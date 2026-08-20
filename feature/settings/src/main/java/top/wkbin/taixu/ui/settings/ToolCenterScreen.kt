@@ -283,6 +283,8 @@ private fun ToolBrandAvatar(
             Triple(null, "🦞", Color(0xFFFF4757))
         key.contains("hermes") ->
             Triple(null, "🪽", Color(0xFF8B5CF6))
+        key.contains("android") ->
+            Triple(null, "🤖", Color(0xFF3DDC84))
         key.contains("devtools") || key.contains("base-devtools") ->
             Triple(null, "⚡", Color(0xFF0284C7))
         key.contains("hello") ->

@@ -99,8 +99,8 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun send() {
-        val text = _input.value
+    fun send(customText: String? = null) {
+        val text = (customText ?: _input.value).trim()
         if (text.isBlank()) return
         _input.value = ""
         // 运行中不拦截：HarnessLoop 会把消息放入排队，当前任务结束后自动接续执行

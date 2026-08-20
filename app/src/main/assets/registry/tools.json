@@ -65,6 +65,28 @@
   },
   {
     "schemaVersion": 1,
+    "id": "android-devtools",
+    "name": "Android 开发套件 (Android SDK & Tools)",
+    "description": "包含 Android 调试桥 (ADB)、OpenJDK 17、Gradle 构建套件、AAPT 与 Android 命令行工具链，支持沙箱内直接构建与设备调试。",
+    "dependencies": ["curl", "ca-certificates"],
+    "launchType": "pty",
+    "version": "1.0.0",
+    "latestVersion": "1.0.0",
+    "publisher": "Google / Android",
+    "category": "DEVELOPER_TOOL",
+    "architectures": ["ARM64"],
+    "permissions": ["NETWORK", "WORKSPACE_READ", "WORKSPACE_WRITE"],
+    "installMethod": "APT",
+    "installScript": "rm -rf /var/lib/dpkg/updates/* /var/lib/dpkg/lock* /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null || true; DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>/dev/null || true; DEBIAN_FRONTEND=noninteractive apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends adb openjdk-17-jdk-headless gradle aapt zipalign wget unzip",
+    "launchCommand": "adb version",
+    "verifyCommand": "adb version",
+    "commandLinks": ["adb", "gradle", "javac", "java", "aapt", "zipalign"],
+    "environment": {
+      "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk-arm64"
+    }
+  },
+  {
+    "schemaVersion": 1,
     "id": "codex",
     "name": "Codex",
     "description": "Linux 环境中的 AI 编程 CLI。",

@@ -251,7 +251,7 @@ fun ChatScreen(
                         input = input,
                         onInputChanged = viewModel::onInputChanged,
                         onApplyCommand = viewModel::applySlashCommand,
-                        onSend = viewModel::send,
+                        onSend = { customText -> viewModel.send(customText) },
                         onStop = viewModel::stop,
                     )
 
@@ -307,7 +307,7 @@ fun ChatScreen(
                     input = input,
                     onInputChanged = viewModel::onInputChanged,
                     onApplyCommand = viewModel::applySlashCommand,
-                    onSend = viewModel::send,
+                    onSend = { customText -> viewModel.send(customText) },
                     onStop = viewModel::stop,
                 )
             }
@@ -391,9 +391,58 @@ private fun ChatPaneContent(
     input: String,
     onInputChanged: (String) -> Unit,
     onApplyCommand: (SlashCommandItem) -> Unit,
-    onSend: () -> Unit,
+    onSend: (String?) -> Unit,
     onStop: () -> Unit,
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var attachments by remember { mutableStateOf<List<ChatAttachment>>(emptyList()) }
+
+    val imagePickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetMultipleContents(),
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            val newItems = uris.mapNotNull { uri ->
+                AttachmentHelper.processUri(context, uri, isImage = true)
+            }
+            attachments = attachments + newItems
+        }
+    }
+
+    val filePickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetMultipleContents(),
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            val newItems = uris.mapNotNull { uri ->
+                AttachmentHelper.processUri(context, uri, isImage = false)
+            }
+            attachments = attachments + newItems
+        }
+    }
+
+    val doSend = {
+        val trimmedInput = input.trim()
+        if (trimmedInput.isNotBlank() || attachments.isNotEmpty()) {
+            val fullMessage = buildString {
+                if (trimmedInput.isNotBlank()) {
+                    append(trimmedInput)
+                } else {
+                    val hasOnlyImages = attachments.all { it.isImage }
+                    append(if (hasOnlyImages) "请分析并处理以下附带的图片：" else "请分析并处理以下附带的文件：")
+                }
+                if (attachments.isNotEmpty()) {
+                    append("\n\n[附件与多模态数据]\n")
+                    attachments.forEachIndexed { i, att ->
+                        val type = if (att.isImage) "图片" else "文件"
+                        append("${i + 1}. [$type] ${att.name} (${AttachmentHelper.formatFileSize(att.sizeBytes)}) -> 沙箱内路径: ${att.localFilePath}\n")
+                    }
+                    append("提示：多模态模型可结合此图片/附件内容直接分析；沙箱内亦可通过 read / bash 工具直接读取操作对应路径。")
+                }
+            }
+            onSend(fullMessage)
+            attachments = emptyList()
+        }
+    }
+
     Column(modifier = modifier) {
         LazyColumn(
             state = listState,
@@ -457,10 +506,18 @@ private fun ChatPaneContent(
                     LaunchedEffect(roundStart) {
                         while (true) {
                             roundElapsed = System.currentTimeMillis() - roundStart
-                            delay(200)
+                            delay(500)
                         }
                     }
-                    ThinkingIndicator("${status ?: "思考中"} · ${formatDuration(roundElapsed)}")
+                    ThinkingIndicator(
+                        status = buildString {
+                            append(status ?: "思考中…")
+                            if (roundElapsed > 0) {
+                                append(" · ")
+                                append(formatDuration(roundElapsed))
+                            }
+                        },
+                    )
                 } else {
                     Spacer(Modifier.height(4.dp))
                 }
@@ -468,8 +525,28 @@ private fun ChatPaneContent(
         }
 
         error?.let {
-            NoticeBanner(it, isError = true, modifier = Modifier.padding(vertical = 6.dp))
-            TextButton(onClick = onClearError) { Text("忽略", color = MaterialTheme.colorScheme.primary) }
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.errorContainer,
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        it,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onClearError) {
+                        Text("关闭", color = MaterialTheme.colorScheme.onErrorContainer)
+                    }
+                }
+            }
         }
 
         // 斜杠指令快捷提示弹窗
@@ -526,37 +603,73 @@ private fun ChatPaneContent(
             }
         }
 
+        // 待发送附件预览栏
+        AttachmentPreviewRow(
+            attachments = attachments,
+            onRemove = { att -> attachments = attachments.filter { it.id != att.id } },
+        )
+
         Row(
-            Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // 🖼️ 选择相册图片
+            IconButton(
+                onClick = { imagePickerLauncher.launch("image/*") },
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            ) {
+                RuntimeIcon(
+                    name = RuntimeIconName.Image,
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+
+            // 📎 选择文件附件
+            IconButton(
+                onClick = { filePickerLauncher.launch("*/*") },
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            ) {
+                RuntimeIcon(
+                    name = RuntimeIconName.Attach,
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+
             OutlinedTextField(
                 value = input,
                 onValueChange = onInputChanged,
                 modifier = Modifier.weight(1f),
                 placeholder = {
                     Text(
-                        if (running) "正在执行… 输入内容可排队，任务结束后自动接续"
-                        else "输入指令… 输入 / 触发快捷命令",
+                        if (running) "正在执行… 输入内容可排队"
+                        else "输入指令… 支持附带图片与文件",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 },
                 minLines = 1,
                 maxLines = 4,
-                    shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(14.dp),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { onSend() }),
+                keyboardActions = KeyboardActions(onSend = { doSend() }),
                 textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
             )
             if (running) {
-                // 运行中：输入非空时提供"排队发送"，同时保留"停止"
-                if (input.isNotBlank()) {
+                // 运行中：输入非空或有附件时提供"排队发送"，同时保留"停止"
+                if (input.isNotBlank() || attachments.isNotEmpty()) {
                     Button(
-                        onClick = onSend,
-                        modifier = Modifier.size(48.dp),
-                        shape = RoundedCornerShape(13.dp),
+                        onClick = doSend,
+                        modifier = Modifier.size(44.dp),
+                        shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(0.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.secondaryContainer,
@@ -568,8 +681,8 @@ private fun ChatPaneContent(
                 }
                 Button(
                     onClick = onStop,
-                    modifier = Modifier.size(48.dp),
-                    shape = RoundedCornerShape(13.dp),
+                    modifier = Modifier.size(44.dp),
+                    shape = RoundedCornerShape(12.dp),
                     contentPadding = PaddingValues(0.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                 ) {
@@ -577,10 +690,10 @@ private fun ChatPaneContent(
                 }
             } else {
                 Button(
-                    onClick = onSend,
-                    enabled = input.isNotBlank(),
-                    modifier = Modifier.size(48.dp),
-                    shape = RoundedCornerShape(13.dp),
+                    onClick = doSend,
+                    enabled = input.isNotBlank() || attachments.isNotEmpty(),
+                    modifier = Modifier.size(44.dp),
+                    shape = RoundedCornerShape(12.dp),
                     contentPadding = PaddingValues(0.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
