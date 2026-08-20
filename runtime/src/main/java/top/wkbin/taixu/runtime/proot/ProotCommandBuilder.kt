@@ -42,6 +42,9 @@ class ProotCommandBuilder @Inject constructor(
         add("${homeDir.absolutePath}:/root")
         add("-b")
         add("${optDir.absolutePath}:/opt/taixu")
+        val attachmentsDir = File(rootfsDir.parentFile, "attachments").apply { mkdirs() }
+        add("-b")
+        add("${attachmentsDir.absolutePath}:/attachments")
         addHostSystemBindings()
         addStorageMountBindings(mounts)
         add("-w")
@@ -91,6 +94,9 @@ class ProotCommandBuilder @Inject constructor(
         add("${homeDir.absolutePath}:/root")
         add("-b")
         add("${optDir.absolutePath}:/opt/taixu")
+        val attachmentsDir = File(rootfsDir.parentFile, "attachments").apply { mkdirs() }
+        add("-b")
+        add("${attachmentsDir.absolutePath}:/attachments")
         addHostSystemBindings()
         addStorageMountBindings(mounts)
         add("-w")

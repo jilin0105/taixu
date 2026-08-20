@@ -251,7 +251,7 @@ fun ChatScreen(
                         input = input,
                         onInputChanged = viewModel::onInputChanged,
                         onApplyCommand = viewModel::applySlashCommand,
-                        onSend = { customText -> viewModel.send(customText) },
+                        onSend = { customText, images -> viewModel.send(customText, images) },
                         onStop = viewModel::stop,
                     )
 
@@ -307,7 +307,7 @@ fun ChatScreen(
                     input = input,
                     onInputChanged = viewModel::onInputChanged,
                     onApplyCommand = viewModel::applySlashCommand,
-                    onSend = { customText -> viewModel.send(customText) },
+                    onSend = { customText, images -> viewModel.send(customText, images) },
                     onStop = viewModel::stop,
                 )
             }

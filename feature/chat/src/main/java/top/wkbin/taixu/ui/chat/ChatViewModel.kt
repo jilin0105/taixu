@@ -99,12 +99,12 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun send(customText: String? = null) {
+    fun send(customText: String? = null, imageUrls: List<String> = emptyList()) {
         val text = (customText ?: _input.value).trim()
-        if (text.isBlank()) return
+        if (text.isBlank() && imageUrls.isEmpty()) return
         _input.value = ""
         // 运行中不拦截：HarnessLoop 会把消息放入排队，当前任务结束后自动接续执行
-        harnessLoop.send(text)
+        harnessLoop.send(text, imageUrls = imageUrls)
     }
 
     /** 重新生成最后一次回复 */

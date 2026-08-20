@@ -85,6 +85,10 @@ fun ToolDetailScreen(
     onLaunchTerminal: (toolId: String) -> Unit,
     viewModel: ToolDetailViewModel = hiltViewModel(),
 ) {
+    androidx.compose.runtime.LaunchedEffect(toolId) {
+        viewModel.setToolId(toolId)
+    }
+
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val tool = state.tool

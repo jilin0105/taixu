@@ -130,25 +130,55 @@ internal class ChatApi(
 
     private fun buildRequest(model: ModelConfig, messages: List<ApiMessage>, stream: Boolean): Request {
         val tools = ProviderClient.buildDynamicTools(model.dynamicMcpTools)
-        val requestBody = json.encodeToString(
-            ChatCompletionRequest.serializer(),
-            ChatCompletionRequest(
-                model = model.model,
-                messages = messages,
-                tools = tools,
-                stream = stream,
-                temperature = model.temperature,
-                max_tokens = model.maxTokens,
-                top_p = model.topP,
-            ),
-        )
+        val requestJson = kotlinx.serialization.json.buildJsonObject {
+            put("model", kotlinx.serialization.json.JsonPrimitive(model.model))
+            put("stream", kotlinx.serialization.json.JsonPrimitive(stream))
+            model.temperature?.let { put("temperature", kotlinx.serialization.json.JsonPrimitive(it)) }
+            model.maxTokens?.let { put("max_tokens", kotlinx.serialization.json.JsonPrimitive(it)) }
+            model.topP?.let { put("top_p", kotlinx.serialization.json.JsonPrimitive(it)) }
+            if (tools.isNotEmpty()) {
+                put("tools", json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(ApiToolDefinition.serializer()), tools))
+            }
+            put("messages", kotlinx.serialization.json.buildJsonArray {
+                messages.forEach { msg ->
+                    add(kotlinx.serialization.json.buildJsonObject {
+                        put("role", kotlinx.serialization.json.JsonPrimitive(msg.role))
+                        if (msg.imageUrls.isNotEmpty()) {
+                            put("content", kotlinx.serialization.json.buildJsonArray {
+                                if (!msg.content.isNullOrBlank()) {
+                                    add(kotlinx.serialization.json.buildJsonObject {
+                                        put("type", kotlinx.serialization.json.JsonPrimitive("text"))
+                                        put("text", kotlinx.serialization.json.JsonPrimitive(msg.content))
+                                    })
+                                }
+                                msg.imageUrls.forEach { url ->
+                                    add(kotlinx.serialization.json.buildJsonObject {
+                                        put("type", kotlinx.serialization.json.JsonPrimitive("image_url"))
+                                        put("image_url", kotlinx.serialization.json.buildJsonObject {
+                                            put("url", kotlinx.serialization.json.JsonPrimitive(url))
+                                        })
+                                    })
+                                }
+                            })
+                        } else if (msg.content != null) {
+                            put("content", kotlinx.serialization.json.JsonPrimitive(msg.content))
+                        }
+                        msg.reasoning_content?.let { put("reasoning_content", kotlinx.serialization.json.JsonPrimitive(it)) }
+                        msg.tool_call_id?.let { put("tool_call_id", kotlinx.serialization.json.JsonPrimitive(it)) }
+                        msg.tool_calls?.let { calls ->
+                            put("tool_calls", json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(ApiToolCall.serializer()), calls))
+                        }
+                    })
+                }
+            })
+        }
         return Request.Builder()
             .url("${model.baseUrl.trimEnd('/')}/chat/completions")
             .header("Content-Type", "application/json")
             .apply {
                 model.apiKey?.let { header("Authorization", "Bearer $it") }
             }
-            .post(requestBody.toRequestBody(ProviderClient.JSON_MEDIA_TYPE))
+            .post(requestJson.toString().toRequestBody(ProviderClient.JSON_MEDIA_TYPE))
             .build()
     }
 }
@@ -204,6 +234,7 @@ data class ApiMessage(
     val reasoning_content: String? = null,
     val tool_calls: List<ApiToolCall>? = null,
     val tool_call_id: String? = null,
+    val imageUrls: List<String> = emptyList(),
 )
 
 @Serializable

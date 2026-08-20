@@ -43,8 +43,12 @@ data class ChatAttachment(
     val isImage: Boolean,
     val sizeBytes: Long,
     val uri: Uri,
-    val localFilePath: String? = null,
-)
+    val hostFilePath: String? = null,
+    val guestFilePath: String? = null,
+    val base64DataUrl: String? = null,
+) {
+    val localFilePath: String get() = guestFilePath ?: hostFilePath.orEmpty()
+}
 
 object AttachmentHelper {
     fun processUri(context: Context, uri: Uri, isImage: Boolean): ChatAttachment? {
@@ -75,12 +79,30 @@ object AttachmentHelper {
                 }
             }
             if (size == 0L) size = targetFile.length()
+
+            val guestPath = "/attachments/${targetFile.name}"
+            val base64 = if (isImage && targetFile.length() < 6 * 1024 * 1024) {
+                runCatching {
+                    val bytes = targetFile.readBytes()
+                    val mime = when (targetFile.extension.lowercase()) {
+                        "png" -> "image/png"
+                        "webp" -> "image/webp"
+                        "gif" -> "image/gif"
+                        else -> "image/jpeg"
+                    }
+                    val encoded = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                    "data:$mime;base64,$encoded"
+                }.getOrNull()
+            } else null
+
             ChatAttachment(
                 name = name,
                 isImage = isImage,
                 sizeBytes = size,
                 uri = uri,
-                localFilePath = targetFile.absolutePath,
+                hostFilePath = targetFile.absolutePath,
+                guestFilePath = guestPath,
+                base64DataUrl = base64,
             )
         } catch (e: Exception) {
             null

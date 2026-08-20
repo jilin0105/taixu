@@ -244,10 +244,11 @@ class HarnessLoop @Inject constructor(
         }
     }
 
-    fun send(text: String, targetSessionId: String? = null) {
+    fun send(text: String, targetSessionId: String? = null, imageUrls: List<String> = emptyList()) {
         val trimmed = text.trim()
         val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
-        if (trimmed.isEmpty() || sessId.isBlank()) return
+        if (trimmed.isEmpty() && imageUrls.isEmpty()) return
+        if (sessId.isBlank()) return
 
         val pendingFlow = getOrCreatePendingFlow(sessId)
         val isRunning = sessionJobs[sessId]?.isActive == true
@@ -263,7 +264,7 @@ class HarnessLoop @Inject constructor(
             setSessionState(sessId, SessionRunState.RUNNING)
             setError(sessId, null)
             try {
-                runLoop(sessId, trimmed)
+                runLoop(sessId, trimmed, imageUrls)
                 setSessionState(sessId, SessionRunState.COMPLETED)
             } catch (cancellation: CancellationException) {
                 withContext(NonCancellable) {
@@ -490,9 +491,9 @@ class HarnessLoop @Inject constructor(
         setError(sessId, null)
     }
 
-    private suspend fun runLoop(sessId: String, userText: String) {
+    private suspend fun runLoop(sessId: String, userText: String, imageUrls: List<String> = emptyList()) {
         logAgentEvent(sessId, "UserPrompt", userText)
-        append(sessId, UserMessage(id = newId(), createdAt = now(), text = userText))
+        append(sessId, UserMessage(id = newId(), createdAt = now(), text = userText, imageUrls = imageUrls))
         runLoopInternal(sessId, startedAt = now())
     }
 

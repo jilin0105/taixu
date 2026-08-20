@@ -144,7 +144,41 @@ internal class AnthropicApi(
                 "user" -> {
                     anthropicMessages += buildJsonObject {
                         put("role", "user")
-                        put("content", buildJsonArray { add(JsonPrimitive(message.content.orEmpty())) })
+                        put(
+                            "content",
+                            buildJsonArray {
+                                if (!message.content.isNullOrBlank()) {
+                                    add(
+                                        buildJsonObject {
+                                            put("type", "text")
+                                            put("text", message.content)
+                                        },
+                                    )
+                                }
+                                message.imageUrls.forEach { url ->
+                                    if (url.startsWith("data:")) {
+                                        val match = Regex("""data:(image/[a-zA-Z+]+);base64,(.+)""").matchEntire(url)
+                                        if (match != null) {
+                                            val mediaType = match.groupValues[1]
+                                            val b64Data = match.groupValues[2]
+                                            add(
+                                                buildJsonObject {
+                                                    put("type", "image")
+                                                    put(
+                                                        "source",
+                                                        buildJsonObject {
+                                                            put("type", "base64")
+                                                            put("media_type", mediaType)
+                                                            put("data", b64Data)
+                                                        },
+                                                    )
+                                                },
+                                            )
+                                        }
+                                    }
+                                }
+                            },
+                        )
                     }
                     index++
                 }

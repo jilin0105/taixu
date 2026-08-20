@@ -31,6 +31,7 @@ data class UserMessage(
     override val id: String,
     override val createdAt: Long,
     val text: String,
+    val imageUrls: List<String> = emptyList(),
 ) : HarnessMessage
 
 @Serializable
