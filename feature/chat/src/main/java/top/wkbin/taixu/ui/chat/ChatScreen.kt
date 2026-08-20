@@ -391,7 +391,7 @@ private fun ChatPaneContent(
     input: String,
     onInputChanged: (String) -> Unit,
     onApplyCommand: (SlashCommandItem) -> Unit,
-    onSend: (String?) -> Unit,
+    onSend: (String?, List<String>) -> Unit,
     onStop: () -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -422,6 +422,7 @@ private fun ChatPaneContent(
     val doSend = {
         val trimmedInput = input.trim()
         if (trimmedInput.isNotBlank() || attachments.isNotEmpty()) {
+            val imageBase64List = attachments.mapNotNull { it.base64DataUrl }
             val fullMessage = buildString {
                 if (trimmedInput.isNotBlank()) {
                     append(trimmedInput)
@@ -433,12 +434,13 @@ private fun ChatPaneContent(
                     append("\n\n[附件与多模态数据]\n")
                     attachments.forEachIndexed { i, att ->
                         val type = if (att.isImage) "图片" else "文件"
-                        append("${i + 1}. [$type] ${att.name} (${AttachmentHelper.formatFileSize(att.sizeBytes)}) -> 沙箱内路径: ${att.localFilePath}\n")
+                        val guestPath = att.guestFilePath ?: "/attachments/${att.name}"
+                        append("${i + 1}. [$type] ${att.name} (${AttachmentHelper.formatFileSize(att.sizeBytes)}) -> 沙箱内路径: $guestPath\n")
                     }
-                    append("提示：多模态模型可结合此图片/附件内容直接分析；沙箱内亦可通过 read / bash 工具直接读取操作对应路径。")
+                    append("提示：多模态视觉模型已附带图像直接分析；沙箱内亦可通过 /attachments/... 路径执行 read 或 bash 工具直接读取操作。")
                 }
             }
-            onSend(fullMessage)
+            onSend(fullMessage, imageBase64List)
             attachments = emptyList()
         }
     }

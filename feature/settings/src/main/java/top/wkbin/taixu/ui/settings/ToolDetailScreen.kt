@@ -143,8 +143,10 @@ fun ToolDetailScreen(
                 )
             }
 
-            // ── 3. 一键应用模型配置 ──
+            // ── 3. 模型配置（支持 AI 插件与通用工具环境注入） ──
             ModelApplyCard(
+                toolName = tool.name,
+                category = tool.category,
                 models = state.models,
                 appliedModelId = state.appliedModelId,
                 applying = state.applyingModel,
@@ -160,11 +162,10 @@ fun ToolDetailScreen(
                 )
             }
 
-            // ── 5. 带 Token 访问链接（仅 Web 类工具） ──
+            // ── 5. 带 Token 访问链接（仅 Web 类工具，支持局域网 IP / 0.0.0.0 / 127.0.0.1） ──
             if (state.isWebService) {
                 AccessLinkCard(
-                    accessUrl = state.accessUrl,
-                    hasToken = state.accessToken != null,
+                    state = state,
                     onGenerate = viewModel::generateToken,
                     onClear = viewModel::clearToken,
                     onCopy = { url ->
@@ -443,36 +444,60 @@ private fun GatewayManagementCard(
 /** 3. 一键应用模型配置 */
 @Composable
 private fun ModelApplyCard(
+    toolName: String,
+    category: String,
     models: List<AiModelEntity>,
     appliedModelId: String?,
     applying: Boolean,
     onApply: (AiModelEntity) -> Unit,
 ) {
+    val isAiTool = category == "AI_AGENT" || category == "CODING_AGENT"
     RuntimeCard(modifier = Modifier.fillMaxWidth()) {
         Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            RuntimeIcon(
-                name = RuntimeIconName.Chat,
-                modifier = Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.primary,
-            )
-            Text(
-                text = "模型配置",
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                RuntimeIcon(
+                    name = RuntimeIconName.Chat,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = "模型配置",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                )
+            }
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                shape = RoundedCornerShape(6.dp),
+            ) {
+                Text(
+                    text = if (isAiTool) "AI 插件" else "通用工具",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            text = "选择已配置的模型一键应用到插件，工具重启后生效",
+            text = if (isAiTool) {
+                "一键将已配置的 AI 模型（API Key、Base URL 与 Model）注入至 $toolName，插件重启后生效。"
+            } else {
+                "为 $toolName 环境注入全局 AI 模型环境变量（如 API Key 与 Base URL），便于在终端脚本与工具中直接调用。"
+            },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
         if (models.isEmpty()) {
             Spacer(Modifier.height(8.dp))
-            NoticeBanner(text = "尚未配置任何模型，请前往 设置 → 模型档案管理 添加")
+            NoticeBanner(text = "尚未配置任何模型档案，可前往【设置 → 模型档案管理】添加 Claude、OpenAI 或 DeepSeek 模型")
         } else {
             Spacer(Modifier.height(10.dp))
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -610,40 +635,100 @@ private fun AutoStartCard(
     }
 }
 
-/** 5. 带 Token 访问链接 */
+/** 5. 带 Token 访问链接（支持局域网 IP / 0.0.0.0 / 127.0.0.1 模式） */
 @Composable
 private fun AccessLinkCard(
-    accessUrl: String?,
-    hasToken: Boolean,
+    state: ToolDetailUiState,
     onGenerate: () -> Unit,
     onClear: () -> Unit,
     onCopy: (String) -> Unit,
 ) {
+    var selectedMode by remember { mutableStateOf("LAN") } // "LAN", "0.0.0.0", "127.0.0.1"
+
+    val currentUrl = when (selectedMode) {
+        "LAN" -> state.lanAccessUrl ?: state.allInterfacesAccessUrl ?: state.loopbackAccessUrl
+        "0.0.0.0" -> state.allInterfacesAccessUrl
+        else -> state.loopbackAccessUrl
+    }
+
     RuntimeCard(modifier = Modifier.fillMaxWidth()) {
         Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            RuntimeIcon(
-                name = RuntimeIconName.Globe,
-                modifier = Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.primary,
-            )
-            Text(
-                text = "访问链接",
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                RuntimeIcon(
+                    name = RuntimeIconName.Globe,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = "访问链接",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                )
+            }
+
+            Surface(
+                color = Color(0xFF2E7D32).copy(alpha = 0.12f),
+                shape = RoundedCornerShape(6.dp),
+            ) {
+                Text(
+                    text = "已绑定 0.0.0.0",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
+                    color = Color(0xFF2E7D32),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
         }
+
         Spacer(Modifier.height(4.dp))
         Text(
-            text = "生成带 Token 的安全链接，可用于浏览器访问或外部集成",
+            text = "网关服务已绑定全网卡 (0.0.0.0)。同局域网设备打开【局域网 IP 链接】即可直接操作，无需 localhost 映射。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
         Spacer(Modifier.height(10.dp))
 
-        if (accessUrl != null) {
+        // 地址模式选择 (局域网 IP / 0.0.0.0 / 127.0.0.1)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            val lanLabel = if (!state.deviceLanIp.isNullOrBlank()) "局域网 (${state.deviceLanIp})" else "局域网"
+            listOf("LAN" to lanLabel, "0.0.0.0" to "0.0.0.0", "127.0.0.1" to "127.0.0.1").forEach { (modeKey, label) ->
+                val isSelected = selectedMode == modeKey
+                Surface(
+                    onClick = { selectedMode = modeKey },
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            fontSize = 10.sp,
+                        ),
+                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .padding(vertical = 6.dp)
+                            .align(Alignment.CenterVertically),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        if (currentUrl != null) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(10.dp),
@@ -655,7 +740,7 @@ private fun AccessLinkCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = accessUrl,
+                        text = currentUrl,
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontFamily = FontFamily.Monospace,
                             fontSize = 11.sp,
@@ -666,7 +751,7 @@ private fun AccessLinkCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     IconButton(
-                        onClick = { onCopy(accessUrl) },
+                        onClick = { onCopy(currentUrl) },
                         modifier = Modifier.size(32.dp),
                     ) {
                         RuntimeIcon(
@@ -688,11 +773,11 @@ private fun AccessLinkCard(
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
             ) {
                 Text(
-                    text = if (hasToken) "重新生成" else "生成链接",
+                    text = if (state.accessToken != null) "重新生成 Token" else "生成安全 Token",
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
                 )
             }
-            if (hasToken) {
+            if (state.accessToken != null) {
                 TextButton(
                     onClick = onClear,
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),

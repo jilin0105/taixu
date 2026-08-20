@@ -77,7 +77,7 @@ class OpenClawToolInstaller @Inject constructor(
         }
     }
 
-    override suspend fun launch(): CommandResult = execute("openclaw gateway --allow-unconfigured")
+    override suspend fun launch(): CommandResult = execute("openclaw gateway --allow-unconfigured --host 0.0.0.0")
 
     override suspend fun verify(): CommandResult = execute("openclaw --version")
 
@@ -90,8 +90,14 @@ class OpenClawToolInstaller @Inject constructor(
     override suspend fun startService(): ManagedProcess = linuxRuntime.startBackground(
         "openclaw-gateway",
         ShellCommand(
-            commandLine = "openclaw gateway --allow-unconfigured",
-            environment = providerManager.environment(),
+            commandLine = "openclaw gateway --allow-unconfigured --host 0.0.0.0",
+            environment = providerManager.environment() + mapOf(
+                "HOST" to "0.0.0.0",
+                "OPENCLAW_HOST" to "0.0.0.0",
+                "OPENCLAW_GATEWAY_HOST" to "0.0.0.0",
+                "OPENCLAW_HOME" to ToolLayout.toolDataDirectory(toolId),
+                "XDG_CONFIG_HOME" to ToolLayout.toolDataDirectory(toolId),
+            ),
         ),
         toolId = toolId,
         type = ProcessType.SERVICE,

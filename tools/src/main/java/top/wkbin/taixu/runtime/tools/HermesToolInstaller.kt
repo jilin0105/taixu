@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.runtime.tools
+package top.wkbin.taixu.runtime.tools
 
 import top.wkbin.taixu.core.model.RuntimeName
 import top.wkbin.taixu.core.model.RuntimeRequirement
@@ -91,8 +91,8 @@ class HermesToolInstaller @Inject constructor(
     override suspend fun startService(): ManagedProcess = linuxRuntime.startBackground(
         "hermes-dashboard",
         ShellCommand(
-            commandLine = "hermes dashboard --no-open --host 127.0.0.1 --port 9119",
-            environment = providerManager.environment(),
+            commandLine = "hermes dashboard --no-open --host 0.0.0.0 --port 9119",
+            environment = providerManager.environment() + mapOf("HOST" to "0.0.0.0"),
         ),
         toolId = toolId,
         type = ProcessType.SERVICE,

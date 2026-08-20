@@ -22,6 +22,8 @@ import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.core.model.ToolManifest
 import top.wkbin.taixu.core.tools.ProviderRepository
 import top.wkbin.taixu.core.tools.ToolManager
+import java.net.Inet4Address
+import java.net.NetworkInterface
 import java.util.UUID
 import javax.inject.Inject
 
@@ -36,21 +38,33 @@ data class ToolDetailUiState(
     val models: List<AiModelEntity> = emptyList(),
     val appliedModelId: String? = null,
     val applyingModel: Boolean = false,
+    val deviceLanIp: String? = null,
 ) {
     val isWebService: Boolean get() = manifest?.launchType == "web"
     val servicePort: Int? get() = manifest?.servicePort
     val activeModel: AiModelEntity? get() = models.firstOrNull { it.isActive }
 
-    val accessUrl: String?
-        get() {
-            val port = servicePort ?: return null
-            val path = manifest?.servicePath ?: "/"
-            return if (accessToken != null) {
-                "http://localhost:$port$path?token=$accessToken"
-            } else {
-                "http://localhost:$port$path"
-            }
+    fun buildUrl(host: String): String? {
+        val port = servicePort ?: return null
+        val path = manifest?.servicePath ?: "/"
+        return if (accessToken != null) {
+            "http://$host:$port$path?token=$accessToken"
+        } else {
+            "http://$host:$port$path"
         }
+    }
+
+    /** 局域网访问链接（如 http://192.168.1.100:18789/?token=...） */
+    val lanAccessUrl: String? get() = deviceLanIp?.let { buildUrl(it) }
+
+    /** 0.0.0.0 绑定链接 */
+    val allInterfacesAccessUrl: String? get() = buildUrl("0.0.0.0")
+
+    /** 127.0.0.1 本地回环链接 */
+    val loopbackAccessUrl: String? get() = buildUrl("127.0.0.1")
+
+    /** 默认主推荐链接：局域网 IP > 0.0.0.0 > 127.0.0.1 */
+    val accessUrl: String? get() = lanAccessUrl ?: allInterfacesAccessUrl ?: loopbackAccessUrl
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -71,10 +85,12 @@ class ToolDetailViewModel @Inject constructor(
     private val _error = MutableStateFlow<String?>(null)
     private val _appliedModelId = MutableStateFlow<String?>(null)
     private val _applyingModel = MutableStateFlow(false)
+    private val _deviceLanIp = MutableStateFlow<String?>(detectLanIp())
 
     fun setToolId(id: String) {
         if (id.isNotBlank() && _toolId.value != id) {
             _toolId.value = id
+            _deviceLanIp.value = detectLanIp()
             _gatewayRunning.value = toolManager.isGatewayRunning(id)
         }
     }
@@ -93,6 +109,7 @@ class ToolDetailViewModel @Inject constructor(
                 aiModelDao.observeAll(),
                 _appliedModelId,
                 _applyingModel,
+                _deviceLanIp,
             ) { values ->
                 @Suppress("UNCHECKED_CAST")
                 val tools = values[0] as List<ToolEntity>
@@ -104,6 +121,7 @@ class ToolDetailViewModel @Inject constructor(
                 val models = values[6] as List<AiModelEntity>
                 val appliedId = values[7] as String?
                 val applying = values[8] as Boolean
+                val lanIp = values[9] as String?
 
                 val tool = tools.firstOrNull { it.id == id }
                 val manifest = toolManager.manifest(id)
@@ -119,6 +137,7 @@ class ToolDetailViewModel @Inject constructor(
                     models = models,
                     appliedModelId = appliedId,
                     applyingModel = applying,
+                    deviceLanIp = lanIp,
                 )
             }
         }
@@ -134,6 +153,7 @@ class ToolDetailViewModel @Inject constructor(
                 val currentId = _toolId.value
                 if (currentId.isNotBlank()) {
                     _gatewayRunning.value = toolManager.isGatewayRunning(currentId)
+                    _deviceLanIp.value = detectLanIp()
                 }
                 delay(3000)
             }
@@ -274,6 +294,26 @@ class ToolDetailViewModel @Inject constructor(
                 logger.w("Tool uninstall failed: $currentId, ${e.message}", e)
                 _error.value = "卸载失败：${e.message}"
             }
+        }
+    }
+
+    private fun detectLanIp(): String? {
+        return try {
+            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return null
+            for (iface in interfaces.asSequence()) {
+                if (iface.isLoopback || !iface.isUp) continue
+                for (addr in iface.inetAddresses.asSequence()) {
+                    if (!addr.isLoopbackAddress && addr is Inet4Address) {
+                        val host = addr.hostAddress
+                        if (!host.isNullOrBlank() && host != "127.0.0.1") {
+                            return host
+                        }
+                    }
+                }
+            }
+            null
+        } catch (_: Exception) {
+            null
         }
     }
 }
