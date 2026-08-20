@@ -141,10 +141,36 @@ class LinuxRuntimeImpl @Inject constructor(
     }
 
     override suspend fun restoreInstalledState(): Boolean = withContext(Dispatchers.IO) {
-        if (!pathManager.isRootfsInstalled() || !pathManager.isProotInstalled()) return@withContext false
-        val health = runCatching { healthChecker.check() }.getOrNull() ?: return@withContext false
-        if (!health.isHealthy) return@withContext false
+        // 恢复失败绝不能静默：任何一环失败都要留下日志与 Error 状态，
+        // 否则用户会被直接扔回引导页"重新安装"，且无从排查原因。
+        if (!pathManager.isRootfsInstalled()) {
+            // 全新安装或 RootFS 缺失：正常走引导页，不算错误。
+            logger.i("Restore skipped: rootfs marker or validator check failed (fresh install?)")
+            return@withContext false
+        }
+        if (!pathManager.isProotInstalled()) {
+            val message = "已安装的 Linux 环境无法恢复：PRoot 运行组件不完整（APK 内 native 库缺失或不可读）"
+            logger.e("Restore failed: $message")
+            _state.value = RuntimeState.Error(IllegalStateException(message))
+            return@withContext false
+        }
+        val health = try {
+            healthChecker.check()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (throwable: Throwable) {
+            logger.e("Restore failed: health check threw", throwable)
+            _state.value = RuntimeState.Error(throwable)
+            return@withContext false
+        }
+        if (!health.isHealthy) {
+            val message = "已安装的 Linux 环境健康检查未通过：${health.detail.orEmpty()}"
+            logger.e("Restore failed: $message")
+            _state.value = RuntimeState.Error(IllegalStateException(message))
+            return@withContext false
+        }
         _state.value = RuntimeState.Ready
+        logger.i("Linux runtime restored from disk and ready")
         true
     }
 
@@ -355,6 +381,8 @@ class LinuxRuntimeImpl @Inject constructor(
         configureDpkgStatoverride()
         configureDpkgNoDoc()
         configureAptSettings()
+        configureChinaMirrors()
+        configurePipMirror()
         installAptStripSetuidHook()
         installPerlFixScript()
     }
@@ -399,6 +427,113 @@ class LinuxRuntimeImpl @Inject constructor(
             };
             """.trimIndent() + "\n",
         )
+    }
+
+    /**
+     * 将沙箱内软件源切换到清华大学 TUNA 镜像站，加速国内 apt / pip 安装。
+     * 仅对 apt 系发行版（debian / ubuntu / kali）生效；其余发行版保持官方源。
+     */
+    private fun configureChinaMirrors() {
+        val osRelease = readOsRelease()
+        if (osRelease.isEmpty()) {
+            logger.i("China mirrors skipped: os-release not found")
+            return
+        }
+        val id = osRelease["ID"] ?: osRelease["ID_LIKE"]
+        val codename = osRelease["VERSION_CODENAME"]
+        val sources = when (id) {
+            "debian" -> codename?.let(::tunaDebianSources)
+            "ubuntu" -> codename?.let(::tunaUbuntuSources)
+            "kali" -> tunaKaliSources()
+            else -> null
+        }
+        if (sources == null) {
+            logger.i("China mirrors skipped for distro id=$id codename=$codename")
+            return
+        }
+        val sourcesListDir = File(pathManager.rootfsDir, "etc/apt/sources.list.d")
+        sourcesListDir.mkdirs()
+        // 停用镜像自带官方源（改名为 apt 不识别的扩展名，可随时改回），避免与新源冲突。
+        disableStockAptSources(sourcesListDir)
+        File(sourcesListDir, "taixu-mirrors.list").writeText(sources + "\n")
+        logger.i("China mirrors applied: TUNA apt sources for $id ($codename)")
+    }
+
+    /**
+     * 停用 rootfs 自带的官方 apt 源：/etc/apt/sources.list 与 sources.list.d 下的
+     * *.list / *.sources 全部改名为 *.taixu-disabled（apt 只识别 .list / .sources 后缀）。
+     */
+    private fun disableStockAptSources(sourcesListDir: File) {
+        File(pathManager.rootfsDir, "etc/apt/sources.list").takeIf { it.isFile }
+            ?.let { stock -> renameToDisabled(stock) }
+        sourcesListDir.listFiles()?.forEach { entry ->
+            val name = entry.name
+            if (entry.isFile && (name.endsWith(".list") || name.endsWith(".sources")) &&
+                name != "taixu-mirrors.list"
+            ) {
+                renameToDisabled(entry)
+            }
+        }
+    }
+
+    private fun renameToDisabled(file: File) {
+        val disabled = File(file.parentFile, "${file.name}.taixu-disabled")
+        if (!file.renameTo(disabled)) {
+            logger.w("Failed to disable stock apt source: ${file.path}")
+        }
+    }
+
+    private fun tunaDebianSources(codename: String): String = """
+        # TaiXu: 清华大学 TUNA 镜像站（由官方源自动切换）
+        deb https://mirrors.tuna.tsinghua.edu.cn/debian $codename main contrib non-free non-free-firmware
+        deb https://mirrors.tuna.tsinghua.edu.cn/debian $codename-updates main contrib non-free non-free-firmware
+        deb https://mirrors.tuna.tsinghua.edu.cn/debian-security $codename-security main contrib non-free non-free-firmware
+    """.trimIndent()
+
+    private fun tunaUbuntuSources(codename: String): String = """
+        # TaiXu: 清华大学 TUNA 镜像站（由官方源自动切换）
+        deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu $codename main restricted universe multiverse
+        deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu $codename-updates main restricted universe multiverse
+        deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu $codename-security main restricted universe multiverse
+        deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu $codename-backports main restricted universe multiverse
+    """.trimIndent()
+
+    private fun tunaKaliSources(): String = """
+        # TaiXu: 清华大学 TUNA 镜像站（由官方源自动切换）
+        deb https://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main contrib non-free
+    """.trimIndent()
+
+    /**
+     * 预置 pip 清华镜像配置（文件在 pip 安装后自动生效，未装 python 时无副作用）。
+     */
+    private fun configurePipMirror() {
+        val config = File(pathManager.rootfsDir, "etc/pip.conf")
+        config.parentFile?.mkdirs()
+        config.writeText(
+            """
+            # TaiXu: 清华大学 TUNA PyPI 镜像
+            [global]
+            index-url = https://pypi.tuna.tsinghua.edu.cn/simple
+            """.trimIndent() + "\n",
+        )
+    }
+
+    /** 解析 rootfs 的 os-release（KEY=VALUE，值可能带引号），失败返回空 Map。 */
+    private fun readOsRelease(): Map<String, String> {
+        val file = File(pathManager.rootfsDir, "etc/os-release")
+            .takeIf { it.isFile }
+            ?: File(pathManager.rootfsDir, "usr/lib/os-release").takeIf { it.isFile }
+            ?: return emptyMap()
+        return runCatching {
+            file.readLines().mapNotNull { line ->
+                val index = line.indexOf('=')
+                if (index <= 0) return@mapNotNull null
+                val key = line.substring(0, index).trim()
+                val value = line.substring(index + 1).trim().trim('"', '\'')
+                key to value
+            }.toMap()
+        }.onFailure { logger.w("Failed to parse os-release", it) }
+            .getOrDefault(emptyMap())
     }
 
     /**

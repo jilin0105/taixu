@@ -138,11 +138,7 @@ class PrivilegeManager @Inject constructor(
             }
 
             // 2. 检查应用是否已获得 Shizuku 权限
-            val isGranted = if (Shizuku.isPreV11()) {
-                Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-            } else {
-                Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-            }
+            val isGranted = Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
 
             if (isGranted) {
                 PrivilegeCheckResult.Authorized(

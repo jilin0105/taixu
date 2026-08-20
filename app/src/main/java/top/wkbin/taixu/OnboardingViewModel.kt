@@ -123,6 +123,16 @@ class OnboardingViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 已安装环境恢复失败后的轻量重试：只重跑健康检查与状态恢复，
+     * 不触发重新下载。适合健康检查偶发失败（冷启动慢、子进程被系统限制等）的场景。
+     */
+    fun retryReady() {
+        if (runtimeState.value is RuntimeState.Initializing) return
+        restoreComplete.value = false
+        restoreInstalledState()
+    }
+
     fun skipModel() = finish()
 
     fun saveModelAndFinish() {

@@ -39,12 +39,28 @@ class WorkspaceFileAccess(
         }
     }
 
-    suspend fun read(path: String): AppResult<String> = withContext(Dispatchers.IO) {
+    /**
+     * 读取文件内容。支持行级分页（pi 的 read 工具设计）：
+     * [offset] 为 1 起始的行号，[limit] 为最多读取的行数；分页时在内容前加范围头，
+     * 让模型知道文件总行数与当前窗口，便于继续翻页或精确定位。
+     */
+    suspend fun read(path: String, offset: Int? = null, limit: Int? = null): AppResult<String> = withContext(Dispatchers.IO) {
         try {
             val file = resolveRequired(path)
             check(file.isFile) { "不是文件：${display(path)}" }
             check(file.length() <= MAX_READ_BYTES) { "文件过大（${file.length()} 字节，上限 ${MAX_READ_BYTES}）" }
-            AppResult.Success(file.readText(Charsets.UTF_8))
+            val content = file.readText(Charsets.UTF_8)
+            if (offset == null && limit == null) {
+                AppResult.Success(content)
+            } else {
+                val lines = content.split('\n')
+                val totalLines = if (content.endsWith("\n")) lines.size - 1 else lines.size
+                val start = ((offset ?: 1) - 1).coerceIn(0, totalLines)
+                val end = if (limit != null) minOf(start + limit, totalLines) else totalLines
+                val selected = lines.subList(start, end)
+                val header = "[文件 ${display(path)} 共 $totalLines 行，当前显示第 ${start + 1}-$end 行]\n"
+                AppResult.Success(header + selected.joinToString("\n"))
+            }
         } catch (throwable: Throwable) {
             failure(path, throwable)
         }

@@ -41,14 +41,38 @@ class ToolExecutor @Inject constructor(
             createdAt = now,
             toolCallId = toolCall.id,
             success = success,
-            output = secretRedactor.redact(rawOutput).take(MAX_OUTPUT_LENGTH),
+            output = secretRedactor.redact(truncateOutput(rawOutput)),
         )
+    }
+
+    /**
+     * 输出超限时带元数据截断（pi 的 truncate 设计）：保留头部，并明确告知模型
+     * 完整输出的规模与截断事实，引导其用 grep/head/tail 精准取段，
+     * 而不是对静默截断的内容得出片面结论。
+     */
+    private fun truncateOutput(output: String): String {
+        if (output.length <= MAX_OUTPUT_LENGTH) return output
+        val kept = output.take(TRUNCATE_KEEP_LENGTH)
+        val totalLines = output.count { it == '\n' } + 1
+        val keptLines = kept.count { it == '\n' } + 1
+        return buildString {
+            append(kept)
+            append("\n\n[输出已截断：完整输出共 ")
+            append(totalLines)
+            append(" 行 / ")
+            append(output.length)
+            append(" 字符，以上仅显示前 ")
+            append(keptLines)
+            append(" 行。需要其余部分请用 grep 过滤关键字、head/tail 取首尾、或 sed -n 'N,Mp' 取指定行段，不要原样重复执行同一命令。]")
+        }
     }
 
     private suspend fun executeTool(tool: HarnessTool, args: JsonObject): Pair<Boolean, String> = when (tool) {
         HarnessTool.READ -> {
             val path = requireString(args, "path")
-            fileAccess.read(path).toToolOutput()
+            val offset = args["offset"]?.jsonPrimitive?.content?.trim()?.toIntOrNull()
+            val limit = args["limit"]?.jsonPrimitive?.content?.trim()?.toIntOrNull()
+            fileAccess.read(path, offset, limit).toToolOutput()
         }
         HarnessTool.WRITE -> {
             val path = requireString(args, "path")
@@ -100,6 +124,7 @@ class ToolExecutor @Inject constructor(
     companion object {
         const val BASE_TIMEOUT_MS = 5 * 60 * 1000L
         const val MAX_OUTPUT_LENGTH = 64 * 1024
+        const val TRUNCATE_KEEP_LENGTH = 60 * 1024
         const val MAX_COMMAND_LENGTH = 32 * 1024
         const val MAX_ARG_LENGTH = 1024 * 1024
         const val DEFAULT_CWD = "/root"

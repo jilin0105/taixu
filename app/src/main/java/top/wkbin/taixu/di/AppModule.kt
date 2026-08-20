@@ -61,7 +61,17 @@ object AppModule {
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase {
         migrateLegacyDatabaseName(context)
         return Room.databaseBuilder(context, AppDatabase::class.java, "taixu.db")
+            .addMigrations(MIGRATION_13_14)
             .build()
+    }
+
+    /** v13 → v14：模型档案新增推理参数列（temperature / maxTokens / topP），旧数据全部取服务端默认。 */
+    private val MIGRATION_13_14 = object : Migration(13, 14) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE harness_models ADD COLUMN temperature REAL DEFAULT NULL")
+            db.execSQL("ALTER TABLE harness_models ADD COLUMN maxTokens INTEGER DEFAULT NULL")
+            db.execSQL("ALTER TABLE harness_models ADD COLUMN topP REAL DEFAULT NULL")
+        }
     }
 
     private fun migrateLegacyDatabaseName(context: Context) {

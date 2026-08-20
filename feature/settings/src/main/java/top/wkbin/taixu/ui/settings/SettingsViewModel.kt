@@ -232,12 +232,22 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun saveModel(id: String?, name: String, provider: String, model: String, baseUrl: String, apiKey: String) {
+    fun saveModel(
+        id: String?,
+        name: String,
+        provider: String,
+        model: String,
+        baseUrl: String,
+        apiKey: String,
+        temperature: Float? = null,
+        maxTokens: Int? = null,
+        topP: Float? = null,
+    ) {
         viewModelScope.launch {
             val existing = aiModelDao.observeAll().first()
             val old: AiModelEntity? = if (id == null) null else aiModelDao.findById(id)
             val modelId = id ?: java.util.UUID.randomUUID().toString()
-            val secretRef = old?.secretRef?.takeIf { it.isNotBlank() } ?: "model_${modelId.replace("-", "")}" 
+            val secretRef = old?.secretRef?.takeIf { it.isNotBlank() } ?: "model_${modelId.replace("-", "")}"
             if (existing.none { it.isActive } || old?.isActive == true) aiModelDao.clearActive()
             aiModelDao.upsert(
                 AiModelEntity(
@@ -250,6 +260,9 @@ class SettingsViewModel @Inject constructor(
                     secretRef = secretRef,
                     isActive = old?.isActive ?: existing.none { it.isActive },
                     createdAt = old?.createdAt ?: System.currentTimeMillis(),
+                    temperature = temperature,
+                    maxTokens = maxTokens,
+                    topP = topP,
                 ),
             )
         }

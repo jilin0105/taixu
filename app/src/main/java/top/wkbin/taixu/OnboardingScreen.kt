@@ -172,6 +172,16 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
                 )
             }
         }
+        if (state is RuntimeState.Error) {
+            item {
+                TextButton(
+                    onClick = viewModel::retryReady,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("已装过环境？点此重试就绪（不重新下载）", color = MaterialTheme.colorScheme.primary)
+                }
+            }
+        }
     }
 }
 

@@ -6,6 +6,8 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -52,66 +54,76 @@ internal class ChatApi(
      * 流式调用：逐行读取 SSE（data: ...），每个内容增量立即通过 [onDelta] 回调
      * 交给 UI；工具调用参数按 index 分片累积。推理增量通过 [onReasoning] 回调。
      */
+    @OptIn(InternalCoroutinesApi::class)
     suspend fun chatStream(
         model: ModelConfig,
         messages: List<ApiMessage>,
         onReasoning: (String) -> Unit = {},
         onDelta: (String) -> Unit,
     ): ChatResult = withContext(Dispatchers.IO) {
-        okHttpClient.newCall(buildRequest(model, messages, stream = true)).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IllegalStateException("LLM 请求失败 HTTP ${response.code}：${response.body?.string().orEmpty().take(512)}")
-            }
-            val source = response.body?.source()
-                ?: throw IllegalStateException("LLM 流式响应无内容")
-            val text = StringBuilder()
-            // 推理模型的 thinking 内容（如 DeepSeek-R1 的 reasoning_content），后续轮次需原样传回
-            val reasoningText = StringBuilder()
-            val toolCalls = mutableMapOf<Int, ToolCallAccumulator>()
-            while (true) {
-                val line = source.readUtf8Line() ?: break
-                if (!line.startsWith("data:")) continue
-                val data = line.removePrefix("data:").trim()
-                if (data == "[DONE]") break
-                val choice = runCatching {
-                    (json.parseToJsonElement(data) as? JsonObject)
-                        ?.get("choices")?.let { it as? JsonArray }?.firstOrNull() as? JsonObject
-                }.getOrNull() ?: continue
-                val delta = choice["delta"] as? JsonObject
-                delta?.get("content")?.let { it as? JsonPrimitive }?.contentOrNull?.let { chunk ->
-                    if (chunk.isNotEmpty()) {
-                        text.append(chunk)
-                        onDelta(chunk)
+        val call = okHttpClient.newCall(buildRequest(model, messages, stream = true))
+        // 关键：阻塞式 readUtf8Line() 不感知协程取消。用户点"停止"时必须主动 call.cancel()
+        // 关闭底层 socket，阻塞读才会立刻抛出 IOException 退出——否则要等读超时（最长 3 分钟），
+        // 表现为"停止按钮没反应"。
+        val cancelHandle = coroutineContext[Job]?.invokeOnCompletion(onCancelling = true) { call.cancel() }
+        try {
+            call.execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw IllegalStateException("LLM 请求失败 HTTP ${response.code}：${response.body?.string().orEmpty().take(512)}")
+                }
+                val source = response.body?.source()
+                    ?: throw IllegalStateException("LLM 流式响应无内容")
+                val text = StringBuilder()
+                // 推理模型的 thinking 内容（如 DeepSeek-R1 的 reasoning_content），后续轮次需原样传回
+                val reasoningText = StringBuilder()
+                val toolCalls = mutableMapOf<Int, ToolCallAccumulator>()
+                while (true) {
+                    val line = source.readUtf8Line() ?: break
+                    if (!line.startsWith("data:")) continue
+                    val data = line.removePrefix("data:").trim()
+                    if (data == "[DONE]") break
+                    val choice = runCatching {
+                        (json.parseToJsonElement(data) as? JsonObject)
+                            ?.get("choices")?.let { it as? JsonArray }?.firstOrNull() as? JsonObject
+                    }.getOrNull() ?: continue
+                    val delta = choice["delta"] as? JsonObject
+                    delta?.get("content")?.let { it as? JsonPrimitive }?.contentOrNull?.let { chunk ->
+                        if (chunk.isNotEmpty()) {
+                            text.append(chunk)
+                            onDelta(chunk)
+                        }
+                    }
+                    // 推理增量：兼容 reasoning_content（DeepSeek/GLM 等）与 reasoning（OpenRouter 等网关）两种字段名
+                    val reasoningChunk = (delta?.get("reasoning_content") ?: delta?.get("reasoning"))
+                        ?.let { it as? JsonPrimitive }?.contentOrNull
+                    reasoningChunk?.let { chunk ->
+                        if (chunk.isNotEmpty()) {
+                            reasoningText.append(chunk)
+                            onReasoning(chunk)
+                        }
+                    }
+                    delta?.get("tool_calls")?.let { it as? JsonArray }?.forEach { call2 ->
+                        val callObj = call2 as? JsonObject ?: return@forEach
+                        val index = callObj["index"]?.let { it as? JsonPrimitive }?.contentOrNull?.toIntOrNull() ?: 0
+                        val accum = toolCalls.getOrPut(index) { ToolCallAccumulator() }
+                        callObj["id"]?.let { it as? JsonPrimitive }?.contentOrNull
+                            ?.takeIf { it.isNotEmpty() }?.let { accum.id = it }
+                        val function = callObj["function"] as? JsonObject
+                        function?.get("name")?.let { it as? JsonPrimitive }?.contentOrNull
+                            ?.takeIf { it.isNotEmpty() }?.let { accum.name = it }
+                        function?.get("arguments")?.let { it as? JsonPrimitive }?.contentOrNull
+                            ?.let { accum.arguments.append(it) }
                     }
                 }
-                // 推理增量：兼容 reasoning_content（DeepSeek/GLM 等）与 reasoning（OpenRouter 等网关）两种字段名
-                val reasoningChunk = (delta?.get("reasoning_content") ?: delta?.get("reasoning"))
-                    ?.let { it as? JsonPrimitive }?.contentOrNull
-                reasoningChunk?.let { chunk ->
-                    if (chunk.isNotEmpty()) {
-                        reasoningText.append(chunk)
-                        onReasoning(chunk)
-                    }
-                }
-                delta?.get("tool_calls")?.let { it as? JsonArray }?.forEach { call ->
-                    val callObj = call as? JsonObject ?: return@forEach
-                    val index = callObj["index"]?.let { it as? JsonPrimitive }?.contentOrNull?.toIntOrNull() ?: 0
-                    val accum = toolCalls.getOrPut(index) { ToolCallAccumulator() }
-                    callObj["id"]?.let { it as? JsonPrimitive }?.contentOrNull
-                        ?.takeIf { it.isNotEmpty() }?.let { accum.id = it }
-                    val function = callObj["function"] as? JsonObject
-                    function?.get("name")?.let { it as? JsonPrimitive }?.contentOrNull
-                        ?.takeIf { it.isNotEmpty() }?.let { accum.name = it }
-                    function?.get("arguments")?.let { it as? JsonPrimitive }?.contentOrNull
-                        ?.let { accum.arguments.append(it) }
-                }
+                val calls = toolCalls.values.map { ApiToolCallSpec(it.id, it.name, it.arguments.toString()) }
+                ChatResult(
+                    content = text.toString().ifEmpty { null },
+                    toolCalls = calls,
+                    reasoningContent = reasoningText.toString().ifEmpty { null },
+                )
             }
-            val calls = toolCalls.values.map { ApiToolCallSpec(it.id, it.name, it.arguments.toString()) }
-            ChatResult(
-                content = text.toString().ifEmpty { null },
-                toolCalls = calls,
-                reasoningContent = reasoningText.toString().ifEmpty { null },
-            )
+        } finally {
+            cancelHandle?.dispose()
         }
     }
 
@@ -123,6 +135,9 @@ internal class ChatApi(
                 messages = messages,
                 tools = ProviderClient.TOOLS,
                 stream = stream,
+                temperature = model.temperature,
+                max_tokens = model.maxTokens,
+                top_p = model.topP,
             ),
         )
         return Request.Builder()
@@ -134,14 +149,14 @@ internal class ChatApi(
             .post(requestBody.toRequestBody(ProviderClient.JSON_MEDIA_TYPE))
             .build()
     }
-
-    /** 分片累积一次工具调用的 id/name/arguments。 */
-    private data class ToolCallAccumulator(
-        var id: String = "",
-        var name: String = "",
-        val arguments: StringBuilder = StringBuilder(),
-    )
 }
+
+/** 分片累积一次工具调用的 id/name/arguments（OpenAI 与 Anthropic 流式均复用）。 */
+internal data class ToolCallAccumulator(
+    var id: String = "",
+    var name: String = "",
+    val arguments: StringBuilder = StringBuilder(),
+)
 
 /** 解析后的模型运行配置。 */
 data class ModelConfig(
@@ -150,7 +165,16 @@ data class ModelConfig(
     val model: String,
     val baseUrl: String,
     val apiKey: String?,
+    /** 接入协议：OPENAI 兼容或 Anthropic Messages API。 */
+    val protocol: ApiProtocol = ApiProtocol.OPENAI,
+    /** 推理参数（null = 服务端默认）。 */
+    val temperature: Float? = null,
+    val maxTokens: Int? = null,
+    val topP: Float? = null,
 )
+
+/** LLM 接入协议：绝大多数厂商提供 OpenAI 兼容端点；Anthropic Claude 需要专用适配。 */
+enum class ApiProtocol { OPENAI, ANTHROPIC }
 
 /** LLM 返回的一轮结果：纯文本 或 一个/多个工具调用。 */
 data class ChatResult(
@@ -199,6 +223,9 @@ data class ChatCompletionRequest(
     val tools: List<ApiToolDefinition>? = null,
     val tool_choice: String = "auto",
     val stream: Boolean = false,
+    val temperature: Float? = null,
+    val max_tokens: Int? = null,
+    val top_p: Float? = null,
 )
 
 @Serializable
@@ -252,13 +279,7 @@ class ProviderClient @Inject constructor(
     suspend fun resolveModel(): ModelConfig = withContext(Dispatchers.IO) {
         val active = modelDao.activeModel()
         if (active != null) {
-            ModelConfig(
-                name = active.name,
-                provider = active.provider,
-                model = active.model,
-                baseUrl = active.baseUrl.ifBlank { DEFAULT_BASE_URL },
-                apiKey = active.apiKey.ifBlank { providerRepository.readApiKey().orEmpty() }.ifBlank { null },
-            )
+            active.toModelConfig(providerRepository)
         } else {
             ModelConfig(
                 name = "默认",
@@ -281,26 +302,25 @@ class ProviderClient @Inject constructor(
             throw IllegalStateException("未配置模型或 API Key，请先在「设置 → 模型」中添加并激活一个模型")
         }
         if (active != null) {
-            ModelConfig(
-                name = active.name,
-                provider = active.provider,
-                model = active.model,
-                baseUrl = active.baseUrl.ifBlank { DEFAULT_BASE_URL },
-                apiKey = active.apiKey.ifBlank { providerKey }.ifBlank { null },
-            )
+            active.toModelConfig(providerRepository)
         } else {
+            val provider = providerRepository.provider.first()
+            val baseUrl = providerRepository.baseUrl.first().ifBlank { DEFAULT_BASE_URL }
             ModelConfig(
                 name = "默认",
-                provider = providerRepository.provider.first(),
+                provider = provider,
                 model = providerRepository.model.first().ifBlank { DEFAULT_MODEL },
-                baseUrl = providerRepository.baseUrl.first().ifBlank { DEFAULT_BASE_URL },
+                baseUrl = baseUrl,
                 apiKey = providerKey.ifBlank { null },
+                protocol = inferProtocol(baseUrl, provider),
             )
         }
     }
 
-    suspend fun chat(model: ModelConfig, messages: List<ApiMessage>): ChatResult =
-        ChatApi(httpClient, json).chat(model, messages)
+    suspend fun chat(model: ModelConfig, messages: List<ApiMessage>): ChatResult = when (model.protocol) {
+        ApiProtocol.ANTHROPIC -> AnthropicApi(httpClient, json).chat(model, messages)
+        ApiProtocol.OPENAI -> ChatApi(httpClient, json).chat(model, messages)
+    }
 
     /** 流式调用：内容增量通过 [onDelta] 实时回调，推理增量通过 [onReasoning] 实时回调。 */
     suspend fun chatStream(
@@ -308,12 +328,48 @@ class ProviderClient @Inject constructor(
         messages: List<ApiMessage>,
         onReasoning: (String) -> Unit = {},
         onDelta: (String) -> Unit,
-    ): ChatResult = ChatApi(httpClient, json).chatStream(model, messages, onReasoning, onDelta)
+    ): ChatResult = when (model.protocol) {
+        ApiProtocol.ANTHROPIC -> AnthropicApi(httpClient, json).chatStream(model, messages, onReasoning, onDelta)
+        ApiProtocol.OPENAI -> ChatApi(httpClient, json).chatStream(model, messages, onReasoning, onDelta)
+    }
 
     companion object {
         const val DEFAULT_BASE_URL = "https://api.openai.com/v1"
         const val DEFAULT_MODEL = "gpt-4o-mini"
         private const val CALL_TIMEOUT_MS = 3 * 60 * 1000L
+
+        /** Room 实体 → 运行配置：推理参数原样透传，协议按 Base URL / 厂商名自动推断。 */
+        private suspend fun top.wkbin.taixu.core.database.AiModelEntity.toModelConfig(
+            providerRepository: top.wkbin.taixu.core.tools.ProviderRepository,
+        ): ModelConfig {
+            val baseUrl = this.baseUrl.ifBlank { DEFAULT_BASE_URL }
+            return ModelConfig(
+                name = name,
+                provider = provider,
+                model = model,
+                baseUrl = baseUrl,
+                apiKey = apiKey.ifBlank { providerRepository.readApiKey().orEmpty() }.ifBlank { null },
+                protocol = inferProtocol(baseUrl, provider),
+                temperature = temperature,
+                maxTokens = maxTokens,
+                topP = topP,
+            )
+        }
+
+        /** Anthropic 协议自动识别：官方域名或厂商名含 anthropic/claude。 */
+        fun inferProtocol(baseUrl: String, provider: String): ApiProtocol {
+            val host = runCatching { java.net.URI(baseUrl.trim()).host?.lowercase() }.getOrNull().orEmpty()
+            val providerLower = provider.lowercase()
+            return if (host == "api.anthropic.com" ||
+                providerLower.contains("anthropic") ||
+                providerLower.contains("claude")
+            ) {
+                ApiProtocol.ANTHROPIC
+            } else {
+                ApiProtocol.OPENAI
+            }
+        }
+
         private const val READ_TIMEOUT_MS = 3 * 60 * 1000L
         internal val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
@@ -322,9 +378,9 @@ class ProviderClient @Inject constructor(
             ApiToolDefinition(
                 function = ApiFunctionDefinition(
                     name = "read",
-                    description = "读取文件内容（UTF-8，单文件上限 1MB）。路径可用相对路径或以 /workspace/ 开头。优先用它检查文件内容，而不是用 cat/sed。若文件不存在或读取失败，用 base 的 ls/find 定位。",
+                    description = "读取文件内容（UTF-8，单文件上限 1MB）。路径可用相对路径或以 /workspace/ 开头。优先用它检查文件内容，而不是用 cat/sed。大文件用 offset（1 起始行号）和 limit（行数）分页读取，返回头部会标注总行数与当前窗口。若文件不存在或读取失败，用 base 的 ls/find 定位。",
                     parameters = Json.parseToJsonElement(
-                        """{"type":"object","properties":{"path":{"type":"string","description":"文件路径"}},"required":["path"]}""",
+                        """{"type":"object","properties":{"path":{"type":"string","description":"文件路径"},"offset":{"type":"integer","description":"起始行号（1 起始），可选"},"limit":{"type":"integer","description":"读取的最大行数，可选"}},"required":["path"]}""",
                     ).jsonObject,
                 ),
             ),

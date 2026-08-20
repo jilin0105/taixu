@@ -37,6 +37,8 @@ class ChatViewModel @Inject constructor(
     val status: StateFlow<String?> = harnessLoop.status
     val thinkingLive: StateFlow<Boolean> = harnessLoop.thinkingLive
     val workspace: StateFlow<String> = harnessLoop.workspace
+    /** 运行中排队的待发送消息（当前任务结束后自动接续）。 */
+    val pendingMessages: StateFlow<List<String>> = harnessLoop.pendingMessages
 
     val sessions: StateFlow<List<HarnessSessionEntity>> = sessionDao.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -94,8 +96,9 @@ class ChatViewModel @Inject constructor(
 
     fun send() {
         val text = _input.value
-        if (text.isBlank() || running.value) return
+        if (text.isBlank()) return
         _input.value = ""
+        // 运行中不拦截：HarnessLoop 会把消息放入排队，当前任务结束后自动接续执行
         harnessLoop.send(text)
     }
 
@@ -119,6 +122,10 @@ class ChatViewModel @Inject constructor(
     }
 
     fun stop() = harnessLoop.cancel()
+
+    fun removePendingMessage(index: Int) = harnessLoop.removePendingMessage(index)
+
+    fun clearPendingMessages() = harnessLoop.clearPendingMessages()
 
     fun clearError() = harnessLoop.clearError()
 

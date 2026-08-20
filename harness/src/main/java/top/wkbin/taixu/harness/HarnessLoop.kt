@@ -18,15 +18,19 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 import top.wkbin.taixu.core.datastore.SettingsDataStore
@@ -47,6 +51,7 @@ class HarnessLoop @Inject constructor(
     private val messageDao: HarnessMessageDao,
     private val sessionDao: HarnessSessionDao,
     private val settingsDataStore: SettingsDataStore,
+    private val fileAccess: WorkspaceFileAccess,
     private val json: Json,
     private val logger: AppLogger,
 ) {
@@ -75,6 +80,13 @@ class HarnessLoop @Inject constructor(
     /** 推理模型思考中（reasoning 正在流式上屏）。开始思考置 true，本回合结束时置 false。 */
     val thinkingLive: StateFlow<Boolean> = _thinkingLive.asStateFlow()
 
+    private val _pendingMessages = MutableStateFlow<List<String>>(emptyList())
+    /**
+     * 运行中排队等待发送的用户消息。当前任务结束后自动按序接续执行；
+     * 用户点"停止"时清空。UI 可观察此列表展示排队状态。
+     */
+    val pendingMessages: StateFlow<List<String>> = _pendingMessages.asStateFlow()
+
     /**
      * 当前模型是否处于思考模式（任一轮响应携带过 reasoning_content）。
      * DeepSeek 系 thinking 模式强制要求：请求历史中每条带 tool_calls 的 assistant
@@ -102,6 +114,7 @@ class HarnessLoop @Inject constructor(
         _messages.value = emptyList()
         _error.value = null
         _thinkingLive.value = false
+        _pendingMessages.value = emptyList()
         return id
     }
 
@@ -118,6 +131,7 @@ class HarnessLoop @Inject constructor(
         _messages.value = history
         _error.value = null
         _thinkingLive.value = false
+        _pendingMessages.value = emptyList()
         // 从历史推断思考模式：旧会话（含升级前持久化的消息）只要出现过 reasoning 即视为思考模型，
         // 后续请求对缺失 reasoning 的轮次以空字符串兜底，避免 DeepSeek thinking 模式 400。
         thinkingMode = history.any { message ->
@@ -145,7 +159,12 @@ class HarnessLoop @Inject constructor(
 
     fun send(text: String) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty() || _running.value || sessionId.isBlank()) return
+        if (trimmed.isEmpty() || sessionId.isBlank()) return
+        // 运行中：进入排队，当前任务结束后自动接续（见 finally 中的 drainPendingQueue）
+        if (_running.value) {
+            _pendingMessages.value = _pendingMessages.value + trimmed
+            return
+        }
         loopJob?.cancel()
         loopJob = loopScope.launch {
             _running.value = true
@@ -166,10 +185,7 @@ class HarnessLoop @Inject constructor(
                 logger.e("Harness loop failed", throwable)
                 _error.value = throwable.message ?: "执行失败"
             } finally {
-                _running.value = false
-                _status.value = null
-                _thinkingLive.value = false
-                loopJob = null
+                finishRun()
             }
         }
     }
@@ -205,10 +221,7 @@ class HarnessLoop @Inject constructor(
                 logger.e("Harness loop failed", throwable)
                 _error.value = throwable.message ?: "执行失败"
             } finally {
-                _running.value = false
-                _status.value = null
-                _thinkingLive.value = false
-                loopJob = null
+                finishRun()
             }
         }
     }
@@ -248,10 +261,7 @@ class HarnessLoop @Inject constructor(
                 logger.e("Harness loop failed", throwable)
                 _error.value = throwable.message ?: "执行失败"
             } finally {
-                _running.value = false
-                _status.value = null
-                _thinkingLive.value = false
-                loopJob = null
+                finishRun()
             }
         }
     }
@@ -311,8 +321,40 @@ class HarnessLoop @Inject constructor(
     }
 
     fun cancel() {
+        // 停止意味着终止一切：连同排队的后续消息一起清空。
+        _pendingMessages.value = emptyList()
+        _status.value = "正在停止…"
         loopJob?.cancel()
         loopJob = null
+    }
+
+    /** 移除一条排队中的消息（下标从 0 开始）。 */
+    fun removePendingMessage(index: Int) {
+        val current = _pendingMessages.value
+        if (index in current.indices) {
+            _pendingMessages.value = current.filterIndexed { i, _ -> i != index }
+        }
+    }
+
+    /** 清空全部排队消息。 */
+    fun clearPendingMessages() {
+        _pendingMessages.value = emptyList()
+    }
+
+    /**
+     * 单次运行的统一收尾：复位状态位；若队列中还有排队消息则自动接续下一条。
+     * 在 loopJob 的 finally 中调用（运行协程本身即将退出，接续任务由 send() 重新起协程）。
+     */
+    private fun finishRun() {
+        _running.value = false
+        _status.value = null
+        _thinkingLive.value = false
+        loopJob = null
+        val next = _pendingMessages.value.firstOrNull()
+        if (next != null) {
+            _pendingMessages.value = _pendingMessages.value.drop(1)
+            send(next)
+        }
     }
 
     fun clearError() {
@@ -332,6 +374,9 @@ class HarnessLoop @Inject constructor(
         val autoCwd = runCatching { settingsDataStore.autoWorkspaceCwd.first() }.getOrDefault(true)
         var round = 0
         while (round < maxRounds) {
+            // 中途转向（pi 的 steering）：运行期间用户排队的消息在下一轮推理前注入，
+            // 让用户能实时纠偏正在执行的任务，而不是等整个任务跑完才被看到。
+            drainSteeringMessages()
             _status.value = "思考中"
             val model = try {
                 // 含最小配置校验：未配置模型/API Key 时直接返回明确错误，消息留在聊天里
@@ -374,6 +419,9 @@ class HarnessLoop @Inject constructor(
                     logAgentEvent("Cancelled", "用户主动取消执行")
                     throw cancellation
                 } catch (io: IOException) {
+                    // 取消（call.cancel() 关闭 socket）也会抛 IOException：先检查协程是否已被取消，
+                    // 已取消则直接走取消路径，绝不能当成网络错误重试。
+                    currentCoroutineContext().ensureActive()
                     netRetry++
                     logAgentEvent("NetworkRetry", "网络中断重试 $netRetry/$MAX_STREAM_RETRIES: ${io.message}", io)
                     if (netRetry > MAX_STREAM_RETRIES) throw io
@@ -420,9 +468,59 @@ class HarnessLoop @Inject constructor(
             _thinkingLive.value = false
             if (!result.hasToolCalls) return
             result.toolCalls.forEach { spec ->
+                // 参数必须是合法 JSON 对象。流式截断、模型笔误都可能产生解析失败的参数——
+                // 静默降级成空参数执行会拿到错误结果且模型不自知（pi 的做法是直接报错让模型重发）。
+                val parsedArgs = try {
+                    json.parseToJsonElement(spec.argumentsJson) as? kotlinx.serialization.json.JsonObject
+                        ?: throw IllegalArgumentException("参数不是 JSON 对象")
+                } catch (parseError: Throwable) {
+                    // 仍需落一条 ToolCall 保证历史配对合法（tool 消息必须跟在 tool_calls 之后）
+                    append(
+                        ToolCall(
+                            id = spec.id,
+                            createdAt = now(),
+                            tool = HarnessApiMapper.toolByName(spec.name),
+                            args = buildJsonObject {},
+                            reasoning = result.reasoningContent,
+                        ),
+                    )
+                    append(
+                        ToolResult(
+                            id = newId(),
+                            createdAt = now(),
+                            toolCallId = spec.id,
+                            success = false,
+                            output = "工具参数 JSON 解析失败（${friendly(parseError)}），参数可能被截断。" +
+                                "请重新发起完整的工具调用，参数必须是合法的 JSON 对象。",
+                        ),
+                    )
+                    return@forEach
+                }
+                // 未知工具名：直接回错误结果。绝不归入 base 盲执行——
+                // 那会让模型以为命令真的跑过，基于幻觉结论继续推理。
+                if (spec.name.trim().lowercase() !in KNOWN_TOOL_NAMES) {
+                    append(
+                        ToolCall(
+                            id = spec.id,
+                            createdAt = now(),
+                            tool = HarnessApiMapper.toolByName(spec.name),
+                            args = buildJsonObject {},
+                            reasoning = result.reasoningContent,
+                        ),
+                    )
+                    append(
+                        ToolResult(
+                            id = newId(),
+                            createdAt = now(),
+                            toolCallId = spec.id,
+                            success = false,
+                            output = "未知工具：${spec.name}。可用工具只有 read / write / edit / base。",
+                        ),
+                    )
+                    return@forEach
+                }
                 val tool = HarnessApiMapper.toolByName(spec.name)
-                var args = runCatching { json.parseToJsonElement(spec.argumentsJson).jsonObject }
-                    .getOrElse { buildJsonObject {} }
+                var args = parsedArgs
                 // base 工具默认在会话关联的工作区执行（cwd 未指定时，且用户启用了自动注入）
                 if (tool == HarnessTool.BASE && autoCwd && _workspace.value.isNotBlank() && args["cwd"] == null) {
                     args = buildJsonObject {
@@ -439,7 +537,7 @@ class HarnessLoop @Inject constructor(
                 )
                 logAgentEvent("ToolCall", "Tool=${tool.name}, Args=$args")
                 append(toolCall)
-                _status.value = "执行 ${HarnessApiMapper.apiName(tool)}"
+                _status.value = describeToolCall(tool, args)
                 val toolStart = now()
                 val outcome = try {
                     toolExecutor.execute(toolCall)
@@ -471,10 +569,39 @@ class HarnessLoop @Inject constructor(
         )
     }
 
+    /**
+     * 生成人话版工具执行状态（通知栏标题 / UI 状态条共用）：
+     * 带上命令首行或文件路径，让用户一眼看到 Agent 当前在做什么。
+     */
+    private fun describeToolCall(tool: HarnessTool, args: JsonObject): String {
+        fun arg(name: String): String? =
+            runCatching { args[name]?.jsonPrimitive?.content }.getOrNull()?.takeIf { it.isNotBlank() }
+        return when (tool) {
+            HarnessTool.BASE -> {
+                val command = arg("command")?.lineSequence()?.first()?.trim().orEmpty()
+                if (command.isEmpty()) "执行命令" else "执行命令：${command.take(MAX_STATUS_ARG_LENGTH)}"
+            }
+            HarnessTool.READ -> arg("path")?.let { "读取文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "读取文件"
+            HarnessTool.WRITE -> arg("path")?.let { "写入文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "写入文件"
+            HarnessTool.EDIT -> arg("path")?.let { "编辑文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "编辑文件"
+        }
+    }
+
     private suspend fun logAgentEvent(tag: String, message: String, throwable: Throwable? = null) {
         val enabled = runCatching { settingsDataStore.agentLoggingEnabled.first() }.getOrDefault(false)
         if (enabled) {
             logger.logAgent(sessionId, tag, message, throwable)
+        }
+    }
+
+    /** 把运行期间排队的用户消息注入为 UserMessage，模型下一轮即可看到并调整方向。 */
+    private suspend fun drainSteeringMessages() {
+        val queued = _pendingMessages.value
+        if (queued.isEmpty()) return
+        _pendingMessages.value = emptyList()
+        queued.forEach { text ->
+            logAgentEvent("SteeringMessage", text)
+            append(UserMessage(id = newId(), createdAt = now(), text = text))
         }
     }
 
@@ -520,11 +647,44 @@ class HarnessLoop @Inject constructor(
             }
         } else ""
 
+        // 项目上下文（pi 的 project context）：会话绑定工作区时自动加载项目级指令文件，
+        // 让 Agent 直接掌握项目约定，而不是每轮靠 ls/read 猜。
+        val projectContext = loadProjectContext()
+
+        val workspaceSection = if (_workspace.value.isNotBlank()) {
+            "\n\n当前工作区：${_workspace.value}（base 命令默认在此目录执行；read/write/edit 的相对路径以此为根）"
+        } else ""
+
         return template
             .replace("{{DISTRO_NAME}}", distroName)
             .replace("{{PKG_MANAGER}}", pkgManager)
             .replace("{{ACTIVE_SKILLS}}", skillSection)
-            .trim()
+            .trim() + workspaceSection + projectContext
+    }
+
+    /**
+     * 从工作区根目录加载项目级指令文件：AGENTS.md / CLAUDE.md / README.md。
+     * 每个文件截断到 [PROJECT_CONTEXT_MAX_BYTES]，避免巨型 README 挤爆上下文。
+     */
+    private suspend fun loadProjectContext(): String {
+        val workspace = _workspace.value
+        if (workspace.isBlank()) return ""
+        val sections = buildList {
+            for (name in listOf("AGENTS.md", "CLAUDE.md", "README.md")) {
+                val content = runCatching {
+                    fileAccess.read("$workspace/$name".removePrefix("/")).getOrNull()
+                }.getOrNull() ?: continue
+                val trimmed = content.take(PROJECT_CONTEXT_MAX_BYTES)
+                add(
+                    "<project_instructions path=\"$name\">\n$trimmed" +
+                        (if (content.length > PROJECT_CONTEXT_MAX_BYTES) "\n…（文件过长已截断）" else "") +
+                        "\n</project_instructions>",
+                )
+            }
+        }
+        if (sections.isEmpty()) return ""
+        return "\n\n<project_context>\n当前工作区的项目说明与约定（自动加载，编码时务必遵守）：\n\n" +
+            sections.joinToString("\n\n") + "\n</project_context>"
     }
 
     /**
@@ -724,11 +884,21 @@ class HarnessLoop @Inject constructor(
         // 自定义工具轮次上限：不再限制为 8，保留一个极高的安全上限防止模型死循环调用工具。
         const val MAX_ROUNDS = 200
 
+        /** 已知工具名（用于拒绝模型的幻觉工具调用）。 */
+        val KNOWN_TOOL_NAMES = setOf("read", "write", "edit", "base")
+
+        /** 项目上下文单文件加载上限（字符）。 */
+        const val PROJECT_CONTEXT_MAX_BYTES = 16 * 1024
+
         /** 流式请求网络瞬时故障（IOException）自动重试上限，最多 5 次；HTTP 业务错误不重试。 */
         const val MAX_STREAM_RETRIES = 5
 
         /** 重试退避基数：第 n 次重试前等待 n × 1s（1s/2s/3s/4s/5s）。 */
         const val RETRY_BACKOFF_MS = 1_000L
+
+        /** 通知/状态条里命令或路径的最大展示长度，超出截断。 */
+        const val MAX_STATUS_ARG_LENGTH = 60
+
         val FALLBACK_SYSTEM_PROMPT = """
             你是太墟（TaiXu）内置的 Agent Harness——一个运行在 Android 私有 Linux 沙箱（Debian via PRoot）中的 AI 助手。你通过调用工具完成任务：读写用户工作区的文件、在 Linux 环境执行命令、安装软件、排查问题。
 

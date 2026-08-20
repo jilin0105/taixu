@@ -1,5 +1,10 @@
 package top.wkbin.taixu.ui.settings
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings as AndroidSettings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
@@ -56,6 +61,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.database.AiModelEntity
 import top.wkbin.taixu.core.model.ExecutionMode
@@ -170,8 +177,8 @@ fun ModelEditorScreen(
             result = testResult,
             discover = { provider, url, key -> viewModel.discoverModels(provider, url, key) },
             test = viewModel::testConnection,
-            save = { name, provider, model, url, key ->
-                viewModel.saveModel(modelId, name, provider, model, url, key)
+            save = { name, provider, model, url, key, temperature, maxTokens, topP ->
+                viewModel.saveModel(modelId, name, provider, model, url, key, temperature, maxTokens, topP)
                 onSaved()
             },
         )
@@ -198,8 +205,10 @@ private fun HomePage(
     var showThemeDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
     var showExecutionModeDialog by remember { mutableStateOf(false) }
+    var showBatteryDialog by remember { mutableStateOf(false) }
     var privilegeResultMessage by remember { mutableStateOf<String?>(null) }
     val context = androidx.compose.ui.platform.LocalContext.current
+    var batteryExempted by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
 
     val themeLabel = when (themeMode) {
         "light" -> "素白浅色"
@@ -234,6 +243,14 @@ private fun HomePage(
                 }
             },
             onDismiss = { showExecutionModeDialog = false },
+        )
+    }
+
+    if (showBatteryDialog) {
+        BatteryOptimizationDialog(
+            exempted = batteryExempted,
+            onRefresh = { batteryExempted = isIgnoringBatteryOptimizations(context) },
+            onDismiss = { showBatteryDialog = false },
         )
     }
 
@@ -294,6 +311,14 @@ private fun HomePage(
                     subtitle = "沙箱 · Shizuku · Root · ADB",
                     value = executionMode.name,
                     onClick = { showExecutionModeDialog = true },
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                SettingsRow(
+                    icon = RuntimeIconName.Shield,
+                    title = "电池优化与后台运行",
+                    subtitle = "豁免电池优化，防止 Agent 后台执行被冻结",
+                    value = if (batteryExempted) "已豁免" else "未豁免",
+                    onClick = { showBatteryDialog = true },
                 )
             }
         }
@@ -486,6 +511,106 @@ private fun ExecutionModeOptionItem(
         }
     }
 }
+
+@Composable
+private fun BatteryOptimizationDialog(
+    exempted: Boolean,
+    onRefresh: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // 从系统授权页返回时刷新豁免状态
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { onRefresh() }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                RuntimeIcon(RuntimeIconName.Shield, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary)
+                Text("电池优化与后台运行", fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = if (exempted) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.errorContainer
+                        },
+                    ) {
+                        Text(
+                            if (exempted) "已豁免电池优化" else "未豁免 · 后台可能被冻结",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = if (exempted) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onErrorContainer
+                            },
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        )
+                    }
+                }
+                Text(
+                    "太墟在 Agent 执行期间会启动前台服务并持有 CPU 进程锁，但系统电池优化仍可能在息屏后" +
+                        "冻结进程，表现为 Agent 推理或命令执行中途停住。建议开启以下两项：",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Button(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(
+                                    AndroidSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                    Uri.parse("package:${context.packageName}"),
+                                ),
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                ) {
+                    Text("申请豁免电池优化")
+                }
+                OutlinedButton(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(
+                                    AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    Uri.parse("package:${context.packageName}"),
+                                ),
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                ) {
+                    Text("打开应用详情（自启动/后台运行）")
+                }
+                Text(
+                    "提示：小米/华为/OPPO 等厂商系统还需在应用详情中手动允许「自启动」与「后台运行」，" +
+                        "否则厂商省电策略仍会终止进程。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        },
+    )
+}
+
+private fun isIgnoringBatteryOptimizations(context: Context): Boolean =
+    context.getSystemService(PowerManager::class.java)
+        ?.isIgnoringBatteryOptimizations(context.packageName) == true
 
 @Composable
 private fun ThemeSelectionDialog(
@@ -828,7 +953,7 @@ private fun ModelEditor(
     result: String?,
     discover: (String, String, String) -> Unit,
     test: (String, String, String) -> Unit,
-    save: (String, String, String, String, String) -> Unit,
+    save: (String, String, String, String, String, Float?, Int?, Float?) -> Unit,
 ) {
     var providerId by remember(existing?.id) {
         mutableStateOf(providers.firstOrNull { it.name == existing?.provider }?.id ?: providers.first().id)
@@ -840,6 +965,10 @@ private fun ModelEditor(
     var model by remember(existing?.id) { mutableStateOf(existing?.model ?: provider.recommendedModels.firstOrNull().orEmpty()) }
     var url by remember(existing?.id) { mutableStateOf(existing?.baseUrl ?: provider.baseUrl) }
     var key by remember(existing?.id) { mutableStateOf(existing?.apiKey.orEmpty()) }
+    // 推理参数（空 = 使用服务端默认）
+    var temperatureText by remember(existing?.id) { mutableStateOf(existing?.temperature?.toString().orEmpty()) }
+    var maxTokensText by remember(existing?.id) { mutableStateOf(existing?.maxTokens?.toString().orEmpty()) }
+    var topPText by remember(existing?.id) { mutableStateOf(existing?.topP?.toString().orEmpty()) }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -934,6 +1063,39 @@ private fun ModelEditor(
             )
         }
         item {
+            Text("推理参数（可选，留空使用服务端默认）", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold))
+        }
+        item {
+            OutlinedTextField(
+                value = temperatureText,
+                onValueChange = { temperatureText = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Temperature（0.0 ~ 2.0）") },
+                placeholder = { Text("默认") },
+                singleLine = true,
+            )
+        }
+        item {
+            OutlinedTextField(
+                value = maxTokensText,
+                onValueChange = { maxTokensText = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Max Tokens（单次回复上限）") },
+                placeholder = { Text("默认") },
+                singleLine = true,
+            )
+        }
+        item {
+            OutlinedTextField(
+                value = topPText,
+                onValueChange = { topPText = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Top P（0.0 ~ 1.0）") },
+                placeholder = { Text("默认") },
+                singleLine = true,
+            )
+        }
+        item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { discover(providerId, url, key) }, enabled = !discovering) {
                     Text(if (discovering) "刷新中…" else "刷新在线模型")
@@ -954,12 +1116,32 @@ private fun ModelEditor(
             }
         }
         item {
+            val parsedTemperature = temperatureText.trim().toFloatOrNull()
+            val parsedMaxTokens = maxTokensText.trim().toIntOrNull()
+            val parsedTopP = topPText.trim().toFloatOrNull()
+            val invalid = buildList {
+                if (temperatureText.isNotBlank() && (parsedTemperature == null || parsedTemperature !in 0f..2f)) add("Temperature 需为 0.0 ~ 2.0 的数字")
+                if (maxTokensText.isNotBlank() && (parsedMaxTokens == null || parsedMaxTokens <= 0)) add("Max Tokens 需为正整数")
+                if (topPText.isNotBlank() && (parsedTopP == null || parsedTopP !in 0f..1f)) add("Top P 需为 0.0 ~ 1.0 的数字")
+            }.joinToString("；").ifBlank { null }
+            invalid?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             Button(
-                onClick = { save(name.ifBlank { model }, provider.name, model, url, key) },
+                onClick = {
+                    save(
+                        name.ifBlank { model },
+                        provider.name,
+                        model,
+                        url,
+                        key,
+                        parsedTemperature,
+                        parsedMaxTokens,
+                        parsedTopP,
+                    )
+                },
                 modifier = Modifier.fillMaxWidth().height(48.dp),
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary),
-                enabled = model.isNotBlank() && url.isNotBlank(),
+                enabled = model.isNotBlank() && url.isNotBlank() && invalid == null,
             ) {
                 Text("保存模型配置", fontWeight = FontWeight.Bold)
             }

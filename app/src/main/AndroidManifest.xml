@@ -5,9 +5,18 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Agent 执行期间持有 PARTIAL_WAKE_LOCK 进程锁，防止息屏后 CPU 休眠冻结推理/工具执行 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 设置页"电池优化与后台运行"入口：申请豁免电池优化 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+
+    <!-- Android 11+ 包可见性：允许解析 Shizuku App（授权弹窗与 Binder 交互都依赖它） -->
+    <queries>
+        <package android:name="moe.shizuku.privileged.api" />
+    </queries>
 
     <application
         android:name=".TaiXuApplication"
@@ -27,6 +36,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Shizuku Binder 接收器（硬性要求）：Shizuku App 通过该 Provider 把 Binder 推送到本应用进程，
+             缺失它 Shizuku.pingBinder() 将永远返回 false，表现为"Shizuku 服务未运行"。 -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
         <service
             android:name=".runtime.service.RuntimeForegroundService"
             android:exported="false"

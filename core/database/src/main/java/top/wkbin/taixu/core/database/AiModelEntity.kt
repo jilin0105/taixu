@@ -23,6 +23,12 @@ data class AiModelEntity(
     val secretRef: String = "",
     val isActive: Boolean = false,
     val createdAt: Long,
+    /** 推理参数（null = 使用服务端默认）：温度，0.0 ~ 2.0。 */
+    val temperature: Float? = null,
+    /** 推理参数（null = 使用服务端默认）：单次回复最大 token 数。 */
+    val maxTokens: Int? = null,
+    /** 推理参数（null = 使用服务端默认）：核采样阈值，0.0 ~ 1.0。 */
+    val topP: Float? = null,
 )
 
 @Dao

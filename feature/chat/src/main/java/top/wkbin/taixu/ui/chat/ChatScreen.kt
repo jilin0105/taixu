@@ -119,6 +119,7 @@ fun ChatScreen(
     val models by viewModel.models.collectAsStateWithLifecycle()
     val workspace by viewModel.workspace.collectAsStateWithLifecycle()
     val matchingCommands by viewModel.matchingCommands.collectAsStateWithLifecycle()
+    val pendingMessages by viewModel.pendingMessages.collectAsStateWithLifecycle()
 
     var showSessions by remember { mutableStateOf(false) }
     var showNewSession by remember { mutableStateOf(false) }
@@ -243,6 +244,8 @@ fun ChatScreen(
                         error = error,
                         onClearError = viewModel::clearError,
                         matchingCommands = matchingCommands,
+                        pendingMessages = pendingMessages,
+                        onRemovePending = viewModel::removePendingMessage,
                         input = input,
                         onInputChanged = viewModel::onInputChanged,
                         onApplyCommand = viewModel::applySlashCommand,
@@ -297,6 +300,8 @@ fun ChatScreen(
                     error = error,
                     onClearError = viewModel::clearError,
                     matchingCommands = matchingCommands,
+                    pendingMessages = pendingMessages,
+                    onRemovePending = viewModel::removePendingMessage,
                     input = input,
                     onInputChanged = viewModel::onInputChanged,
                     onApplyCommand = viewModel::applySlashCommand,
@@ -377,6 +382,8 @@ private fun ChatPaneContent(
     error: String?,
     onClearError: () -> Unit,
     matchingCommands: List<SlashCommandItem>,
+    pendingMessages: List<String>,
+    onRemovePending: (Int) -> Unit,
     input: String,
     onInputChanged: (String) -> Unit,
     onApplyCommand: (SlashCommandItem) -> Unit,
@@ -460,6 +467,52 @@ private fun ChatPaneContent(
             )
         }
 
+        // 排队消息提示条：运行中排队的消息，当前任务结束后自动接续
+        if (pendingMessages.isNotEmpty()) {
+            Column(
+                Modifier.fillMaxWidth().padding(top = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                pendingMessages.forEachIndexed { index, queued ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                "排队 ${index + 1}：",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            Text(
+                                queued,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            IconButton(
+                                onClick = { onRemovePending(index) },
+                                modifier = Modifier.size(28.dp),
+                            ) {
+                                RuntimeIcon(
+                                    RuntimeIconName.Close,
+                                    Modifier.size(16.dp),
+                                    MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Row(
             Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -471,7 +524,8 @@ private fun ChatPaneContent(
                 modifier = Modifier.weight(1f),
                 placeholder = {
                     Text(
-                        "输入指令… 输入 / 触发快捷命令",
+                        if (running) "正在执行… 输入内容可排队，任务结束后自动接续"
+                        else "输入指令… 输入 / 触发快捷命令",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -484,6 +538,21 @@ private fun ChatPaneContent(
                 textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
             )
             if (running) {
+                // 运行中：输入非空时提供"排队发送"，同时保留"停止"
+                if (input.isNotBlank()) {
+                    Button(
+                        onClick = onSend,
+                        modifier = Modifier.size(48.dp),
+                        shape = RoundedCornerShape(13.dp),
+                        contentPadding = PaddingValues(0.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        ),
+                    ) {
+                        RuntimeIcon(RuntimeIconName.Plus, Modifier.size(20.dp), MaterialTheme.colorScheme.onSecondaryContainer)
+                    }
+                }
                 Button(
                     onClick = onStop,
                     modifier = Modifier.size(48.dp),

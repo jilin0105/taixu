@@ -30,8 +30,18 @@ class AgentModelDiscovery @Inject constructor(
             else -> "${provider.baseUrl.trimEnd('/')}/models"
         }
         require(url.isNotBlank() && ProviderEndpointPolicy.isSafeBaseUrl(url)) { "模型发现地址不安全或为空" }
+        val isAnthropic = url.contains("api.anthropic.com")
         val request = Request.Builder().url(url)
-            .apply { if (!apiKey.isNullOrBlank()) header("Authorization", "Bearer $apiKey") }
+            .apply {
+                when {
+                    isAnthropic -> {
+                        // Anthropic 模型列表接口用 x-api-key 而非 Bearer
+                        if (!apiKey.isNullOrBlank()) header("x-api-key", apiKey)
+                        header("anthropic-version", "2023-06-01")
+                    }
+                    else -> if (!apiKey.isNullOrBlank()) header("Authorization", "Bearer $apiKey")
+                }
+            }
             .get().build()
         http.newCall(request).execute().use { response ->
             val body = response.body.string()

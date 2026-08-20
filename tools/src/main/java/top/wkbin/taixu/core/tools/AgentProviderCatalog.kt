@@ -10,6 +10,10 @@ import kotlinx.serialization.json.Json
 @Serializable
 enum class ProviderGroup { OFFICIAL, CHINA, AGGREGATOR, LOCAL, CUSTOM }
 
+/** 接入协议：OPENAI = chat/completions 兼容；ANTHROPIC = Messages API 需协议适配。 */
+@Serializable
+enum class ProviderProtocol { OPENAI, ANTHROPIC }
+
 @Serializable
 data class AgentProviderDefinition(
     val id: String,
@@ -17,6 +21,7 @@ data class AgentProviderDefinition(
     val baseUrl: String,
     val modelsUrl: String = "",
     val group: ProviderGroup,
+    val protocol: ProviderProtocol = ProviderProtocol.OPENAI,
     val recommendedModels: List<String> = emptyList(),
     val apiKeyOptional: Boolean = false,
 )
