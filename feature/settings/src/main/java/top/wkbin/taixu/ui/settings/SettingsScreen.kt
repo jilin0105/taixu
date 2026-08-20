@@ -788,10 +788,14 @@ private fun ModelsPage(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(
                         Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(model.name, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                        top.wkbin.taixu.ui.components.ProviderBadge(
+                            providerIdOrName = model.provider,
+                            size = 26.dp,
+                        )
+                        Text(model.name, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), modifier = Modifier.weight(1f))
                         if (model.isActive) {
                             Surface(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), shape = RoundedCornerShape(6.dp)) {
                                 Text("当前激活", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold), modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
@@ -994,7 +998,19 @@ private fun ModelEditor(
                 ) {
                     providers.forEach { option ->
                         DropdownMenuItem(
-                            text = { Text(option.name) },
+                            text = {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    top.wkbin.taixu.ui.components.ProviderBadge(
+                                        providerIdOrName = option.id,
+                                        size = 22.dp,
+                                    )
+                                    Text(option.name)
+                                }
+                            },
+                            leadingIcon = null,
                             onClick = {
                                 providerId = option.id
                                 url = option.baseUrl

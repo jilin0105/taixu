@@ -1487,10 +1487,9 @@ private fun ModelDialog(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Box(
-                            Modifier.size(10.dp).clip(CircleShape).background(
-                                if (model.isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            ),
+                        top.wkbin.taixu.ui.components.ProviderBadge(
+                            providerIdOrName = model.provider,
+                            size = 26.dp,
                         )
                         Column(Modifier.weight(1f)) {
                             Text(

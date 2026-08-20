@@ -1,5 +1,6 @@
 package top.wkbin.taixu.ui.home
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -7,6 +8,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,19 +27,24 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,8 +54,13 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import top.wkbin.taixu.core.model.DoctorItem
+import top.wkbin.taixu.core.model.DoctorReport
+import top.wkbin.taixu.core.model.DoctorStatus
+import top.wkbin.taixu.core.model.RepairProgress
 import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.ui.components.MainDestination
 import top.wkbin.taixu.ui.components.NoticeBanner
@@ -55,10 +68,11 @@ import top.wkbin.taixu.ui.components.RuntimeBottomBar
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
+import top.wkbin.taixu.ui.components.StatusBadge
 
 /**
  * 太墟 · 运行仪表盘 (TaiXu Linux Runtime Dashboard)
- * 化繁为简，聚焦展示沙箱核心运行状态、实时内存/存储指标、活跃进程与系统环境
+ * 集成沙箱引擎状态、运行环境体检自愈中心、实时内存/存储监控与规格信息
  */
 @Composable
 fun HomeScreen(
@@ -68,6 +82,10 @@ fun HomeScreen(
 ) {
     val state by viewModel.runtimeState.collectAsStateWithLifecycle()
     val metrics by viewModel.metrics.collectAsStateWithLifecycle()
+    val doctorReport by viewModel.doctorReport.collectAsStateWithLifecycle()
+    val isCheckingDoctor by viewModel.isCheckingDoctor.collectAsStateWithLifecycle()
+    val repairProgress by viewModel.repairProgress.collectAsStateWithLifecycle()
+    val isRepairing by viewModel.isRepairing.collectAsStateWithLifecycle()
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -76,7 +94,10 @@ fun HomeScreen(
                 title = "太墟 · 运行仪表盘",
                 statusText = "${metrics.linuxDistro} · ${metrics.cpuArch}",
                 actions = {
-                    IconButton(onClick = viewModel::refreshMetrics) {
+                    IconButton(onClick = {
+                        viewModel.refreshMetrics()
+                        viewModel.runDoctorCheck()
+                    }) {
                         RuntimeIcon(
                             name = RuntimeIconName.Refresh,
                             modifier = Modifier.size(20.dp),
@@ -96,7 +117,7 @@ fun HomeScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // 1. 运行时主状态卡片 (Status Banner)
+            // 1. 运行时引擎主状态卡片 (Status Banner)
             RuntimeEngineStatusCard(
                 state = state,
                 metrics = metrics,
@@ -105,7 +126,19 @@ fun HomeScreen(
                 onOpenTerminal = onOpenTerminal,
             )
 
-            // 2. 核心指标看板 (Live Resource Metrics Grid)
+            // 2. 运行与开发环境体检自愈中心 (TaiXu Doctor & Auto-Fix)
+            EnvironmentDoctorCard(
+                report = doctorReport,
+                isChecking = isCheckingDoctor,
+                isRepairing = isRepairing,
+                repairProgress = repairProgress,
+                runtimeReady = state is RuntimeState.Ready,
+                onRunCheck = viewModel::runDoctorCheck,
+                onStartAutoRepair = viewModel::startAutoRepair,
+                onCancelRepair = viewModel::cancelAutoRepair,
+            )
+
+            // 3. 核心指标看板 (Live Resource Metrics Grid)
             Text(
                 text = "系统资源监控",
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
@@ -143,16 +176,360 @@ fun HomeScreen(
                 )
             }
 
-            // 3. 活跃任务与服务监控卡片
+            // 4. 活跃任务与服务监控卡片
             ActiveTasksStatusCard(
                 metrics = metrics,
                 onOpenTerminal = onOpenTerminal,
             )
 
-            // 4. 运行环境与规格详情
+            // 5. 运行环境与规格详情
             SystemSpecsCard(metrics = metrics)
 
             Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+/**
+ * 运行与开发环境体检自愈卡片 (TaiXu Doctor & Auto-Fix)
+ */
+@Composable
+private fun EnvironmentDoctorCard(
+    report: DoctorReport?,
+    isChecking: Boolean,
+    isRepairing: Boolean,
+    repairProgress: RepairProgress?,
+    runtimeReady: Boolean,
+    onRunCheck: () -> Unit,
+    onStartAutoRepair: () -> Unit,
+    onCancelRepair: () -> Unit,
+) {
+    var expandedDetails by remember { mutableStateOf(false) }
+    var showLogs by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.primaryContainer),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        RuntimeIcon(
+                            name = RuntimeIconName.Shield,
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = "环境体检与自愈中心",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = when {
+                                isRepairing -> "正在执行环境自愈与加速..."
+                                isChecking -> "正在全面体检沙箱环境..."
+                                report == null -> if (runtimeReady) "沙箱就绪，准备体检" else "等待沙箱就绪"
+                                report.isAllHealthy -> "全功能开发就绪 · 体验最佳"
+                                report.needsFix -> "${report.warningCount + report.errorCount} 项待就绪/优化"
+                                else -> "体检完成"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    if (isChecking) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    } else if (runtimeReady) {
+                        IconButton(
+                            onClick = onRunCheck,
+                            enabled = !isRepairing,
+                            modifier = Modifier.size(32.dp),
+                        ) {
+                            RuntimeIcon(
+                                name = RuntimeIconName.Refresh,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 修复中状态展示
+            if (isRepairing && repairProgress != null) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "[步骤 ${repairProgress.stepIndex}/${repairProgress.totalSteps}] ${repairProgress.stepTitle}",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                text = "${(repairProgress.progress * 100).toInt()}%",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+
+                        LinearProgressIndicator(
+                            progress = { repairProgress.progress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = MaterialTheme.colorScheme.primary,
+                            strokeCap = StrokeCap.Round,
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextButton(
+                                onClick = { showLogs = !showLogs },
+                                contentPadding = PaddingValues(horizontal = 4.dp),
+                            ) {
+                                Text(
+                                    text = if (showLogs) "收起执行日志" else "查看实时日志 (${repairProgress.logs.size})",
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+
+                            TextButton(
+                                onClick = onCancelRepair,
+                                contentPadding = PaddingValues(horizontal = 4.dp),
+                            ) {
+                                Text("取消修复", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+
+                        AnimatedVisibility(visible = showLogs) {
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 140.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(8.dp)
+                                        .verticalScroll(rememberScrollState()),
+                                ) {
+                                    repairProgress.logs.takeLast(20).forEach { logLine ->
+                                        Text(
+                                            text = logLine,
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 11.sp,
+                                            ),
+                                            color = if (logLine.startsWith("ERR:")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 体检报告列表展示
+            if (report != null && !isRepairing) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val displayedItems = if (expandedDetails || report.needsFix) report.items else report.items.take(3)
+                    displayedItems.forEach { item ->
+                        DoctorItemRow(item = item)
+                    }
+
+                    if (report.items.size > 3) {
+                        TextButton(
+                            onClick = { expandedDetails = !expandedDetails },
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                        ) {
+                            Text(
+                                text = if (expandedDetails) "收起体检详情" else "查看全部 ${report.items.size} 项体检指标",
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    }
+                }
+
+                // 一键修复按钮或就绪横幅
+                if (report.needsFix) {
+                    Button(
+                        onClick = onStartAutoRepair,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        contentPadding = PaddingValues(vertical = 12.dp),
+                    ) {
+                        RuntimeIcon(
+                            name = RuntimeIconName.Play,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "⚡ 一键自愈与就绪加速 (Auto-Fix & Optimize)",
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                } else if (report.isAllHealthy) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF2E7D32).copy(alpha = 0.1f))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        RuntimeIcon(
+                            name = RuntimeIconName.Check,
+                            modifier = Modifier.size(16.dp),
+                            tint = Color(0xFF2E7D32),
+                        )
+                        Text(
+                            text = "环境配置完善，已满足 Claude Code / OpenClaw 等 AI 工具运行要求",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF2E7D32),
+                        )
+                    }
+                }
+            } else if (!runtimeReady) {
+                Text(
+                    text = "请先初始化并启动沙箱，太墟将自动体检 DNS、国内镜像加速源与核心开发工具链。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 体检条目单行展示
+ */
+@Composable
+private fun DoctorItemRow(item: DoctorItem) {
+    val statusColor = when (item.status) {
+        DoctorStatus.HEALTHY -> Color(0xFF2E7D32)
+        DoctorStatus.WARNING -> Color(0xFFE65100)
+        DoctorStatus.ERROR -> MaterialTheme.colorScheme.error
+        DoctorStatus.CHECKING -> MaterialTheme.colorScheme.tertiary
+    }
+
+    val statusIcon = when (item.status) {
+        DoctorStatus.HEALTHY -> RuntimeIconName.Check
+        DoctorStatus.WARNING -> RuntimeIconName.Alert
+        DoctorStatus.ERROR -> RuntimeIconName.Alert
+        DoctorStatus.CHECKING -> RuntimeIconName.Refresh
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.weight(1f),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(statusColor.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                RuntimeIcon(
+                    name = statusIcon,
+                    modifier = Modifier.size(14.dp),
+                    tint = statusColor,
+                )
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = item.title,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = "· ${item.category.displayName}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    text = item.summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (item.status != DoctorStatus.HEALTHY) statusColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val detail = item.detail
+                if (!detail.isNullOrBlank() && item.status != DoctorStatus.HEALTHY) {
+                    Text(
+                        text = detail,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
     }
 }
@@ -510,7 +887,7 @@ private fun PulsingStatusDot(color: Color, isPulsing: Boolean) {
             label = "pulse_alpha",
         )
     } else {
-        androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(1f) }
+        remember { androidx.compose.runtime.mutableFloatStateOf(1f) }
     }
 
     Box(

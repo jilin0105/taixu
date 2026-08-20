@@ -14,14 +14,19 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.datastore.SettingsDataStore
+import top.wkbin.taixu.core.model.DoctorReport
+import top.wkbin.taixu.core.model.RepairProgress
 import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.runtime.DistributionCatalog
 import top.wkbin.taixu.runtime.LinuxRuntime
-import kotlinx.coroutines.flow.first
+import top.wkbin.taixu.runtime.doctor.EnvironmentDoctor
+import top.wkbin.taixu.runtime.doctor.EnvironmentRepairer
 import javax.inject.Inject
 
 data class SystemResourceMetrics(
@@ -46,6 +51,8 @@ class HomeViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val linuxRuntime: LinuxRuntime,
     private val settingsDataStore: SettingsDataStore,
+    private val environmentDoctor: EnvironmentDoctor,
+    private val environmentRepairer: EnvironmentRepairer,
     private val logger: AppLogger,
 ) : ViewModel() {
 
@@ -57,11 +64,28 @@ class HomeViewModel @Inject constructor(
     private val _metrics = MutableStateFlow(SystemResourceMetrics())
     val metrics: StateFlow<SystemResourceMetrics> = _metrics.asStateFlow()
 
+    // 运行环境健康体检状态
+    private val _doctorReport = MutableStateFlow<DoctorReport?>(null)
+    val doctorReport: StateFlow<DoctorReport?> = _doctorReport.asStateFlow()
+
+    private val _isCheckingDoctor = MutableStateFlow(false)
+    val isCheckingDoctor: StateFlow<Boolean> = _isCheckingDoctor.asStateFlow()
+
+    // 一键自愈修复状态与进度
+    private val _repairProgress = MutableStateFlow<RepairProgress?>(null)
+    val repairProgress: StateFlow<RepairProgress?> = _repairProgress.asStateFlow()
+
+    private val _isRepairing = MutableStateFlow(false)
+    val isRepairing: StateFlow<Boolean> = _isRepairing.asStateFlow()
+
     private var initializationJob: Job? = null
+    private var doctorJob: Job? = null
+    private var repairJob: Job? = null
     private val appStartTime = SystemClock.elapsedRealtime()
 
     init {
         startMetricsMonitoring()
+        observeRuntimeStateForDoctor()
     }
 
     private fun startMetricsMonitoring() {
@@ -71,6 +95,58 @@ class HomeViewModel @Inject constructor(
                 delay(3000)
             }
         }
+    }
+
+    private fun observeRuntimeStateForDoctor() {
+        viewModelScope.launch {
+            runtimeState.collect { state ->
+                if (state is RuntimeState.Ready && _doctorReport.value == null && !_isCheckingDoctor.value) {
+                    runDoctorCheck()
+                }
+            }
+        }
+    }
+
+    fun runDoctorCheck() {
+        if (_isCheckingDoctor.value || _isRepairing.value) return
+        doctorJob = viewModelScope.launch {
+            _isCheckingDoctor.value = true
+            try {
+                val report = environmentDoctor.check()
+                _doctorReport.value = report
+            } catch (e: Exception) {
+                logger.w("Doctor check failed: ${e.message}", e)
+            } finally {
+                _isCheckingDoctor.value = false
+            }
+        }
+    }
+
+    fun startAutoRepair() {
+        if (_isRepairing.value) return
+        repairJob = viewModelScope.launch {
+            _isRepairing.value = true
+            try {
+                environmentRepairer.repair().collect { progress ->
+                    _repairProgress.value = progress
+                    if (progress.isCompleted) {
+                        // 重新运行体检
+                        val updatedReport = environmentDoctor.check()
+                        _doctorReport.value = updatedReport
+                    }
+                }
+            } catch (e: Exception) {
+                logger.w("Auto-repair failed: ${e.message}", e)
+            } finally {
+                _isRepairing.value = false
+            }
+        }
+    }
+
+    fun cancelAutoRepair() {
+        repairJob?.cancel()
+        _isRepairing.value = false
+        _repairProgress.value = null
     }
 
     fun refreshMetrics() {
@@ -148,6 +224,7 @@ class HomeViewModel @Inject constructor(
                 _initializing.value = false
                 initializationJob = null
                 refreshMetrics()
+                runDoctorCheck()
             }
         }
     }
