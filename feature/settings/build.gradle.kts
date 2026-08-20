@@ -42,5 +42,6 @@ dependencies {
     implementation(project(":core:database"))
     implementation(project(":runtime"))
     implementation(project(":tools"))
+    implementation(project(":harness"))
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

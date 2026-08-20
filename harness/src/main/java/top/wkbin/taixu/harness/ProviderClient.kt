@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.harness
+package top.wkbin.taixu.harness
 
 import top.wkbin.taixu.core.database.AiModelDao
 import top.wkbin.taixu.core.tools.ProviderRepository
@@ -33,7 +33,7 @@ internal class ChatApi(
             okHttpClient.newCall(buildRequest(model, messages, stream = false)).execute().use { response ->
                 val body = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
-                    throw IllegalStateException("LLM 请求失败 HTTP ${response.code}：${body.take(512)}")
+                    throw IllegalStateException(ProviderClient.formatHttpErrorMessage(response.code, body))
                 }
                 val parsed = json.decodeFromString(ChatCompletionResponse.serializer(), body)
                 val message = parsed.choices.firstOrNull()?.message ?: ChatResponseMessage()
@@ -69,7 +69,8 @@ internal class ChatApi(
         try {
             call.execute().use { response ->
                 if (!response.isSuccessful) {
-                    throw IllegalStateException("LLM 请求失败 HTTP ${response.code}：${response.body?.string().orEmpty().take(512)}")
+                    val rawBody = response.body?.string().orEmpty().take(512)
+                    throw IllegalStateException(ProviderClient.formatHttpErrorMessage(response.code, rawBody))
                 }
                 val source = response.body?.source()
                     ?: throw IllegalStateException("LLM 流式响应无内容")
@@ -128,12 +129,13 @@ internal class ChatApi(
     }
 
     private fun buildRequest(model: ModelConfig, messages: List<ApiMessage>, stream: Boolean): Request {
+        val tools = ProviderClient.buildDynamicTools(model.dynamicMcpTools)
         val requestBody = json.encodeToString(
             ChatCompletionRequest.serializer(),
             ChatCompletionRequest(
                 model = model.model,
                 messages = messages,
-                tools = ProviderClient.TOOLS,
+                tools = tools,
                 stream = stream,
                 temperature = model.temperature,
                 max_tokens = model.maxTokens,
@@ -171,6 +173,7 @@ data class ModelConfig(
     val temperature: Float? = null,
     val maxTokens: Int? = null,
     val topP: Float? = null,
+    val dynamicMcpTools: List<top.wkbin.taixu.core.model.McpToolInfo> = emptyList(),
 )
 
 /** LLM 接入协议：绝大多数厂商提供 OpenAI 兼容端点；Anthropic Claude 需要专用适配。 */
@@ -269,6 +272,7 @@ class ProviderClient @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val providerRepository: ProviderRepository,
     private val modelDao: AiModelDao,
+    private val mcpManager: top.wkbin.taixu.harness.mcp.McpManager,
     private val json: Json,
 ) {
     private val httpClient: OkHttpClient = okHttpClient.newBuilder()
@@ -278,7 +282,7 @@ class ProviderClient @Inject constructor(
 
     suspend fun resolveModel(): ModelConfig = withContext(Dispatchers.IO) {
         val active = modelDao.activeModel()
-        if (active != null) {
+        val baseConfig = if (active != null) {
             active.toModelConfig(providerRepository)
         } else {
             ModelConfig(
@@ -289,6 +293,8 @@ class ProviderClient @Inject constructor(
                 apiKey = providerRepository.readApiKey(),
             )
         }
+        val dynamicMcp = runCatching { mcpManager.getActiveMcpTools() }.getOrDefault(emptyList())
+        baseConfig.copy(dynamicMcpTools = dynamicMcp)
     }
 
     /**
@@ -301,7 +307,7 @@ class ProviderClient @Inject constructor(
         if (active == null && providerKey.isBlank()) {
             throw IllegalStateException("未配置模型或 API Key，请先在「设置 → 模型」中添加并激活一个模型")
         }
-        if (active != null) {
+        val baseConfig = if (active != null) {
             active.toModelConfig(providerRepository)
         } else {
             val provider = providerRepository.provider.first()
@@ -315,6 +321,8 @@ class ProviderClient @Inject constructor(
                 protocol = inferProtocol(baseUrl, provider),
             )
         }
+        val dynamicMcp = runCatching { mcpManager.getActiveMcpTools() }.getOrDefault(emptyList())
+        baseConfig.copy(dynamicMcpTools = dynamicMcp)
     }
 
     suspend fun chat(model: ModelConfig, messages: List<ApiMessage>): ChatResult = when (model.protocol) {
@@ -370,6 +378,30 @@ class ProviderClient @Inject constructor(
             }
         }
 
+        fun formatHttpErrorMessage(code: Int, rawBody: String): String {
+            val errorMsg = runCatching {
+                val obj = Json.parseToJsonElement(rawBody) as? JsonObject
+                val err = obj?.get("error") as? JsonObject
+                err?.get("message")?.let { it as? JsonPrimitive }?.contentOrNull
+            }.getOrNull()?.trim() ?: rawBody.take(300).trim()
+
+            val lowerMsg = errorMsg.lowercase()
+            return when {
+                code == 403 && (lowerMsg.contains("free quota") || lowerMsg.contains("quota exhausted") || lowerMsg.contains("free tier")) ->
+                    "API 免费额度已耗尽 (HTTP 403)：请前往模型服务商控制台充值、关闭免费层限制，或在太墟中切换其他可用模型。"
+                code == 401 || lowerMsg.contains("invalid api key") || lowerMsg.contains("unauthorized") ->
+                    "API Key 无效或未授权 (HTTP 401)：请在模型设置中检查并更新该服务商的 API Key。"
+                code == 429 || lowerMsg.contains("rate limit") || lowerMsg.contains("insufficient_quota") || lowerMsg.contains("quota") ->
+                    "API 额度已用尽或请求频率超限 (HTTP $code)：$errorMsg"
+                code == 404 ->
+                    "模型名称或 API 地址不存在 (HTTP 404)：请检查模型名称是否拼写正确。"
+                errorMsg.isNotBlank() ->
+                    "LLM 请求失败 (HTTP $code)：$errorMsg"
+                else ->
+                    "LLM 请求失败 (HTTP $code)"
+            }
+        }
+
         private const val READ_TIMEOUT_MS = 3 * 60 * 1000L
         internal val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
@@ -411,6 +443,36 @@ class ProviderClient @Inject constructor(
                     ).jsonObject,
                 ),
             ),
+            ApiToolDefinition(
+                function = ApiFunctionDefinition(
+                    name = "invoke_subagent",
+                    description = "并发派发一个或多个专业角色子智能体（Subagents）执行调研、编写、编译或测试等特定子任务，并在完成后汇总结构化结论。每个子智能体在专属子会话中独立运行。",
+                    parameters = Json.parseToJsonElement(
+                        """{"type":"object","properties":{"subagents":{"type":"array","description":"子任务列表","items":{"type":"object","properties":{"taskName":{"type":"string","description":"子任务名称（如: 数据库结构调研 / 编写测试用例）"},"role":{"type":"string","description":"子智能体角色（如: researcher / coder / tester）"},"prompt":{"type":"string","description":"详细的任务指令与要求"}},"required":["taskName","role","prompt"]}}},"required":["subagents"]}""",
+                    ).jsonObject,
+                ),
+            ),
         )
+
+        /** 组装静态基础工具 + 动态 MCP 插件工具 */
+        fun buildDynamicTools(mcpTools: List<top.wkbin.taixu.core.model.McpToolInfo> = emptyList()): List<ApiToolDefinition> {
+            val list = TOOLS.toMutableList()
+            mcpTools.forEach { mcp ->
+                val fullToolName = "mcp__${mcp.serverId}__${mcp.name}"
+                val params = runCatching {
+                    Json.parseToJsonElement(mcp.parametersJson).jsonObject
+                }.getOrDefault(JsonObject(emptyMap()))
+                list.add(
+                    ApiToolDefinition(
+                        function = ApiFunctionDefinition(
+                            name = fullToolName,
+                            description = "【MCP 插件: ${mcp.serverName}】${mcp.description}",
+                            parameters = params,
+                        ),
+                    ),
+                )
+            }
+            return list
+        }
     }
 }

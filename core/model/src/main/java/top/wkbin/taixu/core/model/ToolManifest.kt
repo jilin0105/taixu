@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.core.model
+package top.wkbin.taixu.core.model
 
 import kotlinx.serialization.Serializable
 
@@ -22,4 +22,11 @@ data class ToolManifest(
     val architectures: List<String> = listOf("ARM64"),
     val permissions: List<String> = emptyList(),
     val updateStrategy: String = "REINSTALL",
+    val installMethod: String = "SCRIPT",
+    val installScript: String? = null,
+    val uninstallScript: String? = null,
+    val launchCommand: String? = null,
+    val verifyCommand: String? = null,
+    val commandLinks: List<String> = emptyList(),
+    val environment: Map<String, String> = emptyMap(),
 )

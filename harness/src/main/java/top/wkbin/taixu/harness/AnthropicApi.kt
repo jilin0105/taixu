@@ -209,7 +209,8 @@ internal class AnthropicApi(
             put(
                 "tools",
                 buildJsonArray {
-                    ProviderClient.TOOLS.forEach { definition ->
+                    val dynamicTools = ProviderClient.buildDynamicTools(model.dynamicMcpTools)
+                    dynamicTools.forEach { definition ->
                         add(
                             buildJsonObject {
                                 put("name", definition.function.name)

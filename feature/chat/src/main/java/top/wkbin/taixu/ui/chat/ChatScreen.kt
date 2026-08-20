@@ -120,6 +120,8 @@ fun ChatScreen(
     val workspace by viewModel.workspace.collectAsStateWithLifecycle()
     val matchingCommands by viewModel.matchingCommands.collectAsStateWithLifecycle()
     val pendingMessages by viewModel.pendingMessages.collectAsStateWithLifecycle()
+    val currentSessionId by viewModel.currentSessionId.collectAsStateWithLifecycle()
+    val sessionRunStates by viewModel.sessionRunStates.collectAsStateWithLifecycle()
 
     var showSessions by remember { mutableStateOf(false) }
     var showNewSession by remember { mutableStateOf(false) }
@@ -333,6 +335,8 @@ fun ChatScreen(
     if (showSessions) {
         SessionsDialog(
             sessions = sessions,
+            currentSessionId = currentSessionId,
+            sessionRunStates = sessionRunStates,
             onDismiss = { showSessions = false },
             onSwitch = { id -> viewModel.switchSession(id); showSessions = false },
             onNew = { showSessions = false; showNewSession = true },
@@ -421,17 +425,26 @@ private fun ChatPaneContent(
                         onToggleExpanded = onToggleExpanded,
                         live = thinkingLive && message.id == liveThinkingMessageId,
                     )
-                    is ToolCall -> ToolCard(
-                        call = message,
-                        result = toolResults[message.id],
-                        workspace = workspace,
-                        onOpenFile = onOpenFile,
-                        running = running,
-                        showReasoning = message.reasoning != null &&
-                            !reasoningAlreadyShown(messages, index, message.reasoning),
-                        defaultExpanded = thinkingExpanded,
-                        onToggleExpanded = onToggleExpanded,
-                    )
+                    is ToolCall -> {
+                        if (message.tool == HarnessTool.SUBAGENT) {
+                            SubagentCard(
+                                call = message,
+                                result = toolResults[message.id],
+                            )
+                        } else {
+                            ToolCard(
+                                call = message,
+                                result = toolResults[message.id],
+                                workspace = workspace,
+                                onOpenFile = onOpenFile,
+                                running = running,
+                                showReasoning = message.reasoning != null &&
+                                    !reasoningAlreadyShown(messages, index, message.reasoning),
+                                defaultExpanded = thinkingExpanded,
+                                onToggleExpanded = onToggleExpanded,
+                            )
+                        }
+                    }
                     is ToolResult -> Unit
                 }
             }
@@ -1167,7 +1180,7 @@ private fun ToolCard(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.size(7.dp).clip(CircleShape).background(dotColor))
                 Text(
-                    toolName(call.tool),
+                    toolName(call.tool, call.rawToolName),
                     style = MaterialTheme.typography.labelLarge.copy(
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.SemiBold,
@@ -1272,6 +1285,8 @@ private fun EditAndResendDialog(
 @Composable
 private fun SessionsDialog(
     sessions: List<HarnessSessionEntity>,
+    currentSessionId: String,
+    sessionRunStates: Map<String, top.wkbin.taixu.core.model.SessionRunState>,
     onDismiss: () -> Unit,
     onSwitch: (String) -> Unit,
     onNew: () -> Unit,
@@ -1308,7 +1323,7 @@ private fun SessionsDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 380.dp),
+                    .heightIn(max = 400.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (sessions.size == 1) {
@@ -1333,16 +1348,28 @@ private fun SessionsDialog(
                 }
                 LazyColumn(
                     modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(sessions.size) { index ->
                         val session = sessions[index]
+                        val isCurrent = session.id == currentSessionId
+                        val runState = sessionRunStates[session.id] ?: top.wkbin.taixu.core.model.SessionRunState.IDLE
+
+                        val (dotColor, stateLabel) = when (runState) {
+                            top.wkbin.taixu.core.model.SessionRunState.RUNNING -> Color(0xFFF59E0B) to "进行中"
+                            top.wkbin.taixu.core.model.SessionRunState.FAILED -> Color(0xFFEF4444) to "失败"
+                            top.wkbin.taixu.core.model.SessionRunState.COMPLETED -> Color(0xFF10B981) to "完成"
+                            top.wkbin.taixu.core.model.SessionRunState.IDLE -> Color(0xFF10B981) to "就绪"
+                        }
+
                         Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainerLow,
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isCurrent) MaterialTheme.colorScheme.surfaceContainer
+                                else MaterialTheme.colorScheme.surfaceContainerLow,
                             border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                MaterialTheme.colorScheme.outlineVariant,
+                                if (isCurrent) 1.5.dp else 1.dp,
+                                if (isCurrent) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                             ),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
@@ -1350,18 +1377,63 @@ private fun SessionsDialog(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable { onSwitch(session.id) }
-                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
-                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                    Text(
-                                        session.title,
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
+                                // 状态指示圆点（绿色完成/橙色进行中/红色失败）
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .clip(CircleShape)
+                                        .background(dotColor),
+                                )
+
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        Text(
+                                            session.title,
+                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.SemiBold,
+                                            ),
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false),
+                                        )
+                                        if (isCurrent) {
+                                            Surface(
+                                                color = MaterialTheme.colorScheme.primaryContainer,
+                                                shape = RoundedCornerShape(4.dp),
+                                            ) {
+                                                Text(
+                                                    "当前",
+                                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                                )
+                                            }
+                                        }
+                                    }
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Surface(
+                                            color = dotColor.copy(alpha = 0.12f),
+                                            shape = RoundedCornerShape(4.dp),
+                                        ) {
+                                            Text(
+                                                stateLabel,
+                                                style = MaterialTheme.typography.labelSmall.copy(
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                ),
+                                                color = dotColor,
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                            )
+                                        }
+
                                         if (session.workspace.isNotBlank()) {
                                             Surface(
                                                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -1369,7 +1441,7 @@ private fun SessionsDialog(
                                             ) {
                                                 Text(
                                                     session.workspace,
-                                                    style = MaterialTheme.typography.labelSmall,
+                                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
                                                     maxLines = 1,
@@ -1379,7 +1451,7 @@ private fun SessionsDialog(
                                         } else {
                                             Text(
                                                 "独立沙箱",
-                                                style = MaterialTheme.typography.labelSmall,
+                                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
                                         }
@@ -1698,11 +1770,16 @@ private fun reasoningAlreadyShown(messages: List<HarnessMessage>, index: Int, re
     return false
 }
 
-private fun toolName(tool: HarnessTool): String = when (tool) {
-    HarnessTool.READ -> "read"
-    HarnessTool.WRITE -> "write"
-    HarnessTool.EDIT -> "edit"
-    HarnessTool.BASE -> "base"
+private fun toolName(tool: HarnessTool, rawToolName: String? = null): String {
+    if (!rawToolName.isNullOrBlank()) return rawToolName
+    return when (tool) {
+        HarnessTool.READ -> "read"
+        HarnessTool.WRITE -> "write"
+        HarnessTool.EDIT -> "edit"
+        HarnessTool.BASE -> "base"
+        HarnessTool.SUBAGENT -> "invoke_subagent"
+        HarnessTool.MCP -> "mcp"
+    }
 }
 
 private fun toolArgsSummary(call: ToolCall): String {

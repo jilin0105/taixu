@@ -1,14 +1,17 @@
 package top.wkbin.taixu.harness
 
 import android.content.Context
+import android.content.Intent
 import dagger.hilt.android.qualifiers.ApplicationContext
 import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.database.HarnessMessageDao
 import top.wkbin.taixu.core.database.HarnessMessageEntity
 import top.wkbin.taixu.core.database.HarnessSessionDao
 import top.wkbin.taixu.core.database.HarnessSessionEntity
+import top.wkbin.taixu.core.model.SessionRunState
 import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -25,6 +28,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -35,13 +39,11 @@ import kotlinx.serialization.json.put
 
 import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.core.model.AgentSkill
-import kotlinx.coroutines.flow.first
 
 /**
- * Harness 主循环：用户消息 → LLM（tool-calling）→ 执行工具 → 结果回传 → 循环，
- * 直到模型给出最终回复。会话与消息通过 Room 持久化，UI 观察 [messages]。
- *
- * 第一版单会话：sessionId 由 [startSession] 指定（新会话或恢复旧会话）。
+ * Harness 多智能体会话并发引擎：
+ * 支持多会话后台并行运行、实时状态机追踪（就绪/运行中/完成/失败）、
+ * 独立的流式消息队列与前台服务多通知分发。
  */
 @Singleton
 class HarnessLoop @Inject constructor(
@@ -56,9 +58,27 @@ class HarnessLoop @Inject constructor(
     private val logger: AppLogger,
 ) {
     private val loopScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private var sessionId: String = ""
-    private var loopJob: Job? = null
 
+    private val _currentSessionId = MutableStateFlow("")
+    val currentSessionId: StateFlow<String> = _currentSessionId.asStateFlow()
+
+    private val sessionJobs = ConcurrentHashMap<String, Job>()
+
+    private val _sessionRunStates = MutableStateFlow<Map<String, SessionRunState>>(emptyMap())
+    /** 全局所有会话的运行状态映射（供会话抽屉、状态点等观察） */
+    val sessionRunStates: StateFlow<Map<String, SessionRunState>> = _sessionRunStates.asStateFlow()
+
+    private val _sessionStatuses = MutableStateFlow<Map<String, String>>(emptyMap())
+    /** 全局各会话当前的动作描述状态 */
+    val sessionStatuses: StateFlow<Map<String, String>> = _sessionStatuses.asStateFlow()
+
+    private val _sessionLiveMessages = ConcurrentHashMap<String, MutableStateFlow<List<HarnessMessage>>>()
+    private val _sessionPendingMessages = ConcurrentHashMap<String, MutableStateFlow<List<String>>>()
+    private val _sessionThinkingLives = ConcurrentHashMap<String, MutableStateFlow<Boolean>>()
+    private val _sessionErrors = ConcurrentHashMap<String, MutableStateFlow<String?>>()
+    private val sessionThinkingModes = ConcurrentHashMap<String, Boolean>()
+
+    // ---- 当前前台聚焦会话的响应式状态镜像 ----
     private val _messages = MutableStateFlow<List<HarnessMessage>>(emptyList())
     val messages: StateFlow<List<HarnessMessage>> = _messages.asStateFlow()
 
@@ -87,19 +107,61 @@ class HarnessLoop @Inject constructor(
      */
     val pendingMessages: StateFlow<List<String>> = _pendingMessages.asStateFlow()
 
-    /**
-     * 当前模型是否处于思考模式（任一轮响应携带过 reasoning_content）。
-     * DeepSeek 系 thinking 模式强制要求：请求历史中每条带 tool_calls 的 assistant
-     * 消息都必须回传 reasoning_content 字段，缺失（哪怕是模型某轮没思考）会返回
-     * HTTP 400 "The reasoning_content in the thinking mode must be passed back to the API"。
-     * 因此检测到思考模式后，缺失的轮次以空字符串兜底；非思考模型则完全不下发该字段。
-     */
-    private var thinkingMode = false
+    private fun getOrCreateLiveMessages(sessId: String): MutableStateFlow<List<HarnessMessage>> {
+        return _sessionLiveMessages.getOrPut(sessId) {
+            val history = kotlinx.coroutines.runBlocking {
+                messageDao.listForSession(sessId).mapNotNull { entity ->
+                    runCatching {
+                        json.decodeFromString(HarnessMessage.serializer(), entity.payloadJson)
+                    }.getOrNull()
+                }
+            }
+            MutableStateFlow(history)
+        }
+    }
+
+    private fun getOrCreatePendingFlow(sessId: String): MutableStateFlow<List<String>> {
+        return _sessionPendingMessages.getOrPut(sessId) { MutableStateFlow(emptyList()) }
+    }
+
+    private fun getOrCreateThinkingLiveFlow(sessId: String): MutableStateFlow<Boolean> {
+        return _sessionThinkingLives.getOrPut(sessId) { MutableStateFlow(false) }
+    }
+
+    private fun getOrCreateErrorFlow(sessId: String): MutableStateFlow<String?> {
+        return _sessionErrors.getOrPut(sessId) { MutableStateFlow(null) }
+    }
+
+    private fun setStatus(sessId: String, statusText: String?) {
+        val updated = if (statusText.isNullOrBlank()) {
+            _sessionStatuses.value - sessId
+        } else {
+            _sessionStatuses.value + (sessId to statusText)
+        }
+        _sessionStatuses.value = updated
+        if (sessId == _currentSessionId.value) {
+            _status.value = statusText
+        }
+    }
+
+    private fun setError(sessId: String, errorText: String?) {
+        getOrCreateErrorFlow(sessId).value = errorText
+        if (sessId == _currentSessionId.value) {
+            _error.value = errorText
+        }
+    }
+
+    private fun setSessionState(sessId: String, state: SessionRunState) {
+        _sessionRunStates.value = _sessionRunStates.value + (sessId to state)
+        if (sessId == _currentSessionId.value) {
+            _running.value = (state == SessionRunState.RUNNING)
+        }
+    }
 
     /** 新建会话。workspace 为关联的工作区 Linux 路径（如 /workspace/proj），空串表示不关联。 */
     suspend fun newSession(title: String, workspace: String = ""): String {
         val id = UUID.randomUUID().toString()
-        sessionId = id
+        _currentSessionId.value = id
         _workspace.value = workspace
         sessionDao.upsert(
             HarnessSessionEntity(
@@ -111,30 +173,46 @@ class HarnessLoop @Inject constructor(
                 workspace = workspace,
             ),
         )
+        _sessionLiveMessages[id] = MutableStateFlow(emptyList())
+        _sessionPendingMessages[id] = MutableStateFlow(emptyList())
+        _sessionThinkingLives[id] = MutableStateFlow(false)
+        _sessionErrors[id] = MutableStateFlow(null)
+        setSessionState(id, SessionRunState.IDLE)
+        setStatus(id, null)
+
         _messages.value = emptyList()
+        _running.value = false
         _error.value = null
+        _status.value = null
         _thinkingLive.value = false
         _pendingMessages.value = emptyList()
         return id
     }
 
-    /** 恢复已有会话的历史消息与工作区关联。 */
+    /** 恢复已有会话的历史消息与工作区关联，不中断正在后台运行的任何会话。 */
     suspend fun loadSession(id: String) {
-        sessionId = id
-        _workspace.value = sessionDao.findById(id)?.workspace.orEmpty()
-        val history = messageDao.listForSession(id)
-            .mapNotNull { entity ->
-                runCatching {
-                    json.decodeFromString(HarnessMessage.serializer(), entity.payloadJson)
-                }.getOrNull()
-            }
-        _messages.value = history
-        _error.value = null
-        _thinkingLive.value = false
-        _pendingMessages.value = emptyList()
-        // 从历史推断思考模式：旧会话（含升级前持久化的消息）只要出现过 reasoning 即视为思考模型，
-        // 后续请求对缺失 reasoning 的轮次以空字符串兜底，避免 DeepSeek thinking 模式 400。
-        thinkingMode = history.any { message ->
+        _currentSessionId.value = id
+        val sessionEntity = sessionDao.findById(id)
+        _workspace.value = sessionEntity?.workspace.orEmpty()
+
+        val liveFlow = _sessionLiveMessages.getOrPut(id) {
+            val history = messageDao.listForSession(id)
+                .mapNotNull { entity ->
+                    runCatching {
+                        json.decodeFromString(HarnessMessage.serializer(), entity.payloadJson)
+                    }.getOrNull()
+                }
+            MutableStateFlow(history)
+        }
+
+        _messages.value = liveFlow.value
+        _running.value = sessionJobs[id]?.isActive == true
+        _error.value = _sessionErrors[id]?.value
+        _status.value = _sessionStatuses.value[id]?.takeIf { it.isNotBlank() }
+        _thinkingLive.value = _sessionThinkingLives[id]?.value ?: false
+        _pendingMessages.value = _sessionPendingMessages[id]?.value ?: emptyList()
+
+        sessionThinkingModes[id] = liveFlow.value.any { message ->
             (message as? AssistantText)?.reasoning != null || (message as? ToolCall)?.reasoning != null
         }
     }
@@ -144,9 +222,18 @@ class HarnessLoop @Inject constructor(
     }
 
     suspend fun deleteSession(id: String) {
+        sessionJobs[id]?.cancel()
+        sessionJobs.remove(id)
+        _sessionLiveMessages.remove(id)
+        _sessionPendingMessages.remove(id)
+        _sessionThinkingLives.remove(id)
+        _sessionErrors.remove(id)
+        _sessionRunStates.value = _sessionRunStates.value - id
+        _sessionStatuses.value = _sessionStatuses.value - id
+
         sessionDao.deleteMessages(id)
         sessionDao.deleteSession(id)
-        if (sessionId == id) {
+        if (_currentSessionId.value == id) {
             val remaining = sessionDao.observeAll().first()
             val nextSession = remaining.firstOrNull { it.id != id }
             if (nextSession != null) {
@@ -157,123 +244,150 @@ class HarnessLoop @Inject constructor(
         }
     }
 
-    fun send(text: String) {
+    fun send(text: String, targetSessionId: String? = null) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty() || sessionId.isBlank()) return
-        // 运行中：进入排队，当前任务结束后自动接续（见 finally 中的 drainPendingQueue）
-        if (_running.value) {
-            _pendingMessages.value = _pendingMessages.value + trimmed
+        val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
+        if (trimmed.isEmpty() || sessId.isBlank()) return
+
+        val pendingFlow = getOrCreatePendingFlow(sessId)
+        val isRunning = sessionJobs[sessId]?.isActive == true
+        if (isRunning) {
+            pendingFlow.value = pendingFlow.value + trimmed
+            if (sessId == _currentSessionId.value) {
+                _pendingMessages.value = pendingFlow.value
+            }
             return
         }
-        loopJob?.cancel()
-        loopJob = loopScope.launch {
-            _running.value = true
-            _error.value = null
+
+        val job = loopScope.launch {
+            setSessionState(sessId, SessionRunState.RUNNING)
+            setError(sessId, null)
             try {
-                runLoop(trimmed)
+                runLoop(sessId, trimmed)
+                setSessionState(sessId, SessionRunState.COMPLETED)
             } catch (cancellation: CancellationException) {
-                // 用户主动停止：必须给所有还没等到结果的 ToolCall 补一条 ToolResult 落库。
-                // 否则历史里存在"悬空"的 tool_calls（后面没有对应 tool 消息），
-                // OpenAI 兼容 API 会在下一次请求直接返回 HTTP 400
-                // "assistant message with 'tool_calls' must be followed by tool messages..."。
-                // 取消中的协程连挂起调用都会抛 CancellationException，所以整个修复必须在 NonCancellable 里完成。
                 withContext(NonCancellable) {
-                    repairDanglingToolCalls(interrupted = true)
+                    repairDanglingToolCalls(sessId, interrupted = true)
                 }
-                logger.i("Harness loop cancelled")
+                logger.i("Harness loop cancelled for session $sessId")
+                setSessionState(sessId, SessionRunState.IDLE)
             } catch (throwable: Throwable) {
-                logger.e("Harness loop failed", throwable)
-                _error.value = throwable.message ?: "执行失败"
+                logger.e("Harness loop failed for session $sessId", throwable)
+                setError(sessId, throwable.message ?: "执行失败")
+                setSessionState(sessId, SessionRunState.FAILED)
             } finally {
-                finishRun()
+                finishRun(sessId)
             }
         }
+        sessionJobs[sessId] = job
+        if (sessId == _currentSessionId.value) {
+            _running.value = true
+        }
+        startForegroundServiceSafe()
     }
 
     /**
-     * 重新生成最后一次回复：
-     * 1. 找到最后一条 UserMessage；
-     * 2. 移除其之后的所有消息（Room + 内存）；
-     * 3. 重新执行 LLM 生成循环。
+     * 重新生成最后一次回复
      */
-    fun regenerateLast() {
-        if (_running.value || sessionId.isBlank()) return
-        val current = _messages.value
+    fun regenerateLast(targetSessionId: String? = null) {
+        val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
+        if (sessionJobs[sessId]?.isActive == true || sessId.isBlank()) return
+        val current = getOrCreateLiveMessages(sessId).value
         val lastUserIndex = current.indexOfLast { it is UserMessage }
         if (lastUserIndex < 0) return
         val lastUserMessage = current[lastUserIndex] as UserMessage
 
-        loopJob?.cancel()
-        loopJob = loopScope.launch {
-            _running.value = true
-            _error.value = null
+        val job = loopScope.launch {
+            setSessionState(sessId, SessionRunState.RUNNING)
+            setError(sessId, null)
             try {
                 val toKeep = current.subList(0, lastUserIndex + 1)
-                _messages.value = toKeep
-                messageDao.deleteFromTimestamp(sessionId, lastUserMessage.createdAt + 1)
-                runLoopInternal(startedAt = now())
+                val liveFlow = getOrCreateLiveMessages(sessId)
+                liveFlow.value = toKeep
+                if (sessId == _currentSessionId.value) {
+                    _messages.value = toKeep
+                }
+                messageDao.deleteFromTimestamp(sessId, lastUserMessage.createdAt + 1)
+                runLoopInternal(sessId, startedAt = now())
+                setSessionState(sessId, SessionRunState.COMPLETED)
             } catch (cancellation: CancellationException) {
                 withContext(NonCancellable) {
-                    repairDanglingToolCalls(interrupted = true)
+                    repairDanglingToolCalls(sessId, interrupted = true)
                 }
-                logger.i("Harness loop cancelled")
+                logger.i("Harness loop cancelled for session $sessId")
+                setSessionState(sessId, SessionRunState.IDLE)
             } catch (throwable: Throwable) {
-                logger.e("Harness loop failed", throwable)
-                _error.value = throwable.message ?: "执行失败"
+                logger.e("Harness loop failed for session $sessId", throwable)
+                setError(sessId, throwable.message ?: "执行失败")
+                setSessionState(sessId, SessionRunState.FAILED)
             } finally {
-                finishRun()
+                finishRun(sessId)
             }
         }
+        sessionJobs[sessId] = job
+        if (sessId == _currentSessionId.value) {
+            _running.value = true
+        }
+        startForegroundServiceSafe()
     }
 
     /**
-     * 编辑并重发指定用户消息：
-     * 1. 找到目标 UserMessage；
-     * 2. 删除该 UserMessage 及其之后的所有消息（Room + 内存）；
-     * 3. 将 newText 作为新的 UserMessage 发送并执行循环。
+     * 编辑并重发指定用户消息
      */
-    fun truncateAndResend(userMessageId: String, newText: String) {
+    fun truncateAndResend(userMessageId: String, newText: String, targetSessionId: String? = null) {
         val trimmed = newText.trim()
-        if (trimmed.isEmpty() || _running.value || sessionId.isBlank()) return
-        val current = _messages.value
+        val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
+        if (trimmed.isEmpty() || sessionJobs[sessId]?.isActive == true || sessId.isBlank()) return
+        val current = getOrCreateLiveMessages(sessId).value
         val targetIndex = current.indexOfFirst { it.id == userMessageId }
         if (targetIndex < 0) {
-            send(trimmed)
+            send(trimmed, sessId)
             return
         }
         val targetMessage = current[targetIndex]
 
-        loopJob?.cancel()
-        loopJob = loopScope.launch {
-            _running.value = true
-            _error.value = null
+        val job = loopScope.launch {
+            setSessionState(sessId, SessionRunState.RUNNING)
+            setError(sessId, null)
             try {
                 val toKeep = current.subList(0, targetIndex)
-                _messages.value = toKeep
-                messageDao.deleteFromTimestamp(sessionId, targetMessage.createdAt)
-                runLoop(trimmed)
+                val liveFlow = getOrCreateLiveMessages(sessId)
+                liveFlow.value = toKeep
+                if (sessId == _currentSessionId.value) {
+                    _messages.value = toKeep
+                }
+                messageDao.deleteFromTimestamp(sessId, targetMessage.createdAt)
+                runLoop(sessId, trimmed)
+                setSessionState(sessId, SessionRunState.COMPLETED)
             } catch (cancellation: CancellationException) {
                 withContext(NonCancellable) {
-                    repairDanglingToolCalls(interrupted = true)
+                    repairDanglingToolCalls(sessId, interrupted = true)
                 }
-                logger.i("Harness loop cancelled")
+                logger.i("Harness loop cancelled for session $sessId")
+                setSessionState(sessId, SessionRunState.IDLE)
             } catch (throwable: Throwable) {
-                logger.e("Harness loop failed", throwable)
-                _error.value = throwable.message ?: "执行失败"
+                logger.e("Harness loop failed for session $sessId", throwable)
+                setError(sessId, throwable.message ?: "执行失败")
+                setSessionState(sessId, SessionRunState.FAILED)
             } finally {
-                finishRun()
+                finishRun(sessId)
             }
         }
+        sessionJobs[sessId] = job
+        if (sessId == _currentSessionId.value) {
+            _running.value = true
+        }
+        startForegroundServiceSafe()
     }
 
     /**
-     * 删除单条消息：
-     * 如果是 ToolCall，连带删除其对应的 ToolResult；
-     * 如果是 ToolResult，连带删除对应的 ToolCall。
+     * 删除单条消息
      */
-    suspend fun deleteMessage(messageId: String) {
-        if (_running.value || sessionId.isBlank()) return
-        val current = _messages.value
+    suspend fun deleteMessage(messageId: String, targetSessionId: String? = null) {
+        val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
+        if (sessionJobs[sessId]?.isActive == true || sessId.isBlank()) return
+        val liveFlow = getOrCreateLiveMessages(sessId)
+        val current = liveFlow.value
         val target = current.firstOrNull { it.id == messageId } ?: return
         val idsToDelete = mutableListOf(messageId)
         if (target is ToolCall) {
@@ -285,18 +399,22 @@ class HarnessLoop @Inject constructor(
                 idsToDelete.add(it.id)
             }
         }
-        _messages.value = current.filter { it.id !in idsToDelete }
+        val updated = current.filter { it.id !in idsToDelete }
+        liveFlow.value = updated
+        if (sessId == _currentSessionId.value) {
+            _messages.value = updated
+        }
         messageDao.deleteByIds(idsToDelete)
     }
 
     /**
-     * 为所有尚无 ToolResult 的 ToolCall 补写一条中断占位结果并持久化。
-     * 修复两类来源的悬空 tool_calls：①本轮执行中被用户取消；②历史遗留的损坏会话。
+     * 为所有尚无 ToolResult 的 ToolCall 补写一条中断占位结果并持久化
      */
-    private suspend fun repairDanglingToolCalls(interrupted: Boolean) {
-        val msgs = _messages.value
-        val answered = msgs.filterIsInstance<ToolResult>().mapTo(mutableSetOf()) { it.toolCallId }
-        val dangling = msgs.filterIsInstance<ToolCall>().filter { it.id !in answered }
+    private suspend fun repairDanglingToolCalls(sessId: String, interrupted: Boolean) {
+        val liveFlow = getOrCreateLiveMessages(sessId)
+        val msgs = liveFlow.value
+        val answeredIds = msgs.filterIsInstance<ToolResult>().mapTo(mutableSetOf()) { it.toolCallId }
+        val dangling = msgs.filterIsInstance<ToolCall>().filter { it.id !in answeredIds }
         if (dangling.isEmpty()) return
         val note = if (interrupted) "用户停止了本次执行，工具被中断。" else "工具结果缺失（历史中断），已补占位结果以继续会话。"
         dangling.forEach { call ->
@@ -307,137 +425,149 @@ class HarnessLoop @Inject constructor(
                 success = false,
                 output = note,
             )
-            _messages.value = _messages.value + result
-            messageDao.insert(
-                HarnessMessageEntity(
-                    id = result.id,
-                    sessionId = sessionId,
-                    createdAt = result.createdAt,
-                    type = result::class.simpleName.orEmpty(),
-                    payloadJson = json.encodeToString(HarnessMessage.serializer(), result),
-                ),
-            )
+            append(sessId, result)
         }
     }
 
-    fun cancel() {
-        // 停止意味着终止一切：连同排队的后续消息一起清空。
-        _pendingMessages.value = emptyList()
-        _status.value = "正在停止…"
-        loopJob?.cancel()
-        loopJob = null
+    fun cancel(targetSessionId: String? = null) {
+        val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
+        _sessionPendingMessages[sessId]?.value = emptyList()
+        setStatus(sessId, "正在停止…")
+        sessionJobs[sessId]?.cancel()
+        sessionJobs.remove(sessId)
+        setSessionState(sessId, SessionRunState.IDLE)
+        if (sessId == _currentSessionId.value) {
+            _pendingMessages.value = emptyList()
+            _status.value = "正在停止…"
+            _running.value = false
+        }
     }
 
-    /** 移除一条排队中的消息（下标从 0 开始）。 */
-    fun removePendingMessage(index: Int) {
-        val current = _pendingMessages.value
+    /** 移除某会话排队中的消息 */
+    fun removePendingMessage(index: Int, targetSessionId: String? = null) {
+        val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
+        val pendingFlow = getOrCreatePendingFlow(sessId)
+        val current = pendingFlow.value
         if (index in current.indices) {
-            _pendingMessages.value = current.filterIndexed { i, _ -> i != index }
+            pendingFlow.value = current.filterIndexed { i, _ -> i != index }
+            if (sessId == _currentSessionId.value) {
+                _pendingMessages.value = pendingFlow.value
+            }
         }
     }
 
-    /** 清空全部排队消息。 */
-    fun clearPendingMessages() {
-        _pendingMessages.value = emptyList()
+    /** 清空某会话全部排队消息 */
+    fun clearPendingMessages(targetSessionId: String? = null) {
+        val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
+        getOrCreatePendingFlow(sessId).value = emptyList()
+        if (sessId == _currentSessionId.value) {
+            _pendingMessages.value = emptyList()
+        }
     }
 
-    /**
-     * 单次运行的统一收尾：复位状态位；若队列中还有排队消息则自动接续下一条。
-     * 在 loopJob 的 finally 中调用（运行协程本身即将退出，接续任务由 send() 重新起协程）。
-     */
-    private fun finishRun() {
-        _running.value = false
-        _status.value = null
-        _thinkingLive.value = false
-        loopJob = null
-        val next = _pendingMessages.value.firstOrNull()
+    private fun finishRun(sessId: String) {
+        sessionJobs.remove(sessId)
+        _sessionThinkingLives[sessId]?.value = false
+        setStatus(sessId, null)
+        if (sessId == _currentSessionId.value) {
+            _running.value = false
+            _status.value = null
+            _thinkingLive.value = false
+        }
+        val pendingFlow = _sessionPendingMessages[sessId]
+        val next = pendingFlow?.value?.firstOrNull()
         if (next != null) {
-            _pendingMessages.value = _pendingMessages.value.drop(1)
-            send(next)
+            pendingFlow.value = pendingFlow.value.drop(1)
+            if (sessId == _currentSessionId.value) {
+                _pendingMessages.value = pendingFlow.value
+            }
+            send(next, sessId)
         }
     }
 
-    fun clearError() {
-        _error.value = null
+    fun clearError(targetSessionId: String? = null) {
+        val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
+        setError(sessId, null)
     }
 
-    private suspend fun runLoop(userText: String) {
-        logAgentEvent("UserPrompt", userText)
-        append(UserMessage(id = newId(), createdAt = now(), text = userText))
-        runLoopInternal(startedAt = now())
+    private suspend fun runLoop(sessId: String, userText: String) {
+        logAgentEvent(sessId, "UserPrompt", userText)
+        append(sessId, UserMessage(id = newId(), createdAt = now(), text = userText))
+        runLoopInternal(sessId, startedAt = now())
     }
 
-    private suspend fun runLoopInternal(startedAt: Long) {
-        // 历史遗留的悬空 tool_calls（旧版本取消 bug 等造成）先自愈补齐，避免下一次请求 400
-        repairDanglingToolCalls(interrupted = false)
+    private suspend fun runLoopInternal(sessId: String, startedAt: Long) {
+        repairDanglingToolCalls(sessId, interrupted = false)
         val maxRounds = runCatching { settingsDataStore.maxToolRounds.first() }.getOrDefault(MAX_ROUNDS)
         val autoCwd = runCatching { settingsDataStore.autoWorkspaceCwd.first() }.getOrDefault(true)
+        val sessionEntity = sessionDao.findById(sessId)
+        val sessionWorkspace = sessionEntity?.workspace.orEmpty()
+
         var round = 0
         while (round < maxRounds) {
-            // 中途转向（pi 的 steering）：运行期间用户排队的消息在下一轮推理前注入，
-            // 让用户能实时纠偏正在执行的任务，而不是等整个任务跑完才被看到。
-            drainSteeringMessages()
-            _status.value = "思考中"
+            drainSteeringMessages(sessId)
+            setStatus(sessId, "思考中")
             val model = try {
-                // 含最小配置校验：未配置模型/API Key 时直接返回明确错误，消息留在聊天里
                 providerClient.resolveConfigured()
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (throwable: Throwable) {
-                logAgentEvent("ModelResolveError", "无法获取模型配置", throwable)
-                appendFatal("无法获取模型配置：${friendly(throwable)}", now() - startedAt)
+                logAgentEvent(sessId, "ModelResolveError", "无法获取模型配置", throwable)
+                appendFatal(sessId, "无法获取模型配置：${friendly(throwable)}", now() - startedAt)
                 return
             }
-            logAgentEvent("ModelRequest", "Round=$round, Model=${model.name}, Provider=${model.provider}")
+            logAgentEvent(sessId, "ModelRequest", "Round=$round, Model=${model.name}, Provider=${model.provider}")
             val assistantId = newId()
             val assistantAt = now()
             val streamText = StringBuilder()
-            // 推理增量单独累积：即使中途出错被 catch，也能把已收到的 reasoning 落库回传。
             val streamReasoning = StringBuilder()
-            // 流式：每个内容增量立即更新 _messages（UI 实时显示），结束时持久化。
-            // 网络类瞬时故障（IOException，如移动网络切换导致的 "software caused connection abort"）
-            // 自动退避重试整个请求；HTTP 业务错误（IllegalStateException）不重试，走原有中断路径。
             var streamed: ChatResult? = null
             var netRetry = 0
             while (streamed == null) {
                 try {
                     streamed = providerClient.chatStream(
                         model,
-                        apiMessages(),
+                        apiMessages(sessId),
                         onReasoning = { chunk ->
                             streamReasoning.append(chunk)
-                            thinkingMode = true
-                            _thinkingLive.value = true
-                            streamAssistantReasoning(assistantId, assistantAt, streamReasoning.toString())
+                            sessionThinkingModes[sessId] = true
+                            getOrCreateThinkingLiveFlow(sessId).value = true
+                            if (sessId == _currentSessionId.value) {
+                                _thinkingLive.value = true
+                            }
+                            streamAssistantReasoning(sessId, assistantId, assistantAt, streamReasoning.toString())
                         },
                     ) { chunk ->
-                        _status.value = "回复中"
+                        setStatus(sessId, "回复中")
                         streamText.append(chunk)
-                        streamAssistant(assistantId, assistantAt, streamText.toString())
+                        streamAssistant(sessId, assistantId, assistantAt, streamText.toString())
                     }
                 } catch (cancellation: CancellationException) {
-                    logAgentEvent("Cancelled", "用户主动取消执行")
+                    logAgentEvent(sessId, "Cancelled", "用户主动取消执行")
                     throw cancellation
                 } catch (io: IOException) {
-                    // 取消（call.cancel() 关闭 socket）也会抛 IOException：先检查协程是否已被取消，
-                    // 已取消则直接走取消路径，绝不能当成网络错误重试。
                     currentCoroutineContext().ensureActive()
                     netRetry++
-                    logAgentEvent("NetworkRetry", "网络中断重试 $netRetry/$MAX_STREAM_RETRIES: ${io.message}", io)
+                    logAgentEvent(sessId, "NetworkRetry", "网络中断重试 $netRetry/$MAX_STREAM_RETRIES: ${io.message}", io)
                     if (netRetry > MAX_STREAM_RETRIES) throw io
-                    _thinkingLive.value = false
-                    _status.value = "网络中断，重试中（$netRetry/$MAX_STREAM_RETRIES）"
-                    // 清空半段输出：重试成功后从头重新流式，同一 assistantId 原位覆盖 UI，不会重复
+                    getOrCreateThinkingLiveFlow(sessId).value = false
+                    if (sessId == _currentSessionId.value) {
+                        _thinkingLive.value = false
+                    }
+                    setStatus(sessId, "网络中断，重试中（$netRetry/$MAX_STREAM_RETRIES）")
                     streamText.clear()
                     streamReasoning.clear()
-                    streamAssistant(assistantId, assistantAt, "")
+                    streamAssistant(sessId, assistantId, assistantAt, "")
                     delay(netRetry * RETRY_BACKOFF_MS)
                 } catch (throwable: Throwable) {
-                    // LLM 调用失败：已流式的半段内容先落库（含已收到的 reasoning），再给出收尾消息，避免“没结论地中断”。
-                    _thinkingLive.value = false
-                    logAgentEvent("ModelError", "LLM 调用失败: ${throwable.message}", throwable)
+                    getOrCreateThinkingLiveFlow(sessId).value = false
+                    if (sessId == _currentSessionId.value) {
+                        _thinkingLive.value = false
+                    }
+                    logAgentEvent(sessId, "ModelError", "LLM 调用失败: ${throwable.message}", throwable)
                     if (streamText.isNotEmpty()) {
                         persistAssistant(
+                            sessId,
                             assistantId,
                             assistantAt,
                             streamText.toString(),
@@ -445,37 +575,39 @@ class HarnessLoop @Inject constructor(
                             totalMs = now() - startedAt,
                         )
                     } else {
-                        appendFatal("执行遇到问题，已中断：${friendly(throwable)}", now() - startedAt)
+                        appendFatal(sessId, "执行遇到问题，已中断：${friendly(throwable)}", now() - startedAt)
                     }
                     return
                 }
             }
             val result = streamed
             logAgentEvent(
+                sessId,
                 "ModelResponse",
                 "TextLength=${streamText.length}, ReasoningLength=${result.reasoningContent?.length ?: 0}, ToolCallsCount=${result.toolCalls.size}",
             )
             if (streamText.isNotEmpty()) {
                 persistAssistant(
+                    sessId,
                     assistantId,
                     assistantAt,
                     streamText.toString(),
                     result.reasoningContent,
-                    // 本轮的最终回复（无后续工具调用）时记录总耗时；中间轮次不记
                     totalMs = if (!result.hasToolCalls) now() - startedAt else null,
                 )
             }
-            _thinkingLive.value = false
+            getOrCreateThinkingLiveFlow(sessId).value = false
+            if (sessId == _currentSessionId.value) {
+                _thinkingLive.value = false
+            }
             if (!result.hasToolCalls) return
             result.toolCalls.forEach { spec ->
-                // 参数必须是合法 JSON 对象。流式截断、模型笔误都可能产生解析失败的参数——
-                // 静默降级成空参数执行会拿到错误结果且模型不自知（pi 的做法是直接报错让模型重发）。
                 val parsedArgs = try {
-                    json.parseToJsonElement(spec.argumentsJson) as? kotlinx.serialization.json.JsonObject
+                    json.parseToJsonElement(spec.argumentsJson) as? JsonObject
                         ?: throw IllegalArgumentException("参数不是 JSON 对象")
                 } catch (parseError: Throwable) {
-                    // 仍需落一条 ToolCall 保证历史配对合法（tool 消息必须跟在 tool_calls 之后）
                     append(
+                        sessId,
                         ToolCall(
                             id = spec.id,
                             createdAt = now(),
@@ -485,6 +617,7 @@ class HarnessLoop @Inject constructor(
                         ),
                     )
                     append(
+                        sessId,
                         ToolResult(
                             id = newId(),
                             createdAt = now(),
@@ -496,35 +629,36 @@ class HarnessLoop @Inject constructor(
                     )
                     return@forEach
                 }
-                // 未知工具名：直接回错误结果。绝不归入 base 盲执行——
-                // 那会让模型以为命令真的跑过，基于幻觉结论继续推理。
-                if (spec.name.trim().lowercase() !in KNOWN_TOOL_NAMES) {
+                val toolNameTrimmed = spec.name.trim()
+                if (toolNameTrimmed.lowercase() !in KNOWN_TOOL_NAMES && !toolNameTrimmed.startsWith("mcp__")) {
                     append(
+                        sessId,
                         ToolCall(
                             id = spec.id,
                             createdAt = now(),
                             tool = HarnessApiMapper.toolByName(spec.name),
                             args = buildJsonObject {},
                             reasoning = result.reasoningContent,
+                            rawToolName = toolNameTrimmed,
                         ),
                     )
                     append(
+                        sessId,
                         ToolResult(
                             id = newId(),
                             createdAt = now(),
                             toolCallId = spec.id,
                             success = false,
-                            output = "未知工具：${spec.name}。可用工具只有 read / write / edit / base。",
+                            output = "未知工具：${spec.name}。可用工具包含 read / write / edit / base / invoke_subagent 以及已启用的 MCP 插件工具。",
                         ),
                     )
                     return@forEach
                 }
                 val tool = HarnessApiMapper.toolByName(spec.name)
                 var args = parsedArgs
-                // base 工具默认在会话关联的工作区执行（cwd 未指定时，且用户启用了自动注入）
-                if (tool == HarnessTool.BASE && autoCwd && _workspace.value.isNotBlank() && args["cwd"] == null) {
+                if (tool == HarnessTool.BASE && autoCwd && sessionWorkspace.isNotBlank() && args["cwd"] == null) {
                     args = buildJsonObject {
-                        put("cwd", _workspace.value)
+                        put("cwd", sessionWorkspace)
                         args.forEach { (key, value) -> put(key, value) }
                     }
                 }
@@ -534,13 +668,14 @@ class HarnessLoop @Inject constructor(
                     tool = tool,
                     args = args,
                     reasoning = result.reasoningContent,
+                    rawToolName = toolNameTrimmed,
                 )
-                logAgentEvent("ToolCall", "Tool=${tool.name}, Args=$args")
-                append(toolCall)
-                _status.value = describeToolCall(tool, args)
+                logAgentEvent(sessId, "ToolCall", "Tool=${tool.name}, RawName=$toolNameTrimmed, Args=$args")
+                append(sessId, toolCall)
+                setStatus(sessId, describeToolCall(tool, args, toolNameTrimmed))
                 val toolStart = now()
                 val outcome = try {
-                    toolExecutor.execute(toolCall)
+                    toolExecutor.execute(toolCall, sessId)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (throwable: Throwable) {
@@ -553,13 +688,14 @@ class HarnessLoop @Inject constructor(
                     )
                 }
                 val duration = now() - toolStart
-                logAgentEvent("ToolResult", "Tool=${tool.name}, Success=${outcome.success}, Duration=${duration}ms, Output=${outcome.output.take(300)}")
-                append(outcome.copy(durationMs = duration))
-                touchSession()
+                logAgentEvent(sessId, "ToolResult", "Tool=${tool.name}, Success=${outcome.success}, Duration=${duration}ms, Output=${outcome.output.take(300)}")
+                append(sessId, outcome.copy(durationMs = duration))
+                touchSession(sessId)
             }
             round++
         }
         append(
+            sessId,
             AssistantText(
                 id = newId(),
                 createdAt = now(),
@@ -569,11 +705,7 @@ class HarnessLoop @Inject constructor(
         )
     }
 
-    /**
-     * 生成人话版工具执行状态（通知栏标题 / UI 状态条共用）：
-     * 带上命令首行或文件路径，让用户一眼看到 Agent 当前在做什么。
-     */
-    private fun describeToolCall(tool: HarnessTool, args: JsonObject): String {
+    private fun describeToolCall(tool: HarnessTool, args: JsonObject, rawToolName: String? = null): String {
         fun arg(name: String): String? =
             runCatching { args[name]?.jsonPrimitive?.content }.getOrNull()?.takeIf { it.isNotBlank() }
         return when (tool) {
@@ -584,38 +716,40 @@ class HarnessLoop @Inject constructor(
             HarnessTool.READ -> arg("path")?.let { "读取文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "读取文件"
             HarnessTool.WRITE -> arg("path")?.let { "写入文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "写入文件"
             HarnessTool.EDIT -> arg("path")?.let { "编辑文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "编辑文件"
+            HarnessTool.SUBAGENT -> "正在派发并执行子智能体协同任务…"
+            HarnessTool.MCP -> "正在调用 MCP 插件工具：${rawToolName ?: "mcp"}…"
         }
     }
 
-    private suspend fun logAgentEvent(tag: String, message: String, throwable: Throwable? = null) {
+    private suspend fun logAgentEvent(sessId: String, tag: String, message: String, throwable: Throwable? = null) {
         val enabled = runCatching { settingsDataStore.agentLoggingEnabled.first() }.getOrDefault(false)
         if (enabled) {
-            logger.logAgent(sessionId, tag, message, throwable)
+            logger.logAgent(sessId, tag, message, throwable)
         }
     }
 
-    /** 把运行期间排队的用户消息注入为 UserMessage，模型下一轮即可看到并调整方向。 */
-    private suspend fun drainSteeringMessages() {
-        val queued = _pendingMessages.value
+    private suspend fun drainSteeringMessages(sessId: String) {
+        val pendingFlow = getOrCreatePendingFlow(sessId)
+        val queued = pendingFlow.value
         if (queued.isEmpty()) return
-        _pendingMessages.value = emptyList()
+        pendingFlow.value = emptyList()
+        if (sessId == _currentSessionId.value) {
+            _pendingMessages.value = emptyList()
+        }
         queued.forEach { text ->
-            logAgentEvent("SteeringMessage", text)
-            append(UserMessage(id = newId(), createdAt = now(), text = text))
+            logAgentEvent(sessId, "SteeringMessage", text)
+            append(sessId, UserMessage(id = newId(), createdAt = now(), text = text))
         }
     }
 
-
-    /** 追加一条“出错了”的收尾消息，保证运行必然有结论。附带本轮总耗时。 */
-    private suspend fun appendFatal(text: String, totalMs: Long? = null) {
-        append(AssistantText(id = newId(), createdAt = now(), text = text, totalMs = totalMs))
+    private suspend fun appendFatal(sessId: String, text: String, totalMs: Long? = null) {
+        append(sessId, AssistantText(id = newId(), createdAt = now(), text = text, totalMs = totalMs))
     }
 
     private fun friendly(throwable: Throwable): String =
         throwable.message?.take(200) ?: throwable::class.simpleName.orEmpty()
 
-    /** 动态组装系统提示词（含已启用的专精 Skill 库指导） */
-    private suspend fun buildSystemPrompt(): String {
+    private suspend fun buildSystemPrompt(workspacePath: String): String {
         val distroId = runCatching { settingsDataStore.selectedDistribution.first() }.getOrDefault("debian")
         val distroName = when (distroId.lowercase()) {
             "ubuntu" -> "Ubuntu 24.04 (Noble Numbat)"
@@ -640,19 +774,13 @@ class HarnessLoop @Inject constructor(
         val activeSkills = runCatching { settingsDataStore.activeSkills.first() }.getOrDefault(emptyList())
         val skillSection = if (activeSkills.isNotEmpty()) {
             "## 当前已启用的专精技能指导规则 (Active Skills)\n\n" + activeSkills.joinToString("\n\n") { skill ->
-                """
-                ### [专精技能] ${skill.name} (${skill.category})
-                ${skill.systemPrompt.trim()}
-                """.trimIndent()
+                "### [专精技能] " + skill.name + " (" + skill.category + ")\n" + skill.systemPrompt.trim()
             }
         } else ""
 
-        // 项目上下文（pi 的 project context）：会话绑定工作区时自动加载项目级指令文件，
-        // 让 Agent 直接掌握项目约定，而不是每轮靠 ls/read 猜。
-        val projectContext = loadProjectContext()
-
-        val workspaceSection = if (_workspace.value.isNotBlank()) {
-            "\n\n当前工作区：${_workspace.value}（base 命令默认在此目录执行；read/write/edit 的相对路径以此为根）"
+        val projectContext = loadProjectContext(workspacePath)
+        val workspaceSection = if (workspacePath.isNotBlank()) {
+            "\n\n当前工作区：" + workspacePath + "（base 命令默认在此目录执行；read/write/edit 的相对路径以此为根）"
         } else ""
 
         return template
@@ -662,21 +790,16 @@ class HarnessLoop @Inject constructor(
             .trim() + workspaceSection + projectContext
     }
 
-    /**
-     * 从工作区根目录加载项目级指令文件：AGENTS.md / CLAUDE.md / README.md。
-     * 每个文件截断到 [PROJECT_CONTEXT_MAX_BYTES]，避免巨型 README 挤爆上下文。
-     */
-    private suspend fun loadProjectContext(): String {
-        val workspace = _workspace.value
-        if (workspace.isBlank()) return ""
+    private suspend fun loadProjectContext(workspacePath: String): String {
+        if (workspacePath.isBlank()) return ""
         val sections = buildList {
             for (name in listOf("AGENTS.md", "CLAUDE.md", "README.md")) {
                 val content = runCatching {
-                    fileAccess.read("$workspace/$name".removePrefix("/")).getOrNull()
+                    fileAccess.read("$workspacePath/$name".removePrefix("/")).getOrNull()
                 }.getOrNull() ?: continue
                 val trimmed = content.take(PROJECT_CONTEXT_MAX_BYTES)
                 add(
-                    "<project_instructions path=\"$name\">\n$trimmed" +
+                    "<project_instructions path=\"" + name + "\">\n" + trimmed +
                         (if (content.length > PROJECT_CONTEXT_MAX_BYTES) "\n…（文件过长已截断）" else "") +
                         "\n</project_instructions>",
                 )
@@ -687,28 +810,22 @@ class HarnessLoop @Inject constructor(
             sections.joinToString("\n\n") + "\n</project_context>"
     }
 
-    /**
-     * Harness 消息 → OpenAI 兼容 API 消息（含系统提示与上下文智能压缩）。
-     *
-     * 当历史轮数超出阈值时，自动对旧轮次的超长 ToolResult 进行安全剪裁，
-     * 保持首尾完整性与合法 tool_call_id 配对，极大压缩 Token 占用。
-     */
-    private suspend fun apiMessages(): List<ApiMessage> {
+    private suspend fun apiMessages(sessId: String): List<ApiMessage> {
         val compactionEnabled = runCatching { settingsDataStore.contextCompactionEnabled.first() }.getOrDefault(true)
         val threshold = runCatching { settingsDataStore.contextCompactionThreshold.first() }.getOrDefault(15)
-        val systemPrompt = buildSystemPrompt()
+        val sessionEntity = sessionDao.findById(sessId)
+        val sessionWorkspace = sessionEntity?.workspace.orEmpty()
+        val systemPrompt = buildSystemPrompt(sessionWorkspace)
+        val thinkingMode = sessionThinkingModes[sessId] ?: false
 
         return buildList {
             add(ApiMessage(role = "system", content = systemPrompt))
-            val msgs = _messages.value
-            // 兜底：没有对应 ToolResult 的 ToolCall 不回传（不应出现，防御性跳过以免 API 400）
+            val msgs = getOrCreateLiveMessages(sessId).value
             val answeredIds = msgs.filterIsInstance<ToolResult>().mapTo(mutableSetOf()) { it.toolCallId }
 
-            // 计算用户交互轮数（以 UserMessage 数量计）
             val userIndices = msgs.indices.filter { msgs[it] is UserMessage }
             val shouldCompact = compactionEnabled && userIndices.size > threshold
 
-            // 如果触发压缩，保留最近 4 轮完整无损，此前的历史工具输出进行紧凑压缩
             val recentTurnCutoffIndex = if (shouldCompact && userIndices.size > 4) {
                 userIndices[userIndices.size - 4]
             } else {
@@ -723,13 +840,10 @@ class HarnessLoop @Inject constructor(
             while (i < msgs.size) {
                 val message = msgs[i]
                 if (message is AssistantText || message is ToolCall) {
-                    // 悬空的 ToolCall（无对应结果）整条跳过，避免构造非法请求体
                     if (message is ToolCall && message.id !in answeredIds) {
                         i++
                         continue
                     }
-                    // 按轮次合并：assistant 文本 + 该轮全部 tool_calls 合成一条 assistant 消息，
-                    // 并把推理模型的 reasoning_content 一并带回（DeepSeek 要求原样回传）。
                     val text = (message as? AssistantText)?.text
                     val reasoning = when (message) {
                         is AssistantText -> message.reasoning
@@ -754,7 +868,6 @@ class HarnessLoop @Inject constructor(
                     )
                     i = j
                 } else if (message is ToolResult) {
-                    // 上下文压缩：对旧轮次的长工具输出进行精简摘要（保留前后关键行，删除冗长中间日志）
                     val content = if (shouldCompact && i < recentTurnCutoffIndex && message.output.length > 240) {
                         compactToolOutput(message.output, message.success)
                     } else {
@@ -776,25 +889,28 @@ class HarnessLoop @Inject constructor(
         }
     }
 
-    /** 压缩历史冗余工具日志 */
     private fun compactToolOutput(output: String, success: Boolean): String {
         val lines = output.lines()
         val summary = if (lines.size > 6) {
             val head = lines.take(3).joinToString("\n")
             val tail = lines.takeLast(2).joinToString("\n")
-            "$head\n... [历史工具输出已压缩，已略去 ${lines.size - 5} 行日志] ...\n$tail"
+            head + "\n... [历史工具输出已压缩，已略去 " + (lines.size - 5) + " 行日志] ...\n" + tail
         } else {
             output.take(180) + "... [已自动压缩]"
         }
-        return "【历史执行结果·状态:${if (success) "成功" else "失败"}】\n$summary"
+        return "【历史执行结果·状态:" + (if (success) "成功" else "失败") + "】\n" + summary
     }
 
-    private suspend fun append(message: HarnessMessage) {
-        _messages.value = _messages.value + message
+    private suspend fun append(sessId: String, message: HarnessMessage) {
+        val liveFlow = getOrCreateLiveMessages(sessId)
+        liveFlow.value = liveFlow.value + message
+        if (sessId == _currentSessionId.value) {
+            _messages.value = liveFlow.value
+        }
         messageDao.insert(
             HarnessMessageEntity(
                 id = message.id,
-                sessionId = sessionId,
+                sessionId = sessId,
                 createdAt = message.createdAt,
                 type = message::class.simpleName.orEmpty(),
                 payloadJson = json.encodeToString(HarnessMessage.serializer(), message),
@@ -802,38 +918,43 @@ class HarnessLoop @Inject constructor(
         )
     }
 
-    /** 流式：增量更新某条 AssistantText（仅内存，供 UI 实时显示）；保留已送达的 reasoning。 */
-    private fun streamAssistant(id: String, createdAt: Long, text: String) {
-        val current = _messages.value
+    private fun streamAssistant(sessId: String, id: String, createdAt: Long, text: String) {
+        val liveFlow = getOrCreateLiveMessages(sessId)
+        val current = liveFlow.value
         val existing = current.firstOrNull { it.id == id }
         val reasoning = (existing as? AssistantText)?.reasoning
         val message = AssistantText(id = id, createdAt = createdAt, text = text, reasoning = reasoning)
-        _messages.value = if (existing != null) {
+        val updated = if (existing != null) {
             current.map { if (it.id == id) message else it }
         } else {
             current + message
         }
-    }
-
-    /**
-     * 流式：把推理模型的 reasoning 增量实时更新到在途的 AssistantText。
-     * 若正文尚未开始（模型先思考后输出），先插入一条空正文占位消息，保证 UI 直接可见。
-     */
-    private fun streamAssistantReasoning(id: String, createdAt: Long, reasoning: String) {
-        val current = _messages.value
-        val idx = current.indexOfFirst { it.id == id }
-        _messages.value = if (idx >= 0) {
-            val existing = current[idx]
-            (existing as? AssistantText)?.let {
-                current.toMutableList().apply { this[idx] = it.copy(reasoning = reasoning) }
-            } ?: current + AssistantText(id = id, createdAt = createdAt, text = "", reasoning = reasoning)
-        } else {
-            current + AssistantText(id = id, createdAt = createdAt, text = "", reasoning = reasoning)
+        liveFlow.value = updated
+        if (sessId == _currentSessionId.value) {
+            _messages.value = updated
         }
     }
 
-    /** 流式结束：把最终的 AssistantText 落库（含推理模型的 reasoning_content 与本轮总耗时）。 */
+    private fun streamAssistantReasoning(sessId: String, id: String, createdAt: Long, reasoning: String) {
+        val liveFlow = getOrCreateLiveMessages(sessId)
+        val current = liveFlow.value
+        val idx = current.indexOfFirst { it.id == id }
+        val updated = if (idx >= 0) {
+            val existing = current[idx]
+            (existing as? AssistantText)?.let {
+                current.toMutableList().apply { this[idx] = it.copy(reasoning = reasoning) }
+            } ?: (current + AssistantText(id = id, createdAt = createdAt, text = "", reasoning = reasoning))
+        } else {
+            current + AssistantText(id = id, createdAt = createdAt, text = "", reasoning = reasoning)
+        }
+        liveFlow.value = updated
+        if (sessId == _currentSessionId.value) {
+            _messages.value = updated
+        }
+    }
+
     private suspend fun persistAssistant(
+        sessId: String,
         id: String,
         createdAt: Long,
         text: String,
@@ -841,16 +962,21 @@ class HarnessLoop @Inject constructor(
         totalMs: Long? = null,
     ) {
         val message = AssistantText(id = id, createdAt = createdAt, text = text, reasoning = reasoning, totalMs = totalMs)
-        // 流式期间内存中已有同 id 的消息：原位替换（补上 totalMs），UI 无需重进会话即可显示
-        _messages.value = if (_messages.value.any { it.id == id }) {
-            _messages.value.map { if (it.id == id) message else it }
+        val liveFlow = getOrCreateLiveMessages(sessId)
+        val current = liveFlow.value
+        val updated = if (current.any { it.id == id }) {
+            current.map { if (it.id == id) message else it }
         } else {
-            _messages.value + message
+            current + message
+        }
+        liveFlow.value = updated
+        if (sessId == _currentSessionId.value) {
+            _messages.value = updated
         }
         messageDao.insert(
             HarnessMessageEntity(
                 id = id,
-                sessionId = sessionId,
+                sessionId = sessId,
                 createdAt = createdAt,
                 type = message::class.simpleName.orEmpty(),
                 payloadJson = json.encodeToString(HarnessMessage.serializer(), message),
@@ -858,16 +984,16 @@ class HarnessLoop @Inject constructor(
         )
     }
 
-    private suspend fun touchSession() {
-        sessionDao.touch(sessionId, System.currentTimeMillis())
+    private suspend fun touchSession(sessId: String) {
+        sessionDao.touch(sessId, System.currentTimeMillis())
     }
 
-    private fun toolByName(name: String): HarnessTool = when (name.trim().lowercase()) {
-        "read" -> HarnessTool.READ
-        "write" -> HarnessTool.WRITE
-        "edit" -> HarnessTool.EDIT
-        "base", "execute", "run" -> HarnessTool.BASE
-        else -> HarnessTool.BASE // 未知工具统一归入 base 由执行层报错
+    private fun startForegroundServiceSafe() {
+        runCatching {
+            val intent = Intent(context, Class.forName("top.wkbin.taixu.service.AgentForegroundService"))
+                .setAction("top.wkbin.taixu.action.AGENT_START")
+            context.startForegroundService(intent)
+        }
     }
 
     private fun HarnessTool.apiName(): String = when (this) {
@@ -875,28 +1001,19 @@ class HarnessLoop @Inject constructor(
         HarnessTool.WRITE -> "write"
         HarnessTool.EDIT -> "edit"
         HarnessTool.BASE -> "base"
+        HarnessTool.SUBAGENT -> "invoke_subagent"
+        HarnessTool.MCP -> "mcp"
     }
 
     private fun newId(): String = UUID.randomUUID().toString()
     private fun now(): Long = System.currentTimeMillis()
 
     companion object {
-        // 自定义工具轮次上限：不再限制为 8，保留一个极高的安全上限防止模型死循环调用工具。
         const val MAX_ROUNDS = 200
-
-        /** 已知工具名（用于拒绝模型的幻觉工具调用）。 */
-        val KNOWN_TOOL_NAMES = setOf("read", "write", "edit", "base")
-
-        /** 项目上下文单文件加载上限（字符）。 */
+        val KNOWN_TOOL_NAMES = setOf("read", "write", "edit", "base", "invoke_subagent", "subagent")
         const val PROJECT_CONTEXT_MAX_BYTES = 16 * 1024
-
-        /** 流式请求网络瞬时故障（IOException）自动重试上限，最多 5 次；HTTP 业务错误不重试。 */
         const val MAX_STREAM_RETRIES = 5
-
-        /** 重试退避基数：第 n 次重试前等待 n × 1s（1s/2s/3s/4s/5s）。 */
         const val RETRY_BACKOFF_MS = 1_000L
-
-        /** 通知/状态条里命令或路径的最大展示长度，超出截断。 */
         const val MAX_STATUS_ARG_LENGTH = 60
 
         val FALLBACK_SYSTEM_PROMPT = """

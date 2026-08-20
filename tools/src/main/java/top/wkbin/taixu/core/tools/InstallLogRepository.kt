@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.core.tools
+package top.wkbin.taixu.core.tools
 
 import top.wkbin.taixu.core.database.InstallLogDao
 import top.wkbin.taixu.core.database.InstallLogEntity
@@ -12,5 +12,6 @@ class InstallLogRepository @Inject constructor(
     private val dao: InstallLogDao,
 ) {
     suspend fun insert(log: InstallLogEntity) = dao.insert(log)
+    suspend fun deleteForTool(toolId: String) = dao.deleteForTool(toolId)
     fun observeForTool(toolId: String): Flow<List<InstallLogEntity>> = dao.observeForTool(toolId)
 }

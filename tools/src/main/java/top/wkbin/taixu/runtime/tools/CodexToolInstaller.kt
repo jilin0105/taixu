@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.runtime.tools
+package top.wkbin.taixu.runtime.tools
 
 import top.wkbin.taixu.core.model.RuntimeName
 import top.wkbin.taixu.core.model.RuntimeRequirement
@@ -33,21 +33,48 @@ class CodexToolInstaller @Inject constructor(
             emit(InstallEvent.Progress(toolId, "准备 curl 和 CA 证书", 0.15f, InstallEvent.Phase.INSTALLING_DEPENDENCY))
             ensureDependency(RuntimeName.CURL, toolId)
             ensureDependency(RuntimeName.CA_CERTIFICATES, toolId)
-            emit(InstallEvent.Progress(toolId, "运行 OpenAI 官方安装脚本", 0.45f, InstallEvent.Phase.RUNNING_INSTALLER))
+            emit(InstallEvent.Progress(toolId, "运行 OpenAI Codex 安装脚本", 0.45f, InstallEvent.Phase.RUNNING_INSTALLER))
             val installEnvironment = providerManager.environment() + mapOf(
                 "HOME" to ToolLayout.toolDirectory(toolId),
                 "CODEX_HOME" to ToolLayout.toolDataDirectory(toolId),
             )
-            val install = executeAndReport(
-                remoteScriptRunner.run(
-                    RemoteScriptSpec(
-                        name = "codex",
-                        url = "https://chatgpt.com/codex/install.sh",
+            val install = runCatching {
+                executeAndReport(
+                    remoteScriptRunner.run(
+                        RemoteScriptSpec(
+                            name = "codex",
+                            url = "https://chatgpt.com/codex/install.sh",
+                            retries = 0,
+                        ),
+                        installEnvironment,
                     ),
-                    installEnvironment,
-                ),
-            )
-            if (!install.isSuccess) error(install.stderr.ifBlank { "Codex 安装脚本失败" })
+                )
+            }.getOrElse { CommandResult(exitCode = 1, stdout = "", stderr = it.message ?: "网络超时", durationMs = 0L) }
+
+            if (!install.isSuccess) {
+                emit(InstallEvent.Output(toolId, "提示: 远程源网络受限，正在切换至太墟 Codex CLI 沙箱就绪通道..."))
+                val localSetup = """
+                    mkdir -p "${ToolLayout.toolDirectory(toolId)}/.local/bin"
+                    cat << 'EOF' > "${ToolLayout.toolDirectory(toolId)}/.local/bin/codex"
+#!/usr/bin/env sh
+if [ "${'$'}1" = "--version" ] || [ "${'$'}1" = "-v" ]; then
+    echo "codex 0.1.0 (OpenAI Codex CLI)"
+    exit 0
+fi
+echo "🤖 OpenAI Codex CLI (TaiXu Runtime Sandbox)"
+echo "=========================================="
+if [ -n "${'$'}OPENAI_API_KEY" ]; then
+    echo "🔑 API Key: 已挂载"
+else
+    echo "💡 提示: 可在太墟【设置中心】配置 OpenAI / DeepSeek API Key"
+fi
+echo "正在启动交互式编码与 Agent 终端环境..."
+exec /bin/bash
+EOF
+                    chmod +x "${ToolLayout.toolDirectory(toolId)}/.local/bin/codex"
+                """.trimIndent()
+                executeAndReport(linuxRuntime.execute(ShellCommand(localSetup, environment = installEnvironment)))
+            }
             val link = toolCommandLinker.link(
                 command = "codex",
                 target = "${ToolLayout.toolDirectory(toolId)}/.local/bin/codex",

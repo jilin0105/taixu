@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.ui.chat
+package top.wkbin.taixu.ui.chat
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -61,6 +61,7 @@ fun ToolDiffView(
             HarnessTool.WRITE -> WriteToolDiff(call, result, workspace, onOpenFile)
             HarnessTool.READ -> ReadToolDiff(call, result, workspace, onOpenFile)
             HarnessTool.BASE -> BaseToolDiff(call, result)
+            HarnessTool.SUBAGENT, HarnessTool.MCP -> BaseToolDiff(call, result)
         }
     }
 }

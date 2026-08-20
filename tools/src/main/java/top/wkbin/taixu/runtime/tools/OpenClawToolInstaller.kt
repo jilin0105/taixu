@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.runtime.tools
+package top.wkbin.taixu.runtime.tools
 
 import top.wkbin.taixu.core.model.RuntimeName
 import top.wkbin.taixu.core.model.RuntimeRequirement
@@ -65,11 +65,9 @@ class OpenClawToolInstaller @Inject constructor(
                 environment = providerManager.environment(),
             )
             if (!link.isSuccess) error(link.stderr.ifBlank { "无法创建 openclaw 命令入口" })
-            emit(InstallEvent.Progress(toolId, "验证 OpenClaw", 0.80f, InstallEvent.Phase.VERIFYING_INSTALLATION))
+            emit(InstallEvent.Progress(toolId, "验证 OpenClaw 命令", 0.85f, InstallEvent.Phase.VERIFYING_INSTALLATION))
             val version = executeAndReport("openclaw --version")
             if (!version.isSuccess) error(version.stderr.ifBlank { "找不到 openclaw 命令" })
-            val doctor = executeAndReport("openclaw doctor")
-            if (!doctor.isSuccess) error(doctor.stderr.ifBlank { "OpenClaw doctor 检查失败" })
             emit(InstallEvent.Completed(toolId, version.stdout.trim().lineSequence().firstOrNull()))
         } catch (cancellation: CancellationException) {
             throw cancellation

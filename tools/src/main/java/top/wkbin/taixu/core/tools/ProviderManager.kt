@@ -1,18 +1,28 @@
-﻿package top.wkbin.taixu.core.tools
+package top.wkbin.taixu.core.tools
 
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
 
 @Singleton
-class ProviderManager @Inject constructor(
-    private val providerRepository: ProviderRepository,
-) {
-    suspend fun environment(): Map<String, String> {
-        val provider = providerRepository.provider.first().trim().lowercase()
-        val apiKey = providerRepository.readApiKey()
-        val baseUrl = providerRepository.baseUrl.first().trim()
-        val model = providerRepository.model.first().trim()
+open class ProviderManager {
+    private val providerRepository: ProviderRepository?
+
+    @Inject
+    constructor(providerRepository: ProviderRepository) {
+        this.providerRepository = providerRepository
+    }
+
+    constructor() {
+        this.providerRepository = null
+    }
+
+    open suspend fun environment(): Map<String, String> {
+        val repo = providerRepository ?: return emptyMap()
+        val provider = repo.provider.first().trim().lowercase()
+        val apiKey = repo.readApiKey()
+        val baseUrl = repo.baseUrl.first().trim()
+        val model = repo.model.first().trim()
         val environment = linkedMapOf<String, String>()
         val variable = when (provider) {
             "openai" -> "OPENAI_API_KEY"
@@ -42,7 +52,6 @@ class ProviderManager @Inject constructor(
         "openrouter" -> "OPENROUTER_$suffix"
         else -> null
     }
-
 }
 
 object ProviderEndpointPolicy {

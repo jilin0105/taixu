@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.service
+package top.wkbin.taixu.service
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -19,9 +19,10 @@ class AgentReplyReceiver : BroadcastReceiver() {
             ?.getCharSequence(AgentForegroundService.KEY_REPLY)
             ?.toString()
             ?.trim()
+        val targetSessionId = intent.getStringExtra(AgentForegroundService.EXTRA_SESSION_ID)
         if (reply.isNullOrBlank()) return
-        // 先拉起前台服务（保持后台存活），再投递指令给 Agent。
-        AgentForegroundService.startFromReply(context)
-        harnessLoop.send(reply)
+        // 先拉起前台服务（保持后台存活），再投递指令给对应 Agent 会话。
+        AgentForegroundService.startFromReply(context, targetSessionId)
+        harnessLoop.send(reply, targetSessionId)
     }
 }

@@ -13,11 +13,50 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
+
 @Singleton
 class EnvironmentRepairer @Inject constructor(
     private val linuxRuntime: LinuxRuntime,
     private val environmentDoctor: EnvironmentDoctor,
 ) {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val _progress = MutableStateFlow<RepairProgress?>(null)
+    val progress: StateFlow<RepairProgress?> = _progress.asStateFlow()
+    private val _isRepairing = MutableStateFlow(false)
+    val isRepairing: StateFlow<Boolean> = _isRepairing.asStateFlow()
+    private var currentRepairJob: Job? = null
+
+    fun startRepair(): Job {
+        val existing = currentRepairJob
+        if (existing?.isActive == true) return existing
+        val job = scope.launch {
+            _isRepairing.value = true
+            try {
+                repair().collect { p ->
+                    _progress.value = p
+                }
+            } finally {
+                _isRepairing.value = false
+            }
+        }
+        currentRepairJob = job
+        return job
+    }
+
+    fun cancelRepair() {
+        currentRepairJob?.cancel()
+        _isRepairing.value = false
+        _progress.value = null
+    }
+
     fun repair(): Flow<RepairProgress> = flow {
         val totalSteps = 5
         val logs = mutableListOf<String>()
@@ -79,7 +118,8 @@ class EnvironmentRepairer @Inject constructor(
             )
             addLog("[Step 2/5] 清理 dpkg/apt 事务锁并替换国内源")
             val mirrorScript = """
-                rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock* 2>/dev/null || true
+                rm -rf /var/lib/dpkg/updates/* /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock* 2>/dev/null || true
+                DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>/dev/null || true
                 if [ -f /etc/os-release ]; then
                     . /etc/os-release
                     if [ "${'$'}ID" = "ubuntu" ]; then
@@ -107,7 +147,7 @@ class EnvironmentRepairer @Inject constructor(
                 ),
             )
             addLog("[Step 3/5] 执行 apt-get update 刷新索引")
-            val updateRes = executeCommand("DEBIAN_FRONTEND=noninteractive apt-get update -y", logs, timeoutMs = 120_000L)
+            val updateRes = executeCommand("rm -rf /var/lib/dpkg/updates/* /var/lib/dpkg/lock* 2>/dev/null || true; DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>/dev/null || true; DEBIAN_FRONTEND=noninteractive apt-get update -y", logs, timeoutMs = 120_000L)
             if (!updateRes.isSuccess) {
                 addLog("提示: apt-get update 产生部分非致命提示")
             }
@@ -132,27 +172,40 @@ class EnvironmentRepairer @Inject constructor(
             }
 
             // ==========================================
-            // Step 5: 配置并准备 Node.js 与国内包镜像
+            // Step 5: 配置并准备/升级 Node.js 与国内包镜像
             // ==========================================
             emit(
                 RepairProgress(
-                    stepTitle = "正在就绪 Node.js 运行时与 NPM/PIP 国内镜像...",
+                    stepTitle = "正在就绪/升级 Node.js 运行时与 NPM/PIP 国内镜像...",
                     stepIndex = 5,
                     totalSteps = totalSteps,
                     progress = 0.90f,
                     logs = logs.toList(),
                 ),
             )
-            addLog("[Step 5/5] 检查 Node.js 并配置 npm/pip 国内镜像")
+            addLog("[Step 5/5] 检查并自动升级 Node.js (>= v20 LTS) 及配置镜像加速")
             val setupNodeAndMirrors = """
-                if ! which node >/dev/null 2>&1; then
-                    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nodejs npm || true
+                NODE_VER=${'$'}(node -v 2>/dev/null | tr -d 'v' | cut -d. -f1)
+                if [ -z "${'$'}NODE_VER" ] || [ "${'$'}NODE_VER" -lt 20 ]; then
+                    echo "检测到 Node.js 缺失或版本较低 (当前: ${'$'}{NODE_VER:-未安装})，正在下载安装 Node.js v22 (LTS ARM64)..."
+                    mkdir -p /tmp/node_setup
+                    curl -fsSL --connect-timeout 10 --max-time 180 https://npmmirror.com/mirrors/node/v22.14.0/node-v22.14.0-linux-arm64.tar.xz -o /tmp/node_setup/node.tar.xz || \
+                    curl -fsSL --connect-timeout 10 --max-time 180 https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-arm64.tar.xz -o /tmp/node_setup/node.tar.xz || true
+                    if [ -f /tmp/node_setup/node.tar.xz ]; then
+                        tar -xJf /tmp/node_setup/node.tar.xz -C /usr/local --strip-components=1
+                        rm -rf /tmp/node_setup
+                        echo "Node.js v22 升级完成: ${'$'}(node -v 2>/dev/null)"
+                    else
+                        echo "预编译包拉取受限，尝试通过系统包管理器就绪基础 Node..."
+                        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nodejs npm || true
+                    fi
                 fi
                 which npm >/dev/null 2>&1 && npm config set registry https://registry.npmmirror.com || true
                 mkdir -p ${'$'}HOME/.pip
                 printf '[global]\nindex-url = https://pypi.tuna.tsinghua.edu.cn/simple\n' > ${'$'}HOME/.pip/pip.conf 2>/dev/null || true
+                echo "运行时就绪状态: Node ${'$'}(node -v 2>/dev/null || echo '未就绪'), NPM ${'$'}(npm -v 2>/dev/null || echo '未就绪')"
             """.trimIndent()
-            executeCommand(setupNodeAndMirrors, logs, timeoutMs = 120_000L)
+            executeCommand(setupNodeAndMirrors, logs, timeoutMs = 240_000L)
 
             // 触发重新体检
             addLog("自愈修复已全部执行完成，正在刷新环境体检报告...")
@@ -220,14 +273,14 @@ class EnvironmentRepairer @Inject constructor(
         result.stdout.lineSequence()
             .map { it.trim() }
             .filter { it.isNotBlank() }
-            .take(15)
+            .take(50)
             .forEach { logs.add(it) }
 
         if (!result.isSuccess) {
             result.stderr.lineSequence()
                 .map { it.trim() }
                 .filter { it.isNotBlank() }
-                .take(10)
+                .take(30)
                 .forEach { logs.add("ERR: $it") }
         }
 

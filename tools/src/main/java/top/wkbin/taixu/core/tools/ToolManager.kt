@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.core.tools
+package top.wkbin.taixu.core.tools
 
 import top.wkbin.taixu.core.database.InstallLogEntity
 import top.wkbin.taixu.core.database.InstallTaskEntity
@@ -27,6 +27,11 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+
 data class ToolInstallProgress(
     val toolId: String,
     val message: String,
@@ -47,21 +52,81 @@ class ToolManager @Inject constructor(
     private val installTransactionManager: InstallTransactionManager,
     private val dependencyManager: DependencyManager,
     private val linuxRuntime: LinuxRuntime,
+    private val providerManager: ProviderManager,
+    private val toolCommandLinker: top.wkbin.taixu.runtime.tools.ToolCommandLinker,
+    private val notificationNotifier: ToolNotificationNotifier,
     private val secretRedactor: SecretRedactor,
     installerAdapters: Set<@JvmSuppressWildcards ToolRuntimeAdapter>,
 ) {
+    private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val installMutex = Mutex()
-    private val transactionMutex = Mutex()
     private val installJobs = mutableMapOf<String, Job>()
     private val _installProgress = MutableStateFlow<Map<String, ToolInstallProgress>>(emptyMap())
     val installProgress: StateFlow<Map<String, ToolInstallProgress>> = _installProgress.asStateFlow()
     private val _verifications = MutableStateFlow<Map<String, ToolVerification>>(emptyMap())
     val verifications: StateFlow<Map<String, ToolVerification>> = _verifications.asStateFlow()
-    private val installerById = installerAdapters.associateBy { it.toolId }
+    private val staticInstallerById = installerAdapters.associateBy { it.toolId }
 
     fun observeTools(): Flow<List<ToolEntity>> = toolRepository.observeTools()
 
-    fun isToolSupported(toolId: String): Boolean = toolId in installerById
+    /** Expose manifest metadata for detail screens. */
+    fun manifest(toolId: String): ToolManifest? = toolRepository.manifest(toolId)
+
+    /** Check whether a background gateway process is currently alive for this tool. */
+    fun isGatewayRunning(toolId: String): Boolean =
+        linuxRuntime.listBackground().any { it.toolId == toolId && it.session.isAlive }
+
+    /** Stop a running gateway service for the given tool. */
+    suspend fun stopGateway(toolId: String) {
+        linuxRuntime.listBackground()
+            .filter { it.toolId == toolId }
+            .forEach { linuxRuntime.stopBackground(it.id) }
+    }
+
+    fun isToolSupported(toolId: String): Boolean = getAdapter(toolId) != null
+
+    fun startInstall(toolId: String): Job {
+        val existing = installJobs[toolId]
+        if (existing?.isActive == true) return existing
+        return managerScope.launch {
+            try {
+                install(toolId).collect { }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (throwable: Throwable) {
+                // Handled in install flow
+            }
+        }
+    }
+
+    fun startUpdate(toolId: String): Job {
+        val existing = installJobs[toolId]
+        if (existing?.isActive == true) return existing
+        return managerScope.launch {
+            try {
+                update(toolId).collect { }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (throwable: Throwable) {
+                // Handled in update flow
+            }
+        }
+    }
+
+    private fun getAdapter(toolId: String): ToolRuntimeAdapter? {
+        staticInstallerById[toolId]?.let { return it }
+        val manifest = toolRepository.manifest(toolId) ?: return null
+        if (!manifest.installScript.isNullOrBlank() || manifest.installMethod.isNotBlank()) {
+            return top.wkbin.taixu.runtime.tools.GenericRecipeInstaller(
+                manifest = manifest,
+                linuxRuntime = linuxRuntime,
+                dependencyManager = dependencyManager,
+                providerManager = providerManager,
+                toolCommandLinker = toolCommandLinker,
+            )
+        }
+        return null
+    }
 
     /** Service metadata comes from the signed/validated manifest, not the UI. */
     fun serviceSpec(toolId: String): LocalServiceSpec? {
@@ -130,7 +195,7 @@ class ToolManager @Inject constructor(
     fun install(toolId: String): Flow<InstallEvent> = installInternal(toolId, OPERATION_INSTALL)
 
     private fun installInternal(toolId: String, operation: String): Flow<InstallEvent> = flow {
-        require(toolId in installerById) { "暂不支持安装工具：$toolId" }
+        require(isToolSupported(toolId)) { "暂不支持安装工具：$toolId" }
         requireManifestEnabled(toolId)
         val currentJob = coroutineContext[Job]
             ?: error("安装任务必须运行在协程中")
@@ -140,6 +205,7 @@ class ToolManager @Inject constructor(
         installMutex.withLock {
             check(toolId !in installJobs) { "工具正在安装：$toolId" }
             installJobs[toolId] = currentJob
+            installLogRepository.deleteForTool(toolId)
             updateProgress(ToolInstallProgress(toolId, "准备安装", 0f))
             toolRepository.updateState(toolId, ToolState.INSTALLING.name)
             installTaskRepository.upsert(
@@ -152,62 +218,70 @@ class ToolManager @Inject constructor(
             )
         }
 
+        val toolName = previousTool?.name ?: toolRepository.findById(toolId)?.name ?: toolId
         var cancelled = false
         var transaction: InstallTransaction? = null
         try {
-            // apt, npm and shared runtime directories are global to the Linux
-            // runtime. Keep one adapter transaction active at a time even when
-            // the UI launches jobs for different tools.
-            transactionMutex.withLock {
-                if (operation == OPERATION_UPDATE) {
-                    linuxRuntime.listBackground()
-                        .filter { it.toolId == toolId }
-                        .forEach { linuxRuntime.stopBackground(it.id) }
+            if (operation == OPERATION_UPDATE) {
+                linuxRuntime.listBackground()
+                    .filter { it.toolId == toolId }
+                    .forEach { linuxRuntime.stopBackground(it.id) }
+            }
+            if (preservePreviousInstall) {
+                val current = requireAdapter(toolId).verify()
+                check(current.isSuccess) {
+                    "更新前验证失败：${current.stderr.ifBlank { current.stdout }.trim()}"
                 }
-                if (preservePreviousInstall) {
-                    val current = requireAdapter(toolId).verify()
-                    check(current.isSuccess) {
-                        "更新前验证失败：${current.stderr.ifBlank { current.stdout }.trim()}"
+            }
+            transaction = installTransactionManager.begin(toolId, preservePreviousInstall)
+            selectInstaller(toolId).collect { event ->
+                val safeEvent = event.redacted()
+                recordEvent(safeEvent)
+                updateFromEvent(safeEvent)
+                when (safeEvent) {
+                    is InstallEvent.Progress -> {
+                        notificationNotifier.showProgress(toolId, toolName, safeEvent.message, safeEvent.progress)
                     }
-                }
-                transaction = installTransactionManager.begin(toolId, preservePreviousInstall)
-                selectInstaller(toolId).collect { event ->
-                    val safeEvent = event.redacted()
-                    recordEvent(safeEvent)
-                    updateFromEvent(safeEvent)
-                    when (safeEvent) {
-                        is InstallEvent.Completed -> toolRepository.updateStateAndInstalledVersion(
+                    is InstallEvent.Completed -> {
+                        val installedVer = safeEvent.version?.trim()?.takeIf { it.isNotBlank() }
+                            ?: toolRepository.findById(toolId)?.manifestVersion
+                        toolRepository.updateStateAndInstalledVersion(
                             id = toolId,
                             state = ToolState.INSTALLED.name,
-                            installedVersion = safeEvent.version?.trim()?.takeIf { it.isNotBlank() }
-                                ?: toolRepository.findById(toolId)?.manifestVersion,
+                            installedVersion = installedVer,
                         )
-                        is InstallEvent.Failed -> {
-                            transaction?.let { installTransactionManager.rollback(it) }
-                            transaction = null
-                            toolRepository.updateStateAndInstalledVersion(
-                                id = toolId,
-                                state = failureState(preservePreviousInstall, previousTool),
-                                installedVersion = if (preservePreviousInstall) previousTool?.installedVersion else null,
-                            )
-                            if (!preservePreviousInstall) releaseRuntimeReferences(toolId)
-                        }
-                        else -> Unit
+                        notificationNotifier.showSuccess(toolId, toolName, installedVer)
                     }
-                    when (safeEvent) {
-                        is InstallEvent.Completed -> updateTask(toolId, TASK_COMPLETED, "安装完成")
-                        is InstallEvent.Failed -> updateTask(toolId, TASK_FAILED, safeEvent.message)
-                        else -> Unit
-                    }
-                    if (safeEvent is InstallEvent.Completed) {
-                        transaction?.let { installTransactionManager.commit(it) }
+                    is InstallEvent.Failed -> {
+                        transaction?.let { installTransactionManager.rollback(it) }
                         transaction = null
+                        toolRepository.updateStateAndInstalledVersion(
+                            id = toolId,
+                            state = failureState(preservePreviousInstall, previousTool),
+                            installedVersion = if (preservePreviousInstall) previousTool?.installedVersion else null,
+                        )
+                        if (!preservePreviousInstall) releaseRuntimeReferences(toolId)
+                        notificationNotifier.showFailed(toolId, toolName, safeEvent.message)
                     }
-                    emit(safeEvent)
+                    is InstallEvent.Cancelled -> {
+                        notificationNotifier.cancel(toolId)
+                    }
+                    else -> Unit
                 }
+                when (safeEvent) {
+                    is InstallEvent.Completed -> updateTask(toolId, TASK_COMPLETED, "安装完成")
+                    is InstallEvent.Failed -> updateTask(toolId, TASK_FAILED, safeEvent.message)
+                    else -> Unit
+                }
+                if (safeEvent is InstallEvent.Completed) {
+                    transaction?.let { installTransactionManager.commit(it) }
+                    transaction = null
+                }
+                emit(safeEvent)
             }
         } catch (throwable: CancellationException) {
             cancelled = true
+            notificationNotifier.cancel(toolId)
             withContext(NonCancellable) {
                 transaction?.let { tx ->
                     try {
@@ -233,6 +307,7 @@ class ToolManager @Inject constructor(
                 toolId,
                 secretRedactor.redact(throwable.message ?: "安装流程异常终止"),
             )
+            notificationNotifier.showFailed(toolId, toolName, event.message)
             withContext(NonCancellable) {
                 transaction?.let { tx ->
                     try {
@@ -288,16 +363,14 @@ class ToolManager @Inject constructor(
     }
 
     suspend fun uninstall(toolId: String, deleteData: Boolean = false) {
-        require(toolId in installerById) { "暂不支持卸载工具：$toolId" }
+        require(isToolSupported(toolId)) { "暂不支持卸载工具：$toolId" }
         installMutex.withLock {
             check(toolId !in installJobs) { "工具正在安装：$toolId" }
         }
-        transactionMutex.withLock {
-            linuxRuntime.listBackground()
-                .filter { it.toolId == toolId }
-                .forEach { linuxRuntime.stopBackground(it.id) }
-            uninstallLocked(toolId, deleteData)
-        }
+        linuxRuntime.listBackground()
+            .filter { it.toolId == toolId }
+            .forEach { linuxRuntime.stopBackground(it.id) }
+        uninstallLocked(toolId, deleteData)
     }
 
     private suspend fun uninstallLocked(toolId: String, deleteData: Boolean) {
@@ -334,6 +407,9 @@ class ToolManager @Inject constructor(
     fun observeInstallLogs(toolId: String): Flow<List<InstallLogEntity>> =
         installLogRepository.observeForTool(toolId)
 
+    suspend fun clearLogs(toolId: String) =
+        installLogRepository.deleteForTool(toolId)
+
     suspend fun launch(toolId: String): top.wkbin.taixu.runtime.shell.CommandResult {
         requireInstalledTool(toolId)
         return requireAdapter(toolId).launch()
@@ -354,7 +430,7 @@ class ToolManager @Inject constructor(
     }
 
     suspend fun verify(toolId: String): ToolVerification {
-        require(toolId in installerById) { "暂不支持验证工具：$toolId" }
+        require(isToolSupported(toolId)) { "暂不支持验证工具：$toolId" }
         requireManifestEnabled(toolId)
         val result = requireAdapter(toolId).verify()
         val safeStdout = secretRedactor.redact(result.stdout)
@@ -409,12 +485,12 @@ class ToolManager @Inject constructor(
     }
 
     private fun selectInstaller(toolId: String): Flow<InstallEvent> =
-        checkNotNull(installerById[toolId]) { "没有找到工具安装器：$toolId" }.install()
+        requireAdapter(toolId).install()
 
     private fun requireAdapter(
         toolId: String,
         requireEnabled: Boolean = true,
-    ): ToolRuntimeAdapter = checkNotNull(installerById[toolId]) { "暂不支持工具：$toolId" }.also {
+    ): ToolRuntimeAdapter = checkNotNull(getAdapter(toolId)) { "暂不支持工具：$toolId" }.also {
         if (requireEnabled) {
             requireManifestEnabled(toolId)
         }
@@ -518,14 +594,11 @@ class ToolManager @Inject constructor(
             existing == null -> ToolState.AVAILABLE.name
             else -> {
                 val installedVersion = existing.installedVersion
-                val manifestLatest = latestVersion
+                val manifestLatest = latestVersion ?: version
                 when {
                     existing.state == ToolState.DISABLED.name ->
                         if (installedVersion != null) ToolState.INSTALLED.name else ToolState.AVAILABLE.name
-                    installedVersion != null &&
-                        manifestLatest != null &&
-                        manifestLatest.versionNumbers() != null &&
-                        installedVersion.versionNumbers() != manifestLatest.versionNumbers() ->
+                    installedVersion != null && isUpdateNewer(manifestLatest, installedVersion) ->
                         ToolState.UPDATE_AVAILABLE.name
                     existing.state == ToolState.UPDATE_AVAILABLE.name -> ToolState.INSTALLED.name
                     else -> existing.state
@@ -542,11 +615,24 @@ class ToolManager @Inject constructor(
         latestVersion = latestVersion ?: version,
     )
 
+    private fun isUpdateNewer(manifestLatest: String?, installedVersion: String?): Boolean {
+        if (manifestLatest.isNullOrBlank() || installedVersion.isNullOrBlank()) return false
+        val latestNums = manifestLatest.versionNumbers() ?: return false
+        val currentNums = installedVersion.versionNumbers() ?: return false
+        for (i in 0 until maxOf(latestNums.size, currentNums.size)) {
+            val l = latestNums.getOrElse(i) { 0 }
+            val c = currentNums.getOrElse(i) { 0 }
+            if (l > c) return true
+            if (l < c) return false
+        }
+        return false
+    }
+
     private fun String.versionNumbers(): List<Int>? = Regex("\\d+(?:\\.\\d+){0,3}")
         .find(this)
         ?.value
         ?.split('.')
-        ?.map(String::toInt)
+        ?.mapNotNull { it.toIntOrNull() }
 
     private fun ToolActionResult.toUninstallOutcome(): UninstallOutcome =
         UninstallOutcome(success, message)

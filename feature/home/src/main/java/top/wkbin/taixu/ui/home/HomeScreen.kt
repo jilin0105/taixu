@@ -306,11 +306,17 @@ private fun EnvironmentDoctorCard(
                                 text = "[步骤 ${repairProgress.stepIndex}/${repairProgress.totalSteps}] ${repairProgress.stepTitle}",
                                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                                 color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                             Text(
                                 text = "${(repairProgress.progress * 100).toInt()}%",
                                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = 8.dp),
+                                maxLines = 1,
+                                softWrap = false,
                             )
                         }
 
@@ -414,7 +420,7 @@ private fun EnvironmentDoctorCard(
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = "⚡ 一键自愈与就绪加速 (Auto-Fix & Optimize)",
+                            text = "一键修复",
                             fontWeight = FontWeight.SemiBold,
                         )
                     }
@@ -615,8 +621,14 @@ private fun RuntimeEngineStatusCard(
                             text = initializing.step,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
-                        TextButton(onClick = onCancel) {
+                        TextButton(
+                            onClick = onCancel,
+                            modifier = Modifier.padding(start = 8.dp),
+                        ) {
                             Text("取消", style = MaterialTheme.typography.labelSmall)
                         }
                     }

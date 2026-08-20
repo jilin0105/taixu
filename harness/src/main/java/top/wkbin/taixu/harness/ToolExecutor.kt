@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.harness
+package top.wkbin.taixu.harness
 
 import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.security.SecretRedactor
@@ -25,11 +25,13 @@ class ToolExecutor @Inject constructor(
     private val fileAccess: WorkspaceFileAccess,
     private val linuxRuntime: LinuxRuntime,
     private val secretRedactor: SecretRedactor,
+    private val subagentOrchestrator: SubagentOrchestrator? = null,
+    private val mcpManager: top.wkbin.taixu.harness.mcp.McpManager? = null,
 ) {
-    suspend fun execute(toolCall: ToolCall): ToolResult {
+    suspend fun execute(toolCall: ToolCall, sessionId: String = ""): ToolResult {
         val now = System.currentTimeMillis()
         val outcome = try {
-            executeTool(toolCall.tool, toolCall.args)
+            executeTool(toolCall.tool, toolCall.args, toolCall.rawToolName, sessionId)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (throwable: Throwable) {
@@ -67,7 +69,12 @@ class ToolExecutor @Inject constructor(
         }
     }
 
-    private suspend fun executeTool(tool: HarnessTool, args: JsonObject): Pair<Boolean, String> = when (tool) {
+    private suspend fun executeTool(
+        tool: HarnessTool,
+        args: JsonObject,
+        rawToolName: String?,
+        sessionId: String,
+    ): Pair<Boolean, String> = when (tool) {
         HarnessTool.READ -> {
             val path = requireString(args, "path")
             val offset = args["offset"]?.jsonPrimitive?.content?.trim()?.toIntOrNull()
@@ -86,6 +93,8 @@ class ToolExecutor @Inject constructor(
             fileAccess.edit(path, oldText, newText).toToolOutput("已修改 $path")
         }
         HarnessTool.BASE -> executeBase(args)
+        HarnessTool.SUBAGENT -> subagentOrchestrator?.executeSubagents(args, sessionId) ?: (false to "未初始化子智能体编排器")
+        HarnessTool.MCP -> mcpManager?.executeTool(rawToolName ?: "mcp", args) ?: (false to "未初始化 MCP 管理器")
     }
 
     private suspend fun executeBase(args: JsonObject): Pair<Boolean, String> {

@@ -14,6 +14,8 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.RemoteInput
 import top.wkbin.taixu.R
+import top.wkbin.taixu.core.database.HarnessSessionDao
+import top.wkbin.taixu.core.model.SessionRunState
 import top.wkbin.taixu.harness.HarnessLoop
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -21,26 +23,27 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlin.math.absoluteValue
 
 /**
- * Agent 后台执行前台服务：当 Agent 开始执行时启动，让进程在后台存活，
- * 通知实时显示当前动作；执行结束后保留一条带【回复】输入框的通知，可继续追加任务。
- *
- * 后台保活三件套：
- * 1. 前台服务（dataSync）+ START_STICKY：进程被杀后由系统择机重启服务；
- * 2. PARTIAL_WAKE_LOCK 进程锁：息屏后 CPU 不休眠，保证推理与工具执行不中断；
- * 3. 通知栏实时进度：把 HarnessLoop.status 的每一步（思考/读文件/执行命令）反映到通知。
+ * Agent 后台执行前台服务：
+ * 当任意一个或多个 Agent 正在运行时启动保活服务。
+ * 为每个并行运行的 Agent 会话分发专属的系统通知（标题含会话名与当前执行动作），
+ * 支持独立点击【停止】以及执行完毕后的【回复】续跑。
  */
 @AndroidEntryPoint
 class AgentForegroundService : Service() {
 
     @Inject lateinit var harnessLoop: HarnessLoop
+    @Inject lateinit var sessionDao: HarnessSessionDao
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var collecting = false
     private var processLock: PowerManager.WakeLock? = null
+    private val activeNotifSessionIds = mutableSetOf<String>()
 
     override fun onCreate() {
         super.onCreate()
@@ -53,34 +56,52 @@ class AgentForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val targetSessionId = intent?.getStringExtra(EXTRA_SESSION_ID)
         when (intent?.action) {
             ACTION_STOP -> {
-                runCatching { harnessLoop.cancel() }.onFailure { Log.w(TAG, "取消 Agent 失败", it) }
-                releaseProcessLock()
-                stopForegroundSafely(STOP_FOREGROUND_REMOVE)
-                stopSelfResult(startId)
+                runCatching {
+                    if (!targetSessionId.isNullOrBlank()) {
+                        harnessLoop.cancel(targetSessionId)
+                    } else {
+                        harnessLoop.cancel()
+                    }
+                }.onFailure { Log.w(TAG, "取消 Agent 失败", it) }
                 return START_NOT_STICKY
             }
             else -> {
-                safeStartForeground(NOTIFICATION_ID, notification(currentStatus()))
+                safeStartForeground(PRIMARY_NOTIFICATION_ID, placeholderNotification("智能体中枢就绪"))
                 acquireProcessLock()
                 if (!collecting) {
                     collecting = true
                     serviceScope.launch {
-                        harnessLoop.running.collectLatest { running ->
-                            if (running) {
-                                notify(harnessLoop.status.value ?: STATUS_THINKING)
+                        combine(
+                            harnessLoop.sessionRunStates,
+                            harnessLoop.sessionStatuses,
+                        ) { runStates, statuses ->
+                            runStates to statuses
+                        }.collectLatest { (runStates, statuses) ->
+                            val runningEntries = runStates.filter { it.value == SessionRunState.RUNNING }
+                            if (runningEntries.isNotEmpty()) {
+                                acquireProcessLock()
+                                runningEntries.forEach { (sessionId, _) ->
+                                    activeNotifSessionIds.add(sessionId)
+                                    val notifId = sessionNotificationId(sessionId)
+                                    val sessionTitle = sessionDao.findById(sessionId)?.title ?: "智枢智能体"
+                                    val statusText = statuses[sessionId]?.takeIf { it.isNotBlank() } ?: STATUS_THINKING
+                                    val notif = sessionNotification(sessionId, sessionTitle, statusText)
+                                    safeNotify(notifId, notif)
+                                }
                             } else {
-                                finishExecution()
-                            }
-                        }
-                    }
-                    // 关键修复：持续收集 status 流。之前只在 running 翻转时读了一次 status，
-                    // 导致通知永远停留在启动时的"Agent 执行中…"，不反映实际进度。
-                    serviceScope.launch {
-                        harnessLoop.status.collectLatest { status ->
-                            if (harnessLoop.running.value) {
-                                notify(status ?: STATUS_THINKING)
+                                val previouslyRunning = activeNotifSessionIds.toList()
+                                activeNotifSessionIds.clear()
+                                previouslyRunning.forEach { sessionId ->
+                                    val notifId = sessionNotificationId(sessionId)
+                                    val sessionTitle = sessionDao.findById(sessionId)?.title ?: "智枢智能体"
+                                    safeNotify(notifId, completedNotification(sessionId, sessionTitle))
+                                }
+                                releaseProcessLock()
+                                stopForegroundSafely(STOP_FOREGROUND_DETACH)
+                                stopSelf()
                             }
                         }
                     }
@@ -98,19 +119,14 @@ class AgentForegroundService : Service() {
         super.onDestroy()
     }
 
-    /**
-     * 进程锁（PARTIAL_WAKE_LOCK）：Agent 执行期间保持 CPU 唤醒，
-     * 防止息屏/后台时 SoC 休眠导致 SSE 流式读取或工具执行被冻结。
-     * 带 4 小时安全上限，即使异常泄漏也会自动超时释放，不会永久耗电。
-     */
     private fun acquireProcessLock() {
         if (processLock?.isHeld == true) return
         runCatching {
             val powerManager = getSystemService(PowerManager::class.java)
             processLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG)
                 .also { it.acquire(LOCK_TIMEOUT_MS) }
-            Log.i(TAG, "Acquired partial wake lock (process lock) for agent execution")
-        }.onFailure { Log.w(TAG, "获取进程锁失败（继续以前台服务保活）", it) }
+            Log.i(TAG, "Acquired partial wake lock for agent execution")
+        }.onFailure { Log.w(TAG, "获取进程锁失败", it) }
     }
 
     private fun releaseProcessLock() {
@@ -120,46 +136,48 @@ class AgentForegroundService : Service() {
         processLock = null
     }
 
-    private fun currentStatus(): String = harnessLoop.status.value ?: STATUS_THINKING
-
-    private fun notify(status: String) {
-        safeNotify(NOTIFICATION_ID, notification(status, ongoing = true))
+    private fun sessionNotificationId(sessionId: String): Int {
+        return PRIMARY_NOTIFICATION_ID + (sessionId.hashCode().absoluteValue % 9000) + 1
     }
 
-    private fun finishExecution() {
-        releaseProcessLock()
-        safeNotify(NOTIFICATION_ID, replyNotification())
-        stopForegroundSafely(STOP_FOREGROUND_DETACH) // 保留完成后通知，不再在前台
-        stopSelf()
-    }
-
-    private fun notification(status: String, ongoing: Boolean = true): Notification =
+    private fun placeholderNotification(status: String): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.logo)
-            // 标题直接展示当前动作（如"执行命令：apt-get install …"），一眼可见在做什么
             .setContentTitle(status)
-            .setContentText("Agent 后台运行中 · 进程锁已开启")
-            .setOngoing(ongoing)
+            .setContentText("太墟 Agent 后台运行中")
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .build()
+
+    private fun sessionNotification(sessionId: String, title: String, status: String): Notification {
+        val stopPending = PendingIntent.getService(
+            this,
+            sessionNotificationId(sessionId),
+            Intent(this, AgentForegroundService::class.java)
+                .setAction(ACTION_STOP)
+                .putExtra(EXTRA_SESSION_ID, sessionId),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.logo)
+            .setContentTitle("【$title】$status")
+            .setContentText("智能体后台运行中 · 进程锁已开启")
+            .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .addAction(
                 NotificationCompat.Action(
                     R.drawable.logo,
                     "停止",
-                    PendingIntent.getService(
-                        this,
-                        2002,
-                        Intent(this, AgentForegroundService::class.java).setAction(ACTION_STOP),
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-                    ),
+                    stopPending,
                 ),
             )
             .build()
+    }
 
-    /** 执行完成后的通知：带 RemoteInput 回复框，用户可继续交代新任务。 */
-    private fun replyNotification(): Notification {
-        // Android 12+（API 31）要求带 RemoteInput 的 action 的 PendingIntent 必须为 mutable，
-        // 否则 NotificationManager 会抛 IllegalArgumentException（见崩溃线程）。
+    private fun completedNotification(sessionId: String, title: String): Notification {
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
         } else {
@@ -167,27 +185,27 @@ class AgentForegroundService : Service() {
         }
         val replyPending = PendingIntent.getBroadcast(
             this,
-            2003,
-            Intent(this, AgentReplyReceiver::class.java),
+            sessionNotificationId(sessionId),
+            Intent(this, AgentReplyReceiver::class.java)
+                .putExtra(EXTRA_SESSION_ID, sessionId),
             flags,
         )
-        val remoteInput = RemoteInput.Builder(KEY_REPLY).setLabel("继续执行").build()
+        val remoteInput = RemoteInput.Builder(KEY_REPLY).setLabel("回复给 $title").build()
         val replyAction = NotificationCompat.Action.Builder(
             R.drawable.logo,
             "回复",
             replyPending,
         ).addRemoteInput(remoteInput).build()
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.logo)
-            .setContentTitle("Agent 已完成")
-            .setContentText("点下方回复，告诉 Agent 下一步做什么")
+            .setContentTitle("【$title】任务已完成")
+            .setContentText("点下方回复，交代下一步任务")
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .addAction(replyAction)
             .build()
     }
-
-    // ---- 通知发布异常隔离：任何通知操作的失败都不应拖垮主线程 ----
 
     private fun safeStartForeground(id: Int, notification: Notification) {
         runCatching { startForeground(id, notification) }
@@ -208,21 +226,24 @@ class AgentForegroundService : Service() {
     companion object {
         const val ACTION_START = "top.wkbin.taixu.action.AGENT_START"
         const val ACTION_STOP = "top.wkbin.taixu.action.AGENT_STOP"
+        const val EXTRA_SESSION_ID = "extra_session_id"
         const val KEY_REPLY = "agent_reply"
         private const val CHANNEL_ID = "agent-execution"
-        private const val NOTIFICATION_ID = 2001
+        private const val PRIMARY_NOTIFICATION_ID = 2001
         private const val TAG = "AgentForegroundService"
         private const val STATUS_THINKING = "Agent 正在思考…"
         private const val WAKE_LOCK_TAG = "taixu:agent-execution"
-        private const val LOCK_TIMEOUT_MS = 4 * 60 * 60 * 1000L // 4 小时安全上限
+        private const val LOCK_TIMEOUT_MS = 4 * 60 * 60 * 1000L
 
-        fun start(context: Context) {
-            val intent = Intent(context, AgentForegroundService::class.java).setAction(ACTION_START)
+        fun start(context: Context, sessionId: String? = null) {
+            val intent = Intent(context, AgentForegroundService::class.java)
+                .setAction(ACTION_START)
+            sessionId?.let { intent.putExtra(EXTRA_SESSION_ID, it) }
             context.startForegroundService(intent)
         }
 
-        fun startFromReply(context: Context) {
-            start(context)
+        fun startFromReply(context: Context, sessionId: String? = null) {
+            start(context, sessionId)
         }
     }
 }

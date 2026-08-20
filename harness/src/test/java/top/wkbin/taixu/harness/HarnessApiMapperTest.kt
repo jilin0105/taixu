@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.harness
+package top.wkbin.taixu.harness
 
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -53,6 +53,9 @@ class HarnessApiMapperTest {
         assertEquals(HarnessTool.EDIT, HarnessApiMapper.toolByName("edit"))
         assertEquals(HarnessTool.BASE, HarnessApiMapper.toolByName("base"))
         assertEquals(HarnessTool.BASE, HarnessApiMapper.toolByName("execute"))
+        assertEquals(HarnessTool.SUBAGENT, HarnessApiMapper.toolByName("invoke_subagent"))
+        assertEquals(HarnessTool.SUBAGENT, HarnessApiMapper.toolByName("subagent"))
+        assertEquals(HarnessTool.MCP, HarnessApiMapper.toolByName("mcp__sqlite__read_query"))
         assertEquals(HarnessTool.BASE, HarnessApiMapper.toolByName("unknown_tool"))
     }
 }

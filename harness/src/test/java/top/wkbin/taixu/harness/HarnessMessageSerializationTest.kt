@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.harness
+package top.wkbin.taixu.harness
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
@@ -54,7 +54,14 @@ class HarnessMessageSerializationTest {
     fun `polymorphic decode dispatches on serial name`() {
         val userJson = """{"type":"user","id":"u","createdAt":1,"text":"hi"}"""
         val callJson = """{"type":"tool_call","id":"c","createdAt":1,"tool":"base","args":{"command":"ls"}}"""
+        val subagentJson = """{"type":"tool_call","id":"sub1","createdAt":1,"tool":"invoke_subagent","args":{"role":"coder"}}"""
+        val mcpJson = """{"type":"tool_call","id":"mcp1","createdAt":1,"tool":"mcp","rawToolName":"mcp__sqlite__query","args":{"sql":"select 1"}}"""
         assertTrue(json.decodeFromString(HarnessMessage.serializer(), userJson) is UserMessage)
         assertTrue(json.decodeFromString(HarnessMessage.serializer(), callJson) is ToolCall)
+        val subCall = json.decodeFromString(HarnessMessage.serializer(), subagentJson) as ToolCall
+        assertEquals(HarnessTool.SUBAGENT, subCall.tool)
+        val mcpCall = json.decodeFromString(HarnessMessage.serializer(), mcpJson) as ToolCall
+        assertEquals(HarnessTool.MCP, mcpCall.tool)
+        assertEquals("mcp__sqlite__query", mcpCall.rawToolName)
     }
 }

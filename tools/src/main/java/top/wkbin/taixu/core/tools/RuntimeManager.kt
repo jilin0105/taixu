@@ -77,7 +77,9 @@ class RuntimeManagerImpl @Inject constructor(
             var install = linuxRuntime.execute(
                 ShellCommand(
                     commandLine =
-                        "apt-get update -y; apt-get --fix-broken install -y || true; " +
+                        "rm -rf /var/lib/dpkg/updates/* /var/lib/dpkg/lock* 2>/dev/null || true; " +
+                            "dpkg --configure -a 2>/dev/null || true; " +
+                            "apt-get update -y; apt-get --fix-broken install -y || true; " +
                             "apt-get install -y $packageName",
                     environment = mapOf("DEBIAN_FRONTEND" to "noninteractive"),
                     timeoutMs = DEPENDENCY_TIMEOUT_MS,

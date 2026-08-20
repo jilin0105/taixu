@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.harness
+package top.wkbin.taixu.harness
 
 /**
  * HarnessMessage ↔ OpenAI 兼容 API 消息的纯转换逻辑（无依赖，便于测试）。
@@ -19,7 +19,7 @@ internal object HarnessApiMapper {
                 ApiToolCall(
                     id = message.id,
                     function = ApiFunctionCall(
-                        name = apiName(message.tool),
+                        name = message.rawToolName ?: apiName(message.tool),
                         arguments = message.args.toString(),
                     ),
                 ),
@@ -33,11 +33,17 @@ internal object HarnessApiMapper {
     }
 
     /** LLM 返回的函数名 → HarnessTool。未知工具统一归入 base 由执行层报错。 */
-    fun toolByName(name: String): HarnessTool = when (name.trim().lowercase()) {
-        "read" -> HarnessTool.READ
-        "write" -> HarnessTool.WRITE
-        "edit" -> HarnessTool.EDIT
-        else -> HarnessTool.BASE
+    fun toolByName(name: String): HarnessTool {
+        val trimmed = name.trim()
+        val lower = trimmed.lowercase()
+        return when {
+            lower == "read" -> HarnessTool.READ
+            lower == "write" -> HarnessTool.WRITE
+            lower == "edit" -> HarnessTool.EDIT
+            lower == "invoke_subagent" || lower == "subagent" -> HarnessTool.SUBAGENT
+            trimmed.startsWith("mcp__") -> HarnessTool.MCP
+            else -> HarnessTool.BASE
+        }
     }
 
     fun apiName(tool: HarnessTool): String = when (tool) {
@@ -45,5 +51,7 @@ internal object HarnessApiMapper {
         HarnessTool.WRITE -> "write"
         HarnessTool.EDIT -> "edit"
         HarnessTool.BASE -> "base"
+        HarnessTool.SUBAGENT -> "invoke_subagent"
+        HarnessTool.MCP -> "mcp"
     }
 }

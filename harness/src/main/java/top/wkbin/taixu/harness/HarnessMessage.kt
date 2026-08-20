@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.harness
+package top.wkbin.taixu.harness
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -11,6 +11,8 @@ enum class HarnessTool {
     @SerialName("write") WRITE,
     @SerialName("edit") EDIT,
     @SerialName("base") BASE,
+    @SerialName("invoke_subagent") SUBAGENT,
+    @SerialName("mcp") MCP,
 }
 
 /**
@@ -55,6 +57,8 @@ data class ToolCall(
     val args: JsonObject,
     /** 触发本次调用的 assistant 轮次的推理内容，多轮时需原样传回 API。 */
     val reasoning: String? = null,
+    /** 原始工具名称（用于 MCP 动态工具或子智能体识别） */
+    val rawToolName: String? = null,
 ) : HarnessMessage
 
 @Serializable

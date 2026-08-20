@@ -84,6 +84,8 @@ fun SettingsScreen(
     onNavigate: (MainDestination) -> Unit,
     onOpenModelProfiles: () -> Unit,
     onOpenAgentSettings: () -> Unit,
+    onOpenMcpSettings: () -> Unit = {},
+    onOpenToolCenter: () -> Unit = {},
     onOpenDeveloper: () -> Unit,
     onOpenStorageMounts: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
@@ -117,6 +119,8 @@ fun SettingsScreen(
             onThemeModeChanged = viewModel::setThemeMode,
             openModels = onOpenModelProfiles,
             openAgentSettings = onOpenAgentSettings,
+            openMcpSettings = onOpenMcpSettings,
+            openToolCenter = onOpenToolCenter,
             openStorageMounts = onOpenStorageMounts,
             setDeveloper = viewModel::setDeveloperMode,
             openDeveloper = onOpenDeveloper,
@@ -198,6 +202,8 @@ private fun HomePage(
     onThemeModeChanged: (String) -> Unit,
     openModels: () -> Unit,
     openAgentSettings: () -> Unit,
+    openMcpSettings: () -> Unit = {},
+    openToolCenter: () -> Unit,
     openStorageMounts: () -> Unit,
     setDeveloper: (Boolean) -> Unit,
     openDeveloper: () -> Unit,
@@ -233,13 +239,9 @@ private fun HomePage(
             currentMode = executionMode,
             switching = switchingMode,
             onSelectMode = { mode ->
-                onSwitchExecutionMode(mode) { success, message ->
-                    if (success) {
-                        android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
-                        showExecutionModeDialog = false
-                    } else {
-                        privilegeResultMessage = message
-                    }
+                showExecutionModeDialog = false
+                onSwitchExecutionMode(mode) { success, msg ->
+                    privilegeResultMessage = if (success) null else msg
                 }
             },
             onDismiss = { showExecutionModeDialog = false },
@@ -334,10 +336,24 @@ private fun HomePage(
             SettingsGroup {
                 SettingsRow(
                     icon = RuntimeIconName.Package,
+                    title = "插件与工具中心",
+                    subtitle = "一键安装 Claude Code、OpenClaw 等 AI CLI 与工具",
+                    onClick = openToolCenter,
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                SettingsRow(
+                    icon = RuntimeIconName.Code,
                     title = "Agent 智能体管理",
                     subtitle = "思考流呈现、上下文压缩阈值与技能插件",
                     value = "$activeSkillsCount 个技能",
                     onClick = openAgentSettings,
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                SettingsRow(
+                    icon = RuntimeIconName.Code,
+                    title = "MCP 插件生态与协议",
+                    subtitle = "管理 SQLite、Git、Fetch 等 Model Context Protocol 协议服务",
+                    onClick = openMcpSettings,
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 SettingsRow(

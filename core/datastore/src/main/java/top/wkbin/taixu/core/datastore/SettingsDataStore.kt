@@ -364,5 +364,107 @@ class SettingsDataStore @Inject constructor(
             }
         }
     }
+
+    // ── Tool Detail: Auto-start & Access Token ──────────────────────────
+
+    /** Whether the tool's gateway service should auto-start when the Linux Runtime becomes ready. */
+    fun toolAutoStart(toolId: String): Flow<Boolean> = context.settingsDataStore.data.map { prefs ->
+        prefs[booleanPreferencesKey("tool_${toolId}_auto_start")] ?: false
+    }
+
+    suspend fun setToolAutoStart(toolId: String, enabled: Boolean) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[booleanPreferencesKey("tool_${toolId}_auto_start")] = enabled
+        }
+    }
+
+    /** Persisted access token for generating shareable URLs to web-type tool services. */
+    fun toolAccessToken(toolId: String): Flow<String?> = context.settingsDataStore.data.map { prefs ->
+        prefs[stringPreferencesKey("tool_${toolId}_access_token")]
+    }
+
+    suspend fun setToolAccessToken(toolId: String, token: String?) {
+        context.settingsDataStore.edit { prefs ->
+            if (token == null) {
+                prefs.remove(stringPreferencesKey("tool_${toolId}_access_token"))
+            } else {
+                prefs[stringPreferencesKey("tool_${toolId}_access_token")] = token
+            }
+        }
+    }
+
+    // ── MCP (Model Context Protocol) Servers Configuration ─────────────
+
+    private val mcpServersKey = stringPreferencesKey("mcp_servers_config_json")
+
+    val mcpServers: Flow<List<top.wkbin.taixu.core.model.McpServerConfig>> = context.settingsDataStore.data.map { preferences ->
+        val raw = preferences[mcpServersKey]
+        if (raw.isNullOrBlank()) {
+            top.wkbin.taixu.core.model.BuiltinMcpPresets.presets
+        } else {
+            runCatching {
+                jsonHelper.decodeFromString<List<top.wkbin.taixu.core.model.McpServerConfig>>(raw)
+            }.getOrDefault(top.wkbin.taixu.core.model.BuiltinMcpPresets.presets)
+        }
+    }
+
+    suspend fun setMcpServers(servers: List<top.wkbin.taixu.core.model.McpServerConfig>) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[mcpServersKey] = jsonHelper.encodeToString(servers)
+        }
+    }
+
+    suspend fun toggleMcpServer(serverId: String, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            val raw = preferences[mcpServersKey]
+            val current = if (raw.isNullOrBlank()) {
+                top.wkbin.taixu.core.model.BuiltinMcpPresets.presets.toMutableList()
+            } else {
+                runCatching {
+                    jsonHelper.decodeFromString<List<top.wkbin.taixu.core.model.McpServerConfig>>(raw).toMutableList()
+                }.getOrDefault(top.wkbin.taixu.core.model.BuiltinMcpPresets.presets.toMutableList())
+            }
+            val index = current.indexOfFirst { it.id == serverId }
+            if (index >= 0) {
+                current[index] = current[index].copy(isEnabled = enabled)
+                preferences[mcpServersKey] = jsonHelper.encodeToString(current)
+            }
+        }
+    }
+
+    suspend fun saveMcpServer(server: top.wkbin.taixu.core.model.McpServerConfig) {
+        context.settingsDataStore.edit { preferences ->
+            val raw = preferences[mcpServersKey]
+            val current = if (raw.isNullOrBlank()) {
+                top.wkbin.taixu.core.model.BuiltinMcpPresets.presets.toMutableList()
+            } else {
+                runCatching {
+                    jsonHelper.decodeFromString<List<top.wkbin.taixu.core.model.McpServerConfig>>(raw).toMutableList()
+                }.getOrDefault(top.wkbin.taixu.core.model.BuiltinMcpPresets.presets.toMutableList())
+            }
+            val index = current.indexOfFirst { it.id == server.id }
+            if (index >= 0) {
+                current[index] = server
+            } else {
+                current.add(server)
+            }
+            preferences[mcpServersKey] = jsonHelper.encodeToString(current)
+        }
+    }
+
+    suspend fun deleteMcpServer(serverId: String) {
+        context.settingsDataStore.edit { preferences ->
+            val raw = preferences[mcpServersKey]
+            val current = if (raw.isNullOrBlank()) {
+                top.wkbin.taixu.core.model.BuiltinMcpPresets.presets.toMutableList()
+            } else {
+                runCatching {
+                    jsonHelper.decodeFromString<List<top.wkbin.taixu.core.model.McpServerConfig>>(raw).toMutableList()
+                }.getOrDefault(top.wkbin.taixu.core.model.BuiltinMcpPresets.presets.toMutableList())
+            }
+            current.removeAll { it.id == serverId }
+            preferences[mcpServersKey] = jsonHelper.encodeToString(current)
+        }
+    }
 }
 

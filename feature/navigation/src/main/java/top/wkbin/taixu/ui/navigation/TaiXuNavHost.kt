@@ -22,6 +22,7 @@ import top.wkbin.taixu.ui.settings.AgentSettingsScreen
 import top.wkbin.taixu.ui.settings.ModelEditorScreen
 import top.wkbin.taixu.ui.settings.ModelProfilesScreen
 import top.wkbin.taixu.ui.settings.SettingsScreen
+import top.wkbin.taixu.ui.settings.ToolDetailScreen
 import top.wkbin.taixu.ui.terminal.TerminalScreen
 import top.wkbin.taixu.ui.workspace.CodeEditorScreen
 import top.wkbin.taixu.ui.workspace.WorkspaceExplorerScreen
@@ -38,6 +39,9 @@ sealed interface AppDestination : NavKey
 @Serializable data class CodeEditorDestination(val projectName: String, val relativePath: String) : AppDestination
 @Serializable data object SettingsDestination : AppDestination
 @Serializable data object AgentSettingsDestination : AppDestination
+@Serializable data object McpSettingsDestination : AppDestination
+@Serializable data object ToolCenterDestination : AppDestination
+@Serializable data class ToolDetailDestination(val toolId: String) : AppDestination
 @Serializable data object StorageMountSettingsDestination : AppDestination
 @Serializable data object ModelProfilesDestination : AppDestination
 @Serializable data class ModelEditorDestination(val modelId: String? = null) : AppDestination
@@ -131,12 +135,31 @@ fun TaiXuNavHost() {
                     onNavigate = ::navigateMain,
                     onOpenModelProfiles = { settingsStack.push(ModelProfilesDestination) },
                     onOpenAgentSettings = { settingsStack.push(AgentSettingsDestination) },
+                    onOpenMcpSettings = { settingsStack.push(McpSettingsDestination) },
+                    onOpenToolCenter = { settingsStack.push(ToolCenterDestination) },
                     onOpenStorageMounts = { settingsStack.push(StorageMountSettingsDestination) },
                     onOpenDeveloper = { settingsStack.push(DeveloperDestination) },
                 )
             }
             entry<AgentSettingsDestination> {
                 AgentSettingsScreen(onBack = ::popBack)
+            }
+            entry<McpSettingsDestination> {
+                top.wkbin.taixu.ui.settings.McpSettingsScreen(onBack = ::popBack)
+            }
+            entry<ToolCenterDestination> {
+                top.wkbin.taixu.ui.settings.ToolCenterScreen(
+                    onBack = ::popBack,
+                    onLaunchPty = { toolId -> homeStack.push(TerminalDestination(toolId = toolId)) },
+                    onOpenToolDetail = { toolId -> settingsStack.push(ToolDetailDestination(toolId = toolId)) },
+                )
+            }
+            entry<ToolDetailDestination> { destination ->
+                ToolDetailScreen(
+                    toolId = destination.toolId,
+                    onBack = ::popBack,
+                    onLaunchTerminal = { toolId -> homeStack.push(TerminalDestination(toolId = toolId)) },
+                )
             }
             entry<StorageMountSettingsDestination> {
                 top.wkbin.taixu.ui.settings.StorageMountSettingsScreen(onBack = ::popBack)

@@ -40,6 +40,11 @@ class ChatViewModel @Inject constructor(
     /** 运行中排队的待发送消息（当前任务结束后自动接续）。 */
     val pendingMessages: StateFlow<List<String>> = harnessLoop.pendingMessages
 
+    /** 当前选中的会话 ID */
+    val currentSessionId: StateFlow<String> = harnessLoop.currentSessionId
+    /** 所有会话的多 Agent 并发运行状态映射 (IDLE / RUNNING / COMPLETED / FAILED) */
+    val sessionRunStates: StateFlow<Map<String, top.wkbin.taixu.core.model.SessionRunState>> = harnessLoop.sessionRunStates
+
     val sessions: StateFlow<List<HarnessSessionEntity>> = sessionDao.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 

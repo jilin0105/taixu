@@ -131,8 +131,21 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(progress.step, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
-                            Text("${(progress.progress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace), color = MaterialTheme.colorScheme.primary)
+                            Text(
+                                text = progress.step,
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = "${(progress.progress * 100).toInt()}%",
+                                style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = 8.dp),
+                                maxLines = 1,
+                                softWrap = false,
+                            )
                         }
                         LinearProgressIndicator(
                             progress = { progress.progress },
@@ -140,7 +153,13 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
                             color = MaterialTheme.colorScheme.primary,
                         )
                         progress.detail?.let {
-                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                text = it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            )
                         }
                     }
                 }

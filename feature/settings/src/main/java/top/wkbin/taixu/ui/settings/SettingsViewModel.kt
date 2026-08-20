@@ -30,7 +30,33 @@ class SettingsViewModel @Inject constructor(
     private val providerCatalogRepository: AgentProviderCatalog,
     private val connectionTester: AgentModelConnectionTester,
     private val privilegeManager: PrivilegeManager,
+    private val mcpManager: top.wkbin.taixu.harness.mcp.McpManager,
 ) : ViewModel() {
+
+    val mcpServers: StateFlow<List<top.wkbin.taixu.core.model.McpServerConfig>> = settingsDataStore.mcpServers
+        .stateIn(viewModelScope, SharingStarted.Eagerly, top.wkbin.taixu.core.model.BuiltinMcpPresets.presets)
+
+    fun toggleMcpServer(serverId: String, enabled: Boolean) {
+        viewModelScope.launch {
+            settingsDataStore.toggleMcpServer(serverId, enabled)
+        }
+    }
+
+    fun saveMcpServer(server: top.wkbin.taixu.core.model.McpServerConfig) {
+        viewModelScope.launch {
+            settingsDataStore.saveMcpServer(server)
+        }
+    }
+
+    fun deleteMcpServer(serverId: String) {
+        viewModelScope.launch {
+            settingsDataStore.deleteMcpServer(serverId)
+        }
+    }
+
+    suspend fun testMcpServer(server: top.wkbin.taixu.core.model.McpServerConfig): Result<List<top.wkbin.taixu.core.model.McpToolInfo>> {
+        return mcpManager.testServer(server)
+    }
 
     val executionMode: StateFlow<ExecutionMode> = settingsDataStore.executionMode
         .stateIn(viewModelScope, SharingStarted.Eagerly, ExecutionMode.PROOT)

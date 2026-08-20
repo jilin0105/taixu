@@ -71,21 +71,27 @@ class HomeViewModel @Inject constructor(
     private val _isCheckingDoctor = MutableStateFlow(false)
     val isCheckingDoctor: StateFlow<Boolean> = _isCheckingDoctor.asStateFlow()
 
-    // 一键自愈修复状态与进度
-    private val _repairProgress = MutableStateFlow<RepairProgress?>(null)
-    val repairProgress: StateFlow<RepairProgress?> = _repairProgress.asStateFlow()
-
-    private val _isRepairing = MutableStateFlow(false)
-    val isRepairing: StateFlow<Boolean> = _isRepairing.asStateFlow()
+    // 一键自愈修复状态与进度 (通过 EnvironmentRepairer 单例持久化，切页面不丢失)
+    val repairProgress: StateFlow<RepairProgress?> = environmentRepairer.progress
+    val isRepairing: StateFlow<Boolean> = environmentRepairer.isRepairing
 
     private var initializationJob: Job? = null
     private var doctorJob: Job? = null
-    private var repairJob: Job? = null
-    private val appStartTime = SystemClock.elapsedRealtime()
 
     init {
         startMetricsMonitoring()
         observeRuntimeStateForDoctor()
+        observeRepairCompletion()
+    }
+
+    private fun observeRepairCompletion() {
+        viewModelScope.launch {
+            environmentRepairer.progress.collect { progress ->
+                if (progress?.isCompleted == true) {
+                    runDoctorCheck()
+                }
+            }
+        }
     }
 
     private fun startMetricsMonitoring() {
@@ -108,7 +114,7 @@ class HomeViewModel @Inject constructor(
     }
 
     fun runDoctorCheck() {
-        if (_isCheckingDoctor.value || _isRepairing.value) return
+        if (_isCheckingDoctor.value || isRepairing.value) return
         doctorJob = viewModelScope.launch {
             _isCheckingDoctor.value = true
             try {
@@ -123,30 +129,11 @@ class HomeViewModel @Inject constructor(
     }
 
     fun startAutoRepair() {
-        if (_isRepairing.value) return
-        repairJob = viewModelScope.launch {
-            _isRepairing.value = true
-            try {
-                environmentRepairer.repair().collect { progress ->
-                    _repairProgress.value = progress
-                    if (progress.isCompleted) {
-                        // 重新运行体检
-                        val updatedReport = environmentDoctor.check()
-                        _doctorReport.value = updatedReport
-                    }
-                }
-            } catch (e: Exception) {
-                logger.w("Auto-repair failed: ${e.message}", e)
-            } finally {
-                _isRepairing.value = false
-            }
-        }
+        environmentRepairer.startRepair()
     }
 
     fun cancelAutoRepair() {
-        repairJob?.cancel()
-        _isRepairing.value = false
-        _repairProgress.value = null
+        environmentRepairer.cancelRepair()
     }
 
     fun refreshMetrics() {
@@ -177,8 +164,8 @@ class HomeViewModel @Inject constructor(
             val bgProcesses = try { linuxRuntime.listBackground() } catch (e: Exception) { emptyList() }
             val activeProcs = bgProcesses.size
 
-            // 4. 运行时间
-            val elapsedSec = (SystemClock.elapsedRealtime() - appStartTime) / 1000
+            // 4. 运行时间 (基于全局应用启动时间戳，切换 Tab 不会重置)
+            val elapsedSec = (SystemClock.elapsedRealtime() - APP_START_TIME) / 1000
             val hours = elapsedSec / 3600
             val minutes = (elapsedSec % 3600) / 60
             val seconds = elapsedSec % 60
@@ -231,5 +218,9 @@ class HomeViewModel @Inject constructor(
 
     fun cancelInitialization() {
         initializationJob?.cancel()
+    }
+
+    companion object {
+        private val APP_START_TIME = SystemClock.elapsedRealtime()
     }
 }

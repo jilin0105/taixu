@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.runtime.tools
+package top.wkbin.taixu.runtime.tools
 
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.shell.CommandResult
@@ -64,7 +64,7 @@ class RemoteScriptRunner @Inject constructor(
             append("set -eu; umask 077; ")
             append("script_path=$quotedPath; ")
             append("trap 'rm -f \"\$script_path\"' EXIT HUP INT TERM; ")
-            append("curl -fsSL --max-redirs 0 --proto '=https' --tlsv1.2 $quotedUrl -o \"\$script_path\"; ")
+            append("curl -fsSL --connect-timeout 10 --max-time 60 --max-redirs 0 --proto '=https' --tlsv1.2 $quotedUrl -o \"\$script_path\"; ")
             append("test -s \"\$script_path\"; chmod 700 \"\$script_path\"; ")
             spec.sha256?.let { checksum ->
                 require(SHA256.matches(checksum)) { "安装脚本 SHA-256 格式无效" }

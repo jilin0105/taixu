@@ -7,6 +7,7 @@ import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowUpward
+import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChevronRight
@@ -20,12 +21,16 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Stop
@@ -43,7 +48,8 @@ enum class RuntimeIconName {
     Home, Workspace, Terminal, Settings, Back, ChevronRight, ChevronDown, Package,
     Refresh, Shield, Storage, Globe, Trash, Close, Check, Alert, Logs,
     Download, Play, Stop, More, Plus, Chat, List, Copy,
-    Folder, File, Code, Edit, Save, ArrowUp,
+    Folder, File, Code, Edit, Save, ArrowUp, Cpu, Search, Info,
+    Image, Attach,
 }
 
 /** Official Material vector icons, shared by every screen for consistent optical weight. */
@@ -93,4 +99,9 @@ private fun RuntimeIconName.materialVector(): ImageVector = when (this) {
     RuntimeIconName.Edit -> Icons.Outlined.Edit
     RuntimeIconName.Save -> Icons.Outlined.Save
     RuntimeIconName.ArrowUp -> Icons.Outlined.ArrowUpward
+    RuntimeIconName.Cpu -> Icons.Outlined.Memory
+    RuntimeIconName.Search -> Icons.Outlined.Search
+    RuntimeIconName.Info -> Icons.Outlined.Info
+    RuntimeIconName.Image -> Icons.Outlined.Image
+    RuntimeIconName.Attach -> Icons.Outlined.AttachFile
 }
