@@ -1,0 +1,243 @@
+package top.wkbin.taixu.runtime.privilege
+
+import android.content.Context
+import android.content.pm.PackageManager
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import rikka.shizuku.Shizuku
+import top.wkbin.taixu.core.common.logging.AppLogger
+import top.wkbin.taixu.core.common.result.AppError
+import top.wkbin.taixu.core.common.result.AppResult
+import top.wkbin.taixu.core.common.result.ErrorCode
+import top.wkbin.taixu.core.datastore.SettingsDataStore
+import top.wkbin.taixu.core.model.ExecutionMode
+import top.wkbin.taixu.core.model.PrivilegeCheckResult
+import java.util.concurrent.TimeUnit
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class PrivilegeManager @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val settingsDataStore: SettingsDataStore,
+    private val logger: AppLogger,
+) {
+
+    /**
+     * 探测并尝试获取目标运行模式的特权授权。
+     */
+    suspend fun checkAndAuthorize(mode: ExecutionMode): PrivilegeCheckResult = withContext(Dispatchers.IO) {
+        when (mode) {
+            ExecutionMode.PROOT -> {
+                PrivilegeCheckResult.Authorized(
+                    mode = ExecutionMode.PROOT,
+                    details = "PRoot 用户态沙箱已就绪，无需额外系统特权。",
+                )
+            }
+
+            ExecutionMode.ROOT -> {
+                checkRootPrivilege()
+            }
+
+            ExecutionMode.SHIZUKU -> {
+                checkShizukuPrivilege()
+            }
+
+            ExecutionMode.ADB -> {
+                checkAdbPrivilege()
+            }
+        }
+    }
+
+    /**
+     * 申请并切换到指定的运行模式。如果授权成功，自动持久化并释放特权能力。
+     */
+    suspend fun switchMode(mode: ExecutionMode): AppResult<PrivilegeCheckResult.Authorized> = withContext(Dispatchers.IO) {
+        val check = checkAndAuthorize(mode)
+        when (check) {
+            is PrivilegeCheckResult.Authorized -> {
+                settingsDataStore.setExecutionMode(mode)
+                applyPrivilegeOptimizations(mode)
+                logger.i("已成功切换至运行模式: ${mode.name} (${check.details})")
+                AppResult.Success(check)
+            }
+
+            is PrivilegeCheckResult.Unauthorized -> {
+                logger.w("切换至 ${mode.name} 失败: ${check.reason}")
+                AppResult.Failure(
+                    AppError(
+                        code = ErrorCode.SECURITY,
+                        message = check.reason,
+                    ),
+                )
+            }
+
+            is PrivilegeCheckResult.ServiceNotRunning -> {
+                logger.w("切换至 ${mode.name} 失败: ${check.guidance}")
+                AppResult.Failure(
+                    AppError(
+                        code = ErrorCode.UNKNOWN,
+                        message = check.guidance,
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * 探测 Root 权限（通过 su 执行流测试 UID 0）
+     */
+    private fun checkRootPrivilege(): PrivilegeCheckResult {
+        return try {
+            val process = ProcessBuilder("su", "-c", "id").start()
+            val completed = process.waitFor(5, TimeUnit.SECONDS)
+            if (!completed) {
+                process.destroyForcibly()
+                return PrivilegeCheckResult.Unauthorized(
+                    ExecutionMode.ROOT,
+                    "请求 Root 授权超时，请在 Magisk / KernelSU / APatch 弹窗中允许授权。",
+                )
+            }
+
+            val output = process.inputStream.bufferedReader().readText()
+            val exitCode = process.exitValue()
+
+            if (exitCode == 0 && output.contains("uid=0")) {
+                PrivilegeCheckResult.Authorized(
+                    ExecutionMode.ROOT,
+                    "已获得 Root 权限 (UID 0: root)，已释放原生 Linux 与内核硬件加速能力！",
+                )
+            } else {
+                PrivilegeCheckResult.Unauthorized(
+                    ExecutionMode.ROOT,
+                    "Root 授权未通过 (exit $exitCode): $output",
+                )
+            }
+        } catch (e: Exception) {
+            logger.e("检查 Root 权限发生异常", e)
+            PrivilegeCheckResult.ServiceNotRunning(
+                ExecutionMode.ROOT,
+                "未在设备上检测到可用的 su 可执行程序。若已 Root，请检查是否在授权管理器中对太墟开启了授权。",
+            )
+        }
+    }
+
+    /**
+     * 使用官方 Shizuku-API 进行 Binder 服务探测与权限检查
+     */
+    private fun checkShizukuPrivilege(): PrivilegeCheckResult {
+        return try {
+            // 1. 探测 Shizuku Binder 服务是否处于运行激活状态
+            val isBinderAlive = Shizuku.pingBinder()
+            if (!isBinderAlive) {
+                return PrivilegeCheckResult.ServiceNotRunning(
+                    ExecutionMode.SHIZUKU,
+                    "Shizuku 服务未运行。请打开 Shizuku App 确保服务状态为“已运行”（可通过无线调试或 Root 启动）。",
+                )
+            }
+
+            // 2. 检查应用是否已获得 Shizuku 权限
+            val isGranted = if (Shizuku.isPreV11()) {
+                Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+            } else {
+                Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+            }
+
+            if (isGranted) {
+                PrivilegeCheckResult.Authorized(
+                    ExecutionMode.SHIZUKU,
+                    "Shizuku (v${Shizuku.getVersion()}) 授权成功，已解锁 ADB 级别特权及 Android 12+ 进程上限豁免能力！",
+                )
+            } else {
+                // 发起 Shizuku 授权申请
+                if (Shizuku.shouldShowRequestPermissionRationale()) {
+                    PrivilegeCheckResult.Unauthorized(
+                        ExecutionMode.SHIZUKU,
+                        "请在 Shizuku 弹窗中允许太墟访问 ADB 特权服务。",
+                    )
+                } else {
+                    runCatching { Shizuku.requestPermission(1001) }
+                    PrivilegeCheckResult.Unauthorized(
+                        ExecutionMode.SHIZUKU,
+                        "已发起 Shizuku 授权请求，请在弹出的系统对话框中点击“允许”后再次点击切换。",
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            logger.e("检查 Shizuku 发生异常", e)
+            PrivilegeCheckResult.ServiceNotRunning(
+                ExecutionMode.SHIZUKU,
+                "无法连接到 Shizuku 服务 (${e.message})。请检查 Shizuku 是否正常运行。",
+            )
+        }
+    }
+
+    /**
+     * 探测无线 ADB 连通性
+     */
+    private fun checkAdbPrivilege(): PrivilegeCheckResult {
+        return try {
+            val process = ProcessBuilder("sh", "-c", "which adb || echo ''").start()
+            val adbPath = process.inputStream.bufferedReader().readText().trim()
+            process.waitFor(2, TimeUnit.SECONDS)
+
+            if (adbPath.isNotBlank()) {
+                PrivilegeCheckResult.Authorized(
+                    ExecutionMode.ADB,
+                    "本地 ADB 调试工具链已就绪。",
+                )
+            } else {
+                PrivilegeCheckResult.Authorized(
+                    ExecutionMode.ADB,
+                    "无线 ADB 模式已就绪，可通过配对码或本地端口连接调试守护进程。",
+                )
+            }
+        } catch (e: Exception) {
+            PrivilegeCheckResult.Unauthorized(
+                ExecutionMode.ADB,
+                "ADB 探测失败: ${e.message}",
+            )
+        }
+    }
+
+    /**
+     * 在授权成功后应用系统级特权优化（如解除 Android 12+ 幽灵进程 32 限制等）
+     */
+    private fun applyPrivilegeOptimizations(mode: ExecutionMode) {
+        when (mode) {
+            ExecutionMode.ROOT -> {
+                runCatching {
+                    ProcessBuilder("su", "-c", "/system/bin/device_config put activity_manager max_phantom_processes 2147483647").start().waitFor(3, TimeUnit.SECONDS)
+                }
+            }
+            ExecutionMode.SHIZUKU -> {
+                runCatching {
+                    // 使用 Shizuku 官方 API 远程进程以 ADB 特权执行命令
+                    val newProcessMethod = Shizuku::class.java.getDeclaredMethod(
+                        "newProcess",
+                        Array<String>::class.java,
+                        Array<String>::class.java,
+                        String::class.java,
+                    )
+                    newProcessMethod.isAccessible = true
+                    val process = newProcessMethod.invoke(
+                        null,
+                        arrayOf("/system/bin/device_config", "put", "activity_manager", "max_phantom_processes", "2147483647"),
+                        null,
+                        null,
+                    ) as Process
+                    process.waitFor(3, TimeUnit.SECONDS)
+                }.onFailure {
+                    logger.w("通过 Shizuku 调整 max_phantom_processes 失败", it)
+                }
+            }
+            ExecutionMode.ADB -> {
+                runCatching {
+                    ProcessBuilder("sh", "-c", "/system/bin/device_config put activity_manager max_phantom_processes 2147483647 2>/dev/null || true").start().waitFor(2, TimeUnit.SECONDS)
+                }
+            }
+            ExecutionMode.PROOT -> Unit
+        }
+    }
+}

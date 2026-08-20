@@ -1,0 +1,263 @@
+﻿package top.wkbin.taixu.ui.workspace
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import top.wkbin.taixu.runtime.WorkspaceFileItem
+import top.wkbin.taixu.runtime.WorkspaceManager
+import top.wkbin.taixu.runtime.WorkspaceProject
+import top.wkbin.taixu.runtime.WorkspaceStorage
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+@HiltViewModel
+class WorkspaceViewModel @Inject constructor(
+    private val workspaceManager: WorkspaceManager,
+) : ViewModel() {
+
+    // ==================== 项目列表状态 ====================
+    val projects: StateFlow<List<WorkspaceProject>> = workspaceManager.observeProjects()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _message = MutableStateFlow<String?>(null)
+    val message: StateFlow<String?> = _message.asStateFlow()
+
+    private val _busy = MutableStateFlow(false)
+    val busy: StateFlow<Boolean> = _busy.asStateFlow()
+
+    // ==================== 文件浏览器状态 ====================
+    private val _selectedProject = MutableStateFlow<String?>(null)
+    val selectedProject: StateFlow<String?> = _selectedProject.asStateFlow()
+
+    private val _currentPath = MutableStateFlow("")
+    val currentPath: StateFlow<String> = _currentPath.asStateFlow()
+
+    private val _fileItems = MutableStateFlow<List<WorkspaceFileItem>>(emptyList())
+    val fileItems: StateFlow<List<WorkspaceFileItem>> = _fileItems.asStateFlow()
+
+    private val _loadingFiles = MutableStateFlow(false)
+    val loadingFiles: StateFlow<Boolean> = _loadingFiles.asStateFlow()
+
+    // ==================== 代码编辑器状态 ====================
+    private val _openedFilePath = MutableStateFlow<String?>(null)
+    val openedFilePath: StateFlow<String?> = _openedFilePath.asStateFlow()
+
+    private val _openedFileExtension = MutableStateFlow("")
+    val openedFileExtension: StateFlow<String> = _openedFileExtension.asStateFlow()
+
+    private val _fileContent = MutableStateFlow("")
+    val fileContent: StateFlow<String> = _fileContent.asStateFlow()
+
+    private var originalContent: String = ""
+
+    private val _isDirty = MutableStateFlow(false)
+    val isDirty: StateFlow<Boolean> = _isDirty.asStateFlow()
+
+    private val _isSaving = MutableStateFlow(false)
+    val isSaving: StateFlow<Boolean> = _isSaving.asStateFlow()
+
+    init {
+        refresh()
+    }
+
+    fun clearMessage() {
+        _message.value = null
+    }
+
+    fun refresh() {
+        viewModelScope.launch {
+            workspaceManager.listProjects()
+        }
+    }
+
+    // ==================== 项目级操作 ====================
+
+    fun create(name: String, storage: WorkspaceStorage, directoryPath: String) {
+        if (_busy.value) return
+        viewModelScope.launch {
+            _busy.value = true
+            val result = workspaceManager.createProject(name, storage, directoryPath)
+            _message.value = result.errorOrNull()?.message ?: "项目已创建，目录已关联"
+            if (result.isSuccess) workspaceManager.listProjects()
+            _busy.value = false
+        }
+    }
+
+    fun delete(name: String) {
+        if (_busy.value) return
+        viewModelScope.launch {
+            _busy.value = true
+            val result = workspaceManager.deleteProject(name)
+            _message.value = result.errorOrNull()?.message ?: "项目已删除"
+            if (result.isSuccess) workspaceManager.listProjects()
+            _busy.value = false
+        }
+    }
+
+    // ==================== 文件浏览器操作 ====================
+
+    fun loadExplorer(projectName: String, relativePath: String = "") {
+        _selectedProject.value = projectName
+        _currentPath.value = relativePath.trim().removePrefix("/")
+        refreshDirectory()
+    }
+
+    fun navigateToDirectory(relativePath: String) {
+        _currentPath.value = relativePath.trim().removePrefix("/")
+        refreshDirectory()
+    }
+
+    fun navigateUp() {
+        val current = _currentPath.value
+        if (current.isBlank()) return
+        val parent = current.substringBeforeLast('/', "")
+        _currentPath.value = parent
+        refreshDirectory()
+    }
+
+    fun refreshDirectory() {
+        val proj = _selectedProject.value ?: return
+        val path = _currentPath.value
+        viewModelScope.launch {
+            _loadingFiles.value = true
+            val result = workspaceManager.listFiles(proj, path)
+            if (result.isSuccess) {
+                _fileItems.value = result.getOrNull().orEmpty()
+            } else {
+                _message.value = result.errorOrNull()?.message ?: "读取目录失败"
+            }
+            _loadingFiles.value = false
+        }
+    }
+
+    fun createFile(name: String) {
+        val proj = _selectedProject.value ?: return
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return
+        val fullRelative = if (_currentPath.value.isBlank()) trimmed else "${_currentPath.value}/$trimmed"
+        viewModelScope.launch {
+            _busy.value = true
+            val result = workspaceManager.createFile(proj, fullRelative)
+            if (result.isSuccess) {
+                _message.value = "文件已创建：$trimmed"
+                refreshDirectory()
+            } else {
+                _message.value = result.errorOrNull()?.message ?: "创建文件失败"
+            }
+            _busy.value = false
+        }
+    }
+
+    fun createDirectory(name: String) {
+        val proj = _selectedProject.value ?: return
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return
+        val fullRelative = if (_currentPath.value.isBlank()) trimmed else "${_currentPath.value}/$trimmed"
+        viewModelScope.launch {
+            _busy.value = true
+            val result = workspaceManager.createDirectory(proj, fullRelative)
+            if (result.isSuccess) {
+                _message.value = "目录已创建：$trimmed"
+                refreshDirectory()
+            } else {
+                _message.value = result.errorOrNull()?.message ?: "创建目录失败"
+            }
+            _busy.value = false
+        }
+    }
+
+    fun renameItem(oldRelativePath: String, newName: String) {
+        val proj = _selectedProject.value ?: return
+        val trimmed = newName.trim()
+        if (trimmed.isBlank()) return
+        viewModelScope.launch {
+            _busy.value = true
+            val result = workspaceManager.renameItem(proj, oldRelativePath, trimmed)
+            if (result.isSuccess) {
+                _message.value = "已重命名为：$trimmed"
+                refreshDirectory()
+            } else {
+                _message.value = result.errorOrNull()?.message ?: "重命名失败"
+            }
+            _busy.value = false
+        }
+    }
+
+    fun deleteItem(relativePath: String) {
+        val proj = _selectedProject.value ?: return
+        viewModelScope.launch {
+            _busy.value = true
+            val result = workspaceManager.deleteItem(proj, relativePath)
+            if (result.isSuccess) {
+                _message.value = "已删除"
+                refreshDirectory()
+            } else {
+                _message.value = result.errorOrNull()?.message ?: "删除失败"
+            }
+            _busy.value = false
+        }
+    }
+
+    // ==================== 编辑器操作 ====================
+
+    fun openFile(projectName: String, relativePath: String) {
+        _selectedProject.value = projectName
+        _openedFilePath.value = relativePath
+        val ext = relativePath.substringAfterLast('.', "")
+        _openedFileExtension.value = ext
+        viewModelScope.launch {
+            _loadingFiles.value = true
+            val result = workspaceManager.readFile(projectName, relativePath)
+            if (result.isSuccess) {
+                val content = result.getOrNull().orEmpty()
+                originalContent = content
+                _fileContent.value = content
+                _isDirty.value = false
+            } else {
+                _message.value = result.errorOrNull()?.message ?: "打开文件失败"
+            }
+            _loadingFiles.value = false
+        }
+    }
+
+    fun onContentChanged(newText: String) {
+        _fileContent.value = newText
+        _isDirty.value = newText != originalContent
+    }
+
+    fun resetContent() {
+        _fileContent.value = originalContent
+        _isDirty.value = false
+    }
+
+    fun saveFile(onSuccess: (() -> Unit)? = null) {
+        val proj = _selectedProject.value ?: return
+        val path = _openedFilePath.value ?: return
+        val text = _fileContent.value
+        viewModelScope.launch {
+            _isSaving.value = true
+            val result = workspaceManager.writeFile(proj, path, text)
+            if (result.isSuccess) {
+                originalContent = text
+                _isDirty.value = false
+                _message.value = "已保存文件"
+                onSuccess?.invoke()
+            } else {
+                _message.value = result.errorOrNull()?.message ?: "保存失败"
+            }
+            _isSaving.value = false
+        }
+    }
+
+    fun closeFile() {
+        _openedFilePath.value = null
+        _fileContent.value = ""
+        originalContent = ""
+        _isDirty.value = false
+    }
+}

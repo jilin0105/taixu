@@ -1,0 +1,182 @@
+package top.wkbin.taixu.ui.terminal
+
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.utf16CodePoint
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import top.wkbin.taixu.core.datastore.SettingsDataStore
+import top.wkbin.taixu.runtime.DistributionCatalog
+import top.wkbin.taixu.runtime.WorkspaceManager
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+@HiltViewModel
+class TerminalViewModel @Inject constructor(
+    private val terminalManager: TerminalSessionManager,
+    private val workspaceManager: WorkspaceManager,
+    private val settingsDataStore: SettingsDataStore,
+) : ViewModel() {
+    private var initialized = false
+
+    val distributionName: StateFlow<String> = settingsDataStore.selectedDistribution
+        .map { distroId -> DistributionCatalog.require(distroId).displayName }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "Ubuntu 24.04 LTS")
+
+    val handles: StateFlow<List<TerminalSessionHandle>> = terminalManager.handles
+    val activeId: StateFlow<String?> = terminalManager.activeId
+
+    private val activeHandle: Flow<TerminalSessionHandle?> = terminalManager.activeHandle
+    val screen: StateFlow<List<TerminalLine>> = activeHandle
+        .flatMapLatest { it?.screen ?: flowOf(emptyList()) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val cursor: StateFlow<TerminalCursor> = activeHandle
+        .flatMapLatest { it?.cursor ?: flowOf(TerminalCursor(0, 0, false)) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TerminalCursor(0, 0, false))
+
+    private val _activeLabel = MutableStateFlow("")
+    val activeLabel: StateFlow<String> = activeHandle
+        .flatMapLatest { it?.let { h -> flowOf(h.label) } ?: flowOf("") }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
+
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
+
+    /**
+     * 尺寸待应用缓存：首帧 resize 触发时会话往往尚未建立（PRoot 启动是异步的），
+     * activeId 为 null 时 resize 直接丢弃会让 PTY 停留在默认 80 列，
+     * 而 UI 可视宽度约 40 列——bash 不换行、输入超出可视区。这里把请求存起来，
+     * 会话就绪或切换时自动补上。
+     */
+    private var pendingResize: Pair<Int, Int>? = null
+
+    init {
+        viewModelScope.launch {
+            activeHandle.collect { handle ->
+                if (handle != null) {
+                    pendingResize?.let { (columns, rows) ->
+                        pendingResize = null
+                        terminalManager.resizeSession(handle.id, columns, rows)
+                        terminalManager.resizeBuffer(handle.id, columns)
+                    }
+                }
+            }
+        }
+    }
+
+    fun initialize(project: String) {
+        if (initialized) return
+        initialized = true
+        viewModelScope.launch {
+            if (project.isNotBlank()) {
+                val workingDirectory = runCatching { workspaceManager.linuxWorkingDirectory(project) }.getOrNull() ?: "/root"
+                runCatching {
+                    terminalManager.openOrSwitchToProject(project, workingDirectory)
+                }.onFailure { _error.value = it.message ?: "无法启动工作区终端" }
+            } else {
+                runCatching {
+                    terminalManager.ensureActive("/root")
+                }.onFailure { _error.value = it.message ?: "无法启动终端" }
+            }
+        }
+    }
+
+    private fun activeIdOrNull(): String? = terminalManager.activeId.value?.takeIf { id ->
+        terminalManager.handles.value.any { it.id == id }
+    }
+
+    fun sendText(text: String) {
+        if (text.isEmpty()) return
+        activeIdOrNull()?.let { terminalManager.write(it, text.toByteArray(Charsets.UTF_8)) }
+    }
+
+    fun interrupt() {
+        activeIdOrNull()?.let { terminalManager.interrupt(it) }
+    }
+
+    fun onTerminalKey(event: KeyEvent): Boolean {
+        if (event.type != KeyEventType.KeyDown) return false
+        val ctrl = event.isCtrlPressed
+        val alt = event.isAltPressed
+        val codePoint = event.utf16CodePoint
+        val bytes: ByteArray? = when {
+            ctrl && codePoint in 'a'.code..'z'.code -> byteArrayOf((codePoint - 96).toByte())
+            ctrl && event.key == Key.Spacebar -> byteArrayOf(0)
+            event.key == Key.DirectionUp -> seq(if (alt) "\u001B\u001B[A" else "\u001B[A")
+            event.key == Key.DirectionDown -> seq(if (alt) "\u001B\u001B[B" else "\u001B[B")
+            event.key == Key.DirectionLeft -> seq(if (alt) "\u001B\u001B[D" else "\u001B[D")
+            event.key == Key.DirectionRight -> seq(if (alt) "\u001B\u001B[C" else "\u001B[C")
+            event.key == Key.MoveHome -> seq("\u001B[1~")
+            event.key == Key.MoveEnd -> seq("\u001B[4~")
+            event.key == Key.PageUp -> seq("\u001B[5~")
+            event.key == Key.PageDown -> seq("\u001B[6~")
+            event.key == Key.Delete -> seq("\u001B[3~")
+            event.key == Key.Insert -> seq("\u001B[2~")
+            event.key == Key.Tab -> byteArrayOf(9)
+            event.key == Key.Backspace -> byteArrayOf(0x7f)
+            event.key == Key.Enter -> byteArrayOf(13)
+            event.key == Key.Escape -> byteArrayOf(27)
+            codePoint in 0x20..0x7e || codePoint > 0x7f ->
+                ((if (alt) "\u001B" else "") + codePoint.toChar()).toByteArray(Charsets.UTF_8)
+            else -> null
+        }
+        if (bytes != null) {
+            activeIdOrNull()?.let { terminalManager.write(it, bytes) }
+            return true
+        }
+        return false
+    }
+
+    private fun seq(value: String): ByteArray = value.toByteArray(Charsets.UTF_8)
+
+    fun resize(columns: Int, rows: Int) {
+        val id = activeIdOrNull()
+        if (id == null) {
+            // 会话尚未建立：缓存待应用（见 pendingResize 注释），就绪后由 init 里的 collector 补上
+            pendingResize = columns to rows
+            return
+        }
+        terminalManager.resizeSession(id, columns, rows)
+        terminalManager.resizeBuffer(id, columns)
+    }
+
+    val workspaces: StateFlow<List<top.wkbin.taixu.runtime.WorkspaceProject>> = workspaceManager.observeProjects()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun createSession(label: String = "", workingDirectory: String = "/root") {
+        viewModelScope.launch {
+            runCatching {
+                val finalLabel = label.trim().ifBlank { "终端 ${handles.value.size + 1}" }
+                terminalManager.createSession(label = finalLabel, workingDirectory = workingDirectory.trim().ifBlank { "/root" })
+            }.onFailure { _error.value = it.message ?: "新建会话失败" }
+        }
+    }
+
+    fun switchSession(id: String) = terminalManager.switchTo(id)
+
+    fun closeSession(id: String) {
+        viewModelScope.launch {
+            runCatching { terminalManager.closeSession(id) }
+                .onFailure { _error.value = it.message ?: "关闭会话失败" }
+        }
+    }
+
+    fun clearError() {
+        _error.value = null
+    }
+}

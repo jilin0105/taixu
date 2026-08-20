@@ -1,0 +1,38 @@
+# Gradle and Kotlin caches
+.gradle/
+.kotlin/
+**/build/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+captures/
+
+# Android native build outputs
+.externalNativeBuild/
+.cxx/
+**/.externalNativeBuild/
+**/.cxx/
+
+# Machine-local Android configuration
+local.properties
+
+# Signing credentials and service configuration
+*.jks
+*.keystore
+keystore.properties
+google-services.json
+
+# Logs, diagnostics, and heap dumps
+*.log
+*.hprof
+
+# Operating system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local environment files
+.env
+.env.*
+!.env.example

@@ -1,0 +1,62 @@
+[
+  {
+    "schemaVersion": 1,
+    "id": "hello-tool",
+    "name": "Hello Tool",
+    "description": "用于验证安装、启动、校验和回滚流程的内置测试工具。",
+    "dependencies": [],
+    "launchType": "one_shot",
+    "version": "1.0.0",
+    "latestVersion": "1.0.0",
+    "publisher": "TaiXu",
+    "category": "DEVELOPER_TOOL",
+    "architectures": ["ARM64"],
+    "permissions": ["WORKSPACE_READ", "WORKSPACE_WRITE"]
+  },
+  {
+    "schemaVersion": 1,
+    "id": "openclaw",
+    "name": "OpenClaw",
+    "description": "面向自动化工作流的太墟工具。",
+    "dependencies": ["node>=22.22.3", "curl", "ca-certificates", "git"],
+    "launchType": "web",
+    "servicePort": 18789,
+    "servicePath": "/",
+    "version": "0.1.0",
+    "latestVersion": "0.1.0",
+    "publisher": "OpenClaw",
+    "category": "AI_AGENT",
+    "architectures": ["ARM64"],
+    "permissions": ["NETWORK", "WORKSPACE_READ", "WORKSPACE_WRITE", "LOCAL_WEB"]
+  },
+  {
+    "schemaVersion": 1,
+    "id": "hermes-agent",
+    "name": "Hermes Agent",
+    "description": "可扩展的本地 Agent 工具。",
+    "dependencies": ["python>=3.11", "curl", "ca-certificates", "git"],
+    "launchType": "web",
+    "servicePort": 9119,
+    "servicePath": "/",
+    "version": "0.1.0",
+    "latestVersion": "0.1.0",
+    "publisher": "Nous Research",
+    "category": "AI_AGENT",
+    "architectures": ["ARM64"],
+    "permissions": ["NETWORK", "WORKSPACE_READ", "WORKSPACE_WRITE", "LOCAL_WEB"]
+  },
+  {
+    "schemaVersion": 1,
+    "id": "codex",
+    "name": "Codex",
+    "description": "Linux 环境中的 AI 编程 CLI。",
+    "dependencies": ["curl", "ca-certificates"],
+    "launchType": "pty",
+    "version": "0.1.0",
+    "latestVersion": "0.1.0",
+    "publisher": "OpenAI",
+    "category": "CODING_AGENT",
+    "architectures": ["ARM64"],
+    "permissions": ["NETWORK", "WORKSPACE_READ", "WORKSPACE_WRITE"]
+  }
+]

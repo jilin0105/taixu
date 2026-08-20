@@ -1,0 +1,70 @@
+﻿package top.wkbin.taixu.harness
+
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
+
+/** Harness 基础工具，与 LLM tool-calling 协议对齐。 */
+@Serializable
+enum class HarnessTool {
+    @SerialName("read") READ,
+    @SerialName("write") WRITE,
+    @SerialName("edit") EDIT,
+    @SerialName("base") BASE,
+}
+
+/**
+ * Harness 会话消息。序列化格式即持久化格式（Room 存 payloadJson），
+ * 同时由 HarnessLoop 转换为 LLM 请求/响应格式。
+ */
+@Serializable
+sealed interface HarnessMessage {
+    val id: String
+    val createdAt: Long
+}
+
+@Serializable
+@SerialName("user")
+data class UserMessage(
+    override val id: String,
+    override val createdAt: Long,
+    val text: String,
+) : HarnessMessage
+
+@Serializable
+@SerialName("assistant")
+data class AssistantText(
+    override val id: String,
+    override val createdAt: Long,
+    val text: String,
+    /** 推理模型（如 DeepSeek-R1）返回的 reasoning_content，多轮时需原样传回 API。 */
+    val reasoning: String? = null,
+    /**
+     * 本轮执行总耗时（从用户发送到该条最终回复产生，毫秒）。
+     * 仅在作为本轮收尾消息（最终回复 / 中断提示）时记录；旧数据无此字段，默认 null。
+     */
+    val totalMs: Long? = null,
+) : HarnessMessage
+
+@Serializable
+@SerialName("tool_call")
+data class ToolCall(
+    override val id: String,
+    override val createdAt: Long,
+    val tool: HarnessTool,
+    val args: JsonObject,
+    /** 触发本次调用的 assistant 轮次的推理内容，多轮时需原样传回 API。 */
+    val reasoning: String? = null,
+) : HarnessMessage
+
+@Serializable
+@SerialName("tool_result")
+data class ToolResult(
+    override val id: String,
+    override val createdAt: Long,
+    val toolCallId: String,
+    val success: Boolean,
+    val output: String,
+    /** 该工具调用实际执行耗时（毫秒，不含排队与 LLM 时间）。旧数据无此字段，默认 null。 */
+    val durationMs: Long? = null,
+) : HarnessMessage
