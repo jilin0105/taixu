@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.service
+package top.wkbin.taixu.service
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.RemoteInput
@@ -25,7 +26,12 @@ import kotlinx.coroutines.launch
 
 /**
  * Agent 后台执行前台服务：当 Agent 开始执行时启动，让进程在后台存活，
- * 通知实时显示进度；执行结束后保留一条带【回复】输入框的通知，可继续追加任务。
+ * 通知实时显示当前动作；执行结束后保留一条带【回复】输入框的通知，可继续追加任务。
+ *
+ * 后台保活三件套：
+ * 1. 前台服务（dataSync）+ START_STICKY：进程被杀后由系统择机重启服务；
+ * 2. PARTIAL_WAKE_LOCK 进程锁：息屏后 CPU 不休眠，保证推理与工具执行不中断；
+ * 3. 通知栏实时进度：把 HarnessLoop.status 的每一步（思考/读文件/执行命令）反映到通知。
  */
 @AndroidEntryPoint
 class AgentForegroundService : Service() {
@@ -34,6 +40,7 @@ class AgentForegroundService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var collecting = false
+    private var processLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -49,20 +56,31 @@ class AgentForegroundService : Service() {
         when (intent?.action) {
             ACTION_STOP -> {
                 runCatching { harnessLoop.cancel() }.onFailure { Log.w(TAG, "取消 Agent 失败", it) }
+                releaseProcessLock()
                 stopForegroundSafely(STOP_FOREGROUND_REMOVE)
                 stopSelfResult(startId)
                 return START_NOT_STICKY
             }
             else -> {
-                safeStartForeground(NOTIFICATION_ID, notification("Agent 执行中…"))
+                safeStartForeground(NOTIFICATION_ID, notification(currentStatus()))
+                acquireProcessLock()
                 if (!collecting) {
                     collecting = true
                     serviceScope.launch {
                         harnessLoop.running.collectLatest { running ->
                             if (running) {
-                                notify(harnessLoop.status.value ?: "思考中")
+                                notify(harnessLoop.status.value ?: STATUS_THINKING)
                             } else {
                                 finishExecution()
+                            }
+                        }
+                    }
+                    // 关键修复：持续收集 status 流。之前只在 running 翻转时读了一次 status，
+                    // 导致通知永远停留在启动时的"Agent 执行中…"，不反映实际进度。
+                    serviceScope.launch {
+                        harnessLoop.status.collectLatest { status ->
+                            if (harnessLoop.running.value) {
+                                notify(status ?: STATUS_THINKING)
                             }
                         }
                     }
@@ -75,15 +93,41 @@ class AgentForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        releaseProcessLock()
         serviceScope.cancel()
         super.onDestroy()
     }
+
+    /**
+     * 进程锁（PARTIAL_WAKE_LOCK）：Agent 执行期间保持 CPU 唤醒，
+     * 防止息屏/后台时 SoC 休眠导致 SSE 流式读取或工具执行被冻结。
+     * 带 4 小时安全上限，即使异常泄漏也会自动超时释放，不会永久耗电。
+     */
+    private fun acquireProcessLock() {
+        if (processLock?.isHeld == true) return
+        runCatching {
+            val powerManager = getSystemService(PowerManager::class.java)
+            processLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG)
+                .also { it.acquire(LOCK_TIMEOUT_MS) }
+            Log.i(TAG, "Acquired partial wake lock (process lock) for agent execution")
+        }.onFailure { Log.w(TAG, "获取进程锁失败（继续以前台服务保活）", it) }
+    }
+
+    private fun releaseProcessLock() {
+        val lock = processLock ?: return
+        runCatching { if (lock.isHeld) lock.release() }
+            .onFailure { Log.w(TAG, "释放进程锁失败", it) }
+        processLock = null
+    }
+
+    private fun currentStatus(): String = harnessLoop.status.value ?: STATUS_THINKING
 
     private fun notify(status: String) {
         safeNotify(NOTIFICATION_ID, notification(status, ongoing = true))
     }
 
     private fun finishExecution() {
+        releaseProcessLock()
         safeNotify(NOTIFICATION_ID, replyNotification())
         stopForegroundSafely(STOP_FOREGROUND_DETACH) // 保留完成后通知，不再在前台
         stopSelf()
@@ -92,8 +136,9 @@ class AgentForegroundService : Service() {
     private fun notification(status: String, ongoing: Boolean = true): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.logo)
-            .setContentTitle("Agent 执行中")
-            .setContentText(status)
+            // 标题直接展示当前动作（如"执行命令：apt-get install …"），一眼可见在做什么
+            .setContentTitle(status)
+            .setContentText("Agent 后台运行中 · 进程锁已开启")
             .setOngoing(ongoing)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
@@ -167,6 +212,9 @@ class AgentForegroundService : Service() {
         private const val CHANNEL_ID = "agent-execution"
         private const val NOTIFICATION_ID = 2001
         private const val TAG = "AgentForegroundService"
+        private const val STATUS_THINKING = "Agent 正在思考…"
+        private const val WAKE_LOCK_TAG = "taixu:agent-execution"
+        private const val LOCK_TIMEOUT_MS = 4 * 60 * 60 * 1000L // 4 小时安全上限
 
         fun start(context: Context) {
             val intent = Intent(context, AgentForegroundService::class.java).setAction(ACTION_START)

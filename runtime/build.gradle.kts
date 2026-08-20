@@ -38,6 +38,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json.jvm)
     implementation(libs.kotlinx.coroutines.core.jvm)
     implementation(libs.zstd)
+    implementation(libs.xz)
     implementation(libs.okhttp)
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)

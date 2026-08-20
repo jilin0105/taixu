@@ -1,6 +1,7 @@
 ﻿package top.wkbin.taixu.runtime.rootfs
 
 import com.github.luben.zstd.ZstdInputStream
+import org.tukaani.xz.XZInputStream
 import top.wkbin.taixu.core.common.files.SafeFileTree
 import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.common.result.AppError
@@ -26,6 +27,7 @@ class RootfsInstaller @Inject constructor(
     private val rootfsValidator: RootfsValidator,
     private val logger: AppLogger,
     private val ociRegistryClient: OciRegistryClient,
+    private val lxcImagesClient: LxcImagesClient,
 ) {
     private var pendingUpdateBackup: File? = null
     private var pendingUpdateVersion: String? = null
@@ -129,23 +131,51 @@ class RootfsInstaller @Inject constructor(
         route: RegistryRoute,
         staging: File,
         onProgress: suspend (DownloadProgress) -> Unit,
-    ): String = ociRegistryClient.pull(
-        distribution,
-        route,
-        File(pathManager.cacheDir, "oci_layers"),
-        onProgress,
-        resetDestination = {
+    ): String {
+        val applyLayer: suspend (File, String) -> Unit = { layer, mediaType ->
+            layer.inputStream().use { raw ->
+                val stream = when {
+                    mediaType.contains("zstd") -> ZstdInputStream(raw)
+                    mediaType.contains("gzip") -> GZIPInputStream(raw)
+                    mediaType.contains("xz") -> XZInputStream(raw)
+                    else -> raw
+                }
+                stream.use { tarStreamExtractor.extract(it, staging, handleWhiteouts = true) }
+            }
+        }
+        return try {
+            ociRegistryClient.pull(
+                distribution,
+                route,
+                File(pathManager.cacheDir, "oci_layers"),
+                onProgress,
+                resetDestination = {
+                    SafeFileTree.delete(staging)
+                    staging.mkdirs()
+                },
+                applyLayer,
+            )
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (ociFailure: Throwable) {
+            // OCI 线路（DaoCloud / Docker Hub）全部失败时，用清华 TUNA 镜像站的
+            // lxc-images 极简 rootfs 兜底，保证国内网络环境下至少能装出可用沙箱。
+            if (route == RegistryRoute.OFFICIAL || !lxcImagesClient.supports(distribution.id)) {
+                throw ociFailure
+            }
+            logger.w(
+                "OCI routes exhausted for ${distribution.id}, falling back to TUNA lxc-images " +
+                    "minimal rootfs (不含 buildpack-deps 工具链)",
+                ociFailure,
+            )
             SafeFileTree.delete(staging)
             staging.mkdirs()
-        },
-    ) { layer, mediaType ->
-        layer.inputStream().use { raw ->
-            val stream = when {
-                mediaType.contains("zstd") -> ZstdInputStream(raw)
-                mediaType.contains("gzip") -> GZIPInputStream(raw)
-                else -> raw
-            }
-            stream.use { tarStreamExtractor.extract(it, staging, handleWhiteouts = true) }
+            lxcImagesClient.pull(
+                distribution,
+                File(pathManager.cacheDir, "lxc_images"),
+                onProgress,
+                applyLayer,
+            )
         }
     }
 
