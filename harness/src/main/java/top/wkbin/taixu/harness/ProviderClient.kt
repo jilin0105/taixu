@@ -1,6 +1,7 @@
 package top.wkbin.taixu.harness
 
 import top.wkbin.taixu.core.database.AiModelDao
+import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.core.tools.ProviderRepository
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -129,6 +130,19 @@ internal class ChatApi(
 
     private fun buildRequest(model: ModelConfig, messages: List<ApiMessage>, stream: Boolean): Request {
         val tools = ProviderClient.buildDynamicTools(model.dynamicMcpTools)
+        // JSON_TEXT 模式：把工具 JSON 描述追加到 system 消息末尾，让模型在纯文本中输出工具调用
+        val effectiveMessages = if (model.toolCallMode == ToolCallMode.JSON_TEXT && tools.isNotEmpty()) {
+            val desc = ProviderClient.buildToolsTextDescription(tools)
+            messages.map { msg ->
+                if (msg.role == "system" && !msg.content.isNullOrBlank()) {
+                    msg.copy(content = msg.content + "\n\n## 可用工具 JSON 定义（必须严格按此 name 与参数输出）\n" + desc)
+                } else {
+                    msg
+                }
+            }
+        } else {
+            messages
+        }
         val requestJson = kotlinx.serialization.json.buildJsonObject {
             put("model", kotlinx.serialization.json.JsonPrimitive(model.model))
             put("stream", kotlinx.serialization.json.JsonPrimitive(stream))
@@ -137,11 +151,13 @@ internal class ChatApi(
             model.topP?.let { put("top_p", kotlinx.serialization.json.JsonPrimitive(it)) }
             // 推理开关/强度：按厂商能力翻译（reasoning_effort / thinking_config / thinking / reasoning）
             ReasoningAdapter.openAiFields(model).forEach { (key, value) -> put(key, value) }
-            if (tools.isNotEmpty()) {
+            // 工具调用：仅 NATIVE 模式注入标准 tools；JSON_TEXT 模式不注入（工具描述已在 system 消息）；
+            // DISABLED 模式完全不注入工具相关参数。
+            if (model.toolCallMode == ToolCallMode.NATIVE && tools.isNotEmpty()) {
                 put("tools", json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(ApiToolDefinition.serializer()), tools))
             }
             put("messages", kotlinx.serialization.json.buildJsonArray {
-                messages.forEach { msg ->
+                effectiveMessages.forEach { msg ->
                     add(kotlinx.serialization.json.buildJsonObject {
                         put("role", kotlinx.serialization.json.JsonPrimitive(msg.role))
                         if (msg.imageUrls.isNotEmpty()) {
@@ -208,11 +224,20 @@ data class ModelConfig(
     val reasoningMode: ReasoningMode = ReasoningMode.AUTO,
     /** 推理强度：null = 服务端默认。 */
     val reasoningEffort: ReasoningEffort? = null,
+    /**
+     * 工具调用模式：NATIVE = OpenAI 标准 function calling（注入 tools）；
+     * JSON_TEXT = 工具列表写入系统提示词，模型用文本输出工具调用；
+     * DISABLED = 禁用工具（纯聊天）。
+     */
+    val toolCallMode: ToolCallMode = ToolCallMode.NATIVE,
     val dynamicMcpTools: List<top.wkbin.taixu.core.model.McpToolInfo> = emptyList(),
 )
 
 /** LLM 接入协议：绝大多数厂商提供 OpenAI 兼容端点；Anthropic Claude 需要专用适配。 */
 enum class ApiProtocol { OPENAI, ANTHROPIC }
+
+/** 工具调用模式：NATIVE = 标准函数调用；JSON_TEXT = 文本 JSON 标记；DISABLED = 禁用。 */
+enum class ToolCallMode { NATIVE, JSON_TEXT, DISABLED }
 
 /** LLM 返回的一轮结果：纯文本 或 一个/多个工具调用。 */
 data class ChatResult(
@@ -309,6 +334,7 @@ class ProviderClient @Inject constructor(
     private val providerRepository: ProviderRepository,
     private val modelDao: AiModelDao,
     private val mcpManager: top.wkbin.taixu.harness.mcp.McpManager,
+    private val settingsDataStore: SettingsDataStore,
     private val json: Json,
 ) {
     private val httpClient: OkHttpClient = okHttpClient.newBuilder()
@@ -330,7 +356,7 @@ class ProviderClient @Inject constructor(
             )
         }
         val dynamicMcp = runCatching { mcpManager.getActiveMcpTools() }.getOrDefault(emptyList())
-        baseConfig.copy(dynamicMcpTools = dynamicMcp)
+        baseConfig.applyGlobalReasoningDepth().copy(dynamicMcpTools = dynamicMcp)
     }
 
     /**
@@ -358,7 +384,44 @@ class ProviderClient @Inject constructor(
             )
         }
         val dynamicMcp = runCatching { mcpManager.getActiveMcpTools() }.getOrDefault(emptyList())
-        baseConfig.copy(dynamicMcpTools = dynamicMcp)
+        baseConfig.applyGlobalReasoningDepth().copy(dynamicMcpTools = dynamicMcp)
+    }
+
+    /**
+     * 把「全局推理深度」设置应用到未显式配置的模型上。**只对该厂商实际支持的能力生效**：
+     * - 先探测厂商能力（能否关闭 / 能否调强度），不支持的选项直接忽略，避免设置"改了却没反应"；
+     * - 模型已显式关闭推理 -> 保持不动（用户意图优先）；
+     * - 全局 disabled：仅当厂商 [ReasoningCapabilities.supportsDisable] 且模型 AUTO 时关闭推理；
+     * - 全局 low/medium/high：仅当厂商 [ReasoningCapabilities.supportsEffort] 时按深度设置强度
+     *   （模型 AUTO 则同时开启推理）；厂商不支持强度（如豆包）则保持 AUTO 跟随服务端默认；
+     * - 全局 auto 或未知值 -> 不动。
+     */
+    private suspend fun ModelConfig.applyGlobalReasoningDepth(): ModelConfig {
+        if (reasoningMode == ReasoningMode.DISABLED) return this
+        val depth = settingsDataStore.defaultReasoningDepth.first()
+        val caps = ReasoningAdapter.capabilities(this)
+        return when (depth) {
+            "disabled" ->
+                if (reasoningMode == ReasoningMode.AUTO && caps.supportsDisable) {
+                    copy(reasoningMode = ReasoningMode.DISABLED)
+                } else {
+                    this
+                }
+            "low", "medium", "high" -> {
+                if (!caps.supportsEffort) return this // 不支持强度 -> 跟随服务端默认
+                val effort = when (depth) {
+                    "low" -> ReasoningEffort.LOW
+                    "medium" -> ReasoningEffort.MEDIUM
+                    else -> ReasoningEffort.HIGH
+                }
+                if (reasoningMode == ReasoningMode.AUTO) {
+                    copy(reasoningMode = ReasoningMode.ENABLED, reasoningEffort = effort)
+                } else {
+                    copy(reasoningEffort = reasoningEffort ?: effort)
+                }
+            }
+            else -> this
+        }
     }
 
     suspend fun chat(model: ModelConfig, messages: List<ApiMessage>): ChatResult = when (model.protocol) {
@@ -407,6 +470,11 @@ class ProviderClient @Inject constructor(
                     "medium" -> ReasoningEffort.MEDIUM
                     "high" -> ReasoningEffort.HIGH
                     else -> null
+                },
+                toolCallMode = when (toolCallMode?.lowercase()) {
+                    "json" -> ToolCallMode.JSON_TEXT
+                    "disabled" -> ToolCallMode.DISABLED
+                    else -> ToolCallMode.NATIVE
                 },
             )
         }
@@ -520,6 +588,21 @@ class ProviderClient @Inject constructor(
                 )
             }
             return list
+        }
+
+        /**
+         * 把工具定义转成给模型看的 JSON 文本描述（JSON_TEXT 工具调用模式使用）。
+         * 每个工具一行 JSON，格式与 OpenAI function calling 一致，模型按 name/parameters 输出调用。
+         */
+        fun buildToolsTextDescription(tools: List<ApiToolDefinition>): String {
+            if (tools.isEmpty()) return "（无可用工具）"
+            return tools.joinToString("\n") { tool ->
+                val fn = tool.function
+                buildString {
+                    append("- ").append(fn.name).append(": ").append(fn.description)
+                    append("\n  参数 JSON Schema: ").append(fn.parameters.toString())
+                }
+            }
         }
     }
 }

@@ -13,6 +13,12 @@ enum class ReasoningMode { AUTO, DISABLED, ENABLED }
 /** 推理强度：null = 服务端默认。 */
 enum class ReasoningEffort { LOW, MEDIUM, HIGH }
 
+/** 某厂商对「推理开关 / 强度」的支持能力。 */
+data class ReasoningCapabilities(
+    val supportsDisable: Boolean,
+    val supportsEffort: Boolean,
+)
+
 /**
  * 把统一的「推理开关 + 强度」配置翻译成各家 API 的参数格式。
  *
@@ -41,7 +47,10 @@ object ReasoningAdapter {
             isDoubao(host, provider) -> thinkingTypeFields(model)
             isOpenRouter(host, provider) -> openRouterFields(model)
             isOpenAiOfficial(host, provider) -> openAiOfficialFields(model)
-            else -> emptyMap()
+            // 未知厂商（自定义 baseURL / 中转站 / OneAPI 等）：绝大多数走 OpenAI 兼容协议，
+            // 按 OpenAI 官方字段注入 reasoning_effort。该字段被 DeepSeek / Qwen / Kimi 等广泛支持；
+            // 极少数不认的模型通常忽略该字段而非报错，比完全注入专有字段更安全。
+            else -> openAiOfficialFields(model)
         }
     }
 
@@ -69,6 +78,31 @@ object ReasoningAdapter {
     }
 
     // ---------- 厂商判定 ----------
+
+    /**
+     * 该厂商的推理能力支持度。用于「全局推理深度」按能力过滤，避免对不支持关闭 / 不支持调强度的厂商盲目注入：
+     * - [supportsDisable]：能否通过参数关闭推理。DeepSeek reasoner 等「推理模型」一般无法关闭，且用普通模型时 `reasoning_effort` 也是未知字段 -> 保守视为不支持。
+     * - [supportsEffort]：能否调节推理强度。豆包等只提供开关、无强度档位 -> 不支持。
+     * - [effortOnly]：不支持关闭但支持调节强度的厂商（理论上很少，目前无）。
+     */
+    fun capabilities(model: ModelConfig): ReasoningCapabilities {
+        val host = hostOf(model.baseUrl)
+        val provider = model.provider.lowercase()
+        val known = isGemini(host, provider) || isZhipu(host, provider) || isDoubao(host, provider) ||
+            isOpenRouter(host, provider) || isOpenAiOfficial(host, provider)
+        if (!known) {
+            // 未知厂商（自定义 baseURL）：OpenAI 兼容协议按 OpenAI 官方字段注入 reasoning_effort；
+            // Anthropic 协议无专有强度字段，保守视为不支持。
+            return if (model.protocol == ApiProtocol.OPENAI) {
+                ReasoningCapabilities(supportsDisable = true, supportsEffort = true)
+            } else {
+                ReasoningCapabilities(supportsDisable = false, supportsEffort = false)
+            }
+        }
+        // 豆包：只有开关，无强度档位
+        val supportsEffort = !isDoubao(host, provider)
+        return ReasoningCapabilities(supportsDisable = true, supportsEffort = supportsEffort)
+    }
 
     private fun hostOf(baseUrl: String): String =
         runCatching { URI(baseUrl.trim()).host?.lowercase() }.getOrNull().orEmpty()

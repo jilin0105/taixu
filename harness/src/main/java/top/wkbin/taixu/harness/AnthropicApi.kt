@@ -244,24 +244,32 @@ internal class AnthropicApi(
                 model.topP?.let { put("top_p", it) }
             }
             put("stream", stream)
+            val dynamicTools = ProviderClient.buildDynamicTools(model.dynamicMcpTools)
+            if (model.toolCallMode == ToolCallMode.JSON_TEXT && dynamicTools.isNotEmpty()) {
+                // JSON 文本模式：工具定义写进 system，模型用文本输出工具调用
+                systemPrompt.append("\n\n## 可用工具 JSON 定义（必须严格按此 name 与参数输出）\n")
+                    .append(ProviderClient.buildToolsTextDescription(dynamicTools))
+            }
             if (systemPrompt.isNotEmpty()) put("system", systemPrompt.toString())
             put("messages", JsonArray(anthropicMessages))
-            put(
-                "tools",
-                buildJsonArray {
-                    val dynamicTools = ProviderClient.buildDynamicTools(model.dynamicMcpTools)
-                    dynamicTools.forEach { definition ->
-                        add(
-                            buildJsonObject {
-                                put("name", definition.function.name)
-                                put("description", definition.function.description)
-                                put("input_schema", definition.function.parameters)
-                            },
-                        )
-                    }
-                },
-            )
-            put("tool_choice", buildJsonObject { put("type", "auto") })
+            // 仅 NATIVE 模式注入标准 tools；JSON_TEXT / DISABLED 均不注入
+            if (model.toolCallMode == ToolCallMode.NATIVE && dynamicTools.isNotEmpty()) {
+                put(
+                    "tools",
+                    buildJsonArray {
+                        dynamicTools.forEach { definition ->
+                            add(
+                                buildJsonObject {
+                                    put("name", definition.function.name)
+                                    put("description", definition.function.description)
+                                    put("input_schema", definition.function.parameters)
+                                },
+                            )
+                        }
+                    },
+                )
+                put("tool_choice", buildJsonObject { put("type", "auto") })
+            }
         }
 
         return Request.Builder()

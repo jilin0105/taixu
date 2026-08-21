@@ -223,6 +223,9 @@ class SettingsViewModel @Inject constructor(
     val thinkingExpanded: StateFlow<Boolean> = settingsDataStore.thinkingExpanded
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    val defaultReasoningDepth: StateFlow<String> = settingsDataStore.defaultReasoningDepth
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
+
     val contextCompactionEnabled: StateFlow<Boolean> = settingsDataStore.contextCompactionEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
@@ -243,6 +246,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setThinkingExpanded(value: Boolean) {
         viewModelScope.launch { settingsDataStore.setThinkingExpanded(value) }
+    }
+
+    fun setDefaultReasoningDepth(value: String) {
+        viewModelScope.launch { settingsDataStore.setDefaultReasoningDepth(value) }
     }
 
     fun setContextCompactionEnabled(value: Boolean) {
@@ -392,6 +399,7 @@ class SettingsViewModel @Inject constructor(
         topP: Float? = null,
         reasoningMode: String? = null,
         reasoningEffort: String? = null,
+        toolCallMode: String? = null,
     ) {
         viewModelScope.launch {
             val existing = aiModelDao.observeAll().first()
@@ -415,6 +423,7 @@ class SettingsViewModel @Inject constructor(
                     topP = topP,
                     reasoningMode = reasoningMode?.ifBlank { null },
                     reasoningEffort = reasoningEffort?.ifBlank { null },
+                    toolCallMode = toolCallMode?.ifBlank { null },
                 ),
             )
         }

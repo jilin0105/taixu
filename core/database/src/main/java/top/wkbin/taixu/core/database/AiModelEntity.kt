@@ -33,6 +33,12 @@ data class AiModelEntity(
     val reasoningMode: String? = null,
     /** 推理强度：null = 默认；"low" / "medium" / "high"。 */
     val reasoningEffort: String? = null,
+    /**
+     * 工具调用模式：null = native（OpenAI 标准函数调用）；
+     * "json" = JSON 文本格式（工具列表写入系统提示词，模型用文本输出工具调用）；
+     * "disabled" = 禁用工具（纯聊天）。
+     */
+    val toolCallMode: String? = null,
 )
 
 @Dao

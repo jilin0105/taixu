@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import top.wkbin.taixu.core.security.SecretManager
@@ -35,6 +36,7 @@ class SettingsDataStore @Inject constructor(
     private val registrySignatureUrlKey = stringPreferencesKey("registry_signature_url")
     private val registryPublicKeyKey = stringPreferencesKey("registry_public_key")
     private val thinkingExpandedKey = booleanPreferencesKey("thinking_blocks_expanded")
+    private val defaultReasoningDepthKey = stringPreferencesKey("agent_default_reasoning_depth")
     private val agentLoggingEnabledKey = booleanPreferencesKey("agent_local_logging_enabled")
     private val executionModeKey = stringPreferencesKey("execution_mode")
 
@@ -267,6 +269,12 @@ class SettingsDataStore @Inject constructor(
 
     suspend fun setThinkingExpanded(value: Boolean) {
         context.settingsDataStore.edit { it[thinkingExpandedKey] = value }
+    }
+
+    /** 全局推理深度：auto / disabled / low / medium / high（作用于未单独设置强度的模型）。 */
+    val defaultReasoningDepth: Flow<String> = context.settingsDataStore.data.map { it[defaultReasoningDepthKey] ?: "auto" }
+    suspend fun setDefaultReasoningDepth(value: String) {
+        context.settingsDataStore.edit { it[defaultReasoningDepthKey] = value }
     }
 
     // ==================== Agent 智能体核心配置 ====================

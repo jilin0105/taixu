@@ -603,8 +603,8 @@ fun ModelEditorScreen(
             result = testResult,
             discover = { provider, url, key -> viewModel.discoverModels(provider, url, key) },
             test = viewModel::testConnection,
-            save = { name, provider, model, url, key, temperature, maxTokens, topP, reasoningMode, reasoningEffort ->
-                viewModel.saveModel(modelId, name, provider, model, url, key, temperature, maxTokens, topP, reasoningMode, reasoningEffort)
+            save = { name, provider, model, url, key, temperature, maxTokens, topP, reasoningMode, reasoningEffort, toolCallMode ->
+                viewModel.saveModel(modelId, name, provider, model, url, key, temperature, maxTokens, topP, reasoningMode, reasoningEffort, toolCallMode)
                 onSaved()
             },
         )
@@ -1438,7 +1438,7 @@ private fun ModelEditor(
     result: String?,
     discover: (String, String, String) -> Unit,
     test: (String, String, String) -> Unit,
-    save: (String, String, String, String, String, Float?, Int?, Float?, String?, String?) -> Unit,
+    save: (String, String, String, String, String, Float?, Int?, Float?, String?, String?, String?) -> Unit,
 ) {
     var providerId by remember(existing?.id) {
         mutableStateOf(providers.firstOrNull { it.name == existing?.provider }?.id ?: providers.first().id)
@@ -1459,6 +1459,9 @@ private fun ModelEditor(
     var reasoningEffortText by remember(existing?.id) { mutableStateOf(existing?.reasoningEffort.orEmpty()) }
     var reasoningModeMenu by remember { mutableStateOf(false) }
     var reasoningEffortMenu by remember { mutableStateOf(false) }
+    // 工具调用模式（null/native = OpenAI 标准函数调用；json = 文本 JSON 标记；disabled = 禁用）
+    var toolCallModeText by remember(existing?.id) { mutableStateOf(existing?.toolCallMode ?: "native") }
+    var toolCallModeMenu by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -1710,6 +1713,45 @@ private fun ModelEditor(
             }
         }
         item {
+            Text("工具调用模式（模型不支持 function calling 时选 JSON 文本）", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold))
+        }
+        item {
+            ExposedDropdownMenuBox(
+                expanded = toolCallModeMenu,
+                onExpandedChange = { toolCallModeMenu = !toolCallModeMenu },
+            ) {
+                OutlinedTextField(
+                    value = when (toolCallModeText) {
+                        "json" -> "JSON 文本格式"
+                        "disabled" -> "禁用工具"
+                        else -> "标准函数调用"
+                    },
+                    onValueChange = {},
+                    modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+                    readOnly = true,
+                    label = { Text("工具调用") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(toolCallModeMenu) },
+                )
+                ExposedDropdownMenu(
+                    expanded = toolCallModeMenu,
+                    onDismissRequest = { toolCallModeMenu = false },
+                ) {
+                    DropdownMenuItem(text = { Text("标准函数调用（推荐）") }, onClick = {
+                        toolCallModeText = "native"
+                        toolCallModeMenu = false
+                    })
+                    DropdownMenuItem(text = { Text("JSON 文本格式（兼容无 function calling 的模型）") }, onClick = {
+                        toolCallModeText = "json"
+                        toolCallModeMenu = false
+                    })
+                    DropdownMenuItem(text = { Text("禁用工具（纯聊天）") }, onClick = {
+                        toolCallModeText = "disabled"
+                        toolCallModeMenu = false
+                    })
+                }
+            }
+        }
+        item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { discover(providerId, url, key) }, enabled = !discovering) {
                     Text(if (discovering) "刷新中…" else "刷新在线模型")
@@ -1752,6 +1794,7 @@ private fun ModelEditor(
                         parsedTopP,
                         reasoningModeText.takeIf { it != "auto" },
                         reasoningEffortText.ifBlank { null },
+                        toolCallModeText.takeIf { it != "native" },
                     )
                 },
                 modifier = Modifier.fillMaxWidth().height(48.dp),

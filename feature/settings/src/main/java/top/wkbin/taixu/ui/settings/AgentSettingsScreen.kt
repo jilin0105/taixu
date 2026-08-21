@@ -64,6 +64,7 @@ fun AgentSettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val thinkingExpanded by viewModel.thinkingExpanded.collectAsStateWithLifecycle()
+    val reasoningDepth by viewModel.defaultReasoningDepth.collectAsStateWithLifecycle()
     val compactionEnabled by viewModel.contextCompactionEnabled.collectAsStateWithLifecycle()
     val compactionThreshold by viewModel.contextCompactionThreshold.collectAsStateWithLifecycle()
     val maxToolRounds by viewModel.maxToolRounds.collectAsStateWithLifecycle()
@@ -106,6 +107,11 @@ fun AgentSettingsScreen(
                         subtitle = if (thinkingExpanded) "聊天界面中新生成的思考过程将默认展开呈现" else "思考过程（包括生成中内容）默认折叠，点击可展开查看",
                         checked = thinkingExpanded,
                         onCheckedChange = viewModel::setThinkingExpanded,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    ReasoningDepthSliderRow(
+                        currentDepth = reasoningDepth,
+                        onValueChange = viewModel::setDefaultReasoningDepth,
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     AgentToggleRow(
@@ -299,6 +305,63 @@ private fun AgentToggleRow(
                 checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
                 checkedTrackColor = MaterialTheme.colorScheme.primary,
             ),
+        )
+    }
+}
+
+private val REASONING_DEPTH_STEPS = listOf(
+    "auto" to "跟随模型默认",
+    "disabled" to "关闭推理",
+    "low" to "简洁",
+    "medium" to "平衡",
+    "high" to "深度",
+)
+
+@Composable
+private fun ReasoningDepthSliderRow(
+    currentDepth: String,
+    onValueChange: (String) -> Unit,
+) {
+    val stepIndex = remember(currentDepth) {
+        REASONING_DEPTH_STEPS.indexOfFirst { it.first == currentDepth }
+            .takeIf { it >= 0 } ?: 0
+    }
+    var sliderVal by remember(stepIndex) { mutableFloatStateOf(stepIndex.toFloat()) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RuntimeIcon(RuntimeIconName.Brain, Modifier.size(16.dp), MaterialTheme.colorScheme.primary)
+                Text("推理深度", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+            }
+            Text(
+                REASONING_DEPTH_STEPS[sliderVal.toInt().coerceIn(0, REASONING_DEPTH_STEPS.lastIndex)].second,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        Slider(
+            value = sliderVal,
+            onValueChange = { sliderVal = it },
+            onValueChangeFinished = {
+                onValueChange(REASONING_DEPTH_STEPS[sliderVal.toInt().coerceIn(0, REASONING_DEPTH_STEPS.lastIndex)].first)
+            },
+            valueRange = 0f..(REASONING_DEPTH_STEPS.size - 1).toFloat(),
+            steps = REASONING_DEPTH_STEPS.size - 2, // 5 档 -> 4 段间隔 -> steps=3
+        )
+        Text(
+            "控制模型在动手执行前的思考量：调低可显著减少推理输出、响应更快；调高则更深思熟虑（对不支持调节的模型自动忽略）",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

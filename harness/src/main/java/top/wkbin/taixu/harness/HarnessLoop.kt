@@ -33,6 +33,7 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -533,7 +534,7 @@ class HarnessLoop @Inject constructor(
                 try {
                     streamed = providerClient.chatStream(
                         model,
-                        apiMessages(sessId),
+                        apiMessages(sessId, model.toolCallMode),
                         onReasoning = { chunk ->
                             streamReasoning.append(chunk)
                             sessionThinkingModes[sessId] = true
@@ -587,27 +588,34 @@ class HarnessLoop @Inject constructor(
                 }
             }
             val result = streamed
+            val jsonMode = model.toolCallMode == ToolCallMode.JSON_TEXT
+            val rawText = streamText.toString()
+            // JSON 文本模式：从回复文本中解析 [[tool_call]]{...}[[/tool_call]] 标记，
+            // 展示给用户与持久化时剥离标记（标记仅作为模型↔引擎的调用协议）
+            val jsonCalls = if (jsonMode) extractJsonToolCalls(rawText) else emptyList()
+            val displayText = if (jsonMode) stripToolCallMarkers(rawText) else rawText
             logAgentEvent(
                 sessId,
                 "ModelResponse",
-                "TextLength=${streamText.length}, ReasoningLength=${result.reasoningContent?.length ?: 0}, ToolCallsCount=${result.toolCalls.size}",
+                "TextLength=${rawText.length}, ReasoningLength=${result.reasoningContent?.length ?: 0}, ToolCallsCount=${result.toolCalls.size}, JsonTextCalls=${jsonCalls.size}",
             )
-            if (streamText.isNotEmpty()) {
+            if (displayText.isNotEmpty()) {
                 persistAssistant(
                     sessId,
                     assistantId,
                     assistantAt,
-                    streamText.toString(),
+                    displayText,
                     result.reasoningContent,
-                    totalMs = if (!result.hasToolCalls) now() - startedAt else null,
+                    totalMs = if (result.toolCalls.isEmpty() && jsonCalls.isEmpty()) now() - startedAt else null,
                 )
             }
             getOrCreateThinkingLiveFlow(sessId).value = false
             if (sessId == _currentSessionId.value) {
                 _thinkingLive.value = false
             }
-            if (!result.hasToolCalls) return
-            result.toolCalls.forEach { spec ->
+            val allCalls = result.toolCalls + jsonCalls
+            if (allCalls.isEmpty()) return
+            allCalls.forEach { spec ->
                 val parsedArgs = try {
                     json.parseToJsonElement(spec.argumentsJson) as? JsonObject
                         ?: throw IllegalArgumentException("参数不是 JSON 对象")
@@ -711,6 +719,29 @@ class HarnessLoop @Inject constructor(
         )
     }
 
+    /** JSON 文本模式专用调用标记：模型在回复中输出 [[tool_call]]{JSON}[[/tool_call]]。 */
+    private fun extractJsonToolCalls(text: String): List<ApiToolCallSpec> {
+        if (text.isBlank()) return emptyList()
+        val regex = Regex("""\[\[tool_call\]\](.*?)\[\[/tool_call\]\]""", RegexOption.DOT_MATCHES_ALL)
+        return regex.findAll(text).mapNotNull { match ->
+            val payload = match.groupValues[1].trim()
+            runCatching {
+                val obj = json.parseToJsonElement(payload) as? JsonObject ?: return@runCatching null
+                val name = obj["name"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+                if (name.isBlank()) return@runCatching null
+                ApiToolCallSpec(
+                    id = "json-" + UUID.randomUUID().toString(),
+                    name = name,
+                    argumentsJson = obj["arguments"]?.toString() ?: "{}",
+                )
+            }.getOrNull()
+        }.toList()
+    }
+
+    /** 从展示文本中剥离工具调用标记，只留下模型真正写给用户看的内容。 */
+    private fun stripToolCallMarkers(text: String): String =
+        text.replace(Regex("""\[\[tool_call\]\].*?\[\[/tool_call\]\]""", RegexOption.DOT_MATCHES_ALL), "").trim()
+
     private fun describeToolCall(tool: HarnessTool, args: JsonObject, rawToolName: String? = null): String {
         fun arg(name: String): String? =
             runCatching { args[name]?.jsonPrimitive?.content }.getOrNull()?.takeIf { it.isNotBlank() }
@@ -755,7 +786,7 @@ class HarnessLoop @Inject constructor(
     private fun friendly(throwable: Throwable): String =
         throwable.message?.take(200) ?: throwable::class.simpleName.orEmpty()
 
-    private suspend fun buildSystemPrompt(workspacePath: String): String {
+    private suspend fun buildSystemPrompt(workspacePath: String, toolCallMode: ToolCallMode = ToolCallMode.NATIVE): String {
         val distroId = runCatching { settingsDataStore.selectedDistribution.first() }.getOrDefault("debian")
         val distroName = when (distroId.lowercase()) {
             "ubuntu" -> "Ubuntu 24.04 (Noble Numbat)"
@@ -789,11 +820,31 @@ class HarnessLoop @Inject constructor(
             "\n\n当前工作区：" + workspacePath + "（base 命令默认在此目录执行；read/write/edit 的相对路径以此为根）"
         } else ""
 
+        val toolCallSection = when (toolCallMode) {
+            ToolCallMode.JSON_TEXT -> """
+                |
+                |## 工具调用方式（重要：当前使用 JSON 文本模式）
+                |你无法使用系统级 function calling，必须用**文本标记**调用工具：
+                |- 当需要调用工具时，在回复中直接输出（独占一行，前后不要有解释文字）：
+                |  [[tool_call]]{"name":"工具名","arguments":{...}}[[/tool_call]]
+                |- 参数必须与上方"可用工具 JSON 定义"中的参数一致，缺一不可；
+                |- 一次可连续输出多个 [[tool_call]] 标记，引擎会逐个执行并返回结果；
+                |- 标记后的结果会以【工具 xxx 执行结果】形式出现在后续对话中，你据此继续；
+                |- 不调用工具时，不要输出任何 [[tool_call]] 标记。
+            """.trimMargin()
+            ToolCallMode.DISABLED -> """
+                |
+                |## 工具禁用说明
+                |当前会话已禁用工具调用：请直接回答用户问题，不要尝试调用任何工具（read / write / edit / base 等均不可用）。
+            """.trimMargin()
+            ToolCallMode.NATIVE -> ""
+        }
+
         return template
             .replace("{{DISTRO_NAME}}", distroName)
             .replace("{{PKG_MANAGER}}", pkgManager)
             .replace("{{ACTIVE_SKILLS}}", skillSection)
-            .trim() + workspaceSection + projectContext
+            .trim() + toolCallSection + workspaceSection + projectContext
     }
 
     private suspend fun loadProjectContext(workspacePath: String): String {
@@ -816,12 +867,12 @@ class HarnessLoop @Inject constructor(
             sections.joinToString("\n\n") + "\n</project_context>"
     }
 
-    private suspend fun apiMessages(sessId: String): List<ApiMessage> {
+    private suspend fun apiMessages(sessId: String, toolCallMode: ToolCallMode = ToolCallMode.NATIVE): List<ApiMessage> {
         val compactionEnabled = runCatching { settingsDataStore.contextCompactionEnabled.first() }.getOrDefault(true)
         val threshold = runCatching { settingsDataStore.contextCompactionThreshold.first() }.getOrDefault(15)
         val sessionEntity = sessionDao.findById(sessId)
         val sessionWorkspace = sessionEntity?.workspace.orEmpty()
-        val systemPrompt = buildSystemPrompt(sessionWorkspace)
+        val systemPrompt = buildSystemPrompt(sessionWorkspace, toolCallMode)
         val thinkingMode = sessionThinkingModes[sessId] ?: false
 
         return buildList {
@@ -838,6 +889,9 @@ class HarnessLoop @Inject constructor(
                 msgs.size
             }
 
+            // JSON 文本模式：工具调用以文本表达，tool 消息需转成 user 文本（API 不认识 tool 角色）
+            val toolNames = mutableMapOf<String, String>()
+
             var i = 0
             fun apiToolCall(tc: ToolCall) = ApiToolCall(
                 id = tc.id,
@@ -845,6 +899,30 @@ class HarnessLoop @Inject constructor(
             )
             while (i < msgs.size) {
                 val message = msgs[i]
+                if (toolCallMode == ToolCallMode.JSON_TEXT) {
+                    when (message) {
+                        is ToolCall -> {
+                            toolNames[message.id] = message.rawToolName ?: message.tool.apiName()
+                            i++
+                        }
+                        is ToolResult -> {
+                            val name = toolNames[message.toolCallId] ?: "工具"
+                            val status = if (message.success) "成功" else "失败"
+                            add(
+                                ApiMessage(
+                                    role = "user",
+                                    content = "【工具 $name 执行结果·$status】\n${message.output}",
+                                ),
+                            )
+                            i++
+                        }
+                        else -> {
+                            add(HarnessApiMapper.toApiMessage(message))
+                            i++
+                        }
+                    }
+                    continue
+                }
                 if (message is AssistantText || message is ToolCall) {
                     if (message is ToolCall && message.id !in answeredIds) {
                         i++
@@ -1103,6 +1181,7 @@ class HarnessLoop @Inject constructor(
             - 需要信息时先 read / base 获取事实，不要凭空猜测或编造内容。
             - 每一步想清楚再动手；失败时读取错误输出并自我纠正（换路径、装依赖、重试）。
             - 尽量一次完成用户要求：安装后要验证（如 xxx --version），并汇报真实结果。
+            - 思考语言：内部推理 / 思考过程（含开启推理模式时的 thinking 内容）一律使用中文，便于用户理解思路；最终回答语言遵循用户要求（默认中文）。
             - 用简洁中文汇报；不空话客套；绝不复述或暴露 API Key / Token 等机密。
             - 若不确定或需要用户确认，直接说明。
         """.trimIndent()
