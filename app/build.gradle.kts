@@ -1,6 +1,12 @@
 import com.android.build.api.dsl.ApplicationExtension
+import com.android.build.api.variant.ApplicationAndroidComponentsExtension
+import java.io.FileInputStream
+import java.util.Properties
 import org.gradle.kotlin.dsl.configure
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+val appVersionName = "0.1.0"
+val appVersionCode = 1
 
 plugins {
     alias(libs.plugins.android.application)
@@ -19,8 +25,8 @@ extensions.configure<ApplicationExtension> {
         applicationId = "top.wkbin.taixu"
         minSdk = 29
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters += "arm64-v8a"
@@ -40,6 +46,30 @@ extensions.configure<ApplicationExtension> {
         }
     }
 
+    val keystorePropertiesFile = rootProject.file("keystore.properties").takeIf { it.exists() }
+        ?: project.file("keystore.properties").takeIf { it.exists() }
+    val keystoreProperties = Properties()
+    if (keystorePropertiesFile != null) {
+        keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+    }
+
+    signingConfigs {
+        create("release") {
+            if (keystorePropertiesFile != null) {
+                val storeFilePath = keystoreProperties.getProperty("storeFile") ?: ""
+                val resolvedStoreFile = if (storeFilePath.startsWith("/") || storeFilePath.contains(":\\")) {
+                    file(storeFilePath)
+                } else {
+                    rootProject.file(storeFilePath).takeIf { it.exists() } ?: project.file(storeFilePath)
+                }
+                storeFile = resolvedStoreFile
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -48,6 +78,9 @@ extensions.configure<ApplicationExtension> {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            if (keystorePropertiesFile != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
@@ -147,6 +180,14 @@ tasks.configureEach {
             check(bundledProotLoader.asFile.isFile && bundledProotLoader.asFile.length() > 4096L) {
                 "Missing ARM64 PRoot loader. Run tools/prepare-proot-runtime.ps1 before building."
             }
+        }
+    }
+}
+
+extensions.configure<ApplicationAndroidComponentsExtension> {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            output.outputFileName.set("taixu-v${appVersionName}-${variant.name}.apk")
         }
     }
 }

@@ -2,6 +2,14 @@
   "schemaVersion": 1,
   "providers": [
     {
+      "id": "custom",
+      "name": "自定义 OpenAI 兼容接口",
+      "group": "CUSTOM",
+      "baseUrl": "",
+      "modelsUrl": "",
+      "apiKeyOptional": true
+    },
+    {
       "id": "anthropic",
       "name": "Anthropic Claude",
       "group": "OFFICIAL",
@@ -259,14 +267,6 @@
       "group": "LOCAL",
       "baseUrl": "http://127.0.0.1:8000/v1",
       "modelsUrl": "http://127.0.0.1:8000/v1/models",
-      "apiKeyOptional": true
-    },
-    {
-      "id": "custom",
-      "name": "自定义 OpenAI 兼容接口",
-      "group": "CUSTOM",
-      "baseUrl": "",
-      "modelsUrl": "",
       "apiKeyOptional": true
     }
   ]

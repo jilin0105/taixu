@@ -29,6 +29,10 @@ data class AiModelEntity(
     val maxTokens: Int? = null,
     /** 推理参数（null = 使用服务端默认）：核采样阈值，0.0 ~ 1.0。 */
     val topP: Float? = null,
+    /** 推理开关：null = auto（跟随模型默认）；"disabled" / "enabled"。 */
+    val reasoningMode: String? = null,
+    /** 推理强度：null = 默认；"low" / "medium" / "high"。 */
+    val reasoningEffort: String? = null,
 )
 
 @Dao

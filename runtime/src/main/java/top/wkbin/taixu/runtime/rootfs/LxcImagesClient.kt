@@ -15,18 +15,19 @@ import top.wkbin.taixu.runtime.DistributionSpec
 import top.wkbin.taixu.runtime.DownloadProgress
 
 /**
- * 清华大学 TUNA 镜像站 rootfs 下载通道（images.linuxcontainers.org 的完整同步）。
+ * lxc-images rootfs 下载兜底通道（单文件 `rootfs.tar.xz` + SHA256SUMS 摘要校验）。
  *
- * 与 OciRegistryClient 的 OCI 分层拉取不同，这里直接下载单文件 `rootfs.tar.xz`，
- * 并使用目录内的 `SHA256SUMS` 做摘要校验。仅作为 OCI 线路（DaoCloud / Docker Hub）
- * 全部失败后的国内兜底，且只支持映射到 lxc-images 的发行版。
+ * 镜像源按顺序尝试：清华 TUNA（国内加速，同步大部分发行版）→ LXC 官方源
+ * （images.linuxcontainers.org，覆盖 TUNA 未同步的发行版，如 archlinux 的 arm64）。
+ * 仅作为 OCI 线路（DaoCloud / Docker Hub）全部失败后的兜底，且只支持映射到
+ * lxc-images 的发行版。
  */
 @Singleton
 class LxcImagesClient @Inject constructor(
     private val http: OkHttpClient,
     private val logger: AppLogger,
 ) {
-    /** 该发行版是否提供 TUNA 兜底镜像。 */
+    /** 该发行版是否提供 lxc-images 兜底镜像。 */
     fun supports(distributionId: String): Boolean = lxcPathFor(distributionId) != null
 
     suspend fun pull(
@@ -36,18 +37,27 @@ class LxcImagesClient @Inject constructor(
         applyLayer: suspend (File, String) -> Unit,
     ): String = withContext(Dispatchers.IO) {
         val lxcPath = lxcPathFor(distribution.id)
-            ?: error("清华镜像站暂不支持发行版 ${distribution.id}")
+            ?: error("lxc-images 暂不支持发行版 ${distribution.id}")
         cacheDir.mkdirs()
-        val buildDir = resolveLatestBuild(lxcPath)
-        val expectedSha = fetchExpectedSha256(lxcPath, buildDir)
-        val blob = downloadRootfs(lxcPath, buildDir, expectedSha, cacheDir, onProgress)
-        applyLayer(blob, MEDIA_TYPE_ROOTFS_TAR_XZ)
-        "lxc-5.7.0-${distribution.id}-$buildDir"
+        var lastFailure: Throwable? = null
+        for (base in MIRROR_BASES) {
+            try {
+                val buildDir = resolveLatestBuild(base, lxcPath)
+                val expectedSha = fetchExpectedSha256(base, lxcPath, buildDir)
+                val blob = downloadRootfs(base, lxcPath, buildDir, expectedSha, cacheDir, onProgress)
+                applyLayer(blob, MEDIA_TYPE_ROOTFS_TAR_XZ)
+                return@withContext "lxc-5.7.0-${distribution.id}-$buildDir"
+            } catch (failure: Throwable) {
+                lastFailure = failure
+                logger.w("lxc-images 镜像源 $base 不可用（${distribution.id}）", failure)
+            }
+        }
+        throw lastFailure ?: IllegalStateException("没有可用的 lxc-images 镜像源")
     }
 
     /** 抓取目录列表并解析出最新一次构建的时间戳目录（形如 20260820_05:24）。 */
-    private fun resolveLatestBuild(lxcPath: String): String {
-        val url = "$MIRROR_BASE/$lxcPath/arm64/default/"
+    private fun resolveLatestBuild(mirrorBase: String, lxcPath: String): String {
+        val url = "$mirrorBase/$lxcPath/arm64/default/"
         val body = fetchText(url, metadataClient())
         val builds = Regex("(\\d{8}_\\d{2}(?:%3A|:)\\d{2})/")
             .findAll(body)
@@ -55,13 +65,13 @@ class LxcImagesClient @Inject constructor(
             .distinct()
             .sorted()
             .toList()
-        check(builds.isNotEmpty()) { "TUNA 镜像目录解析失败：$url" }
+        check(builds.isNotEmpty()) { "lxc-images 目录解析失败：$url" }
         return builds.last()
     }
 
     /** 读取构建目录中的 SHA256SUMS，取 rootfs.tar.xz 的摘要。 */
-    private fun fetchExpectedSha256(lxcPath: String, buildDir: String): String {
-        val url = buildUrl(lxcPath, buildDir, "SHA256SUMS")
+    private fun fetchExpectedSha256(mirrorBase: String, lxcPath: String, buildDir: String): String {
+        val url = buildUrl(mirrorBase, lxcPath, buildDir, "SHA256SUMS")
         val body = fetchText(url, metadataClient())
         val expected = body.lineSequence()
             .firstOrNull { it.trimEnd().endsWith("rootfs.tar.xz") }
@@ -70,11 +80,12 @@ class LxcImagesClient @Inject constructor(
             ?.firstOrNull()
             ?.lowercase()
             ?: error("SHA256SUMS 中找不到 rootfs.tar.xz 条目：$url")
-        check(expected.matches(Regex("[0-9a-f]{64}"))) { "TUNA SHA256SUMS 摘要格式非法：$expected" }
+        check(expected.matches(Regex("[0-9a-f]{64}"))) { "lxc-images SHA256SUMS 摘要格式非法：$expected" }
         return expected
     }
 
     private suspend fun downloadRootfs(
+        mirrorBase: String,
         lxcPath: String,
         buildDir: String,
         expectedSha: String,
@@ -83,15 +94,15 @@ class LxcImagesClient @Inject constructor(
     ): File {
         val target = File(cacheDir, "sha256-$expectedSha.rootfs.tar.xz")
         if (target.isFile && sha256(target) == expectedSha) {
-            logger.i("TUNA lxc-images layer cache hit: ${target.name}")
+            logger.i("lxc-images layer cache hit: ${target.name}")
             return target
         }
         val partial = File(cacheDir, "sha256-$expectedSha.part")
         partial.delete()
-        val url = buildUrl(lxcPath, buildDir, "rootfs.tar.xz")
+        val url = buildUrl(mirrorBase, lxcPath, buildDir, "rootfs.tar.xz")
         val request = Request.Builder().url(url).header("User-Agent", USER_AGENT).build()
         http.newCall(request).execute().use { response ->
-            check(response.isSuccessful) { "下载 TUNA rootfs 失败 HTTP ${response.code}" }
+            check(response.isSuccessful) { "下载 lxc-images rootfs 失败 HTTP ${response.code}" }
             val total = response.header("Content-Length")?.toLongOrNull()?.takeIf { it > 0 }
             val md = MessageDigest.getInstance("SHA-256")
             var count = 0L
@@ -109,20 +120,20 @@ class LxcImagesClient @Inject constructor(
                 }
             }
             val actual = md.digest().joinToString("") { "%02x".format(it) }
-            check(actual == expectedSha) { "TUNA rootfs 摘要校验失败：期望 $expectedSha，实际 $actual" }
+            check(actual == expectedSha) { "lxc-images rootfs 摘要校验失败：期望 $expectedSha，实际 $actual" }
         }
-        check(partial.renameTo(target)) { "无法提交 TUNA rootfs 缓存" }
+        check(partial.renameTo(target)) { "无法提交 lxc-images rootfs 缓存" }
         return target
     }
 
     /** 时间戳目录名中的冒号需要编码，避免部分 HTTP 栈拒绝路径。 */
-    private fun buildUrl(lxcPath: String, buildDir: String, fileName: String): String =
-        "$MIRROR_BASE/$lxcPath/arm64/default/${buildDir.replace(":", "%3A")}/$fileName"
+    private fun buildUrl(mirrorBase: String, lxcPath: String, buildDir: String, fileName: String): String =
+        "$mirrorBase/$lxcPath/arm64/default/${buildDir.replace(":", "%3A")}/$fileName"
 
     private fun fetchText(url: String, client: OkHttpClient): String {
         val request = Request.Builder().url(url).header("User-Agent", USER_AGENT).build()
         client.newCall(request).execute().use { response ->
-            check(response.isSuccessful) { "TUNA 镜像元数据请求失败 HTTP ${response.code}: $url" }
+            check(response.isSuccessful) { "lxc-images 元数据请求失败 HTTP ${response.code}: $url" }
             return response.body.string()
         }
     }
@@ -148,7 +159,11 @@ class LxcImagesClient @Inject constructor(
     }
 
     private companion object {
-        const val MIRROR_BASE = "https://mirrors.tuna.tsinghua.edu.cn/lxc-images/images"
+        /** 依次尝试的镜像源：国内加速优先，官方源兜底（覆盖 TUNA 未同步的发行版）。 */
+        val MIRROR_BASES = listOf(
+            "https://mirrors.tuna.tsinghua.edu.cn/lxc-images/images",
+            "https://images.linuxcontainers.org/images",
+        )
         const val USER_AGENT = "TaiXu/proot-distro-5.7.0-compatible"
         const val MEDIA_TYPE_ROOTFS_TAR_XZ = "application/x-tar.xz"
 
@@ -161,6 +176,7 @@ class LxcImagesClient @Inject constructor(
             "debian" -> "debian/bookworm"
             "ubuntu" -> "ubuntu/noble"
             "kali" -> "kali/current"
+            "arch" -> "archlinux/current"
             else -> null
         }
     }

@@ -90,6 +90,82 @@ class ChatApiTest {
     }
 
     @Test
+    fun `openai official maps reasoning effort to reasoning_effort`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"choices":[]}"""))
+        api.chat(
+            model().copy(reasoningMode = ReasoningMode.ENABLED, reasoningEffort = ReasoningEffort.MEDIUM),
+            emptyList(),
+        )
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body.contains("\"reasoning_effort\":\"medium\""))
+    }
+
+    @Test
+    fun `openai official disables reasoning with effort none`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"choices":[]}"""))
+        api.chat(model().copy(reasoningMode = ReasoningMode.DISABLED), emptyList())
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body.contains("\"reasoning_effort\":\"none\""))
+    }
+
+    @Test
+    fun `gemini maps reasoning to thinking_config thinkingBudget`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"choices":[]}"""))
+        api.chat(
+            model().copy(
+                provider = "Google Gemini",
+                baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai",
+                reasoningMode = ReasoningMode.ENABLED,
+                reasoningEffort = ReasoningEffort.LOW,
+            ),
+            emptyList(),
+        )
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body.contains("\"thinking_config\":{\"thinkingBudget\":1024}"))
+    }
+
+    @Test
+    fun `gemini disables reasoning with zero budget`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"choices":[]}"""))
+        api.chat(
+            model().copy(
+                provider = "Google Gemini",
+                baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai",
+                reasoningMode = ReasoningMode.DISABLED,
+            ),
+            emptyList(),
+        )
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body.contains("\"thinking_config\":{\"thinkingBudget\":0}"))
+    }
+
+    @Test
+    fun `unknown provider does not inject reasoning fields`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"choices":[]}"""))
+        api.chat(
+            model().copy(
+                provider = "自定义 OpenAI 兼容接口",
+                reasoningMode = ReasoningMode.ENABLED,
+                reasoningEffort = ReasoningEffort.HIGH,
+            ),
+            emptyList(),
+        )
+        val body = server.takeRequest().body.readUtf8()
+        assertFalse(body.contains("reasoning_effort"))
+        assertFalse(body.contains("thinking_config"))
+        assertFalse(body.contains("\"reasoning\""))
+    }
+
+    @Test
+    fun `auto mode does not inject reasoning fields`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"choices":[]}"""))
+        api.chat(model(), emptyList())
+        val body = server.takeRequest().body.readUtf8()
+        assertFalse(body.contains("reasoning_effort"))
+        assertFalse(body.contains("thinking_config"))
+    }
+
+    @Test
     fun `streams content deltas and accumulates tool calls`() = runBlocking {
         val body = """
             data: {"choices":[{"delta":{"content":"你"}}]}

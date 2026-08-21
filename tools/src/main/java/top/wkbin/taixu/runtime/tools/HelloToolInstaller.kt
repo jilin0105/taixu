@@ -25,8 +25,9 @@ class HelloToolInstaller @Inject constructor(
 
     override fun install(): Flow<InstallEvent> = flow {
         emit(InstallEvent.Started(toolId))
-        val targetDir = File(pathManager.taixuToolsDir, toolId)
-        val stagingDir = File(pathManager.taixuRootDir, ".staging-$toolId")
+        val distroId = linuxRuntime.activeDistroId.value
+        val targetDir = File(pathManager.taixuToolsDir(distroId), toolId)
+        val stagingDir = File(pathManager.taixuRootDir(distroId), ".staging-$toolId")
         try {
             if (linuxRuntime.state.value !is top.wkbin.taixu.core.model.RuntimeState.Ready) {
                 throw IllegalStateException("Linux Runtime 未就绪，请先初始化 Linux")
@@ -61,7 +62,7 @@ class HelloToolInstaller @Inject constructor(
     }
 
     override suspend fun uninstall(deleteData: Boolean): ToolActionResult = runCatching {
-        SafeFileTree.delete(File(pathManager.taixuToolsDir, "hello-tool"))
+        SafeFileTree.delete(File(pathManager.taixuToolsDir(linuxRuntime.activeDistroId.value), "hello-tool"))
     }.fold(
         onSuccess = { ToolActionResult(true, "卸载完成") },
         onFailure = { ToolActionResult(false, "卸载 hello-tool 失败：${it.message.orEmpty()}") },

@@ -13,12 +13,14 @@ class ToolRepository @Inject constructor(
     private val toolDao: ToolDao,
     private val toolRegistry: ToolRegistry,
 ) {
-    fun observeTools(): Flow<List<ToolEntity>> = toolDao.observeAll()
-    suspend fun findById(id: String): ToolEntity? = toolDao.findById(id)
+    fun observeTools(distroId: String): Flow<List<ToolEntity>> = toolDao.observeForDistro(distroId)
+    suspend fun findById(distroId: String, id: String): ToolEntity? = toolDao.findById(distroId, id)
     suspend fun upsert(tool: ToolEntity) = toolDao.upsert(tool)
-    suspend fun updateState(id: String, state: String) = toolDao.updateState(id, state)
-    suspend fun updateStateAndInstalledVersion(id: String, state: String, installedVersion: String?) =
-        toolDao.updateStateAndInstalledVersion(id, state, installedVersion)
+    suspend fun updateState(distroId: String, id: String, state: String) =
+        toolDao.updateState(distroId, id, state)
+    suspend fun updateStateAndInstalledVersion(distroId: String, id: String, state: String, installedVersion: String?) =
+        toolDao.updateStateAndInstalledVersion(distroId, id, state, installedVersion)
+    suspend fun deleteByDistro(distroId: String) = toolDao.deleteByDistro(distroId)
     fun manifests(): List<ToolManifest> = toolRegistry.load()
     fun manifest(id: String): ToolManifest? = manifests().firstOrNull { it.id == id }
 }

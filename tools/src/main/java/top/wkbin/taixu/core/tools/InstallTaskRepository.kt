@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.core.tools
+package top.wkbin.taixu.core.tools
 
 import top.wkbin.taixu.core.database.InstallTaskDao
 import top.wkbin.taixu.core.database.InstallTaskEntity
@@ -11,6 +11,8 @@ class InstallTaskRepository @Inject constructor(
     private val dao: InstallTaskDao,
 ) {
     suspend fun upsert(task: InstallTaskEntity) = dao.upsert(task)
-    suspend fun findByTool(toolId: String): InstallTaskEntity? = dao.findByTool(toolId)
+    suspend fun findByTool(distroId: String, toolId: String): InstallTaskEntity? = dao.findByTool(distroId, toolId)
     suspend fun listByState(state: String): List<InstallTaskEntity> = dao.listByState(state)
+    suspend fun deleteByDistro(distroId: String) = dao.deleteByDistro(distroId)
 }
+

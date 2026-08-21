@@ -558,25 +558,6 @@ class SettingsDataStore @Inject constructor(
         }
     }
 
-    /** 一次性升级旧版本明文保存的 MCP 配置和工具访问令牌。 */
-    suspend fun migrateLegacyProtectedValues() {
-        context.settingsDataStore.edit { preferences ->
-            preferences[mcpServersKey]?.takeIf {
-                it.isNotBlank() && !it.startsWith(PROTECTED_VALUE_PREFIX)
-            }?.let { legacy ->
-                preferences[mcpServersKey] = encodeProtectedValue(legacy)
-            }
-            preferences.asMap().forEach { (key, rawValue) ->
-                if (key.name.startsWith("tool_") && key.name.endsWith("_access_token")) {
-                    val legacy = rawValue as? String ?: return@forEach
-                    if (legacy.isNotBlank() && !legacy.startsWith(PROTECTED_VALUE_PREFIX)) {
-                        preferences[stringPreferencesKey(key.name)] = encodeProtectedValue(legacy)
-                    }
-                }
-            }
-        }
-    }
-
     private fun encodeProtectedValue(value: String): String = PROTECTED_VALUE_PREFIX + secretManager.encrypt(value)
 
     /** 兼容升级前的明文值；下一次保存时会自动转为 Keystore 密文。 */

@@ -9,6 +9,7 @@ import top.wkbin.taixu.core.tools.ProviderRepository
 import top.wkbin.taixu.core.tools.AgentModelDiscovery
 import top.wkbin.taixu.core.tools.AgentProviderCatalog
 import top.wkbin.taixu.core.tools.AgentModelConnectionTester
+import top.wkbin.taixu.core.tools.ProviderEndpointPolicy
 import top.wkbin.taixu.core.model.ExecutionMode
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -334,10 +335,12 @@ class SettingsViewModel @Inject constructor(
 
     fun discoverModels(providerId: String, baseUrl: String, apiKey: String = "") {
         viewModelScope.launch {
+            val cleanUrl = ProviderEndpointPolicy.normalizeUrl(baseUrl)
+            if (!ProviderEndpointPolicy.isSafeBaseUrl(cleanUrl)) return@launch
             _discoveringModels.value = true
             _modelDiscoveryError.value = null
             val provider = providerCatalogRepository.find(providerId)
-            runCatching { modelDiscovery.discover(provider, baseUrl, apiKey.ifBlank { providerRepository.readApiKey() }) }
+            runCatching { modelDiscovery.discover(provider, cleanUrl, apiKey.ifBlank { providerRepository.readApiKey() }) }
                 .onSuccess { models ->
                     _discoveredModels.value = models
                     if (models.isEmpty()) _modelDiscoveryError.value = "端点未返回可用的 Agent 模型"
@@ -387,6 +390,8 @@ class SettingsViewModel @Inject constructor(
         temperature: Float? = null,
         maxTokens: Int? = null,
         topP: Float? = null,
+        reasoningMode: String? = null,
+        reasoningEffort: String? = null,
     ) {
         viewModelScope.launch {
             val existing = aiModelDao.observeAll().first()
@@ -408,6 +413,8 @@ class SettingsViewModel @Inject constructor(
                     temperature = temperature,
                     maxTokens = maxTokens,
                     topP = topP,
+                    reasoningMode = reasoningMode?.ifBlank { null },
+                    reasoningEffort = reasoningEffort?.ifBlank { null },
                 ),
             )
         }

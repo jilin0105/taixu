@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.core.tools
+package top.wkbin.taixu.core.tools
 
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -23,15 +23,17 @@ class AgentModelDiscovery @Inject constructor(
         baseUrl: String,
         apiKey: String?,
     ): List<String> = withContext(Dispatchers.IO) {
+        val cleanBaseUrl = ProviderEndpointPolicy.normalizeUrl(baseUrl)
         val url = when {
-            provider.id == "custom" -> "${baseUrl.trimEnd('/')}/models"
-            baseUrl.isNotBlank() && baseUrl.trimEnd('/') != provider.baseUrl.trimEnd('/') -> "${baseUrl.trimEnd('/')}/models"
+            provider.id == "custom" -> "${cleanBaseUrl.trimEnd('/')}/models"
+            cleanBaseUrl.isNotBlank() && cleanBaseUrl.trimEnd('/') != provider.baseUrl.trimEnd('/') -> "${cleanBaseUrl.trimEnd('/')}/models"
             provider.modelsUrl.isNotBlank() -> provider.modelsUrl
             else -> "${provider.baseUrl.trimEnd('/')}/models"
         }
-        require(url.isNotBlank() && ProviderEndpointPolicy.isSafeBaseUrl(url)) { "模型发现地址不安全或为空" }
-        val isAnthropic = url.contains("api.anthropic.com")
-        val request = Request.Builder().url(url)
+        val targetUrl = ProviderEndpointPolicy.normalizeUrl(url)
+        require(targetUrl.isNotBlank() && ProviderEndpointPolicy.isSafeBaseUrl(targetUrl)) { "模型发现地址不安全或为空" }
+        val isAnthropic = targetUrl.contains("api.anthropic.com")
+        val request = Request.Builder().url(targetUrl)
             .apply {
                 when {
                     isAnthropic -> {

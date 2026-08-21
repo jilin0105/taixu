@@ -32,21 +32,21 @@ class StorageManager @Inject constructor(
         val rootfsBytes = sizeOf(pathManager.rootfsDir)
         // Keep this bucket exclusive: baseDir itself would double-count rootfs,
         // tools, data, workspace and cache in the UI.
+        val distroIds = pathManager.listInstalledDistroIds()
         val runtimeBytes = listOf(
             pathManager.binDir,
             pathManager.homeDir,
-            pathManager.taixuRuntimesDir,
             pathManager.stagingRootfsDir,
             pathManager.rootfsPreviousDir(),
             pathManager.tmpDir,
             pathManager.logsDir,
             pathManager.metadataDir,
-        ).sumOf(::sizeOf)
+        ).sumOf(::sizeOf) + distroIds.sumOf { sizeOf(pathManager.taixuRuntimesDir(it)) }
         StorageUsage(
             rootfsBytes = rootfsBytes,
             runtimeBytes = runtimeBytes,
-            toolBytes = sizeOf(pathManager.taixuToolsDir),
-            dataBytes = sizeOf(pathManager.taixuDataDir),
+            toolBytes = distroIds.sumOf { sizeOf(pathManager.taixuToolsDir(it)) },
+            dataBytes = distroIds.sumOf { sizeOf(pathManager.taixuDataDir(it)) },
             workspaceBytes = sizeOf(pathManager.workspaceDir),
             cacheBytes = sizeOf(pathManager.cacheDir),
             availableBytes = availableBytes(),

@@ -2,8 +2,6 @@ package top.wkbin.taixu.di
 
 import android.content.Context
 import androidx.room.Room
-import androidx.room.migration.Migration
-import androidx.sqlite.db.SupportSQLiteDatabase
 import top.wkbin.taixu.core.database.AppDatabase
 import top.wkbin.taixu.core.database.ToolDao
 import top.wkbin.taixu.core.database.InstallLogDao
@@ -59,53 +57,10 @@ object AppModule {
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase {
-        migrateLegacyDatabaseName(context)
+        // 未发布阶段：不做任何历史数据迁移，schema 变更直接破坏性重建数据库。
         return Room.databaseBuilder(context, AppDatabase::class.java, "taixu.db")
-            .addMigrations(MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
+            .fallbackToDestructiveMigration()
             .build()
-    }
-
-    /** v13 → v14：模型档案新增推理参数列（temperature / maxTokens / topP），旧数据全部取服务端默认。 */
-    private val MIGRATION_13_14 = object : Migration(13, 14) {
-        override fun migrate(db: SupportSQLiteDatabase) {
-            db.execSQL("ALTER TABLE harness_models ADD COLUMN temperature REAL DEFAULT NULL")
-            db.execSQL("ALTER TABLE harness_models ADD COLUMN maxTokens INTEGER DEFAULT NULL")
-            db.execSQL("ALTER TABLE harness_models ADD COLUMN topP REAL DEFAULT NULL")
-        }
-    }
-
-    /** v14 → v15：终端会话表新增所属发行版列（distributionId），默认归属 ubuntu。 */
-    private val MIGRATION_14_15 = object : Migration(14, 15) {
-        override fun migrate(db: SupportSQLiteDatabase) {
-            db.execSQL("ALTER TABLE terminal_sessions ADD COLUMN distributionId TEXT NOT NULL DEFAULT 'ubuntu'")
-        }
-    }
-
-    /** v15 → v16：为会话消息和高频排序查询补索引，避免历史增长后全表扫描。 */
-    private val MIGRATION_15_16 = object : Migration(15, 16) {
-        override fun migrate(db: SupportSQLiteDatabase) {
-            db.execSQL("CREATE INDEX IF NOT EXISTS index_harness_messages_sessionId_createdAt ON harness_messages(sessionId, createdAt)")
-            db.execSQL("CREATE INDEX IF NOT EXISTS index_harness_sessions_updatedAt ON harness_sessions(updatedAt)")
-            db.execSQL("CREATE INDEX IF NOT EXISTS index_terminal_sessions_sortOrder ON terminal_sessions(sortOrder)")
-        }
-    }
-
-    private fun migrateLegacyDatabaseName(context: Context) {
-        val legacyName = "linux" + "ai.db"
-        val currentName = "taixu.db"
-        val legacy = context.getDatabasePath(legacyName)
-        val current = context.getDatabasePath(currentName)
-        if (!legacy.exists() || current.exists()) return
-        current.parentFile?.mkdirs()
-        listOf("", "-wal", "-shm", "-journal").forEach { suffix ->
-            val source = context.getDatabasePath(legacyName + suffix)
-            if (!source.exists()) return@forEach
-            val target = context.getDatabasePath(currentName + suffix)
-            if (!source.renameTo(target)) {
-                source.copyTo(target, overwrite = false)
-                source.delete()
-            }
-        }
     }
 
     @Provides

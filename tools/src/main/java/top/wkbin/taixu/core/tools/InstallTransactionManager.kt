@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.core.tools
+package top.wkbin.taixu.core.tools
 
 import top.wkbin.taixu.core.common.files.SafeFileTree
 import top.wkbin.taixu.core.common.logging.AppLogger
@@ -21,18 +21,19 @@ class InstallTransactionManager @Inject constructor(
     private val pathManager: RuntimePathManager,
     private val logger: AppLogger,
 ) {
-    suspend fun begin(toolId: String, preserveExisting: Boolean): InstallTransaction =
+    suspend fun begin(distroId: String, toolId: String, preserveExisting: Boolean): InstallTransaction =
         withContext(Dispatchers.IO) {
             require(SAFE_TOOL_ID.matches(toolId)) { "工具 ID 无效：$toolId" }
-            pathManager.ensureDirectories()
-            val target = File(pathManager.taixuToolsDir, toolId)
-            val transactionRoot = File(pathManager.taixuRootDir, ".transactions")
+            val safeDistro = distroId.lowercase().trim()
+            pathManager.ensureDistroDirectories(safeDistro)
+            val target = File(pathManager.taixuToolsDir(safeDistro), toolId)
+            val transactionRoot = File(pathManager.taixuRootDir(safeDistro), ".transactions")
             transactionRoot.mkdirs()
             val snapshot = File(transactionRoot, "$toolId-${System.nanoTime()}")
             if (preserveExisting && target.isDirectory) {
                 SafeFileTree.copy(target, snapshot)
             } else {
-                safeDelete(target, "begin($toolId)")
+                safeDelete(target, "begin($safeDistro:$toolId)")
             }
             InstallTransaction(target = target, snapshot = snapshot.takeIf { it.exists() })
         }
@@ -42,30 +43,35 @@ class InstallTransactionManager @Inject constructor(
     }
 
     /** Restores the newest orphaned transaction after an app-process crash. */
-    suspend fun recover(toolId: String, preserveExisting: Boolean): Boolean = withContext(Dispatchers.IO) {
+    suspend fun recover(distroId: String, toolId: String, preserveExisting: Boolean): Boolean = withContext(Dispatchers.IO) {
         require(SAFE_TOOL_ID.matches(toolId)) { "工具 ID 无效：$toolId" }
-        val transactionRoot = File(pathManager.taixuRootDir, ".transactions")
+        val safeDistro = distroId.lowercase().trim()
+        val transactionRoot = File(pathManager.taixuRootDir(safeDistro), ".transactions")
         val candidates = transactionRoot.listFiles()
             .orEmpty()
             .filter { it.name.startsWith("$toolId-") }
             .sortedByDescending { it.lastModified() }
-        val target = File(pathManager.taixuToolsDir, toolId)
+        val target = File(pathManager.taixuToolsDir(safeDistro), toolId)
         if (preserveExisting && candidates.isNotEmpty()) {
-            safeDelete(target, "recover($toolId) target")
+            safeDelete(target, "recover($safeDistro:$toolId) target")
             SafeFileTree.copy(candidates.first(), target)
         } else if (!preserveExisting) {
-            safeDelete(target, "recover($toolId) target")
+            safeDelete(target, "recover($safeDistro:$toolId) target")
         }
-        candidates.forEach { safeDelete(it, "recover($toolId) snapshot") }
+        candidates.forEach { safeDelete(it, "recover($safeDistro:$toolId) snapshot") }
         candidates.isNotEmpty() || !preserveExisting
     }
 
     suspend fun cleanupOrphans(activeToolIds: Set<String> = emptySet()) = withContext(Dispatchers.IO) {
-        File(pathManager.taixuRootDir, ".transactions")
-            .listFiles()
-            .orEmpty()
-            .filter { file -> activeToolIds.none { file.name.startsWith("$it-") } }
-            .forEach { safeDelete(it, "cleanupOrphans") }
+        val distroIds = pathManager.listInstalledDistroIds().ifEmpty { listOf("ubuntu") }
+        distroIds.forEach { distroId ->
+            val safeDistro = distroId.lowercase().trim()
+            File(pathManager.taixuRootDir(safeDistro), ".transactions")
+                .listFiles()
+                .orEmpty()
+                .filter { file -> activeToolIds.none { file.name.startsWith("$it-") } }
+                .forEach { safeDelete(it, "cleanupOrphans($safeDistro)") }
+        }
     }
 
     suspend fun rollback(transaction: InstallTransaction) = withContext(Dispatchers.IO) {

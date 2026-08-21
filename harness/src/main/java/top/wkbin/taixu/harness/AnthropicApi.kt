@@ -234,8 +234,15 @@ internal class AnthropicApi(
             put("model", model.model)
             // Anthropic 必填；未配置时用安全默认值
             put("max_tokens", model.maxTokens ?: DEFAULT_MAX_TOKENS)
-            model.temperature?.let { put("temperature", it) }
-            model.topP?.let { put("top_p", it) }
+            // 推理开关/强度：thinking enabled 时 Anthropic 强制要求 temperature=1（省略即默认），
+            // 且此时不再发送 temperature/top_p 以免 400。
+            val thinking = ReasoningAdapter.anthropicThinking(model)
+            thinking?.let { put("thinking", it) }
+            val thinkingEnabled = thinking?.get("type")?.jsonPrimitive?.contentOrNull == "enabled"
+            if (!thinkingEnabled) {
+                model.temperature?.let { put("temperature", it) }
+                model.topP?.let { put("top_p", it) }
+            }
             put("stream", stream)
             if (systemPrompt.isNotEmpty()) put("system", systemPrompt.toString())
             put("messages", JsonArray(anthropicMessages))

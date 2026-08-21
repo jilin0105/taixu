@@ -34,6 +34,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
@@ -68,6 +69,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.database.AiModelEntity
 import top.wkbin.taixu.core.model.ExecutionMode
 import top.wkbin.taixu.core.tools.AgentProviderDefinition
+import top.wkbin.taixu.core.tools.ProviderEndpointPolicy
 import top.wkbin.taixu.ui.components.IconTile
 import top.wkbin.taixu.ui.components.MainDestination
 import top.wkbin.taixu.ui.components.RuntimeBottomBar
@@ -134,9 +136,9 @@ fun SettingsScreen(
             // 1. 智能体与 AI 模型生态
             item {
                 SettingsCategoryCard(
-                    icon = RuntimeIconName.Globe,
-                    iconTint = MaterialTheme.colorScheme.primary,
-                    iconBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                    icon = RuntimeIconName.Brain,
+                    iconTint = Color(0xFF6366F1),
+                    iconBg = Color(0xFF6366F1).copy(alpha = 0.12f),
                     title = "智能体与 AI 模型",
                     subtitle = "模型档案 · 插件工具中心 · 技能与 MCP 生态",
                     badge = if (models.isEmpty()) "未配置模型" else "${models.size} 个模型 · ${skills.count { it.isEnabled }} 技能",
@@ -147,7 +149,7 @@ fun SettingsScreen(
             // 2. Linux 容器沙箱与存储
             item {
                 SettingsCategoryCard(
-                    icon = RuntimeIconName.Storage,
+                    icon = RuntimeIconName.Server,
                     iconTint = Color(0xFF10B981),
                     iconBg = Color(0xFF10B981).copy(alpha = 0.12f),
                     title = "Linux 容器与存储",
@@ -160,7 +162,7 @@ fun SettingsScreen(
             // 3. 外观、字号与终端定制
             item {
                 SettingsCategoryCard(
-                    icon = RuntimeIconName.Terminal,
+                    icon = RuntimeIconName.Palette,
                     iconTint = Color(0xFF8B5CF6),
                     iconBg = Color(0xFF8B5CF6).copy(alpha = 0.12f),
                     title = "外观、字号与终端定制",
@@ -173,7 +175,7 @@ fun SettingsScreen(
             // 4. 系统保活与开发者诊断
             item {
                 SettingsCategoryCard(
-                    icon = RuntimeIconName.Shield,
+                    icon = RuntimeIconName.Admin,
                     iconTint = Color(0xFFF59E0B),
                     iconBg = Color(0xFFF59E0B).copy(alpha = 0.12f),
                     title = "系统保活与开发者诊断",
@@ -186,7 +188,7 @@ fun SettingsScreen(
             // 5. 关于、更新与官方社区
             item {
                 SettingsCategoryCard(
-                    icon = RuntimeIconName.Package,
+                    icon = RuntimeIconName.Community,
                     iconTint = Color(0xFF3B82F6),
                     iconBg = Color(0xFF3B82F6).copy(alpha = 0.12f),
                     title = "关于、更新与官方社区",
@@ -315,7 +317,7 @@ fun AgentEcoSettingsScreen(
                 )
                 SettingsGroup {
                     SettingsRow(
-                        icon = RuntimeIconName.Globe,
+                        icon = RuntimeIconName.Model,
                         title = "模型档案管理",
                         subtitle = "配置 OpenAI / DeepSeek / Claude / 本地大模型密钥与端点",
                         value = if (models.isEmpty()) "未配置" else "${models.size} 个模型",
@@ -333,14 +335,14 @@ fun AgentEcoSettingsScreen(
                 )
                 SettingsGroup {
                     SettingsRow(
-                        icon = RuntimeIconName.Package,
+                        icon = RuntimeIconName.Wrench,
                         title = "插件与工具生态中心",
                         subtitle = "一键安装 Claude Code、OpenClaw 等 AI CLI 与开发环境",
                         onClick = onOpenToolCenter,
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     SettingsRow(
-                        icon = RuntimeIconName.Code,
+                        icon = RuntimeIconName.Bot,
                         title = "Agent 智能体管理",
                         subtitle = "思考流呈现、上下文压缩阈值与技能插件",
                         value = "${skills.count { it.isEnabled }} 个技能",
@@ -348,7 +350,7 @@ fun AgentEcoSettingsScreen(
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     SettingsRow(
-                        icon = RuntimeIconName.Code,
+                        icon = RuntimeIconName.Network,
                         title = "MCP 协议生态与服务",
                         subtitle = "管理 SQLite、Git、Fetch 等 Model Context Protocol 协议服务",
                         onClick = onOpenMcpSettings,
@@ -426,7 +428,7 @@ fun LinuxEnvironmentSettingsScreen(
                 )
                 SettingsGroup {
                     SettingsRow(
-                        icon = RuntimeIconName.Storage,
+                        icon = RuntimeIconName.Server,
                         title = "Linux 发行版管理",
                         subtitle = "多沙箱并存 · 镜像拉取 · 一键切换主系统",
                         value = "${installedDistros.size} 套系统",
@@ -434,7 +436,7 @@ fun LinuxEnvironmentSettingsScreen(
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     SettingsRow(
-                        icon = RuntimeIconName.Folder,
+                        icon = RuntimeIconName.SdCard,
                         title = "存储挂载与共享",
                         subtitle = "PRoot 宿主存储映射 (-b /sdcard)",
                         onClick = onOpenStorageMounts,
@@ -451,7 +453,7 @@ fun LinuxEnvironmentSettingsScreen(
                 )
                 SettingsGroup {
                     SettingsRow(
-                        icon = RuntimeIconName.Shield,
+                        icon = RuntimeIconName.Key,
                         title = "系统运行特权模式",
                         subtitle = "PRoot 用户态沙箱 · Shizuku · Root · ADB",
                         value = executionMode.name,
@@ -503,7 +505,7 @@ fun SystemDevSettingsScreen(
                 )
                 SettingsGroup {
                     SettingsRow(
-                        icon = RuntimeIconName.Shield,
+                        icon = RuntimeIconName.Battery,
                         title = "电池优化与后台保活",
                         subtitle = "豁免系统电池限制，防止 Agent 息屏被冻结",
                         value = if (batteryExempted) "已豁免" else "未豁免",
@@ -521,7 +523,7 @@ fun SystemDevSettingsScreen(
                 )
                 SettingsGroup {
                     ToggleRow(
-                        icon = RuntimeIconName.Terminal,
+                        icon = RuntimeIconName.Bug,
                         title = "开发者诊断模式",
                         subtitle = "开启底层健康监控与调试控制台",
                         checked = developer,
@@ -530,7 +532,7 @@ fun SystemDevSettingsScreen(
                     if (developer) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                         SettingsRow(
-                            icon = RuntimeIconName.Logs,
+                            icon = RuntimeIconName.Terminal,
                             title = "开发者控制台",
                             subtitle = "实时查看 PRoot 进程与命令追踪",
                             onClick = onOpenDeveloper,
@@ -601,8 +603,8 @@ fun ModelEditorScreen(
             result = testResult,
             discover = { provider, url, key -> viewModel.discoverModels(provider, url, key) },
             test = viewModel::testConnection,
-            save = { name, provider, model, url, key, temperature, maxTokens, topP ->
-                viewModel.saveModel(modelId, name, provider, model, url, key, temperature, maxTokens, topP)
+            save = { name, provider, model, url, key, temperature, maxTokens, topP, reasoningMode, reasoningEffort ->
+                viewModel.saveModel(modelId, name, provider, model, url, key, temperature, maxTokens, topP, reasoningMode, reasoningEffort)
                 onSaved()
             },
         )
@@ -698,7 +700,7 @@ fun AboutCommunityScreen(
                 )
                 SettingsGroup {
                     SettingsRow(
-                        icon = RuntimeIconName.Refresh,
+                        icon = RuntimeIconName.Update,
                         title = "检查新版本",
                         subtitle = "基于 GitHub Releases 自动检测与在线升级",
                         value = if (updateCheckState is top.wkbin.taixu.core.model.UpdateCheckState.Checking) "检查中…" else "v0.1.0",
@@ -706,7 +708,7 @@ fun AboutCommunityScreen(
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     ToggleRow(
-                        icon = RuntimeIconName.Refresh,
+                        icon = RuntimeIconName.Update,
                         title = "启动时自动检查更新",
                         subtitle = "应用启动时在后台静默检测新版本",
                         checked = autoCheckUpdates,
@@ -724,14 +726,14 @@ fun AboutCommunityScreen(
                 )
                 SettingsGroup {
                     SettingsRow(
-                        icon = RuntimeIconName.Globe,
+                        icon = RuntimeIconName.Github,
                         title = "GitHub 开源项目",
                         subtitle = "https://github.com/wkbin/taixu · 欢迎 Star 支持",
                         onClick = { openBrowser(context, "https://github.com/wkbin/taixu") },
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     SettingsRow(
-                        icon = RuntimeIconName.Chat,
+                        icon = RuntimeIconName.Qq,
                         title = "官方 QQ 交流群",
                         subtitle = "群号: 964382207 · 点击一键加群 / 复制群号",
                         value = "964382207",
@@ -739,7 +741,7 @@ fun AboutCommunityScreen(
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     SettingsRow(
-                        icon = RuntimeIconName.Package,
+                        icon = RuntimeIconName.Info,
                         title = "关于太墟 · TaiXu",
                         subtitle = "Android 原生 Linux PRoot 沙箱与 AI 结对中枢",
                         onClick = { showAboutDialog = true },
@@ -1436,7 +1438,7 @@ private fun ModelEditor(
     result: String?,
     discover: (String, String, String) -> Unit,
     test: (String, String, String) -> Unit,
-    save: (String, String, String, String, String, Float?, Int?, Float?) -> Unit,
+    save: (String, String, String, String, String, Float?, Int?, Float?, String?, String?) -> Unit,
 ) {
     var providerId by remember(existing?.id) {
         mutableStateOf(providers.firstOrNull { it.name == existing?.provider }?.id ?: providers.first().id)
@@ -1452,6 +1454,11 @@ private fun ModelEditor(
     var temperatureText by remember(existing?.id) { mutableStateOf(existing?.temperature?.toString().orEmpty()) }
     var maxTokensText by remember(existing?.id) { mutableStateOf(existing?.maxTokens?.toString().orEmpty()) }
     var topPText by remember(existing?.id) { mutableStateOf(existing?.topP?.toString().orEmpty()) }
+    // 推理开关/强度（"auto" = 跟随模型默认；仅部分厂商支持，见 ReasoningAdapter）
+    var reasoningModeText by remember(existing?.id) { mutableStateOf(existing?.reasoningMode ?: "auto") }
+    var reasoningEffortText by remember(existing?.id) { mutableStateOf(existing?.reasoningEffort.orEmpty()) }
+    var reasoningModeMenu by remember { mutableStateOf(false) }
+    var reasoningEffortMenu by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -1470,6 +1477,13 @@ private fun ModelEditor(
                     modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
                     readOnly = true,
                     label = { Text("服务商预设") },
+                    leadingIcon = {
+                        top.wkbin.taixu.ui.components.ProviderBadge(
+                            providerIdOrName = provider.id,
+                            size = 24.dp,
+                        )
+                    },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(providerMenu) },
                 )
                 ExposedDropdownMenu(
                     expanded = providerMenu,
@@ -1495,6 +1509,9 @@ private fun ModelEditor(
                                 url = option.baseUrl
                                 model = option.recommendedModels.firstOrNull().orEmpty()
                                 providerMenu = false
+                                if (option.baseUrl.isNotBlank() && ProviderEndpointPolicy.isSafeBaseUrl(option.baseUrl)) {
+                                    discover(option.id, option.baseUrl, key)
+                                }
                             },
                         )
                     }
@@ -1511,6 +1528,44 @@ private fun ModelEditor(
             )
         }
         item {
+            OutlinedTextField(
+                value = url,
+                onValueChange = {
+                    url = it
+                    if (ProviderEndpointPolicy.isSafeBaseUrl(it)) {
+                        discover(providerId, it, key)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Base URL（接口地址）") },
+                placeholder = { Text("https://api.openai.com/v1") },
+                trailingIcon = {
+                    IconButton(
+                        onClick = { discover(providerId, url, key) },
+                        enabled = !discovering && url.isNotBlank(),
+                    ) {
+                        if (discovering) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        } else {
+                            RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                },
+                singleLine = true,
+            )
+        }
+        item {
+            OutlinedTextField(
+                value = key,
+                onValueChange = { key = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("API Key（可选）") },
+                placeholder = { Text("sk-...") },
+                visualTransformation = PasswordVisualTransformation(),
+                singleLine = true,
+            )
+        }
+        item {
             ExposedDropdownMenuBox(
                 expanded = modelMenu,
                 onExpandedChange = { modelMenu = !modelMenu },
@@ -1519,7 +1574,8 @@ private fun ModelEditor(
                     value = model,
                     onValueChange = { model = it },
                     modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable).fillMaxWidth(),
-                    label = { Text("模型 ID") },
+                    label = { Text("模型 ID（可选择预设或手动输入）") },
+                    placeholder = { Text("gpt-4o / deepseek-chat") },
                     singleLine = true,
                 )
                 ExposedDropdownMenu(
@@ -1537,25 +1593,6 @@ private fun ModelEditor(
                     }
                 }
             }
-        }
-        item {
-            OutlinedTextField(
-                value = url,
-                onValueChange = { url = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Base URL") },
-                singleLine = true,
-            )
-        }
-        item {
-            OutlinedTextField(
-                value = key,
-                onValueChange = { key = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("API Key") },
-                visualTransformation = PasswordVisualTransformation(),
-                singleLine = true,
-            )
         }
         item {
             Text("推理参数（可选，留空使用服务端默认）", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold))
@@ -1589,6 +1626,88 @@ private fun ModelEditor(
                 placeholder = { Text("默认") },
                 singleLine = true,
             )
+        }
+        item {
+            Text("推理设置（仅 OpenAI / Claude / Gemini / GLM 等支持，其余自动忽略）", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold))
+        }
+        item {
+            ExposedDropdownMenuBox(
+                expanded = reasoningModeMenu,
+                onExpandedChange = { reasoningModeMenu = !reasoningModeMenu },
+            ) {
+                OutlinedTextField(
+                    value = when (reasoningModeText) {
+                        "disabled" -> "关闭推理"
+                        "enabled" -> "开启推理"
+                        else -> "跟随模型默认"
+                    },
+                    onValueChange = {},
+                    modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+                    readOnly = true,
+                    label = { Text("推理开关") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(reasoningModeMenu) },
+                )
+                ExposedDropdownMenu(
+                    expanded = reasoningModeMenu,
+                    onDismissRequest = { reasoningModeMenu = false },
+                ) {
+                    DropdownMenuItem(text = { Text("跟随模型默认") }, onClick = {
+                        reasoningModeText = "auto"
+                        reasoningModeMenu = false
+                    })
+                    DropdownMenuItem(text = { Text("关闭推理（最快响应）") }, onClick = {
+                        reasoningModeText = "disabled"
+                        reasoningModeMenu = false
+                    })
+                    DropdownMenuItem(text = { Text("开启推理（更深入思考）") }, onClick = {
+                        reasoningModeText = "enabled"
+                        reasoningModeMenu = false
+                    })
+                }
+            }
+        }
+        if (reasoningModeText == "enabled") {
+            item {
+                ExposedDropdownMenuBox(
+                    expanded = reasoningEffortMenu,
+                    onExpandedChange = { reasoningEffortMenu = !reasoningEffortMenu },
+                ) {
+                    OutlinedTextField(
+                        value = when (reasoningEffortText) {
+                            "low" -> "低（省时）"
+                            "medium" -> "中（均衡）"
+                            "high" -> "高（深度推理）"
+                            else -> "默认"
+                        },
+                        onValueChange = {},
+                        modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+                        readOnly = true,
+                        label = { Text("推理强度") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(reasoningEffortMenu) },
+                    )
+                    ExposedDropdownMenu(
+                        expanded = reasoningEffortMenu,
+                        onDismissRequest = { reasoningEffortMenu = false },
+                    ) {
+                        DropdownMenuItem(text = { Text("默认") }, onClick = {
+                            reasoningEffortText = ""
+                            reasoningEffortMenu = false
+                        })
+                        DropdownMenuItem(text = { Text("低（省时）") }, onClick = {
+                            reasoningEffortText = "low"
+                            reasoningEffortMenu = false
+                        })
+                        DropdownMenuItem(text = { Text("中（均衡）") }, onClick = {
+                            reasoningEffortText = "medium"
+                            reasoningEffortMenu = false
+                        })
+                        DropdownMenuItem(text = { Text("高（深度推理）") }, onClick = {
+                            reasoningEffortText = "high"
+                            reasoningEffortMenu = false
+                        })
+                    }
+                }
+            }
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1631,6 +1750,8 @@ private fun ModelEditor(
                         parsedTemperature,
                         parsedMaxTokens,
                         parsedTopP,
+                        reasoningModeText.takeIf { it != "auto" },
+                        reasoningEffortText.ifBlank { null },
                     )
                 },
                 modifier = Modifier.fillMaxWidth().height(48.dp),

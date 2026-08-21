@@ -175,7 +175,7 @@ fun DeveloperScreen(
             SectionHeader("资源管理", "后台 Linux 进程与磁盘占用")
 
             RuntimeCard(Modifier.fillMaxWidth()) {
-                ResourceHeader(RuntimeIconName.Terminal, "后台进程", "${processes.size} 个活动进程", viewModel::refreshProcesses)
+                ResourceHeader(RuntimeIconName.Cpu, "后台进程", "${processes.size} 个活动进程", viewModel::refreshProcesses)
                 Spacer(Modifier.height(14.dp))
                 if (processes.isEmpty()) {
                     Text("当前没有登记中的后台进程。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

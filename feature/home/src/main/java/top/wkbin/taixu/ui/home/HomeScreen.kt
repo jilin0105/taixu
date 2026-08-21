@@ -170,7 +170,7 @@ fun HomeScreen(
                     progressText = "已占用 ${metrics.memoryUsagePercent}%",
                     extraInfo = "App 堆: ${metrics.appHeapUsedMb} MB",
                     accentColor = MaterialTheme.colorScheme.primary,
-                    icon = RuntimeIconName.Terminal,
+                    icon = RuntimeIconName.Cpu,
                 )
 
                 // 存储指标
@@ -183,7 +183,7 @@ fun HomeScreen(
                     progressText = "已使用 ${metrics.storageUsagePercent}%",
                     extraInfo = "Rootfs 状态正常",
                     accentColor = MaterialTheme.colorScheme.secondary,
-                    icon = RuntimeIconName.Folder,
+                    icon = RuntimeIconName.Storage,
                 )
             }
 

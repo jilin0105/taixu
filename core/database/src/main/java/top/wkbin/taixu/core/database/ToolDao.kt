@@ -9,22 +9,27 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface ToolDao {
 
-    @Query("SELECT * FROM tools ORDER BY name")
-    fun observeAll(): Flow<List<ToolEntity>>
+    @Query("SELECT * FROM tools WHERE distroId = :distroId ORDER BY name")
+    fun observeForDistro(distroId: String): Flow<List<ToolEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(tool: ToolEntity)
 
-    @Query("SELECT * FROM tools WHERE id = :id LIMIT 1")
-    suspend fun findById(id: String): ToolEntity?
+    @Query("SELECT * FROM tools WHERE distroId = :distroId AND id = :id LIMIT 1")
+    suspend fun findById(distroId: String, id: String): ToolEntity?
 
-    @Query("UPDATE tools SET state = :state WHERE id = :id")
-    suspend fun updateState(id: String, state: String)
+    @Query("UPDATE tools SET state = :state WHERE distroId = :distroId AND id = :id")
+    suspend fun updateState(distroId: String, id: String, state: String)
 
-    @Query("UPDATE tools SET state = :state, installedVersion = :installedVersion WHERE id = :id")
+    @Query("UPDATE tools SET state = :state, installedVersion = :installedVersion WHERE distroId = :distroId AND id = :id")
     suspend fun updateStateAndInstalledVersion(
+        distroId: String,
         id: String,
         state: String,
         installedVersion: String?,
     )
+
+    /** 卸载发行版时清理该系统的全部工具状态。 */
+    @Query("DELETE FROM tools WHERE distroId = :distroId")
+    suspend fun deleteByDistro(distroId: String)
 }

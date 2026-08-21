@@ -24,6 +24,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+import top.wkbin.taixu.core.tools.ProviderEndpointPolicy
+
 data class OnboardingStatus(val loaded: Boolean = false, val completed: Boolean = false)
 
 @HiltViewModel
@@ -52,7 +54,7 @@ class OnboardingViewModel @Inject constructor(
     val mirror = _mirror.asStateFlow()
     private val _page = MutableStateFlow(0)
     val page = _page.asStateFlow()
-    private val _modelProvider = MutableStateFlow("OpenAI")
+    private val _modelProvider = MutableStateFlow("自定义 OpenAI 兼容接口")
     val modelProvider = _modelProvider.asStateFlow()
     private val _modelId = MutableStateFlow("")
     val modelId = _modelId.asStateFlow()
@@ -62,6 +64,8 @@ class OnboardingViewModel @Inject constructor(
     val apiKey = _apiKey.asStateFlow()
     private val _discoveredModels = MutableStateFlow<List<String>>(emptyList())
     val discoveredModels = _discoveredModels.asStateFlow()
+    private val _discoveringModels = MutableStateFlow(false)
+    val discoveringModels = _discoveringModels.asStateFlow()
     private val _modelDiscoveryError = MutableStateFlow<String?>(null)
     val modelDiscoveryError = _modelDiscoveryError.asStateFlow()
 
@@ -76,7 +80,13 @@ class OnboardingViewModel @Inject constructor(
     fun selectMirror(value: String) { _mirror.value = value }
     fun setModelProvider(value: String) { _modelProvider.value = value }
     fun setModelId(value: String) { _modelId.value = value }
-    fun setBaseUrl(value: String) { _baseUrl.value = value }
+    fun setBaseUrl(value: String) {
+        _baseUrl.value = value
+        val clean = ProviderEndpointPolicy.normalizeUrl(value)
+        if (ProviderEndpointPolicy.isSafeBaseUrl(clean)) {
+            discoverModels()
+        }
+    }
     fun setApiKey(value: String) { _apiKey.value = value }
     fun selectProvider(id: String) {
         val preset = providerCatalogRepository.find(id)
@@ -84,15 +94,27 @@ class OnboardingViewModel @Inject constructor(
         _baseUrl.value = preset.baseUrl
         _modelId.value = preset.recommendedModels.firstOrNull().orEmpty()
         _discoveredModels.value = emptyList()
+        if (preset.baseUrl.isNotBlank() && ProviderEndpointPolicy.isSafeBaseUrl(preset.baseUrl)) {
+            discoverModels()
+        }
     }
 
     fun discoverModels() {
         viewModelScope.launch {
+            val cleanUrl = ProviderEndpointPolicy.normalizeUrl(_baseUrl.value)
+            if (!ProviderEndpointPolicy.isSafeBaseUrl(cleanUrl)) return@launch
             val preset = providerCatalog.firstOrNull { it.name == _modelProvider.value } ?: providerCatalogRepository.find("custom")
+            _discoveringModels.value = true
             _modelDiscoveryError.value = null
-            runCatching { modelDiscovery.discover(preset, _baseUrl.value, _apiKey.value.ifBlank { null }) }
-                .onSuccess { _discoveredModels.value = it }
+            runCatching { modelDiscovery.discover(preset, cleanUrl, _apiKey.value.ifBlank { null }) }
+                .onSuccess { models ->
+                    _discoveredModels.value = models
+                    if ((_modelId.value.isBlank() || _modelId.value == preset.recommendedModels.firstOrNull()) && models.isNotEmpty()) {
+                        _modelId.value = models.first()
+                    }
+                }
                 .onFailure { _modelDiscoveryError.value = it.message ?: "刷新模型失败" }
+            _discoveringModels.value = false
         }
     }
 

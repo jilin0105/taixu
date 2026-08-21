@@ -12,12 +12,13 @@ import okhttp3.RequestBody.Companion.toRequestBody
 @Singleton
 class AgentModelConnectionTester @Inject constructor(private val http: OkHttpClient) {
     suspend fun test(baseUrl: String, model: String, apiKey: String?) = withContext(Dispatchers.IO) {
-        require(ProviderEndpointPolicy.isSafeBaseUrl(baseUrl)) { "Base URL 不安全或为空" }
-        val isAnthropic = baseUrl.trimEnd('/').contains("api.anthropic.com")
+        val cleanBaseUrl = ProviderEndpointPolicy.normalizeUrl(baseUrl)
+        require(cleanBaseUrl.isNotBlank() && ProviderEndpointPolicy.isSafeBaseUrl(cleanBaseUrl)) { "Base URL 不安全或为空" }
+        val isAnthropic = cleanBaseUrl.trimEnd('/').contains("api.anthropic.com")
         if (isAnthropic) {
-            testAnthropic(baseUrl, model, apiKey)
+            testAnthropic(cleanBaseUrl, model, apiKey)
         } else {
-            testOpenAi(baseUrl, model, apiKey)
+            testOpenAi(cleanBaseUrl, model, apiKey)
         }
     }
 

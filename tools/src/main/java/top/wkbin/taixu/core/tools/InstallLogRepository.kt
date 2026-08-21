@@ -12,6 +12,8 @@ class InstallLogRepository @Inject constructor(
     private val dao: InstallLogDao,
 ) {
     suspend fun insert(log: InstallLogEntity) = dao.insert(log)
-    suspend fun deleteForTool(toolId: String) = dao.deleteForTool(toolId)
-    fun observeForTool(toolId: String): Flow<List<InstallLogEntity>> = dao.observeForTool(toolId)
+    suspend fun deleteForTool(distroId: String, toolId: String) = dao.deleteForTool(distroId, toolId)
+    fun observeForTool(distroId: String, toolId: String): Flow<List<InstallLogEntity>> = dao.observeForTool(distroId, toolId)
+    suspend fun deleteByDistro(distroId: String) = dao.deleteByDistro(distroId)
 }
+

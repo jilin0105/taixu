@@ -1,7 +1,6 @@
 package top.wkbin.taixu.runtime
 
 import android.content.Context
-import top.wkbin.taixu.core.common.files.SafeFileTree
 import top.wkbin.taixu.runtime.rootfs.RootfsValidator
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
@@ -23,18 +22,14 @@ class RuntimePathManager @Inject constructor(
     val binDir: File = File(baseDir, "bin")
     val prootFile: File = File(binDir, "proot")
     val distrosDir: File = File(baseDir, "distros")
-    val legacyRootfsDir: File = File(baseDir, "rootfs")
     val rootfsDir: File get() {
         val installed = listInstalledDistroIds().firstOrNull() ?: "ubuntu"
-        val target = rootfsDir(installed)
-        return if (target.exists()) target else legacyRootfsDir
+        return rootfsDir(installed)
     }
     val stagingRootfsDir: File = File(baseDir, "rootfs.staging")
-    val legacyHomeDir: File = File(baseDir, "home")
     val homeDir: File get() {
         val installed = listInstalledDistroIds().firstOrNull() ?: "ubuntu"
-        val target = homeDir(installed)
-        return if (target.exists()) target else legacyHomeDir
+        return homeDir(installed)
     }
     val optDir: File = File(baseDir, "opt")
     val workspaceDir: File = File(baseDir, "workspace")
@@ -42,10 +37,33 @@ class RuntimePathManager @Inject constructor(
     val tmpDir: File = File(baseDir, "tmp")
     val logsDir: File = File(baseDir, "logs")
     val metadataDir: File = File(baseDir, "metadata")
-    val taixuRootDir: File = File(optDir, "taixu")
-    val taixuRuntimesDir: File = File(taixuRootDir, "runtimes")
-    val taixuToolsDir: File = File(taixuRootDir, "tools")
-    val taixuDataDir: File = File(taixuRootDir, "data")
+
+    // ==================== 插件目录（按发行版隔离） ====================
+    // v17 起插件本体/数据/命令与依赖 Runtime 均随发行版走：
+    // linux-runtime/distros/<id>/opt/taixu/{tools,data,bin,runtimes,...}
+
+    fun distroOptDir(distroId: String): File = File(distroDir(distroId), "opt")
+
+    fun taixuRootDir(distroId: String): File = File(distroOptDir(distroId), "taixu")
+
+    fun taixuRuntimesDir(distroId: String): File = File(taixuRootDir(distroId), "runtimes")
+
+    fun taixuToolsDir(distroId: String): File = File(taixuRootDir(distroId), "tools")
+
+    fun taixuDataDir(distroId: String): File = File(taixuRootDir(distroId), "data")
+
+    fun taixuBinDir(distroId: String): File = File(taixuRootDir(distroId), "bin")
+
+    fun ensureDistroDirectories(distroId: String) {
+        val safeId = distroId.lowercase().trim()
+        listOf(
+            taixuRootDir(safeId),
+            taixuRuntimesDir(safeId),
+            taixuToolsDir(safeId),
+            taixuDataDir(safeId),
+            taixuBinDir(safeId),
+        ).forEach { it.mkdirs() }
+    }
     private val hostLibraries = mapOf(
         "libtalloc.so" to "libtalloc.so.2",
         "libandroid-shmem.so" to "libandroid-shmem.so",
@@ -101,87 +119,23 @@ class RuntimePathManager @Inject constructor(
             binDir,
             distrosDir,
             optDir,
-            taixuRootDir,
-            taixuRuntimesDir,
-            taixuToolsDir,
-            taixuDataDir,
-            File(taixuRootDir, "bin"),
             workspaceDir,
             cacheDir,
             tmpDir,
             logsDir,
             metadataDir,
         ).forEach { it.mkdirs() }
+        listInstalledDistroIds().forEach(::ensureDistroDirectories)
     }
 
-    fun cleanupStalePtyMarkers() {
-        taixuToolsDir.parentFile
-            ?.listFiles()
+    fun cleanupStalePtyMarkers(distroId: String = "ubuntu") {
+        val safeId = distroId.lowercase().trim()
+        taixuRootDir(safeId)
+            .listFiles()
             .orEmpty()
             .filter { it.name.startsWith(".pty-") }
             .forEach { it.delete() }
     }
-
-    /**
-     * 老版本单 rootfs 向多系统目录拓扑平滑迁移：
-     * 如果 linux-runtime/rootfs 存在且包含系统，将其平移至 linux-runtime/distros/<defaultDistroId>/
-     */
-    fun migrateLegacySingleDistro(defaultDistroId: String = "ubuntu") {
-        ensureDirectories()
-        val targetDistroDir = distroDir(defaultDistroId)
-        val targetRootfs = rootfsDir(defaultDistroId)
-        val targetHome = homeDir(defaultDistroId)
-        val targetMeta = metadataDir(defaultDistroId)
-
-        if (legacyRootfsDir.exists() && rootfsValidator.isValid(legacyRootfsDir) && !targetRootfs.exists()) {
-            targetDistroDir.mkdirs()
-            targetMeta.mkdirs()
-            legacyRootfsDir.renameTo(targetRootfs)
-
-            val legacyMarker = rootfsInstalledMarker()
-            if (legacyMarker.exists()) {
-                val targetMarker = rootfsInstalledMarker(defaultDistroId)
-                legacyMarker.renameTo(targetMarker)
-            } else {
-                rootfsInstalledMarker(defaultDistroId).writeText("rootfs-version=legacy-migrated\n")
-            }
-
-            if (legacyHomeDir.exists() && !targetHome.exists()) {
-                legacyHomeDir.renameTo(targetHome)
-            }
-        }
-    }
-
-    /** Move legacy in-rootfs user data to the persistent app-private bind mounts once. */
-    fun migratePersistentDirectories(distroId: String = "ubuntu") {
-        ensureDirectories()
-        val rfs = rootfsDir(distroId)
-        val hDir = homeDir(distroId)
-        migrateMissingPersistentFiles(File(rfs, "root"), hDir)
-        // Import data created before the project adopted the TaiXu name.
-        migrateMissingPersistentFiles(File(optDir, LEGACY_OPT_NAME), taixuRootDir)
-        migrateMissingPersistentFiles(File(rfs, "opt/$LEGACY_OPT_NAME"), taixuRootDir)
-        migrateMissingPersistentFiles(File(rfs, "opt/taixu"), taixuRootDir)
-    }
-
-    private fun migrateMissingPersistentFiles(source: File, target: File) {
-        if (!source.exists()) return
-        target.mkdirs()
-        val sourceRoot = source.canonicalFile
-        val targetRoot = target.canonicalFile
-        source.listFiles().orEmpty().forEach { child ->
-            if (!isInside(sourceRoot, child.canonicalFile)) return@forEach
-            val targetChild = File(target, child.name)
-            if (!isInside(targetRoot, targetChild.canonicalFile)) return@forEach
-            if (!targetChild.exists()) {
-                SafeFileTree.copy(child, targetChild)
-            }
-        }
-    }
-
-    private fun isInside(root: File, candidate: File): Boolean =
-        candidate.absolutePath == root.absolutePath ||
-            candidate.absolutePath.startsWith(root.absolutePath + File.separator)
 
     /**
      * PRoot is an Android-native executable, but its Termux build keeps talloc as a
@@ -242,8 +196,7 @@ class RuntimePathManager @Inject constructor(
         isUsableProot(activeProotFile()) &&
             isUsableNativeArtifact(bundledProotLoaderFile, MIN_PROOT_LOADER_BYTES)
 
-    fun isRootfsInstalled(): Boolean =
-        listInstalledDistroIds().isNotEmpty() || (rootfsInstalledMarker().isFile && rootfsValidator.isValid(legacyRootfsDir))
+    fun isRootfsInstalled(): Boolean = listInstalledDistroIds().isNotEmpty()
 
     private fun isUsableProot(file: File): Boolean =
         file.isFile && file.length() > MIN_PROOT_BYTES && (file.canExecute() || file == bundledProotFile)
@@ -252,7 +205,6 @@ class RuntimePathManager @Inject constructor(
         file.isFile && file.length() > minimumBytes && file.canRead()
 
     private companion object {
-        const val LEGACY_OPT_NAME = "linux" + "ai"
         const val MIN_PROOT_BYTES = 4096L
         const val MIN_PROOT_LOADER_BYTES = 4096L
         const val MIN_TALLOC_BYTES = 4096L

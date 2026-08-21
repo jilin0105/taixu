@@ -59,6 +59,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -248,7 +249,6 @@ fun ChatScreen(
                         onOpenFile = onOpenFile,
                         onEditMessage = { editTargetMessage = it },
                         onDeleteMessage = viewModel::deleteMessage,
-                        onToggleExpanded = viewModel::setThinkingExpanded,
                         error = error,
                         onClearError = viewModel::clearError,
                         matchingCommands = matchingCommands,
@@ -304,7 +304,6 @@ fun ChatScreen(
                     onOpenFile = onOpenFile,
                     onEditMessage = { editTargetMessage = it },
                     onDeleteMessage = viewModel::deleteMessage,
-                    onToggleExpanded = viewModel::setThinkingExpanded,
                     error = error,
                     onClearError = viewModel::clearError,
                     matchingCommands = matchingCommands,
@@ -388,7 +387,6 @@ private fun ChatPaneContent(
     onOpenFile: ((projectName: String, relativePath: String) -> Unit)?,
     onEditMessage: (UserMessage) -> Unit,
     onDeleteMessage: (String) -> Unit,
-    onToggleExpanded: (Boolean) -> Unit,
     error: String?,
     onClearError: () -> Unit,
     matchingCommands: List<SlashCommandItem>,
@@ -479,7 +477,6 @@ private fun ChatPaneContent(
                     is AssistantText -> AssistantBubble(
                         message = message,
                         defaultExpanded = thinkingExpanded,
-                        onToggleExpanded = onToggleExpanded,
                         live = thinkingLive && message.id == liveThinkingMessageId,
                     )
                     is ToolCall -> {
@@ -498,7 +495,6 @@ private fun ChatPaneContent(
                                 showReasoning = message.reasoning != null &&
                                     !reasoningAlreadyShown(messages, index, message.reasoning),
                                 defaultExpanded = thinkingExpanded,
-                                onToggleExpanded = onToggleExpanded,
                             )
                         }
                     }
@@ -922,7 +918,6 @@ private fun UserBubble(
 private fun AssistantBubble(
     message: AssistantText,
     defaultExpanded: Boolean,
-    onToggleExpanded: (Boolean) -> Unit,
     live: Boolean = false,
 ) {
     val reasoning = message.reasoning
@@ -940,7 +935,6 @@ private fun AssistantBubble(
                 id = message.id,
                 reasoning = reasoning,
                 defaultExpanded = defaultExpanded,
-                onToggleExpanded = onToggleExpanded,
                 live = live,
             )
         }
@@ -1185,13 +1179,9 @@ private fun ThinkingBlock(
     id: String,
     reasoning: String,
     defaultExpanded: Boolean,
-    onToggleExpanded: (Boolean) -> Unit,
     live: Boolean = false,
 ) {
-    var expanded by remember(id) { mutableStateOf(defaultExpanded) }
-    LaunchedEffect(defaultExpanded) {
-        expanded = defaultExpanded
-    }
+    var expanded by rememberSaveable(id) { mutableStateOf(defaultExpanded) }
     val context = LocalContext.current
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
 
@@ -1215,9 +1205,7 @@ private fun ThinkingBlock(
             )
             .clickable {
                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                val next = !expanded
-                expanded = next
-                onToggleExpanded(next)
+                expanded = !expanded
             }
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1299,7 +1287,6 @@ private fun ToolCard(
     running: Boolean,
     showReasoning: Boolean = false,
     defaultExpanded: Boolean = false,
-    onToggleExpanded: (Boolean) -> Unit = {},
 ) {
     var expanded by remember(call.id) { mutableStateOf(false) }
     val dotColor = when {
@@ -1326,7 +1313,6 @@ private fun ToolCard(
                             id = call.id,
                             reasoning = it,
                             defaultExpanded = defaultExpanded,
-                            onToggleExpanded = onToggleExpanded,
                         )
                     }
             }
@@ -1748,7 +1734,7 @@ private fun AddModelDialog(
     onAdd: (String, String, String, String) -> Unit,
 ) {
     var name by remember { mutableStateOf("") }
-    var provider by remember { mutableStateOf("OpenAI") }
+    var provider by remember { mutableStateOf("自定义 OpenAI 兼容接口") }
     var model by remember { mutableStateOf("") }
     var baseUrl by remember { mutableStateOf("") }
     AlertDialog(
@@ -1758,8 +1744,8 @@ private fun AddModelDialog(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("名称（可选）") }, singleLine = true)
                 OutlinedTextField(value = provider, onValueChange = { provider = it }, label = { Text("Provider") }, singleLine = true)
+                OutlinedTextField(value = baseUrl, onValueChange = { baseUrl = it }, label = { Text("Base URL（可选）") }, placeholder = { Text("https://api.openai.com/v1") }, singleLine = true)
                 OutlinedTextField(value = model, onValueChange = { model = it }, label = { Text("模型 ID") }, placeholder = { Text("deepseek-chat / gpt-4o") }, singleLine = true)
-                OutlinedTextField(value = baseUrl, onValueChange = { baseUrl = it }, label = { Text("Base URL（可选）") }, singleLine = true)
             }
         },
         confirmButton = {

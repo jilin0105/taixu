@@ -143,6 +143,56 @@ class AnthropicApiTest {
     }
 
     @Test
+    fun `thinking enabled sends budget tokens and drops temperature`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+        api.chat(
+            model().copy(
+                reasoningMode = ReasoningMode.ENABLED,
+                reasoningEffort = ReasoningEffort.MEDIUM,
+                temperature = 0.7f,
+                topP = 0.9f,
+            ),
+            listOf(ApiMessage(role = "user", content = "hi")),
+        )
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body.contains("\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":8192}"))
+        assertFalse(body.contains("\"temperature\""))
+        assertFalse(body.contains("\"top_p\""))
+    }
+
+    @Test
+    fun `thinking enabled without effort uses default budget and clamps to max tokens`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+        api.chat(
+            model().copy(reasoningMode = ReasoningMode.ENABLED, maxTokens = 4096),
+            listOf(ApiMessage(role = "user", content = "hi")),
+        )
+        val body = server.takeRequest().body.readUtf8()
+        // 默认 8192 需严格小于 max_tokens 4096，clamp 到 4096-1024=3072
+        assertTrue(body.contains("\"budget_tokens\":3072"))
+    }
+
+    @Test
+    fun `thinking disabled sends type disabled and keeps temperature`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+        api.chat(
+            model().copy(reasoningMode = ReasoningMode.DISABLED, temperature = 0.3f),
+            listOf(ApiMessage(role = "user", content = "hi")),
+        )
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body.contains("\"thinking\":{\"type\":\"disabled\"}"))
+        assertTrue(body.contains("\"temperature\":0.3"))
+    }
+
+    @Test
+    fun `auto mode does not inject thinking`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+        api.chat(model(), listOf(ApiMessage(role = "user", content = "hi")))
+        val body = server.takeRequest().body.readUtf8()
+        assertFalse(body.contains("\"thinking\""))
+    }
+
+    @Test
     fun `stream events assemble text reasoning and tool arguments`() = runBlocking {
         val sse = buildString {
             append("event: message_start\n")

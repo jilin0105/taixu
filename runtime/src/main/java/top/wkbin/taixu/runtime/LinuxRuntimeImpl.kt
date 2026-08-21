@@ -94,6 +94,7 @@ class LinuxRuntimeImpl @Inject constructor(
                 AppError(ErrorCode.RUNTIME_NOT_INITIALIZED, "系统未安装或文件不完整：$safeId"),
             )
         }
+        pathManager.ensureDistroDirectories(safeId)
         _activeDistroId.value = safeId
         settingsDataStore.setSelectedDistribution(safeId)
         refreshInstalledDistros()
@@ -169,8 +170,7 @@ class LinuxRuntimeImpl @Inject constructor(
 
                 updateInitializing("createDirectories", 0.1f)
                 pathManager.ensureDirectories()
-                pathManager.cleanupStalePtyMarkers()
-                pathManager.migrateLegacySingleDistro(request.distributionId)
+                pathManager.cleanupStalePtyMarkers(request.distributionId)
 
                 updateInitializing("校验运行引擎", 0.15f, "校验 PRoot 主程序、外置 loader 与 ARM64 架构")
                 val prootResult = prootInstaller.install()
@@ -245,7 +245,6 @@ class LinuxRuntimeImpl @Inject constructor(
 
     override suspend fun restoreInstalledState(): Boolean = withContext(Dispatchers.IO) {
         val selectedDistroId = runCatching { settingsDataStore.selectedDistribution.first() }.getOrDefault("ubuntu")
-        pathManager.migrateLegacySingleDistro(selectedDistroId)
 
         if (!pathManager.isRootfsInstalled()) {
             logger.i("Restore skipped: rootfs marker or validator check failed (fresh install?)")
@@ -260,6 +259,7 @@ class LinuxRuntimeImpl @Inject constructor(
 
         val installedList = pathManager.listInstalledDistroIds()
         val effectiveDistro = if (selectedDistroId in installedList) selectedDistroId else installedList.firstOrNull() ?: selectedDistroId
+        pathManager.ensureDistroDirectories(effectiveDistro)
         _activeDistroId.value = effectiveDistro
         refreshInstalledDistros()
 
@@ -358,7 +358,7 @@ class LinuxRuntimeImpl @Inject constructor(
                 rootfsDir = pathManager.rootfsDir(safeDistro),
                 workspaceDir = pathManager.workspaceDir,
                 homeDir = pathManager.homeDir(safeDistro),
-                optDir = pathManager.taixuRootDir,
+                optDir = pathManager.taixuRootDir(safeDistro),
                 tmpDir = pathManager.tmpDir,
                 command = command,
                 mounts = mounts,
@@ -371,7 +371,7 @@ class LinuxRuntimeImpl @Inject constructor(
         ensureReady()
         val safeDistro = distroId?.lowercase()?.trim()?.takeIf { it.isNotBlank() } ?: _activeDistroId.value
         val markerId = UUID.randomUUID().toString()
-        val markerFile = File(pathManager.taixuRootDir, ".pty-$markerId")
+        val markerFile = File(pathManager.taixuRootDir(safeDistro), ".pty-$markerId")
         val markerPath = "/opt/taixu/.pty-$markerId"
         val mounts = storageMounts()
         return try {
@@ -382,7 +382,7 @@ class LinuxRuntimeImpl @Inject constructor(
                         rootfsDir = pathManager.rootfsDir(safeDistro),
                         workspaceDir = pathManager.workspaceDir,
                         homeDir = pathManager.homeDir(safeDistro),
-                        optDir = pathManager.taixuRootDir,
+                        optDir = pathManager.taixuRootDir(safeDistro),
                         tmpDir = pathManager.tmpDir,
                         config = config,
                         nativePty = true,
@@ -399,7 +399,7 @@ class LinuxRuntimeImpl @Inject constructor(
                         rootfsDir = pathManager.rootfsDir(safeDistro),
                         workspaceDir = pathManager.workspaceDir,
                         homeDir = pathManager.homeDir(safeDistro),
-                        optDir = pathManager.taixuRootDir,
+                        optDir = pathManager.taixuRootDir(safeDistro),
                         tmpDir = pathManager.tmpDir,
                         config = config,
                         ptyMarker = markerPath,
@@ -443,7 +443,7 @@ class LinuxRuntimeImpl @Inject constructor(
                     rootfsDir = pathManager.rootfsDir(distroId),
                     workspaceDir = pathManager.workspaceDir,
                     homeDir = pathManager.homeDir(distroId),
-                    optDir = pathManager.taixuRootDir,
+                    optDir = pathManager.taixuRootDir(distroId),
                     tmpDir = pathManager.tmpDir,
                     command = ShellCommand(
                         commandLine = "if test -s '$markerPath'; then " +
@@ -522,7 +522,7 @@ class LinuxRuntimeImpl @Inject constructor(
         etcDir.mkdirs()
         File(etcDir, "taixu-runtime").writeText("taixu-runtime=0.1.0\n")
         File(rootfs, "opt/taixu").mkdirs()
-        pathManager.migratePersistentDirectories(distroId)
+        pathManager.ensureDistroDirectories(distroId)
         stripSetuidBits(distroId)
         configureDpkgStatoverride(distroId)
         configureDpkgNoDoc(distroId)

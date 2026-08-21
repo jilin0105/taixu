@@ -10,9 +10,13 @@ interface InstallLogDao {
     @Insert
     suspend fun insert(log: InstallLogEntity)
 
-    @Query("SELECT * FROM install_logs WHERE toolId = :toolId ORDER BY createdAt ASC, id ASC")
-    fun observeForTool(toolId: String): Flow<List<InstallLogEntity>>
+    @Query("SELECT * FROM install_logs WHERE distroId = :distroId AND toolId = :toolId ORDER BY createdAt ASC, id ASC")
+    fun observeForTool(distroId: String, toolId: String): Flow<List<InstallLogEntity>>
 
-    @Query("DELETE FROM install_logs WHERE toolId = :toolId")
-    suspend fun deleteForTool(toolId: String)
+    @Query("DELETE FROM install_logs WHERE distroId = :distroId AND toolId = :toolId")
+    suspend fun deleteForTool(distroId: String, toolId: String)
+
+    @Query("DELETE FROM install_logs WHERE distroId = :distroId")
+    suspend fun deleteByDistro(distroId: String)
 }
+

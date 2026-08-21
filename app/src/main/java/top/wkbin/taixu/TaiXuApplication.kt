@@ -25,9 +25,6 @@ class TaiXuApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         crashReporter.install()
-        appScope.launch(Dispatchers.IO) {
-            runCatching { settingsDataStore.migrateLegacyProtectedValues() }
-        }
         // Agent 开始执行时拉起前台服务，保证后台存活 + 通知进度；结束后由服务发带回复框的通知。
         appScope.launch {
             harnessLoop.running.collectLatest { running ->

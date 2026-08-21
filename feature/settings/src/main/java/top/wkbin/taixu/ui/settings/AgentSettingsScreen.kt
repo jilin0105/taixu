@@ -101,7 +101,7 @@ fun AgentSettingsScreen(
             item {
                 AgentSettingsGroup {
                     AgentToggleRow(
-                        icon = RuntimeIconName.Refresh,
+                        icon = RuntimeIconName.Brain,
                         title = "默认展开模型思考过程",
                         subtitle = if (thinkingExpanded) "聊天界面中新生成的思考过程将默认展开呈现" else "思考过程（包括生成中内容）默认折叠，点击可展开查看",
                         checked = thinkingExpanded,
@@ -109,7 +109,7 @@ fun AgentSettingsScreen(
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     AgentToggleRow(
-                        icon = RuntimeIconName.Folder,
+                        icon = RuntimeIconName.FolderOpen,
                         title = "自动注入关联工作区路径",
                         subtitle = "当会话关联了工作区时，执行 base 命令默认以该目录为工作路径 (cwd)",
                         checked = autoWorkspaceCwd,
@@ -133,7 +133,7 @@ fun AgentSettingsScreen(
             item {
                 AgentSettingsGroup {
                     AgentToggleRow(
-                        icon = RuntimeIconName.Code,
+                        icon = RuntimeIconName.Compress,
                         title = "开启上下文智能压缩 (Context Compaction)",
                         subtitle = "多轮工具调用超出阈值时，自动压缩历史中间工具输出日志，保留任务首尾与关键状态",
                         checked = compactionEnabled,
@@ -170,7 +170,7 @@ fun AgentSettingsScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        RuntimeIcon(RuntimeIconName.Plus, Modifier.size(16.dp), MaterialTheme.colorScheme.onPrimaryContainer)
+                        RuntimeIcon(RuntimeIconName.Sparkles, Modifier.size(16.dp), MaterialTheme.colorScheme.onPrimaryContainer)
                         Text("新增自定义 Skill 技能", color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold)
                     }
                 }

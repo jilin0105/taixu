@@ -135,6 +135,8 @@ internal class ChatApi(
             model.temperature?.let { put("temperature", kotlinx.serialization.json.JsonPrimitive(it)) }
             model.maxTokens?.let { put("max_tokens", kotlinx.serialization.json.JsonPrimitive(it)) }
             model.topP?.let { put("top_p", kotlinx.serialization.json.JsonPrimitive(it)) }
+            // 推理开关/强度：按厂商能力翻译（reasoning_effort / thinking_config / thinking / reasoning）
+            ReasoningAdapter.openAiFields(model).forEach { (key, value) -> put(key, value) }
             if (tools.isNotEmpty()) {
                 put("tools", json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(ApiToolDefinition.serializer()), tools))
             }
@@ -202,6 +204,10 @@ data class ModelConfig(
     val temperature: Float? = null,
     val maxTokens: Int? = null,
     val topP: Float? = null,
+    /** 推理开关：AUTO = 跟随模型服务端默认。 */
+    val reasoningMode: ReasoningMode = ReasoningMode.AUTO,
+    /** 推理强度：null = 服务端默认。 */
+    val reasoningEffort: ReasoningEffort? = null,
     val dynamicMcpTools: List<top.wkbin.taixu.core.model.McpToolInfo> = emptyList(),
 )
 
@@ -391,6 +397,17 @@ class ProviderClient @Inject constructor(
                 temperature = temperature,
                 maxTokens = maxTokens,
                 topP = topP,
+                reasoningMode = when (reasoningMode?.lowercase()) {
+                    "disabled" -> ReasoningMode.DISABLED
+                    "enabled" -> ReasoningMode.ENABLED
+                    else -> ReasoningMode.AUTO
+                },
+                reasoningEffort = when (reasoningEffort?.lowercase()) {
+                    "low" -> ReasoningEffort.LOW
+                    "medium" -> ReasoningEffort.MEDIUM
+                    "high" -> ReasoningEffort.HIGH
+                    else -> null
+                },
             )
         }
 

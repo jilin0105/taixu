@@ -7,48 +7,65 @@ import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.BatteryChargingFull
 import androidx.compose.material.icons.outlined.BugReport
+import androidx.compose.material.icons.outlined.Build
+import androidx.compose.material.icons.outlined.Cable
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.Compress
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.DownloadForOffline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.FolderShared
 import androidx.compose.material.icons.outlined.FormatSize
+import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Lan
 import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.Layers
+import androidx.compose.material.icons.outlined.Lightbulb
+import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.SdCard
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SmartToy
+import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.Vibration
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
@@ -67,10 +84,12 @@ enum class RuntimeIconName {
     Download, Play, Stop, More, Plus, Chat, List, Copy,
     Folder, File, Code, Edit, Save, ArrowUp, Cpu, Search, Info,
     Image, Attach,
-    // 语义增强新图标
+    // 语义增强与二级菜单精美图标
     Linux, Debian, Ubuntu, Arch, Kali,
     Github, Qq,
     Bot, Palette, FontSize, Battery, Bug, Update, Extension, Hub, Mount, OpenInNew, Key, Tune,
+    Brain, Sparkles, Vibrate, FolderDownload, Document, SdCard, Server, Compress,
+    Prompt, Wrench, Model, Network, Community, FolderOpen, Speed, Cable, Admin, Link,
 }
 
 /** Official Material & Customized Brand vector icons, shared by every screen for consistent optical weight. */
@@ -137,7 +156,7 @@ private fun RuntimeIconName.materialVector(): ImageVector = when (this) {
     RuntimeIconName.Image -> Icons.Outlined.Image
     RuntimeIconName.Attach -> Icons.Outlined.AttachFile
     // 语义增强新图标
-    RuntimeIconName.Bot -> Icons.Outlined.AutoAwesome
+    RuntimeIconName.Bot -> Icons.Outlined.SmartToy
     RuntimeIconName.Palette -> Icons.Outlined.Palette
     RuntimeIconName.FontSize -> Icons.Outlined.FormatSize
     RuntimeIconName.Battery -> Icons.Outlined.BatteryChargingFull
@@ -149,6 +168,24 @@ private fun RuntimeIconName.materialVector(): ImageVector = when (this) {
     RuntimeIconName.OpenInNew -> Icons.AutoMirrored.Outlined.OpenInNew
     RuntimeIconName.Key -> Icons.Outlined.Key
     RuntimeIconName.Tune -> Icons.Outlined.Tune
+    RuntimeIconName.Brain -> Icons.Outlined.Psychology
+    RuntimeIconName.Sparkles -> Icons.Outlined.AutoAwesome
+    RuntimeIconName.Vibrate -> Icons.Outlined.Vibration
+    RuntimeIconName.FolderDownload -> Icons.Outlined.DownloadForOffline
+    RuntimeIconName.Document -> Icons.Outlined.Description
+    RuntimeIconName.SdCard -> Icons.Outlined.SdCard
+    RuntimeIconName.Server -> Icons.Outlined.Dns
+    RuntimeIconName.Compress -> Icons.Outlined.Compress
+    RuntimeIconName.Prompt -> Icons.Outlined.Lightbulb
+    RuntimeIconName.Wrench -> Icons.Outlined.Build
+    RuntimeIconName.Model -> Icons.Outlined.Layers
+    RuntimeIconName.Network -> Icons.Outlined.Lan
+    RuntimeIconName.Community -> Icons.Outlined.Groups
+    RuntimeIconName.FolderOpen -> Icons.Outlined.FolderOpen
+    RuntimeIconName.Speed -> Icons.Outlined.Speed
+    RuntimeIconName.Cable -> Icons.Outlined.Cable
+    RuntimeIconName.Admin -> Icons.Outlined.AdminPanelSettings
+    RuntimeIconName.Link -> Icons.Outlined.Link
     // 专有品牌矢量
     RuntimeIconName.Linux -> LinuxVector
     RuntimeIconName.Debian -> DebianVector

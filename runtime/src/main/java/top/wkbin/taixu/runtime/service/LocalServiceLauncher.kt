@@ -36,7 +36,9 @@ data class LocalServiceSpec(
     }
 
     companion object {
-        const val DEFAULT_STARTUP_TIMEOUT_MS = 20_000L
+        // 网关启动等待：首次启动可能需编译/下载依赖，20 秒在慢速真机上经常不够，
+        // 加长到 10 分钟；若进程真正崩溃退出，等待逻辑会立即感知并报错，无需等满超时。
+        const val DEFAULT_STARTUP_TIMEOUT_MS = 10 * 60 * 1000L
         const val DEFAULT_POLL_INTERVAL_MS = 200L
         private val SERVICE_ID = Regex("[a-z0-9][a-z0-9-]{1,63}")
     }

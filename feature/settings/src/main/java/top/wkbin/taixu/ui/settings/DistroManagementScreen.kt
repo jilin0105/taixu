@@ -420,7 +420,7 @@ private fun InstallDistroDialog(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Column {
                                     Text(
-                                        text = spec.displayName,
+                                        text = spec.displayWithVersion,
                                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                                     )
                                     Text(

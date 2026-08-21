@@ -192,7 +192,7 @@ fun AppearanceSettingsScreen(
 
                     // 终端触觉震动反馈
                     ToggleRow(
-                        icon = RuntimeIconName.Shield,
+                        icon = RuntimeIconName.Vibrate,
                         title = "终端触觉按键反馈",
                         subtitle = "点击辅助按键条与回车时产生微弱触觉震动",
                         checked = terminalHapticsEnabled,

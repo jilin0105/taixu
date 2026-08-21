@@ -89,7 +89,7 @@ class ProcessRegistryImpl @Inject constructor(
                 rootfsDir = pathManager.rootfsDir(safeDistro),
                 workspaceDir = pathManager.workspaceDir,
                 homeDir = pathManager.homeDir(safeDistro),
-                optDir = pathManager.taixuRootDir,
+                optDir = pathManager.taixuRootDir(safeDistro),
                 tmpDir = pathManager.tmpDir,
                 command = command,
             ),

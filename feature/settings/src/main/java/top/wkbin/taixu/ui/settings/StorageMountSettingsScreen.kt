@@ -109,7 +109,7 @@ fun StorageMountSettingsScreen(
                 ) {
                     Column {
                         MountToggleRow(
-                            icon = RuntimeIconName.Folder,
+                            icon = RuntimeIconName.FolderDownload,
                             title = "下载目录 (Download)",
                             hostPath = "/storage/emulated/0/Download",
                             guestPath = "/sdcard/Download",
@@ -118,7 +118,7 @@ fun StorageMountSettingsScreen(
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                         MountToggleRow(
-                            icon = RuntimeIconName.File,
+                            icon = RuntimeIconName.Document,
                             title = "文档目录 (Documents)",
                             hostPath = "/storage/emulated/0/Documents",
                             guestPath = "/sdcard/Documents",
@@ -127,7 +127,7 @@ fun StorageMountSettingsScreen(
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                         MountToggleRow(
-                            icon = RuntimeIconName.Workspace,
+                            icon = RuntimeIconName.SdCard,
                             title = "完整共享存储 (/sdcard)",
                             hostPath = "/storage/emulated/0",
                             guestPath = "/sdcard",

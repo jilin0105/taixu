@@ -99,7 +99,7 @@ fun McpSettingsScreen(
                                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
                                 contentAlignment = Alignment.Center,
                             ) {
-                                RuntimeIcon(RuntimeIconName.Code, Modifier.size(16.dp), MaterialTheme.colorScheme.primary)
+                                RuntimeIcon(RuntimeIconName.Network, Modifier.size(16.dp), MaterialTheme.colorScheme.primary)
                             }
                             Text(
                                 "Model Context Protocol (MCP)",

@@ -14,6 +14,7 @@ import top.wkbin.taixu.runtime.shell.ManagedProcess
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -69,7 +71,13 @@ class ToolManager @Inject constructor(
     val verifications: StateFlow<Map<String, ToolVerification>> = _verifications.asStateFlow()
     private val staticInstallerById = installerAdapters.associateBy { it.toolId }
 
-    fun observeTools(): Flow<List<ToolEntity>> = toolRepository.observeTools()
+    /** 当前发行版（安装/卸载/验证等操作的作用目标系统）。 */
+    private fun currentDistroId(): String = linuxRuntime.activeDistroId.value
+
+    /** 插件状态按当前发行版隔离：切换系统后自动切换为该系统的安装状态。 */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun observeTools(): Flow<List<ToolEntity>> =
+        linuxRuntime.activeDistroId.flatMapLatest { toolRepository.observeTools(it) }
 
     /** Expose manifest metadata for detail screens. */
     fun manifest(toolId: String): ToolManifest? = toolRepository.manifest(toolId)
@@ -169,51 +177,61 @@ class ToolManager @Inject constructor(
 
     suspend fun syncRegistry() {
         val liveInstallTools = installJobs.keys.toSet()
+        // 中断任务恢复按任务记录的所属系统恢复；元数据同步覆盖所有已安装系统
+        val distroIds = linuxRuntime.installedDistros.value.map { it.id }
+            .ifEmpty { listOf(currentDistroId()) }
+            .distinct()
         installTaskRepository.listByState(TASK_RUNNING)
             .filter { it.toolId !in liveInstallTools }
             .forEach { task ->
-            installTransactionManager.recover(
-                toolId = task.toolId,
-                preserveExisting = task.operation == OPERATION_UPDATE,
-            )
-            installTaskRepository.upsert(
-                task.copy(
-                    state = TASK_INTERRUPTED,
-                    message = "检测到应用进程被中断，请重试",
-                    updatedAt = System.currentTimeMillis(),
-                ),
-            )
-            val interruptedTool = toolRepository.findById(task.toolId)
-            val recoveredState = if (
-                task.operation == OPERATION_UPDATE && interruptedTool?.installedVersion != null
-            ) {
-                ToolState.INSTALLED.name
-            } else {
-                ToolState.FAILED.name
-            }
-            toolRepository.updateState(task.toolId, recoveredState)
-            installLogRepository.insert(
-                InstallLogEntity(
+                val taskDistro = task.distroId
+                installTransactionManager.recover(
+                    distroId = taskDistro,
                     toolId = task.toolId,
-                    event = TASK_INTERRUPTED,
-                    message = "${task.operation} 任务在应用进程终止后被标记为中断",
-                ),
-            )
-        }
-        toolRepository.manifests().forEach { manifest ->
-            val existing = toolRepository.findById(manifest.id)
-            toolRepository.upsert(manifest.toEntity(existing))
-            if (existing?.state == ToolState.INSTALLING.name && manifest.id !in liveInstallTools) {
-                // The process may have been killed while an installer was running.
-                // Never leave a durable INSTALLING state that has no live Job behind it.
-                toolRepository.updateState(manifest.id, ToolState.FAILED.name)
-                installLogRepository.insert(
-                    InstallLogEntity(
-                        toolId = manifest.id,
-                        event = "RECOVERED",
-                        message = "检测到上次安装被中断，请重试",
+                    preserveExisting = task.operation == OPERATION_UPDATE,
+                )
+                installTaskRepository.upsert(
+                    task.copy(
+                        state = TASK_INTERRUPTED,
+                        message = "检测到应用进程被中断，请重试",
+                        updatedAt = System.currentTimeMillis(),
                     ),
                 )
+                val interruptedTool = toolRepository.findById(taskDistro, task.toolId)
+                val recoveredState = if (
+                    task.operation == OPERATION_UPDATE && interruptedTool?.installedVersion != null
+                ) {
+                    ToolState.INSTALLED.name
+                } else {
+                    ToolState.FAILED.name
+                }
+                toolRepository.updateState(taskDistro, task.toolId, recoveredState)
+                installLogRepository.insert(
+                    InstallLogEntity(
+                        distroId = taskDistro,
+                        toolId = task.toolId,
+                        event = TASK_INTERRUPTED,
+                        message = "${task.operation} 任务在应用进程终止后被标记为中断",
+                    ),
+                )
+            }
+        distroIds.forEach { distroId ->
+            toolRepository.manifests().forEach { manifest ->
+                val existing = toolRepository.findById(distroId, manifest.id)
+                toolRepository.upsert(manifest.toEntity(distroId, existing))
+                if (existing?.state == ToolState.INSTALLING.name && manifest.id !in liveInstallTools) {
+                    // The process may have been killed while an installer was running.
+                    // Never leave a durable INSTALLING state that has no live Job behind it.
+                    toolRepository.updateState(distroId, manifest.id, ToolState.FAILED.name)
+                    installLogRepository.insert(
+                        InstallLogEntity(
+                            distroId = distroId,
+                            toolId = manifest.id,
+                            event = "RECOVERED",
+                            message = "检测到上次安装被中断，请重试",
+                        ),
+                    )
+                }
             }
         }
         installTransactionManager.cleanupOrphans(liveInstallTools)
@@ -225,19 +243,21 @@ class ToolManager @Inject constructor(
     private fun installInternal(toolId: String, operation: String): Flow<InstallEvent> = flow {
         require(isToolSupported(toolId)) { "暂不支持安装工具：$toolId" }
         requireManifestEnabled(toolId)
+        val distroId = currentDistroId()
         val currentJob = coroutineContext[Job]
             ?: error("安装任务必须运行在协程中")
-        val previousTool = toolRepository.findById(toolId)
+        val previousTool = toolRepository.findById(distroId, toolId)
         val preservePreviousInstall = operation == OPERATION_UPDATE &&
             previousTool?.installedVersion != null
         installMutex.withLock {
             check(toolId !in installJobs) { "工具正在安装：$toolId" }
             installJobs[toolId] = currentJob
-            installLogRepository.deleteForTool(toolId)
+            installLogRepository.deleteForTool(distroId, toolId)
             updateProgress(ToolInstallProgress(toolId, "准备安装", 0f))
-            toolRepository.updateState(toolId, ToolState.INSTALLING.name)
+            toolRepository.updateState(distroId, toolId, ToolState.INSTALLING.name)
             installTaskRepository.upsert(
                 InstallTaskEntity(
+                    distroId = distroId,
                     toolId = toolId,
                     operation = operation,
                     state = TASK_RUNNING,
@@ -246,7 +266,7 @@ class ToolManager @Inject constructor(
             )
         }
 
-        val toolName = previousTool?.name ?: toolRepository.findById(toolId)?.name ?: toolId
+        val toolName = previousTool?.name ?: toolRepository.findById(distroId, toolId)?.name ?: toolId
         var cancelled = false
         var transaction: InstallTransaction? = null
         try {
@@ -261,10 +281,10 @@ class ToolManager @Inject constructor(
                     "更新前验证失败：${current.stderr.ifBlank { current.stdout }.trim()}"
                 }
             }
-            transaction = installTransactionManager.begin(toolId, preservePreviousInstall)
+            transaction = installTransactionManager.begin(distroId, toolId, preservePreviousInstall)
             selectInstaller(toolId).collect { event ->
                 val safeEvent = event.redacted()
-                recordEvent(safeEvent)
+                recordEvent(distroId, safeEvent)
                 updateFromEvent(safeEvent)
                 when (safeEvent) {
                     is InstallEvent.Progress -> {
@@ -272,8 +292,9 @@ class ToolManager @Inject constructor(
                     }
                     is InstallEvent.Completed -> {
                         val installedVer = safeEvent.version?.trim()?.takeIf { it.isNotBlank() }
-                            ?: toolRepository.findById(toolId)?.manifestVersion
+                            ?: toolRepository.findById(distroId, toolId)?.manifestVersion
                         toolRepository.updateStateAndInstalledVersion(
+                            distroId = distroId,
                             id = toolId,
                             state = ToolState.INSTALLED.name,
                             installedVersion = installedVer,
@@ -284,11 +305,12 @@ class ToolManager @Inject constructor(
                         transaction?.let { installTransactionManager.rollback(it) }
                         transaction = null
                         toolRepository.updateStateAndInstalledVersion(
+                            distroId = distroId,
                             id = toolId,
                             state = failureState(preservePreviousInstall, previousTool),
                             installedVersion = if (preservePreviousInstall) previousTool.installedVersion else null,
                         )
-                        if (!preservePreviousInstall) releaseRuntimeReferences(toolId)
+                        if (!preservePreviousInstall) releaseRuntimeReferences(toolId, distroId)
                         notificationNotifier.showFailed(toolId, toolName, safeEvent.message)
                     }
                     is InstallEvent.Cancelled -> {
@@ -297,8 +319,8 @@ class ToolManager @Inject constructor(
                     else -> Unit
                 }
                 when (safeEvent) {
-                    is InstallEvent.Completed -> updateTask(toolId, TASK_COMPLETED, "安装完成")
-                    is InstallEvent.Failed -> updateTask(toolId, TASK_FAILED, safeEvent.message)
+                    is InstallEvent.Completed -> updateTask(distroId, toolId, TASK_COMPLETED, "安装完成")
+                    is InstallEvent.Failed -> updateTask(distroId, toolId, TASK_FAILED, safeEvent.message)
                     else -> Unit
                 }
                 if (safeEvent is InstallEvent.Completed) {
@@ -319,14 +341,15 @@ class ToolManager @Inject constructor(
                     }
                 }
                 toolRepository.updateStateAndInstalledVersion(
+                    distroId = distroId,
                     id = toolId,
                     state = failureState(preservePreviousInstall, previousTool, cancelled = true),
                     installedVersion = if (preservePreviousInstall) previousTool.installedVersion else null,
                 )
-                updateTask(toolId, TASK_CANCELLED, "用户取消安装")
-                if (!preservePreviousInstall) releaseRuntimeReferences(toolId)
+                updateTask(distroId, toolId, TASK_CANCELLED, "用户取消安装")
+                if (!preservePreviousInstall) releaseRuntimeReferences(toolId, distroId)
                 val event = InstallEvent.Cancelled(toolId)
-                recordEvent(event)
+                recordEvent(distroId, event)
                 updateFromEvent(event)
             }
             throw throwable
@@ -345,13 +368,14 @@ class ToolManager @Inject constructor(
                     }
                 }
                 toolRepository.updateStateAndInstalledVersion(
+                    distroId = distroId,
                     id = toolId,
                     state = failureState(preservePreviousInstall, previousTool),
                     installedVersion = if (preservePreviousInstall) previousTool.installedVersion else null,
                 )
-                if (!preservePreviousInstall) releaseRuntimeReferences(toolId)
-                updateTask(toolId, TASK_FAILED, event.message)
-                recordEvent(event)
+                if (!preservePreviousInstall) releaseRuntimeReferences(toolId, distroId)
+                updateTask(distroId, toolId, TASK_FAILED, event.message)
+                recordEvent(distroId, event)
                 updateFromEvent(event)
             }
             emit(event)
@@ -370,14 +394,15 @@ class ToolManager @Inject constructor(
                         }
                     }
                     toolRepository.updateStateAndInstalledVersion(
+                        distroId = distroId,
                         id = toolId,
                         state = failureState(preservePreviousInstall, previousTool),
                         installedVersion = if (preservePreviousInstall) previousTool.installedVersion else null,
                     )
-                    if (!preservePreviousInstall) releaseRuntimeReferences(toolId)
+                    if (!preservePreviousInstall) releaseRuntimeReferences(toolId, distroId)
                     val event = InstallEvent.Failed(toolId, "安装流程未完成")
-                    updateTask(toolId, TASK_FAILED, event.message)
-                    recordEvent(event)
+                    updateTask(distroId, toolId, TASK_FAILED, event.message)
+                    recordEvent(distroId, event)
                     updateFromEvent(event)
                 }
             }
@@ -402,8 +427,10 @@ class ToolManager @Inject constructor(
     }
 
     private suspend fun uninstallLocked(toolId: String, deleteData: Boolean) {
+        val distroId = currentDistroId()
         installTaskRepository.upsert(
             InstallTaskEntity(
+                distroId = distroId,
                 toolId = toolId,
                 operation = OPERATION_UNINSTALL,
                 state = TASK_RUNNING,
@@ -415,28 +442,32 @@ class ToolManager @Inject constructor(
             val event = if (outcome.success) "UNINSTALLED" else "UNINSTALL_FAILED"
             val safeMessage = secretRedactor.redact(outcome.message.ifBlank { "卸载完成" })
             toolRepository.updateStateAndInstalledVersion(
+                distroId = distroId,
                 id = toolId,
                 state = if (outcome.success) ToolState.AVAILABLE.name else ToolState.FAILED.name,
-                installedVersion = if (outcome.success) null else toolRepository.findById(toolId)?.installedVersion,
+                installedVersion = if (outcome.success) null else toolRepository.findById(distroId, toolId)?.installedVersion,
             )
-            if (outcome.success) releaseRuntimeReferences(toolId)
-            updateTask(toolId, if (outcome.success) TASK_COMPLETED else TASK_FAILED, safeMessage)
-            installLogRepository.insert(InstallLogEntity(toolId = toolId, event = event, message = safeMessage))
+            if (outcome.success) releaseRuntimeReferences(toolId, distroId)
+            updateTask(distroId, toolId, if (outcome.success) TASK_COMPLETED else TASK_FAILED, safeMessage)
+            installLogRepository.insert(InstallLogEntity(distroId = distroId, toolId = toolId, event = event, message = safeMessage))
         } catch (cancellation: CancellationException) {
-            withContext(NonCancellable) { updateTask(toolId, TASK_CANCELLED, "用户取消卸载") }
+            withContext(NonCancellable) { updateTask(distroId, toolId, TASK_CANCELLED, "用户取消卸载") }
             throw cancellation
         } catch (throwable: Throwable) {
             val message = secretRedactor.redact(throwable.message ?: "卸载流程异常终止")
-            updateTask(toolId, TASK_FAILED, message)
+            updateTask(distroId, toolId, TASK_FAILED, message)
             throw throwable
         }
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun observeInstallLogs(toolId: String): Flow<List<InstallLogEntity>> =
-        installLogRepository.observeForTool(toolId)
+        linuxRuntime.activeDistroId.flatMapLatest { distroId ->
+            installLogRepository.observeForTool(distroId, toolId)
+        }
 
     suspend fun clearLogs(toolId: String) =
-        installLogRepository.deleteForTool(toolId)
+        installLogRepository.deleteForTool(currentDistroId(), toolId)
 
     suspend fun launch(toolId: String): top.wkbin.taixu.runtime.shell.CommandResult {
         requireInstalledTool(toolId)
@@ -476,14 +507,17 @@ class ToolManager @Inject constructor(
         _verifications.value = _verifications.value + (toolId to verification)
         installLogRepository.insert(
             InstallLogEntity(
+                distroId = currentDistroId(),
                 toolId = toolId,
                 event = if (verification.healthy) "VERIFIED" else "VERIFY_FAILED",
                 message = verification.detail,
             ),
         )
         if (verification.healthy) {
-            val current = toolRepository.findById(toolId)
+            val distroId = currentDistroId()
+            val current = toolRepository.findById(distroId, toolId)
             toolRepository.updateStateAndInstalledVersion(
+                distroId = distroId,
                 id = toolId,
                 state = ToolState.INSTALLED.name,
                 installedVersion = current?.installedVersion
@@ -491,7 +525,7 @@ class ToolManager @Inject constructor(
                     ?: verification.version,
             )
         } else {
-            toolRepository.updateState(toolId, ToolState.FAILED.name)
+            toolRepository.updateState(currentDistroId(), toolId, ToolState.FAILED.name)
         }
         return verification
     }
@@ -538,7 +572,7 @@ class ToolManager @Inject constructor(
     }.getOrDefault(false)
 
     private suspend fun requireInstalledTool(toolId: String): ToolEntity {
-        val tool = toolRepository.findById(toolId)
+        val tool = toolRepository.findById(currentDistroId(), toolId)
             ?: error("工具不在当前清单中：$toolId")
         check(tool.state == ToolState.INSTALLED.name || tool.state == ToolState.UPDATE_AVAILABLE.name) {
             "工具尚未安装：${tool.name}"
@@ -564,12 +598,12 @@ class ToolManager @Inject constructor(
         check(manifest.enabled) { "工具已被 Registry 暂停：${manifest.name}" }
     }
 
-    private suspend fun recordEvent(event: InstallEvent) {
-        installLogRepository.insert(event.toLog())
+    private suspend fun recordEvent(distroId: String, event: InstallEvent) {
+        installLogRepository.insert(event.toLog(distroId))
     }
 
-    private suspend fun updateTask(toolId: String, state: String, message: String) {
-        val current = installTaskRepository.findByTool(toolId) ?: return
+    private suspend fun updateTask(distroId: String, toolId: String, state: String, message: String) {
+        val current = installTaskRepository.findByTool(distroId, toolId) ?: return
         installTaskRepository.upsert(
             current.copy(
                 state = state,
@@ -613,8 +647,8 @@ class ToolManager @Inject constructor(
         else -> ToolState.FAILED.name
     }
 
-    private suspend fun releaseRuntimeReferences(toolId: String) {
-        val dependencies = toolRepository.findById(toolId)?.dependencies.orEmpty()
+    private suspend fun releaseRuntimeReferences(toolId: String, distroId: String) {
+        val dependencies = toolRepository.findById(distroId, toolId)?.dependencies.orEmpty()
             .split(',')
             .map { it.trim().lowercase() }
             .filter { it.isNotBlank() }
@@ -631,21 +665,23 @@ class ToolManager @Inject constructor(
         }
     }
 
-    private fun InstallEvent.toLog(): InstallLogEntity = when (this) {
-        is InstallEvent.Started -> InstallLogEntity(toolId = toolId, event = "STARTED", message = "开始安装")
+    private fun InstallEvent.toLog(distroId: String): InstallLogEntity = when (this) {
+        is InstallEvent.Started -> InstallLogEntity(distroId = distroId, toolId = toolId, event = "STARTED", message = "开始安装")
         is InstallEvent.Progress -> InstallLogEntity(
+            distroId = distroId,
             toolId = toolId,
             event = "PROGRESS_${phase.name}",
             message = message,
         )
-        is InstallEvent.Output -> InstallLogEntity(toolId = toolId, event = "OUTPUT", message = line)
-        is InstallEvent.Completed -> InstallLogEntity(toolId = toolId, event = "COMPLETED", message = "安装完成${version?.let { "：$it" } ?: ""}")
-        is InstallEvent.Failed -> InstallLogEntity(toolId = toolId, event = "FAILED", message = message)
-        is InstallEvent.RolledBack -> InstallLogEntity(toolId = toolId, event = "ROLLED_BACK", message = "已回滚安装事务")
-        is InstallEvent.Cancelled -> InstallLogEntity(toolId = toolId, event = "CANCELLED", message = "用户取消安装")
+        is InstallEvent.Output -> InstallLogEntity(distroId = distroId, toolId = toolId, event = "OUTPUT", message = line)
+        is InstallEvent.Completed -> InstallLogEntity(distroId = distroId, toolId = toolId, event = "COMPLETED", message = "安装完成${version?.let { "：$it" } ?: ""}")
+        is InstallEvent.Failed -> InstallLogEntity(distroId = distroId, toolId = toolId, event = "FAILED", message = message)
+        is InstallEvent.RolledBack -> InstallLogEntity(distroId = distroId, toolId = toolId, event = "ROLLED_BACK", message = "已回滚安装事务")
+        is InstallEvent.Cancelled -> InstallLogEntity(distroId = distroId, toolId = toolId, event = "CANCELLED", message = "用户取消安装")
     }
 
-    private suspend fun ToolManifest.toEntity(existing: ToolEntity?) = ToolEntity(
+    private suspend fun ToolManifest.toEntity(distroId: String, existing: ToolEntity?) = ToolEntity(
+        distroId = distroId,
         id = id,
         name = name,
         description = description,

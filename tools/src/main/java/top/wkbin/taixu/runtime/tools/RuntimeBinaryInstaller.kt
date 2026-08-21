@@ -4,6 +4,7 @@ import top.wkbin.taixu.core.common.files.SafeFileTree
 import top.wkbin.taixu.core.network.ChecksumVerifier
 import top.wkbin.taixu.core.network.DownloadRequest
 import top.wkbin.taixu.core.network.FileDownloader
+import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.RuntimePathManager
 import top.wkbin.taixu.runtime.rootfs.TarStreamExtractor
 import java.io.File
@@ -18,16 +19,18 @@ import org.tukaani.xz.XZInputStream
 @Singleton
 class RuntimeBinaryInstaller @Inject constructor(
     private val pathManager: RuntimePathManager,
+    private val linuxRuntime: LinuxRuntime,
     private val fileDownloader: FileDownloader,
     private val checksumVerifier: ChecksumVerifier,
     private val tarStreamExtractor: TarStreamExtractor,
 ) {
     suspend fun installNode(): String = withContext(Dispatchers.IO) {
+        val distroId = linuxRuntime.activeDistroId.value
         val version = NODE_VERSION
-        val runtimeRoot = File(pathManager.taixuRuntimesDir, "node/$version")
+        val runtimeRoot = File(pathManager.taixuRuntimesDir(distroId), "node/$version")
         val nodeExecutable = File(runtimeRoot, "bin/node")
         if (!nodeExecutable.isFile) {
-            pathManager.ensureDirectories()
+            pathManager.ensureDistroDirectories(distroId)
             val archive = File(pathManager.cacheDir, "node-$version-linux-arm64.tar.xz")
             if (archive.isFile && runCatching { checksumVerifier.verify(archive, NODE_SHA256) }.isFailure) {
                 archive.delete()
@@ -43,7 +46,7 @@ class RuntimeBinaryInstaller @Inject constructor(
                 ).collect { }
             }
 
-            val staging = File(pathManager.taixuRootDir, ".staging-node-$version")
+            val staging = File(pathManager.taixuRootDir(distroId), ".staging-node-$version")
             SafeFileTree.delete(staging)
             staging.mkdirs()
             archive.inputStream().use { input ->
@@ -57,17 +60,18 @@ class RuntimeBinaryInstaller @Inject constructor(
             check(extractedRoot.renameTo(runtimeRoot)) { "无法提交 Node Runtime" }
             archive.delete()
         }
-        createWrappers()
+        createWrappers(distroId)
         version
     }
 
     suspend fun removeNode() = withContext(Dispatchers.IO) {
-        SafeFileTree.delete(File(pathManager.taixuRuntimesDir, "node"))
-        listOf("node", "npm", "npx").forEach { File(pathManager.taixuRootDir, "bin/$it").delete() }
+        val distroId = linuxRuntime.activeDistroId.value
+        SafeFileTree.delete(File(pathManager.taixuRuntimesDir(distroId), "node"))
+        listOf("node", "npm", "npx").forEach { File(pathManager.taixuBinDir(distroId), "$it").delete() }
     }
 
-    private fun createWrappers() {
-        val bin = File(pathManager.taixuRootDir, "bin")
+    private fun createWrappers(distroId: String) {
+        val bin = pathManager.taixuBinDir(distroId)
         bin.mkdirs()
         mapOf(
             "node" to "node",
