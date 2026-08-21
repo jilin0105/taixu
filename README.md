@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="app/src/main/res/drawable/logo.webp" width="128" alt="太墟 Logo" />
+  <img src="app/src/main/res/drawable/logo.webp" width="96" alt="太墟 Logo" />
 </p>
 
 <h1 align="center">太墟 · TaiXu</h1>
@@ -68,11 +68,11 @@
 
 - 支持 OpenAI 兼容 `chat/completions` 接口，以及 Anthropic Messages API 适配。
 - 支持 SSE 流式文本、`reasoning_content` / `reasoning` 推理增量与分片 `tool_calls` 参数累积。
+- **指令如律**：支持 `/run`、`/install`、`/init`、`/git` 等快捷指令，精简高频开发链路，让意图直达行动。
+- **诸智共鸣**：支持主智能体派发并观测多个专业子智能体（Researcher, Coder, Tester），在隔离上下文中并发推进复杂工程。
 - 内置 `read`、`write`、`edit`、`base` 等工作区与 Linux 执行工具。
-- 支持主 Agent 并发派发多个专业子智能体，在隔离子会话中完成调研、编码或测试后汇总结论。
 - 支持 MCP STDIO 与 SSE 服务，能够发现工具定义、动态注入模型并执行调用。
 - 会话、消息、工具执行、模型档案与推理内容通过 Room 持久化。
-- 支持多模型添加、切换与删除，并可将会话关联到指定工作区。
 - 支持图片视觉输入与文件附件；文件会复制到受控附件目录并映射进 Linux 沙箱。
 - 能从 Markdown 检查项提取任务计划，在对话中展示步骤与进度。
 
@@ -83,6 +83,7 @@
 太墟不是在文本框中模拟 Shell，而是维护真实 Linux 会话与进程生命周期。
 
 - JNI `forkpty` 原生后端已接入，具备控制终端、窗口尺寸与信号语义。
+- **变更洞察**：在对话中直接渲染文件变更的视觉化 Diff（红绿行对比），支持点击直达编辑器相关代码行。
 - 原生后端不可用时自动回退至 Debian `script` PTY 路径。
 - 支持 UTF-8 增量解码、ANSI/VT100 状态、Ctrl+C、动态 Resize 与滚动缓冲。
 - 支持终端多会话的新建、切换、关闭与重命名。
@@ -117,6 +118,7 @@
 | Hermes Agent | Web Dashboard | Python 依赖、Dashboard 服务与后台进程管理 |
 | Base DevTools | 一次性工具包 | ripgrep、fd、jq、tmux |
 | Android DevTools | PTY / 工具包 | ADB、OpenJDK 17、Gradle、AAPT、zipalign |
+| Android RE Tools | PTY / 工具包 | APKTool、JADX-CLI、Smali 逆向分析环境 |
 | Hello Tool | 测试工具 | 验证安装、启动、校验与回滚链路 |
 
 工具系统同时具备：
@@ -133,6 +135,8 @@
 ### 六、观天察地 · 仪表盘、设置与诊断
 
 - 展示运行时状态、架构、内存、存储、进程和活跃任务。
+- **显微观象**：智能体执行流、工具调用细节本地持久化日志，支持一键脱敏复制与清理。
+- **Shell Runner**：在隔离的 Linux 环境中执行一次性 Shell 命令，辅助快速诊断。
 - 按 RootFS、Runtime、工具程序、工具数据、工作区与缓存统计空间。
 - 管理模型 Provider、API Key、MCP 服务、存储挂载、发行版和工具服务。
 - 支持本地模型端点，如 llama.cpp 与 Ollama 的 OpenAI 兼容接口。
@@ -281,7 +285,7 @@ adb shell am start -n top.wkbin.taixu/.MainActivity
 | --- | --- | --- |
 | 鸿蒙 | ✅ 已完成 | PRoot、OCI RootFS、Shell、持久化目录与基础诊断 |
 | 立极 | ✅ 已完成 | 工作区、Agent Harness、流式模型接入、工具调用与会话持久化 |
-| 衍界 | ✅ 已具雏形 | 多发行版、JNI PTY、多终端、MCP、子智能体与工具事务 |
+| 衍界 | ✅ 已完成 | 多发行版、JNI PTY、多终端、MCP、子智能体与工具事务 |
 | 万象 | 🔄 进行中 | 真机兼容、上游工具验收、终端交互、测试覆盖与发布安全 |
 | 归一 | 📋 规划中 | 可迁移环境、可信远程协作与更完整的跨设备连续性 |
 
