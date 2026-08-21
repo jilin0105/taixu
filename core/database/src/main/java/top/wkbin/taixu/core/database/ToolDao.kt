@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.core.database
+package top.wkbin.taixu.core.database
 
 import androidx.room.Dao
 import androidx.room.Insert
@@ -11,6 +11,9 @@ interface ToolDao {
 
     @Query("SELECT * FROM tools WHERE distroId = :distroId ORDER BY name")
     fun observeForDistro(distroId: String): Flow<List<ToolEntity>>
+
+    @Query("SELECT * FROM tools WHERE distroId = :distroId AND state = 'INSTALLED' ORDER BY name")
+    suspend fun getInstalledForDistro(distroId: String): List<ToolEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(tool: ToolEntity)

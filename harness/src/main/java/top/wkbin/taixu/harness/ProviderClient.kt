@@ -129,9 +129,9 @@ internal class ChatApi(
     }
 
     private fun buildRequest(model: ModelConfig, messages: List<ApiMessage>, stream: Boolean): Request {
-        val tools = ProviderClient.buildDynamicTools(model.dynamicMcpTools)
+            val tools = if (model.pureChatMode) emptyList() else ProviderClient.buildDynamicTools(model.dynamicMcpTools)
         // JSON_TEXT 模式：把工具 JSON 描述追加到 system 消息末尾，让模型在纯文本中输出工具调用
-        val effectiveMessages = if (model.toolCallMode == ToolCallMode.JSON_TEXT && tools.isNotEmpty()) {
+        val effectiveMessages = if (!model.pureChatMode && model.toolCallMode == ToolCallMode.JSON_TEXT && tools.isNotEmpty()) {
             val desc = ProviderClient.buildToolsTextDescription(tools)
             messages.map { msg ->
                 if (msg.role == "system" && !msg.content.isNullOrBlank()) {
@@ -151,9 +151,8 @@ internal class ChatApi(
             model.topP?.let { put("top_p", kotlinx.serialization.json.JsonPrimitive(it)) }
             // 推理开关/强度：按厂商能力翻译（reasoning_effort / thinking_config / thinking / reasoning）
             ReasoningAdapter.openAiFields(model).forEach { (key, value) -> put(key, value) }
-            // 工具调用：仅 NATIVE 模式注入标准 tools；JSON_TEXT 模式不注入（工具描述已在 system 消息）；
-            // DISABLED 模式完全不注入工具相关参数。
-            if (model.toolCallMode == ToolCallMode.NATIVE && tools.isNotEmpty()) {
+            // 工具调用：纯净模式与 DISABLED 模式完全不注入工具相关参数；仅 NATIVE 模式注入标准 tools
+            if (!model.pureChatMode && model.toolCallMode == ToolCallMode.NATIVE && tools.isNotEmpty()) {
                 put("tools", json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(ApiToolDefinition.serializer()), tools))
             }
             put("messages", kotlinx.serialization.json.buildJsonArray {
@@ -194,6 +193,9 @@ internal class ChatApi(
             .header("Content-Type", "application/json")
             .apply {
                 model.apiKey?.let { header("Authorization", "Bearer $it") }
+                ProviderClient.parseCustomHeaders(model.customHeaders).forEach { (name, value) ->
+                    header(name, value)
+                }
             }
             .post(requestJson.toString().toRequestBody(ProviderClient.JSON_MEDIA_TYPE))
             .build()
@@ -231,6 +233,14 @@ data class ModelConfig(
      */
     val toolCallMode: ToolCallMode = ToolCallMode.NATIVE,
     val dynamicMcpTools: List<top.wkbin.taixu.core.model.McpToolInfo> = emptyList(),
+    /** 上下文 Token 容量上限（如 128000，超出时滑动窗口压缩）。 */
+    val contextTokens: Int? = null,
+    /** 自定义请求头（多行 Key: Value 格式）。 */
+    val customHeaders: String = "",
+    /** 纯净排查模式：不注入系统提示词与工具。 */
+    val pureChatMode: Boolean = false,
+    /** 是否支持视觉多模态直接发送图片。 */
+    val visionEnabled: Boolean = true,
 )
 
 /** LLM 接入协议：绝大多数厂商提供 OpenAI 兼容端点；Anthropic Claude 需要专用适配。 */
@@ -476,7 +486,28 @@ class ProviderClient @Inject constructor(
                     "disabled" -> ToolCallMode.DISABLED
                     else -> ToolCallMode.NATIVE
                 },
+                contextTokens = contextTokens,
+                customHeaders = customHeaders,
+                pureChatMode = pureChatMode,
+                visionEnabled = visionEnabled,
             )
+        }
+
+        /** 解析多行自定义请求头（格式为 Key: Value，支持忽略空行与 # 注释） */
+        fun parseCustomHeaders(raw: String): List<Pair<String, String>> {
+            if (raw.isBlank()) return emptyList()
+            return raw.lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && !it.startsWith("#") }
+                .mapNotNull { line ->
+                    val colonIndex = line.indexOf(':')
+                    if (colonIndex > 0) {
+                        val name = line.substring(0, colonIndex).trim()
+                        val value = line.substring(colonIndex + 1).trim()
+                        if (name.isNotEmpty() && value.isNotEmpty()) name to value else null
+                    } else null
+                }
+                .toList()
         }
 
         /** Anthropic 协议自动识别：官方域名或厂商名含 anthropic/claude。 */
@@ -555,6 +586,33 @@ class ProviderClient @Inject constructor(
                     description = "在 Debian Linux 沙箱中执行 shell 命令，返回退出码/stdout/stderr。用于安装软件（apt-get/npm/pip install）、运行脚本、查看文件/进程/网络、执行任意 bash。命令有超时与输出截断；可用 cwd 指定工作目录（会话关联工作区时默认在其目录执行）。",
                     parameters = Json.parseToJsonElement(
                         """{"type":"object","properties":{"command":{"type":"string","description":"要执行的 shell 命令"},"cwd":{"type":"string","description":"工作目录，默认 /root"}},"required":["command"]}""",
+                    ).jsonObject,
+                ),
+            ),
+            ApiToolDefinition(
+                function = ApiFunctionDefinition(
+                    name = "memory",
+                    description = "长期语义与事实记忆管理：持久化记录用户的长期偏好、项目架构规范、稳定事实。支持 action: save, query, list, delete。scope: global, project, session。kind: preference, rule, fact, project_info。",
+                    parameters = Json.parseToJsonElement(
+                        """{"type":"object","properties":{"action":{"type":"string","enum":["save","query","list","delete"],"description":"操作动作"},"key":{"type":"string","description":"记忆键名"},"value":{"type":"string","description":"记忆内容（save 必需）"},"kind":{"type":"string","enum":["preference","rule","fact","project_info"],"description":"记忆类型"},"scope":{"type":"string","enum":["global","project","session"],"description":"记忆作用域"}},"required":["action"]}""",
+                    ).jsonObject,
+                ),
+            ),
+            ApiToolDefinition(
+                function = ApiFunctionDefinition(
+                    name = "plan",
+                    description = "结构化多步骤任务规划管理：拆解长任务子步骤并持续跟踪推进进度。支持 action: replace_active, get_active, advance, clear_active。",
+                    parameters = Json.parseToJsonElement(
+                        """{"type":"object","properties":{"action":{"type":"string","enum":["replace_active","get_active","advance","clear_active"],"description":"规划操作动作"},"goal":{"type":"string","description":"任务总体目标"},"steps":{"type":"array","description":"规划步骤列表（每个步骤包含 id, title, status: pending|in_progress|completed|failed）","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"},"status":{"type":"string"}},"required":["id","title","status"]}},"status":{"type":"string","description":"任务整体状态"}},"required":["action"]}""",
+                    ).jsonObject,
+                ),
+            ),
+            ApiToolDefinition(
+                function = ApiFunctionDefinition(
+                    name = "scratchpad",
+                    description = "任务/会话局部工作草稿便签：临时记录排查假说、分析草稿、当前子目标与阻塞点（Blockers）。支持 action: save, get, list, delete, clear。",
+                    parameters = Json.parseToJsonElement(
+                        """{"type":"object","properties":{"action":{"type":"string","enum":["save","get","list","delete","clear"],"description":"草稿操作动作"},"key":{"type":"string","description":"草稿键名"},"value":{"type":"string","description":"草稿内容（save 必需）"}},"required":["action"]}""",
                     ).jsonObject,
                 ),
             ),

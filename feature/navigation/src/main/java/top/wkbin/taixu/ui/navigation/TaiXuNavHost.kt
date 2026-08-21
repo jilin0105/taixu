@@ -64,6 +64,7 @@ fun TaiXuNavHost() {
     val agentStack = rememberNavBackStack(AgentDestination)
     val workspaceStack = rememberNavBackStack(WorkspaceDestination)
     val settingsStack = rememberNavBackStack(SettingsDestination)
+    val chatViewModel: top.wkbin.taixu.ui.chat.ChatViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
     var selectedMain by rememberSaveable { mutableStateOf(MainDestination.Home) } // 默认进入太墟开辟主界
 
     val activeStack = when (selectedMain) {
@@ -188,13 +189,23 @@ fun TaiXuNavHost() {
                     onBack = ::popBack,
                     onLaunchPty = { toolId -> homeStack.push(TerminalDestination(toolId = toolId)) },
                     onOpenToolDetail = { toolId -> settingsStack.push(ToolDetailDestination(toolId = toolId)) },
+                    onStartAiHealing = { toolId, toolName, logs ->
+                        val prompt = top.wkbin.taixu.ui.settings.ToolSelfHealingHelper.buildHealingPrompt(toolId, toolName, logs)
+                        chatViewModel.startHealingTask("🔧 自愈: $toolName", prompt)
+                        selectedMain = MainDestination.Agent
+                    },
                 )
             }
             entry<ToolDetailDestination> { destination ->
-                ToolDetailScreen(
+                top.wkbin.taixu.ui.settings.ToolDetailScreen(
                     toolId = destination.toolId,
                     onBack = ::popBack,
                     onLaunchTerminal = { toolId -> homeStack.push(TerminalDestination(toolId = toolId)) },
+                    onStartAiHealing = { toolId, toolName, logs ->
+                        val prompt = top.wkbin.taixu.ui.settings.ToolSelfHealingHelper.buildHealingPrompt(toolId, toolName, logs)
+                        chatViewModel.startHealingTask("🔧 自愈: $toolName", prompt)
+                        selectedMain = MainDestination.Agent
+                    },
                 )
             }
             entry<StorageMountSettingsDestination> {

@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.runtime.shell
+package top.wkbin.taixu.runtime.shell
 
 import top.wkbin.taixu.runtime.RuntimePathManager
 import kotlinx.coroutines.Dispatchers
@@ -36,6 +36,9 @@ class ProcessShellExecutor @Inject constructor(
             }
             .redirectErrorStream(false)
             .start()
+
+        // 🌟 关键修复：主动关闭子进程的标准输入（stdin），防止任何交互式脚本/命令无限阻塞在等待键盘输入上
+        runCatching { process.outputStream.close() }
 
         val stdoutDeferred = async(Dispatchers.IO) {
             readFully(process.inputStream)

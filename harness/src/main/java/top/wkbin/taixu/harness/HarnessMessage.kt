@@ -11,6 +11,9 @@ enum class HarnessTool {
     @SerialName("write") WRITE,
     @SerialName("edit") EDIT,
     @SerialName("base") BASE,
+    @SerialName("memory") MEMORY,
+    @SerialName("plan") PLAN,
+    @SerialName("scratchpad") SCRATCHPAD,
     @SerialName("invoke_subagent") SUBAGENT,
     @SerialName("mcp") MCP,
 }

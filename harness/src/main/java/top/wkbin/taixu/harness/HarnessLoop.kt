@@ -53,6 +53,8 @@ class HarnessLoop @Inject constructor(
     private val toolExecutor: ToolExecutor,
     private val messageDao: HarnessMessageDao,
     private val sessionDao: HarnessSessionDao,
+    private val toolDao: top.wkbin.taixu.core.database.ToolDao,
+    private val agentContextDao: top.wkbin.taixu.core.database.AgentContextDao,
     private val settingsDataStore: SettingsDataStore,
     private val fileAccess: WorkspaceFileAccess,
     private val json: Json,
@@ -524,17 +526,33 @@ class HarnessLoop @Inject constructor(
                 return
             }
             logAgentEvent(sessId, "ModelRequest", "Round=$round, Model=${model.name}, Provider=${model.provider}")
+            val msgs = getOrCreateLiveMessages(sessId).value
+            val latestUserText = msgs.filterIsInstance<UserMessage>().lastOrNull()?.text.orEmpty()
+            val mentionedNames = extractMentionedNames(latestUserText)
+            val effectiveModel = if (mentionedNames.isNotEmpty()) {
+                val matchedTools = model.dynamicMcpTools.filter { tool ->
+                    val sName = tool.serverName.lowercase()
+                    val sId = tool.serverId.lowercase()
+                    val tName = tool.name.lowercase()
+                    sName in mentionedNames || sId in mentionedNames || tName in mentionedNames
+                }
+                if (matchedTools.isNotEmpty()) model.copy(dynamicMcpTools = matchedTools) else model
+            } else {
+                model
+            }
             val assistantId = newId()
             val assistantAt = now()
             val streamText = StringBuilder()
             val streamReasoning = StringBuilder()
             var streamed: ChatResult? = null
             var netRetry = 0
+            var lastReasoningFlushTime = 0L
+            var lastTextFlushTime = 0L
             while (streamed == null) {
                 try {
                     streamed = providerClient.chatStream(
-                        model,
-                        apiMessages(sessId, model.toolCallMode),
+                        effectiveModel,
+                        apiMessages(sessId, effectiveModel),
                         onReasoning = { chunk ->
                             streamReasoning.append(chunk)
                             sessionThinkingModes[sessId] = true
@@ -542,11 +560,26 @@ class HarnessLoop @Inject constructor(
                             if (sessId == _currentSessionId.value) {
                                 _thinkingLive.value = true
                             }
-                            streamAssistantReasoning(sessId, assistantId, assistantAt, streamReasoning.toString())
+                            val now = System.currentTimeMillis()
+                            if (now - lastReasoningFlushTime >= STREAM_FLUSH_INTERVAL_MS) {
+                                lastReasoningFlushTime = now
+                                streamAssistantReasoning(sessId, assistantId, assistantAt, streamReasoning.toString())
+                            }
                         },
                     ) { chunk ->
                         setStatus(sessId, "回复中")
                         streamText.append(chunk)
+                        val now = System.currentTimeMillis()
+                        if (now - lastTextFlushTime >= STREAM_FLUSH_INTERVAL_MS) {
+                            lastTextFlushTime = now
+                            streamAssistant(sessId, assistantId, assistantAt, streamText.toString())
+                        }
+                    }
+                    // 流式传输完毕，无条件刷新一次完整内容
+                    if (streamReasoning.isNotEmpty()) {
+                        streamAssistantReasoning(sessId, assistantId, assistantAt, streamReasoning.toString())
+                    }
+                    if (streamText.isNotEmpty()) {
                         streamAssistant(sessId, assistantId, assistantAt, streamText.toString())
                     }
                 } catch (cancellation: CancellationException) {
@@ -689,7 +722,7 @@ class HarnessLoop @Inject constructor(
                 setStatus(sessId, describeToolCall(tool, args, toolNameTrimmed))
                 val toolStart = now()
                 val outcome = try {
-                    toolExecutor.execute(toolCall, sessId)
+                    toolExecutor.execute(toolCall, sessId, sessionWorkspace)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (throwable: Throwable) {
@@ -753,6 +786,9 @@ class HarnessLoop @Inject constructor(
             HarnessTool.READ -> arg("path")?.let { "读取文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "读取文件"
             HarnessTool.WRITE -> arg("path")?.let { "写入文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "写入文件"
             HarnessTool.EDIT -> arg("path")?.let { "编辑文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "编辑文件"
+            HarnessTool.MEMORY -> "正在存取长期记忆：${arg("key") ?: arg("action") ?: "memory"}"
+            HarnessTool.PLAN -> "正在更新任务执行规划：${arg("goal") ?: arg("action") ?: "plan"}"
+            HarnessTool.SCRATCHPAD -> "正在记录工作草稿便签：${arg("key") ?: arg("action") ?: "scratchpad"}"
             HarnessTool.SUBAGENT -> "正在派发并执行子智能体协同任务…"
             HarnessTool.MCP -> "正在调用 MCP 插件工具：${rawToolName ?: "mcp"}…"
         }
@@ -786,7 +822,12 @@ class HarnessLoop @Inject constructor(
     private fun friendly(throwable: Throwable): String =
         throwable.message?.take(200) ?: throwable::class.simpleName.orEmpty()
 
-    private suspend fun buildSystemPrompt(workspacePath: String, toolCallMode: ToolCallMode = ToolCallMode.NATIVE): String {
+    private suspend fun buildSystemPrompt(
+        workspacePath: String,
+        toolCallMode: ToolCallMode = ToolCallMode.NATIVE,
+        mentionedNames: Set<String> = emptySet(),
+        sessionId: String = "",
+    ): String {
         val distroId = runCatching { settingsDataStore.selectedDistribution.first() }.getOrDefault("debian")
         val distroName = when (distroId.lowercase()) {
             "ubuntu" -> "Ubuntu 24.04 (Noble Numbat)"
@@ -808,11 +849,43 @@ class HarnessLoop @Inject constructor(
             context.assets.open("prompts/agent_system.md").bufferedReader().use { it.readText() }
         }.getOrDefault(FALLBACK_SYSTEM_PROMPT)
 
-        val activeSkills = runCatching { settingsDataStore.activeSkills.first() }.getOrDefault(emptyList())
-        val skillSection = if (activeSkills.isNotEmpty()) {
-            "## 当前已启用的专精技能指导规则 (Active Skills)\n\n" + activeSkills.joinToString("\n\n") { skill ->
+        val allSkills = runCatching { settingsDataStore.allSkills.first() }.getOrDefault(emptyList())
+        val selectedSkills = if (mentionedNames.isNotEmpty()) {
+            val matched = allSkills.filter { skill ->
+                val nameLower = skill.name.lowercase()
+                val idLower = skill.id.lowercase()
+                val cmdLower = skill.triggerCommand?.removePrefix("/")?.lowercase().orEmpty()
+                nameLower in mentionedNames || idLower in mentionedNames || (cmdLower.isNotEmpty() && cmdLower in mentionedNames)
+            }
+            if (matched.isNotEmpty()) matched else allSkills.filter { it.isEnabled }
+        } else {
+            allSkills.filter { it.isEnabled }
+        }
+
+        val skillSection = if (selectedSkills.isNotEmpty()) {
+            "## 当前生效的专精技能指导规则 (Active Skills)\n\n" + selectedSkills.joinToString("\n\n") { skill ->
                 "### [专精技能] " + skill.name + " (" + skill.category + ")\n" + skill.systemPrompt.trim()
             }
+        } else ""
+
+        val installedTools = runCatching { toolDao.getInstalledForDistro(distroId) }.getOrDefault(emptyList())
+        val installedToolsSection = if (installedTools.isNotEmpty()) {
+            "\n\n## 当前 Linux 沙箱已就绪的开发套件与工具环境（已安装就绪，直接调用即可，切勿重复下载或重新安装）：\n" +
+                installedTools.joinToString("\n") { tool ->
+                    val ver = tool.installedVersion?.let { " (v$it)" } ?: ""
+                    "- ${tool.name}$ver: ${tool.description}"
+                }
+        } else ""
+
+        val memories = runCatching { agentContextDao.getMemoriesByScopes(listOf("global", "project", "session")) }.getOrDefault(emptyList())
+        val memorySection = if (memories.isNotEmpty()) {
+            "\n\n## 长期事实与偏好记忆 (Long-Term Memory)\n" +
+                memories.joinToString("\n") { "- [${it.scope}/${it.kind}] ${it.key}: ${it.value}" }
+        } else ""
+
+        val activePlan = runCatching { agentContextDao.getActivePlan(sessionId) }.getOrNull()
+        val planSection = if (activePlan != null && activePlan.status == "active") {
+            "\n\n## 当前任务多步骤执行规划与进度看板 (Active Plan)\n目标：${activePlan.goal}\n步骤与状态：\n${activePlan.stepsJson}"
         } else ""
 
         val projectContext = loadProjectContext(workspacePath)
@@ -844,7 +917,13 @@ class HarnessLoop @Inject constructor(
             .replace("{{DISTRO_NAME}}", distroName)
             .replace("{{PKG_MANAGER}}", pkgManager)
             .replace("{{ACTIVE_SKILLS}}", skillSection)
-            .trim() + toolCallSection + workspaceSection + projectContext
+            .trim() + installedToolsSection + memorySection + planSection + toolCallSection + workspaceSection + projectContext
+    }
+
+    private fun extractMentionedNames(text: String): Set<String> {
+        if (!text.contains("@")) return emptySet()
+        val regex = Regex("""@([^\s@,，:：\n]+)""")
+        return regex.findAll(text).map { it.groupValues[1].trim().lowercase() }.toSet()
     }
 
     private suspend fun loadProjectContext(workspacePath: String): String {
@@ -867,17 +946,23 @@ class HarnessLoop @Inject constructor(
             sections.joinToString("\n\n") + "\n</project_context>"
     }
 
-    private suspend fun apiMessages(sessId: String, toolCallMode: ToolCallMode = ToolCallMode.NATIVE): List<ApiMessage> {
+    private suspend fun apiMessages(sessId: String, model: ModelConfig): List<ApiMessage> {
         val compactionEnabled = runCatching { settingsDataStore.contextCompactionEnabled.first() }.getOrDefault(true)
         val threshold = runCatching { settingsDataStore.contextCompactionThreshold.first() }.getOrDefault(15)
         val sessionEntity = sessionDao.findById(sessId)
         val sessionWorkspace = sessionEntity?.workspace.orEmpty()
-        val systemPrompt = buildSystemPrompt(sessionWorkspace, toolCallMode)
         val thinkingMode = sessionThinkingModes[sessId] ?: false
+        val toolCallMode = if (model.pureChatMode) ToolCallMode.DISABLED else model.toolCallMode
+
+        val msgs = getOrCreateLiveMessages(sessId).value
+        val latestUserText = msgs.filterIsInstance<UserMessage>().lastOrNull()?.text.orEmpty()
+        val mentionedNames = extractMentionedNames(latestUserText)
 
         return buildList {
-            add(ApiMessage(role = "system", content = systemPrompt))
-            val msgs = getOrCreateLiveMessages(sessId).value
+            if (!model.pureChatMode) {
+                val systemPrompt = buildSystemPrompt(sessionWorkspace, toolCallMode, mentionedNames, sessId)
+                add(ApiMessage(role = "system", content = systemPrompt))
+            }
             val answeredIds = msgs.filterIsInstance<ToolResult>().mapTo(mutableSetOf()) { it.toolCallId }
 
             val userIndices = msgs.indices.filter { msgs[it] is UserMessage }
@@ -1129,6 +1214,9 @@ class HarnessLoop @Inject constructor(
         HarnessTool.WRITE -> "write"
         HarnessTool.EDIT -> "edit"
         HarnessTool.BASE -> "base"
+        HarnessTool.MEMORY -> "memory"
+        HarnessTool.PLAN -> "plan"
+        HarnessTool.SCRATCHPAD -> "scratchpad"
         HarnessTool.SUBAGENT -> "invoke_subagent"
         HarnessTool.MCP -> "mcp"
     }
@@ -1137,8 +1225,9 @@ class HarnessLoop @Inject constructor(
     private fun now(): Long = System.currentTimeMillis()
 
     companion object {
+        const val STREAM_FLUSH_INTERVAL_MS = 40L
         const val MAX_ROUNDS = 200
-        val KNOWN_TOOL_NAMES = setOf("read", "write", "edit", "base", "invoke_subagent", "subagent")
+        val KNOWN_TOOL_NAMES = setOf("read", "write", "edit", "base", "memory", "plan", "scratchpad", "invoke_subagent", "subagent")
         const val PROJECT_CONTEXT_MAX_BYTES = 16 * 1024
         const val MAX_STREAM_RETRIES = 5
         const val RETRY_BACKOFF_MS = 1_000L
@@ -1177,13 +1266,14 @@ class HarnessLoop @Inject constructor(
             - 遇到奇怪的错误（Bad substitution、dpkg -V 报缺文档、权限异常）优先怀疑是沙箱差异而非系统损坏；确认无实际影响后继续，不要反复重试同一命令，也不要试图“修复”沙箱本身。
             - 工具输出可能被截断：需要完整输出时用 grep/head/tail 截取关键部分，而不是重复执行。
 
-            工作方式：
+            工作方式（行动优先，直接交付，绝不墨迹）：
+            - 直接行动与代码交付：当用户要求创建项目、编写代码、修改逻辑或配置环境时，直接调用 write / edit 工具创建或修改完整工程文件，立即交付成果！严禁在无必要时反复执行环境探测命令，严禁在未受阻碍时反复向用户询问多余的确认问题。
+            - 敏捷思考：内部推理与思考（thinking 内容）一律使用中文，必须精炼敏捷、直奔关键决策，严禁冗长铺垫与自言自语；理清第一步后立即调用工具行动。
             - 需要信息时先 read / base 获取事实，不要凭空猜测或编造内容。
-            - 每一步想清楚再动手；失败时读取错误输出并自我纠正（换路径、装依赖、重试）。
-            - 尽量一次完成用户要求：安装后要验证（如 xxx --version），并汇报真实结果。
-            - 思考语言：内部推理 / 思考过程（含开启推理模式时的 thinking 内容）一律使用中文，便于用户理解思路；最终回答语言遵循用户要求（默认中文）。
+            - 失败时读取真实错误输出并自我纠正（换路径、装依赖、重试）。
+            - 尽量一次完成用户要求：安装或编写完成后汇报真实结果。
             - 用简洁中文汇报；不空话客套；绝不复述或暴露 API Key / Token 等机密。
-            - 若不确定或需要用户确认，直接说明。
+            - 仅在涉及不可逆破坏性操作（如 rm -rf / 等）时才向用户确认，常规开发任务直接执行！
         """.trimIndent()
     }
 }

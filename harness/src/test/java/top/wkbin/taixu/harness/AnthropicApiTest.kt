@@ -155,7 +155,7 @@ class AnthropicApiTest {
             listOf(ApiMessage(role = "user", content = "hi")),
         )
         val body = server.takeRequest().body.readUtf8()
-        assertTrue(body.contains("\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":8192}"))
+        assertTrue(body.contains("\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":2048}"))
         assertFalse(body.contains("\"temperature\""))
         assertFalse(body.contains("\"top_p\""))
     }
@@ -164,12 +164,12 @@ class AnthropicApiTest {
     fun `thinking enabled without effort uses default budget and clamps to max tokens`() = runBlocking {
         server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
         api.chat(
-            model().copy(reasoningMode = ReasoningMode.ENABLED, maxTokens = 4096),
+            model().copy(reasoningMode = ReasoningMode.ENABLED, maxTokens = 2500),
             listOf(ApiMessage(role = "user", content = "hi")),
         )
         val body = server.takeRequest().body.readUtf8()
-        // 默认 8192 需严格小于 max_tokens 4096，clamp 到 4096-1024=3072
-        assertTrue(body.contains("\"budget_tokens\":3072"))
+        // 默认 2048 需严格小于 max_tokens 2500，clamp 到 2500-1024=1476
+        assertTrue(body.contains("\"budget_tokens\":1476"))
     }
 
     @Test

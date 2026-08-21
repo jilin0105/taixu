@@ -12,11 +12,29 @@ data class AgentSkill(
     val iconName: String = "Code",
     val isEnabled: Boolean = true,
     val isBuiltin: Boolean = true,
+    val isImmutable: Boolean = false,
     val category: String = "通用",
 )
 
 object BuiltinSkills {
     val presets: List<AgentSkill> = listOf(
+        AgentSkill(
+            id = "agent_context",
+            name = "上下文与任务记忆规划",
+            description = "太墟核心系统能力：提供长期事实记忆 (memory)、任务执行规划 (plan) 与工作草稿便签 (scratchpad)",
+            systemPrompt = """
+                【Agent 上下文与任务记忆规划核心指导】：
+                1. 长期记忆 (memory)：当用户表达偏好、架构规范或重要事实时，主动调用 memory(action="save", key=..., value=..., kind="preference"|"rule"|"fact") 持久化存储；
+                2. 任务规划 (plan)：对于复杂多步骤任务，第一时间调用 plan(action="replace_active", goal=..., steps=[...]) 拆解子步骤，并在完成每一步时更新推进进度；
+                3. 工作便签 (scratchpad)：临时分析草稿、排查假说与子目标使用 scratchpad 记录。
+            """.trimIndent(),
+            triggerCommand = "/context",
+            iconName = "Star",
+            isEnabled = true,
+            isBuiltin = true,
+            isImmutable = true,
+            category = "核心系统",
+        ),
         AgentSkill(
             id = "linux_ops",
             name = "Linux 沙箱运维专精",
@@ -80,6 +98,56 @@ object BuiltinSkills {
             isEnabled = true,
             isBuiltin = true,
             category = "编程开发",
+        ),
+        AgentSkill(
+            id = "android_cli",
+            name = "Android 统一开发助手",
+            description = "精通 Android Jetpack Compose 架构、Gradle 工具链与现代 App 极速初始化与构建",
+            systemPrompt = """
+                【Android 统一开发助手指导】：
+                1. 立即行动与直接交付：当用户需要创建或初始化 Android 项目时，直接在当前工作区中使用 write 工具生成完整的标准工程骨架文件（settings.gradle.kts、build.gradle.kts、app/build.gradle.kts、AndroidManifest.xml、MainActivity.kt 与 Compose UI 页面代码），严禁在无必要时反复探测环境或询问多余问题！
+                2. 架构规范（与最新工业标准完全拉齐）：
+                   - 语言与编译器：Kotlin 2.x (2.4.x) + Java 17 (compileSdk = 34/35, minSdk = 26)；
+                   - UI 框架：Jetpack Compose + Material3 现代化声明式 UI，模块化目录结构；
+                   - 构建工具链：Gradle 8.7+ / 8.10+ (Kotlin DSL *.gradle.kts)；
+                3. 构建与运行指南：
+                   - 系统已预装 OpenJDK 17、acli、adb、aapt、zipalign 与 Gradle 8.7（PATH 中已有 acli/adb/aapt/java/javac/gradle）；
+                   - 构建排错时优先使用 acli build 执行构建，或在项目根目录下通过 ./gradlew assembleDebug 编译；
+                   - 若需要更新 Gradle，使用腾讯云国内镜像 `https://mirrors.cloud.tencent.com/gradle/gradle-8.7-bin.zip` 秒级满速部署！
+                4. 安装到本手机（极速交付流程）：
+                   - 当用户要求“安装到手机 / 运行到本机 / 装上看看”时：
+                     a. 检查 APK 是否已构建；若未构建则先自动执行构建；
+                     b. 立即将编译出的 APK 拷贝到手机公共存储：`cp app/build/outputs/apk/debug/*.apk /sdcard/Download/<项目名>.apk`；
+                     c. 若检测到 ADB 已连接（如无线调试 127.0.0.1），优先执行 `adb install -r <apk路径>` 实现免确认极速直装；
+                     d. 汇报安装/导出成功，提示用户已就绪！
+                5. 沙箱环境配置：Java 环境为 OpenJDK 17 (JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64)。
+            """.trimIndent(),
+            triggerCommand = "/acli",
+            iconName = "Play",
+            isEnabled = true,
+            isBuiltin = true,
+            category = "安卓开发",
+        ),
+        AgentSkill(
+            id = "android_reverse",
+            name = "Android 逆向与代码审计",
+            description = "精通 APK 解包、JADX-CLI 全自动 Java 源码反编译、资源结构与安全漏洞分析",
+            systemPrompt = """
+                【Android 逆向与代码审计指导】：
+                1. 优先使用 jadx-cli 进行全自动反编译：
+                   - 执行命令：jadx -d <输出目录> <APK/DEX文件路径>
+                   - 输出为完整的 Java 源码工程，反编译后直接使用 read 或 rg 检索类名、方法名、接口 URL 与加密密钥。
+                2. 需要修改资源或 Smali 汇编时使用 apktool：
+                   - 解包：apktool d <APK路径> -o <输出目录>
+                   - 回编译：apktool b <解包目录> -o <新APK路径>
+                   - 关键文件分析：优先查阅 AndroidManifest.xml 获取 Application、Activity、Service、BroadcastReceiver 以及权限声明。
+                3. 分析目标：组件导出风险（exported=true）、WebView 漏洞、硬编码敏感信息、网络通信协议等。
+            """.trimIndent(),
+            triggerCommand = "/re",
+            iconName = "Search",
+            isEnabled = true,
+            isBuiltin = true,
+            category = "安卓开发",
         ),
     )
 }

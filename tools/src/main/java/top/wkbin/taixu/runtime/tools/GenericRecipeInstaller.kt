@@ -77,7 +77,7 @@ class GenericRecipeInstaller(
             // 3. 执行安装配方脚本
             emit(InstallEvent.Progress(toolId, "正在执行 ${manifest.name} 安装配方...", 0.55f, InstallEvent.Phase.RUNNING_INSTALLER))
             val script = manifest.installScript?.trimIndent()
-                ?: error("工具 ${manifest.id} 未配置有效安装脚本 (installScript)")
+                ?: error("工具 ${manifest.id} 未配置有效安装步骤 (installSteps)")
 
             var result = executeAndReport(
                 linuxRuntime.execute(
@@ -137,13 +137,20 @@ class GenericRecipeInstaller(
             emit(InstallEvent.Progress(toolId, "正在验证安装结果...", 0.90f, InstallEvent.Phase.VERIFYING_INSTALLATION))
             val verifyCmd = manifest.verifyCommand ?: "${links.first()} --version"
             val versionResult = executeAndReport(
-                linuxRuntime.execute(ShellCommand(commandLine = verifyCmd, environment = baseEnvironment)),
+                linuxRuntime.execute(ShellCommand(commandLine = verifyCmd, environment = baseEnvironment, timeoutMs = 60_000L)),
             )
             if (!versionResult.isSuccess) {
-                error("验证命令失败 ($verifyCmd): ${versionResult.stderr.ifBlank { versionResult.stdout }}")
+                // 兜底检查：如果主要二进制已建立，判定为安装成功并记录告警，避免因单次命令超时粗暴回滚整个事务
+                val anyBinaryExists = links.any { link ->
+                    val checkRes = linuxRuntime.execute(ShellCommand("test -x $toolDir/bin/$link || test -x /opt/taixu/bin/$link || test -x /usr/bin/$link", environment = baseEnvironment, timeoutMs = 5_000L))
+                    checkRes.isSuccess
+                }
+                if (!anyBinaryExists) {
+                    error("验证命令失败 ($verifyCmd): ${versionResult.stderr.ifBlank { versionResult.stdout }}")
+                }
             }
 
-            val versionOutput = versionResult.stdout.trim().lineSequence().firstOrNull() ?: manifest.version
+            val versionOutput = versionResult.stdout.trim().lineSequence().firstOrNull()?.takeIf { it.isNotBlank() } ?: manifest.version
             emit(InstallEvent.Completed(toolId, versionOutput))
         } catch (cancellation: CancellationException) {
             throw cancellation

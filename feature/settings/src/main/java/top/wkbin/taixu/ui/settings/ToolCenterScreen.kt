@@ -75,6 +75,7 @@ fun ToolCenterScreen(
     onBack: () -> Unit,
     onLaunchPty: (toolId: String) -> Unit,
     onOpenToolDetail: (toolId: String) -> Unit = {},
+    onStartAiHealing: (toolId: String, toolName: String, errorLogs: List<String>) -> Unit = { _, _, _ -> },
     viewModel: ToolCenterViewModel = hiltViewModel(),
 ) {
     val tools by viewModel.tools.collectAsStateWithLifecycle()
@@ -181,6 +182,7 @@ fun ToolCenterScreen(
                             onLaunch = { onLaunchPty(tool.id) },
                             onViewLogs = { viewModel.viewLogs(tool.id) },
                             onOpenDetail = { onOpenToolDetail(tool.id) },
+                            onStartAiHealing = { onStartAiHealing(tool.id, tool.name, installProgress[tool.id]?.message?.let { listOf(it) } ?: emptyList()) },
                         )
                     }
                 }
@@ -191,9 +193,12 @@ fun ToolCenterScreen(
         if (viewingLogsToolId != null) {
             val context = androidx.compose.ui.platform.LocalContext.current
             val toolId = viewingLogsToolId ?: ""
+            val toolName = tools.firstOrNull { it.id == toolId }?.name ?: toolId
+            val hasErrors = toolLogs.any { it.event.contains("FAIL", ignoreCase = true) || it.message.startsWith("ERR") }
+
             AlertDialog(
                 onDismissRequest = { viewModel.viewLogs(null) },
-                title = { Text("工具执行日志 ($toolId)") },
+                title = { Text("工具执行日志 ($toolName)") },
                 text = {
                     Card(
                         modifier = Modifier
@@ -234,7 +239,28 @@ fun ToolCenterScreen(
                     }
                 },
                 confirmButton = {
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (hasErrors) {
+                            Button(
+                                onClick = {
+                                    val fullLogs = toolLogs.map { "[${it.event}] ${it.message}" }
+                                    viewModel.viewLogs(null)
+                                    onStartAiHealing(toolId, toolName, fullLogs)
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            ) {
+                                RuntimeIcon(
+                                    name = RuntimeIconName.Brain,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text("🧠 AI 自愈", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            }
+                        }
                         TextButton(
                             onClick = {
                                 val fullLogs = toolLogs.joinToString("\n") { "[${it.event}] ${it.message}" }
@@ -245,7 +271,7 @@ fun ToolCenterScreen(
                             },
                             enabled = toolLogs.isNotEmpty(),
                         ) {
-                            Text("复制全部")
+                            Text("复制")
                         }
                         TextButton(
                             onClick = { viewModel.clearLogs(toolId) },
@@ -355,6 +381,7 @@ private fun ToolCard(
     onLaunch: () -> Unit,
     onViewLogs: () -> Unit,
     onOpenDetail: () -> Unit,
+    onStartAiHealing: () -> Unit = {},
 ) {
     val isInstalled = tool.state == ToolState.INSTALLED.name || tool.state == ToolState.UPDATE_AVAILABLE.name
     val isInstalling = tool.state == ToolState.INSTALLING.name
@@ -566,17 +593,29 @@ private fun ToolCard(
                             Text("更新", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
                         }
                     } else if (isFailed) {
-                        FilledTonalButton(
-                            onClick = onInstall,
+                        Button(
+                            onClick = onStartAiHealing,
                             shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                         ) {
                             RuntimeIcon(
-                                name = RuntimeIconName.Download,
+                                name = RuntimeIconName.Brain,
                                 modifier = Modifier.size(15.dp),
                             )
                             Spacer(Modifier.width(4.dp))
-                            Text("重试", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                            Text("AI 自愈", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                        }
+                        FilledTonalButton(
+                            onClick = onInstall,
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        ) {
+                            RuntimeIcon(
+                                name = RuntimeIconName.Download,
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("重试", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.labelMedium)
                         }
                     } else if (!isInstalled && !isInstalling) {
                         Button(

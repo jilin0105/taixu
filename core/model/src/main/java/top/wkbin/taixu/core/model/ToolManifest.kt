@@ -23,10 +23,16 @@ data class ToolManifest(
     val permissions: List<String> = emptyList(),
     val updateStrategy: String = "REINSTALL",
     val installMethod: String = "SCRIPT",
-    val installScript: String? = null,
-    val uninstallScript: String? = null,
+    val installSteps: List<String> = emptyList(),
+    val uninstallSteps: List<String> = emptyList(),
     val launchCommand: String? = null,
     val verifyCommand: String? = null,
     val commandLinks: List<String> = emptyList(),
     val environment: Map<String, String> = emptyMap(),
-)
+) {
+    val installScript: String?
+        get() = installSteps.takeIf { it.isNotEmpty() }?.joinToString("\n")
+
+    val uninstallScript: String?
+        get() = uninstallSteps.takeIf { it.isNotEmpty() }?.joinToString("\n")
+}

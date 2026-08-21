@@ -346,6 +346,50 @@ class McpManager @Inject constructor(
                 parametersJson = """{"type":"object","properties":{"target":{"type":"string","description":"比较目标（如 HEAD 或分支名）"}}}""",
             ),
         )
+        "mcp_apktool" -> listOf(
+            McpToolInfo(
+                serverId = server.id,
+                serverName = server.name,
+                name = "decode_apk",
+                description = "自动化反编译 APK 文件，输出 Smali 源码与解包资源目录",
+                parametersJson = """{"type":"object","properties":{"apk_path":{"type":"string","description":"APK 文件的绝对路径"},"output_dir":{"type":"string","description":"解包输出目录（可选）"}},"required":["apk_path"]}""",
+            ),
+            McpToolInfo(
+                serverId = server.id,
+                serverName = server.name,
+                name = "build_apk",
+                description = "将已修改的 Smali 与资源目录重新打包编译为 APK 文件",
+                parametersJson = """{"type":"object","properties":{"project_dir":{"type":"string","description":"解包工程目录绝对路径"},"output_apk":{"type":"string","description":"生成的 APK 目标路径"}},"required":["project_dir"]}""",
+            ),
+            McpToolInfo(
+                serverId = server.id,
+                serverName = server.name,
+                name = "analyze_manifest",
+                description = "深度审计 AndroidManifest.xml 清单文件，提取四大组件导出状态与高危权限",
+                parametersJson = """{"type":"object","properties":{"apk_or_manifest_path":{"type":"string","description":"APK 文件路径或 AndroidManifest.xml 路径"}},"required":["apk_or_manifest_path"]}""",
+            ),
+            McpToolInfo(
+                serverId = server.id,
+                serverName = server.name,
+                name = "extract_strings",
+                description = "从 APK 资源中提取全部字符串、硬编码 API Key、URL 与潜在敏感凭据",
+                parametersJson = """{"type":"object","properties":{"apk_or_res_path":{"type":"string","description":"APK 路径或 res 资源目录路径"}},"required":["apk_or_res_path"]}""",
+            ),
+            McpToolInfo(
+                serverId = server.id,
+                serverName = server.name,
+                name = "search_smali",
+                description = "在 Smali 代码中全局检索关键方法、签名校验逻辑或加密解密特征",
+                parametersJson = """{"type":"object","properties":{"project_dir":{"type":"string","description":"解包工程目录绝对路径"},"pattern":{"type":"string","description":"搜索关键词或正则模式"}},"required":["project_dir","pattern"]}""",
+            ),
+            McpToolInfo(
+                serverId = server.id,
+                serverName = server.name,
+                name = "sign_apk",
+                description = "对生成的 APK 执行 zipalign 内存对齐与 V2/V3 签名",
+                parametersJson = """{"type":"object","properties":{"apk_path":{"type":"string","description":"待签名的 APK 路径"},"output_apk":{"type":"string","description":"签名后的 APK 输出路径"}},"required":["apk_path"]}""",
+            ),
+        )
         else -> emptyList()
     }
 

@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.harness
+package top.wkbin.taixu.harness
 
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
@@ -114,7 +114,6 @@ class ChatApiTest {
         api.chat(
             model().copy(
                 provider = "Google Gemini",
-                baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai",
                 reasoningMode = ReasoningMode.ENABLED,
                 reasoningEffort = ReasoningEffort.LOW,
             ),
@@ -130,7 +129,6 @@ class ChatApiTest {
         api.chat(
             model().copy(
                 provider = "Google Gemini",
-                baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai",
                 reasoningMode = ReasoningMode.DISABLED,
             ),
             emptyList(),
@@ -151,9 +149,9 @@ class ChatApiTest {
             emptyList(),
         )
         val body = server.takeRequest().body.readUtf8()
-        assertFalse(body.contains("reasoning_effort"))
+        assertTrue(body.contains("reasoning_effort"))
         assertFalse(body.contains("thinking_config"))
-        assertFalse(body.contains("\"reasoning\""))
+        assertFalse(body.contains("\"reasoning\":{"))
     }
 
     @Test

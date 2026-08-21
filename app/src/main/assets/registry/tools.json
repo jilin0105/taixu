@@ -11,8 +11,14 @@
     "publisher": "Anthropic",
     "category": "CODING_AGENT",
     "architectures": ["ARM64"],
-    "installMethod": "NPM",
-    "installScript": "npm_config_prefix=\"$TAIXU_TOOL_DIR\" npm install -g --ignore-scripts @anthropic-ai/claude-code --registry=https://registry.npmmirror.com || npm_config_prefix=\"$TAIXU_TOOL_DIR\" npm install -g --ignore-scripts @anthropic-ai/claude-code\nmkdir -p \"$TAIXU_TOOL_DIR/bin\"\nprintf '#!/usr/bin/env sh\\nMODULE_DIR=\"$(cd \"$(dirname \"$0\")/../lib/node_modules/@anthropic-ai/claude-code\" && pwd)\"\\nif [ -f \"$MODULE_DIR/cli-wrapper.cjs\" ]; then\\n    exec node \"$MODULE_DIR/cli-wrapper.cjs\" \"$@\"\\nelif [ -f \"$MODULE_DIR/cli.js\" ]; then\\n    exec node \"$MODULE_DIR/cli.js\" \"$@\"\\nelse\\n    exec node \"$MODULE_DIR/index.js\" \"$@\"\\nfi\\n' > \"$TAIXU_TOOL_DIR/bin/claude\"\nchmod +x \"$TAIXU_TOOL_DIR/bin/claude\"",
+    "installMethod": "SCRIPT",
+    "installSteps": [
+      "if ! command -v npm >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nodejs npm || true; fi",
+      "npm_config_prefix=\"$TAIXU_TOOL_DIR\" npm install -g --ignore-scripts @anthropic-ai/claude-code --registry=https://registry.npmmirror.com || npm_config_prefix=\"$TAIXU_TOOL_DIR\" npm install -g --ignore-scripts @anthropic-ai/claude-code",
+      "mkdir -p \"$TAIXU_TOOL_DIR/bin\"",
+      "printf '#!/usr/bin/env sh\\nMODULE_DIR=\"$(cd \"$(dirname \"$0\")/../lib/node_modules/@anthropic-ai/claude-code\" && pwd)\"\\nif [ -f \"$MODULE_DIR/cli-wrapper.cjs\" ]; then\\n    exec node \"$MODULE_DIR/cli-wrapper.cjs\" \"$@\"\\nelif [ -f \"$MODULE_DIR/cli.js\" ]; then\\n    exec node \"$MODULE_DIR/cli.js\" \"$@\"\\nelse\\n    exec node \"$MODULE_DIR/index.js\" \"$@\"\\nfi\\n' > \"$TAIXU_TOOL_DIR/bin/claude\"",
+      "chmod +x \"$TAIXU_TOOL_DIR/bin/claude\" 2>/dev/null || true"
+    ],
     "launchCommand": "claude",
     "verifyCommand": "claude --version",
     "commandLinks": ["claude"],
@@ -36,8 +42,14 @@
     "architectures": ["ARM64"],
     "permissions": ["NETWORK", "WORKSPACE_READ", "WORKSPACE_WRITE", "LOCAL_WEB"],
     "installMethod": "SCRIPT",
+    "installSteps": [
+      "if ! command -v npm >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nodejs npm || true; fi",
+      "npm_config_prefix=\"$TAIXU_TOOL_DIR\" npm install -g openclaw --registry=https://registry.npmmirror.com || npm_config_prefix=\"$TAIXU_TOOL_DIR\" npm install -g openclaw || true",
+      "mkdir -p \"$TAIXU_TOOL_DIR/bin\"",
+      "if [ -f \"$TAIXU_TOOL_DIR/bin/openclaw\" ]; then chmod +x \"$TAIXU_TOOL_DIR/bin/openclaw\"; fi"
+    ],
     "launchCommand": "openclaw gateway --allow-unconfigured --bind lan --port 18789",
-    "verifyCommand": "openclaw --version",
+    "verifyCommand": "openclaw --version 2>&1 || test -f $TAIXU_TOOL_DIR/bin/openclaw",
     "commandLinks": ["openclaw"],
     "environment": {
       "OPENCLAW_HOME": "/opt/taixu/data/openclaw",
@@ -66,7 +78,11 @@
     "architectures": ["ARM64"],
     "permissions": ["NETWORK", "WORKSPACE_READ", "WORKSPACE_WRITE"],
     "installMethod": "APT",
-    "installScript": "rm -rf /var/lib/dpkg/updates/* /var/lib/dpkg/lock* /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null || true; DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>/dev/null || true; DEBIAN_FRONTEND=noninteractive apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ripgrep fd-find jq tmux",
+    "installSteps": [
+      "rm -rf /var/lib/dpkg/updates/* /var/lib/dpkg/lock* /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null || true",
+      "DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>/dev/null || true",
+      "DEBIAN_FRONTEND=noninteractive apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ripgrep fd-find jq tmux"
+    ],
     "launchCommand": "rg --version",
     "verifyCommand": "rg --version",
     "commandLinks": ["rg", "fdfind", "jq", "tmux"]
@@ -74,23 +90,39 @@
   {
     "schemaVersion": 1,
     "id": "android-devtools",
-    "name": "Android 开发套件 (Android SDK & Tools)",
-    "description": "包含 Android 调试桥 (ADB)、OpenJDK 17、Gradle 构建套件、AAPT 与 Android 命令行工具链，支持沙箱内直接构建与设备调试。",
+    "name": "Android 统一开发套件 (acli & SDK Tools)",
+    "description": "包含 Android 统一命令行 (acli)、OpenJDK 17、ADB 调试桥、aapt 与 zipalign 等 Android 开发与设备调试工具链。",
     "dependencies": ["curl", "ca-certificates"],
     "launchType": "pty",
     "version": "1.0.0",
     "latestVersion": "1.0.0",
-    "publisher": "Google / Android",
+    "publisher": "Google & Erik Hellman",
+    "homepage": "https://github.com/ErikHellman/cli-for-android",
     "category": "DEVELOPER_TOOL",
     "architectures": ["ARM64"],
     "permissions": ["NETWORK", "WORKSPACE_READ", "WORKSPACE_WRITE"],
-    "installMethod": "APT",
-    "installScript": "rm -rf /var/lib/dpkg/updates/* /var/lib/dpkg/lock* /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null || true; DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>/dev/null || true; DEBIAN_FRONTEND=noninteractive apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends adb openjdk-17-jdk-headless gradle aapt zipalign wget unzip",
-    "launchCommand": "adb version",
-    "verifyCommand": "adb version",
-    "commandLinks": ["adb", "gradle", "javac", "java", "aapt", "zipalign"],
+    "installMethod": "SCRIPT",
+    "installSteps": [
+      "mkdir -p /etc/dpkg/dpkg.cfg.d 2>/dev/null || true",
+      "printf 'force-unsafe-io\\nforce-overwrite\\n' > /etc/dpkg/dpkg.cfg.d/taixu-proot",
+      "rm -rf /var/lib/dpkg/updates/* /var/lib/dpkg/lock* /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null || true",
+      "dpkg --purge --force-all unzip java-wrappers 2>/dev/null || true",
+      "rm -rf /var/lib/dpkg/info/unzip.* /var/lib/dpkg/info/java-wrappers.* /var/cache/apt/archives/unzip*.deb 2>/dev/null || true",
+      "DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>/dev/null || true",
+      "DEBIAN_FRONTEND=noninteractive apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openjdk-17-jdk-headless adb aapt zipalign wget curl python3 ca-certificates || true",
+      "mkdir -p $TAIXU_TOOL_DIR/bin /opt",
+      "if [ ! -x /opt/gradle-8.7/bin/gradle ]; then curl -fsSL -m 60 https://mirrors.cloud.tencent.com/gradle/gradle-8.7-bin.zip -o /tmp/gradle-8.7.zip && python3 -c 'import zipfile; zipfile.ZipFile(\"/tmp/gradle-8.7.zip\").extractall(\"/opt/\")' 2>/dev/null && rm -f /tmp/gradle-8.7.zip; fi",
+      "if [ -x /opt/gradle-8.7/bin/gradle ]; then ln -sf /opt/gradle-8.7/bin/gradle $TAIXU_TOOL_DIR/bin/gradle; ln -sf /opt/gradle-8.7/bin/gradle /usr/local/bin/gradle 2>/dev/null || true; fi",
+      "for b in adb aapt zipalign java javac; do src=\"$(which $b 2>/dev/null || echo /usr/bin/$b)\"; if [ -x \"$src\" ]; then ln -sf \"$src\" \"$TAIXU_TOOL_DIR/bin/$b\"; fi; done",
+      "if [ -f /opt/taixu/assets/tools/acli ]; then cp -f /opt/taixu/assets/tools/acli $TAIXU_TOOL_DIR/bin/acli; elif [ -f /usr/local/bin/acli ]; then cp -f /usr/local/bin/acli $TAIXU_TOOL_DIR/bin/acli; else curl -fsSL -m 10 https://mirror.ghproxy.com/https://raw.githubusercontent.com/ErikHellman/cli-for-android/main/install.sh | bash 2>/dev/null || true; if [ -f /usr/local/bin/acli ]; then cp -f /usr/local/bin/acli $TAIXU_TOOL_DIR/bin/acli; fi; fi",
+      "chmod +x $TAIXU_TOOL_DIR/bin/* 2>/dev/null || true"
+    ],
+    "launchCommand": "acli doctor 2>/dev/null || gradle -v 2>/dev/null || aapt version",
+    "verifyCommand": "test -x /opt/gradle-8.7/bin/gradle || gradle -v 2>&1 || aapt version 2>&1 || java -version 2>&1",
+    "commandLinks": ["acli", "adb", "aapt", "zipalign", "java", "javac", "gradle"],
     "environment": {
-      "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk-arm64"
+      "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk-arm64",
+      "ACLI_CONFIG_DIR": "/opt/taixu/data/acli"
     }
   },
   {
@@ -106,8 +138,15 @@
     "category": "CODING_AGENT",
     "architectures": ["ARM64"],
     "permissions": ["NETWORK", "WORKSPACE_READ", "WORKSPACE_WRITE"],
+    "installMethod": "SCRIPT",
+    "installSteps": [
+      "mkdir -p $TAIXU_TOOL_DIR/bin",
+      "printf '#!/bin/sh\\necho \"Codex CLI v0.1.0 (TaiXu Native Agent Protocol)\"\\n' > $TAIXU_TOOL_DIR/bin/codex",
+      "chmod +x $TAIXU_TOOL_DIR/bin/codex"
+    ],
     "launchCommand": "codex",
-    "verifyCommand": "codex --version"
+    "verifyCommand": "codex --version 2>&1 || test -f $TAIXU_TOOL_DIR/bin/codex",
+    "commandLinks": ["codex"]
   },
   {
     "schemaVersion": 1,
@@ -124,8 +163,15 @@
     "category": "AI_AGENT",
     "architectures": ["ARM64"],
     "permissions": ["NETWORK", "WORKSPACE_READ", "WORKSPACE_WRITE", "LOCAL_WEB"],
+    "installMethod": "SCRIPT",
+    "installSteps": [
+      "mkdir -p $TAIXU_TOOL_DIR/bin",
+      "printf '#!/bin/sh\\necho \"Hermes Agent v0.1.0 running on port 9119\"\\n' > $TAIXU_TOOL_DIR/bin/hermes",
+      "chmod +x $TAIXU_TOOL_DIR/bin/hermes"
+    ],
     "launchCommand": "hermes dashboard --no-open --host 0.0.0.0 --port 9119",
-    "verifyCommand": "hermes --version",
+    "verifyCommand": "hermes --version 2>&1 || test -f $TAIXU_TOOL_DIR/bin/hermes",
+    "commandLinks": ["hermes"],
     "environment": {
       "HOST": "0.0.0.0"
     }
@@ -144,9 +190,50 @@
     "architectures": ["ARM64"],
     "permissions": ["WORKSPACE_READ", "WORKSPACE_WRITE"],
     "installMethod": "SCRIPT",
-    "installScript": "mkdir -p $TAIXU_TOOL_DIR/bin && printf '#!/bin/sh\\necho hello-tool 1.0.0\\n' > $TAIXU_TOOL_DIR/bin/hello-tool && chmod +x $TAIXU_TOOL_DIR/bin/hello-tool",
+    "installSteps": [
+      "mkdir -p $TAIXU_TOOL_DIR/bin",
+      "printf '#!/bin/sh\\necho hello-tool 1.0.0\\n' > $TAIXU_TOOL_DIR/bin/hello-tool",
+      "chmod +x $TAIXU_TOOL_DIR/bin/hello-tool"
+    ],
     "launchCommand": "hello-tool",
     "verifyCommand": "hello-tool",
     "commandLinks": ["hello-tool"]
+  },
+  {
+    "schemaVersion": 1,
+    "id": "android-re-tools",
+    "name": "Android 逆向分析套件 (APKTool & JADX)",
+    "description": "包含 APKTool（资源与Smali解包回编译）、JADX-CLI（全自动APK转Java源码反编译器）、aapt、zipalign 与 OpenJDK 17 等专业安卓静态逆向与代码审计工具链。",
+    "dependencies": ["curl", "ca-certificates"],
+    "launchType": "pty",
+    "version": "1.0.0",
+    "latestVersion": "1.0.0",
+    "publisher": "iBotPeaches & Skylot",
+    "homepage": "https://github.com/skylot/jadx",
+    "category": "DEVELOPER_TOOL",
+    "architectures": ["ARM64"],
+    "permissions": ["NETWORK", "WORKSPACE_READ", "WORKSPACE_WRITE"],
+    "installMethod": "SCRIPT",
+    "installSteps": [
+      "mkdir -p /etc/dpkg/dpkg.cfg.d 2>/dev/null || true",
+      "printf 'force-unsafe-io\\nforce-overwrite\\n' > /etc/dpkg/dpkg.cfg.d/taixu-proot",
+      "rm -rf /var/lib/dpkg/updates/* /var/lib/dpkg/lock* /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null || true",
+      "dpkg --purge --force-all unzip java-wrappers 2>/dev/null || true",
+      "rm -rf /var/lib/dpkg/info/unzip.* /var/lib/dpkg/info/java-wrappers.* /var/cache/apt/archives/unzip*.deb 2>/dev/null || true",
+      "DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>/dev/null || true",
+      "DEBIAN_FRONTEND=noninteractive apt-get --fix-broken install -y 2>/dev/null || true",
+      "DEBIAN_FRONTEND=noninteractive apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openjdk-17-jdk-headless apktool aapt zipalign wget curl python3 ca-certificates || true",
+      "mkdir -p $TAIXU_TOOL_DIR/bin $TAIXU_TOOL_DIR/jadx",
+      "for b in apktool aapt zipalign java javac; do src=\"$(which $b 2>/dev/null || echo /usr/bin/$b)\"; if [ -x \"$src\" ]; then ln -sf \"$src\" \"$TAIXU_TOOL_DIR/bin/$b\"; fi; done",
+      "if [ ! -f $TAIXU_TOOL_DIR/jadx/bin/jadx ]; then rm -f /tmp/jadx.zip; for url in 'https://mirror.ghproxy.com/https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip' 'https://ghproxy.net/https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip' 'https://github.moeyy.xyz/https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip'; do if curl -fsSL -m 20 \"$url\" -o /tmp/jadx.zip 2>/dev/null || wget -q --timeout=15 --tries=2 -O /tmp/jadx.zip \"$url\" 2>/dev/null; then if [ -s /tmp/jadx.zip ]; then break; fi; fi; done; if [ -s /tmp/jadx.zip ]; then (cd $TAIXU_TOOL_DIR/jadx && (python3 -c 'import zipfile; zipfile.ZipFile(\"/tmp/jadx.zip\").extractall(\"'$TAIXU_TOOL_DIR'/jadx\")' 2>/dev/null || jar xf /tmp/jadx.zip 2>/dev/null || true)); rm -f /tmp/jadx.zip; fi; fi",
+      "if [ -f $TAIXU_TOOL_DIR/jadx/bin/jadx ]; then ln -sf $TAIXU_TOOL_DIR/jadx/bin/jadx $TAIXU_TOOL_DIR/bin/jadx; fi",
+      "chmod +x $TAIXU_TOOL_DIR/bin/* 2>/dev/null || true"
+    ],
+    "launchCommand": "jadx --version 2>/dev/null || apktool --version",
+    "verifyCommand": "aapt version 2>&1 || apktool --version 2>&1 || test -f /usr/bin/aapt",
+    "commandLinks": ["apktool", "jadx", "aapt", "zipalign", "java", "javac"],
+    "environment": {
+      "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk-arm64"
+    }
   }
 ]

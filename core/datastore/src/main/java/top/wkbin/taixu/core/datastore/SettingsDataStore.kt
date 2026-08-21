@@ -319,13 +319,16 @@ class SettingsDataStore @Inject constructor(
         } else emptyList()
 
         val all = top.wkbin.taixu.core.model.BuiltinSkills.presets + customSkills
-        all.map { skill -> skill.copy(isEnabled = skill.id in enabledIds) }
+        all.map { skill -> if (skill.isImmutable) skill.copy(isEnabled = true) else skill.copy(isEnabled = skill.id in enabledIds) }
     }
 
     /** 获取当前已启用的 Skill 列表 */
     val activeSkills: Flow<List<top.wkbin.taixu.core.model.AgentSkill>> = allSkills.map { list -> list.filter { it.isEnabled } }
 
     suspend fun setSkillEnabled(skillId: String, enabled: Boolean) {
+        val target = top.wkbin.taixu.core.model.BuiltinSkills.presets.find { it.id == skillId }
+        if (target?.isImmutable == true && !enabled) return // 系统核心技能不可被关闭
+
         context.settingsDataStore.edit { prefs ->
             val enabledIdsJson = prefs[enabledSkillsKey]
             val current: MutableSet<String> = if (enabledIdsJson != null) {
@@ -509,7 +512,14 @@ class SettingsDataStore @Inject constructor(
         if (raw.isNullOrBlank()) {
             top.wkbin.taixu.core.model.BuiltinMcpPresets.presets
         } else {
-            decodeMcpServers(raw)
+            val decoded = decodeMcpServers(raw)
+            val existingIds = decoded.map { it.id }.toSet()
+            val missingPresets = top.wkbin.taixu.core.model.BuiltinMcpPresets.presets.filter { it.id !in existingIds }
+            if (missingPresets.isNotEmpty()) {
+                decoded + missingPresets
+            } else {
+                decoded
+            }
         }
     }
 

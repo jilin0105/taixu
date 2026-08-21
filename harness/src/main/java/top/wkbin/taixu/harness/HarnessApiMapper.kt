@@ -5,7 +5,7 @@ package top.wkbin.taixu.harness
  */
 internal object HarnessApiMapper {
     fun toApiMessage(message: HarnessMessage): ApiMessage = when (message) {
-        is UserMessage -> ApiMessage(role = "user", content = message.text)
+        is UserMessage -> ApiMessage(role = "user", content = message.text, imageUrls = message.imageUrls)
         is AssistantText -> ApiMessage(
             role = "assistant",
             content = message.text,
@@ -40,6 +40,9 @@ internal object HarnessApiMapper {
             lower == "read" -> HarnessTool.READ
             lower == "write" -> HarnessTool.WRITE
             lower == "edit" -> HarnessTool.EDIT
+            lower == "memory" -> HarnessTool.MEMORY
+            lower == "plan" -> HarnessTool.PLAN
+            lower == "scratchpad" -> HarnessTool.SCRATCHPAD
             lower == "invoke_subagent" || lower == "subagent" -> HarnessTool.SUBAGENT
             trimmed.startsWith("mcp__") -> HarnessTool.MCP
             else -> HarnessTool.BASE
@@ -51,6 +54,9 @@ internal object HarnessApiMapper {
         HarnessTool.WRITE -> "write"
         HarnessTool.EDIT -> "edit"
         HarnessTool.BASE -> "base"
+        HarnessTool.MEMORY -> "memory"
+        HarnessTool.PLAN -> "plan"
+        HarnessTool.SCRATCHPAD -> "scratchpad"
         HarnessTool.SUBAGENT -> "invoke_subagent"
         HarnessTool.MCP -> "mcp"
     }

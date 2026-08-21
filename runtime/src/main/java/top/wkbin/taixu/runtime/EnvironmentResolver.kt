@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.runtime
+package top.wkbin.taixu.runtime
 
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -22,7 +22,14 @@ class EnvironmentResolver @Inject constructor() {
         put("LANG", "C.UTF-8")
         put("TMPDIR", "/tmp")
         put("PATH", runtimePath())
-        if (interactive) put("TERM", "xterm-256color")
+        if (interactive) {
+            put("TERM", "xterm-256color")
+        } else {
+            put("TERM", "dumb")
+            put("DEBIAN_FRONTEND", "noninteractive")
+            put("CI", "true")
+            put("NONINTERACTIVE", "1")
+        }
     }
 
     fun merge(

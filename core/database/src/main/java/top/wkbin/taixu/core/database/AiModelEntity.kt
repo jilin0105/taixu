@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.core.database
+package top.wkbin.taixu.core.database
 
 import androidx.room.Dao
 import androidx.room.Entity
@@ -39,6 +39,14 @@ data class AiModelEntity(
      * "disabled" = 禁用工具（纯聊天）。
      */
     val toolCallMode: String? = null,
+    /** 上下文 Token 容量上限（如 128000，超出时自动滑动窗口压缩，null = 默认）。 */
+    val contextTokens: Int? = null,
+    /** 自定义请求头（多行 Key: Value 格式，请求时追加注入）。 */
+    val customHeaders: String = "",
+    /** 纯净排查模式：关闭太墟系统提示词与工具定义注入，仅发送纯用户消息。 */
+    val pureChatMode: Boolean = false,
+    /** 是否支持视觉多模态直接传图（true = 直接以 image_url 发送；false = 提示工具读取）。 */
+    val visionEnabled: Boolean = true,
 )
 
 @Dao
@@ -60,6 +68,9 @@ interface AiModelDao {
 
     @Query("UPDATE harness_models SET isActive = 1 WHERE id = :id")
     suspend fun setActive(id: String)
+
+    @Query("UPDATE harness_models SET reasoningMode = :mode, reasoningEffort = :effort WHERE id = :id")
+    suspend fun updateReasoning(id: String, mode: String?, effort: String?)
 
     @Query("DELETE FROM harness_models WHERE id = :id")
     suspend fun delete(id: String)

@@ -83,10 +83,101 @@ class ChatViewModel @Inject constructor(
     val activeSkills: StateFlow<List<top.wkbin.taixu.core.model.AgentSkill>> = settingsDataStore.activeSkills
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val allSkills: StateFlow<List<top.wkbin.taixu.core.model.AgentSkill>> = settingsDataStore.allSkills
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val mcpServers: StateFlow<List<top.wkbin.taixu.core.model.McpServerConfig>> = settingsDataStore.mcpServers
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun setSkillEnabled(skillId: String, enabled: Boolean) {
+        viewModelScope.launch {
+            settingsDataStore.setSkillEnabled(skillId, enabled)
+        }
+    }
+
+    fun setMcpServerEnabled(serverId: String, enabled: Boolean) {
+        viewModelScope.launch {
+            settingsDataStore.toggleMcpServer(serverId, enabled)
+        }
+    }
+
     /** 斜杠指令建议列表（当输入以 / 开头时实时过滤展示，自动合并已激活的专精技能）。 */
     val matchingCommands: StateFlow<List<SlashCommandItem>> = kotlinx.coroutines.flow.combine(_input, settingsDataStore.activeSkills) { text, skills ->
         if (text.startsWith("/")) SlashCommands.filterCommands(text, skills)
         else emptyList()
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** @ 艾特唤醒建议列表（当输入包含 @ 时实时过滤技能与 MCP 插件）。 */
+    val matchingMentions: StateFlow<List<MentionItem>> = kotlinx.coroutines.flow.combine(
+        _input,
+        settingsDataStore.allSkills,
+        settingsDataStore.mcpServers,
+    ) { text, skills, mcps ->
+        val atIndex = text.lastIndexOf('@')
+        if (atIndex < 0) return@combine emptyList()
+        val query = text.substring(atIndex + 1).trim().lowercase()
+
+        val skillMentions = skills.filter { !it.isImmutable }.map { skill ->
+            MentionItem(
+                id = skill.id,
+                name = skill.name,
+                description = skill.description,
+                category = "专精技能",
+                type = MentionType.SKILL,
+                icon = top.wkbin.taixu.ui.components.RuntimeIconName.Brain,
+            )
+        }
+        val mcpMentions = mcps.map { mcp ->
+            MentionItem(
+                id = mcp.id,
+                name = mcp.name,
+                description = if (mcp.isEnabled) "MCP 工具服务 (${mcp.transportType})" else "MCP 工具服务（点击将自动启用）",
+                category = "MCP 插件",
+                type = MentionType.MCP_SERVER,
+                icon = top.wkbin.taixu.ui.components.RuntimeIconName.Cpu,
+            )
+        }
+        val all = skillMentions + mcpMentions
+        if (query.isEmpty()) all
+        else all.filter { it.name.lowercase().contains(query) || it.description.lowercase().contains(query) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** 当前输入框中已挂载的技能与 MCP 标签列表（用于输入框顶部展示高亮双排 Chips）。 */
+    val attachedMentions: StateFlow<List<MentionItem>> = kotlinx.coroutines.flow.combine(
+        _input,
+        settingsDataStore.allSkills,
+        settingsDataStore.mcpServers,
+    ) { text, skills, mcps ->
+        if (!text.contains("@")) return@combine emptyList()
+        val regex = Regex("""@([^\s@,，:：\n]+)""")
+        val matchedNames = regex.findAll(text).map { it.groupValues[1].trim().lowercase() }.toSet()
+        if (matchedNames.isEmpty()) return@combine emptyList()
+
+        val matchedSkills = skills.filter { !it.isImmutable && (it.name.lowercase() in matchedNames || it.id.lowercase() in matchedNames) }.map { skill ->
+            MentionItem(
+                id = skill.id,
+                name = skill.name,
+                description = skill.description,
+                category = "专精技能",
+                type = MentionType.SKILL,
+                icon = top.wkbin.taixu.ui.components.RuntimeIconName.Brain,
+            )
+        }
+
+        val matchedMcps = mcps.filter { mcp ->
+            mcp.name.lowercase() in matchedNames || mcp.id.lowercase() in matchedNames
+        }.map { mcp ->
+            MentionItem(
+                id = mcp.id,
+                name = mcp.name,
+                description = mcp.description,
+                category = "MCP 插件",
+                type = MentionType.MCP_SERVER,
+                icon = top.wkbin.taixu.ui.components.RuntimeIconName.Cpu,
+            )
+        }
+
+        matchedSkills + matchedMcps
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     init {
@@ -114,12 +205,48 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    fun applyMention(item: MentionItem) {
+        val text = _input.value
+        val atIndex = text.lastIndexOf('@')
+        val prefix = if (atIndex >= 0) text.substring(0, atIndex) else text
+        _input.value = "${prefix}@${item.name} "
+        if (item.type == MentionType.MCP_SERVER) {
+            setMcpServerEnabled(item.id, true)
+        }
+    }
+
+    /** 从输入框中整块移除某个已挂载的 @能力 标签 */
+    fun removeMention(item: MentionItem) {
+        val current = _input.value
+        // 正则替换 @name 及其后可能跟随的空格
+        val updated = current.replace(Regex("""@${Regex.escape(item.name)}\s*"""), "")
+            .replace(Regex("""@${Regex.escape(item.id)}\s*"""), "")
+            .trimStart()
+        _input.value = updated
+    }
+
+    fun triggerMentionInput() {
+        val current = _input.value
+        if (!current.endsWith("@")) {
+            _input.value = if (current.isBlank()) "@" else "$current @"
+        }
+    }
+
     fun send(customText: String? = null, imageUrls: List<String> = emptyList()) {
         val text = (customText ?: _input.value).trim()
         if (text.isBlank() && imageUrls.isEmpty()) return
         _input.value = ""
         // 运行中不拦截：HarnessLoop 会把消息放入排队，当前任务结束后自动接续执行
         harnessLoop.send(text, imageUrls = imageUrls)
+    }
+
+    /** 创建针对工具安装或沙箱异常的专属自愈会话并立即启动诊断 */
+    fun startHealingTask(title: String, prompt: String) {
+        viewModelScope.launch {
+            harnessLoop.newSession(title = title)
+            _input.value = ""
+            harnessLoop.send(prompt)
+        }
     }
 
     /** 重新生成最后一次回复 */
@@ -200,7 +327,27 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    fun updateActiveModelReasoning(mode: String?, effort: String?) {
+        viewModelScope.launch {
+            val active = aiModelDao.activeModel() ?: return@launch
+            aiModelDao.updateReasoning(active.id, mode, effort)
+        }
+    }
+
     fun deleteModel(id: String) {
         viewModelScope.launch { aiModelDao.delete(id) }
     }
+}
+
+data class MentionItem(
+    val id: String,
+    val name: String,
+    val description: String,
+    val category: String,
+    val type: MentionType,
+    val icon: top.wkbin.taixu.ui.components.RuntimeIconName,
+)
+
+enum class MentionType {
+    SKILL, MCP_SERVER
 }

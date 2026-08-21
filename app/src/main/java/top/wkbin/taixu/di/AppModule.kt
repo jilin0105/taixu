@@ -101,6 +101,10 @@ object AppModule {
 
     @Provides
     @Singleton
+    fun provideAgentContextDao(database: AppDatabase): top.wkbin.taixu.core.database.AgentContextDao = database.agentContextDao()
+
+    @Provides
+    @Singleton
     fun provideWorkspaceFileAccess(pathManager: top.wkbin.taixu.runtime.RuntimePathManager): WorkspaceFileAccess =
         WorkspaceFileAccess(pathManager.workspaceDir)
 

@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.harness
+package top.wkbin.taixu.harness
 
 import top.wkbin.taixu.core.common.result.AppError
 import top.wkbin.taixu.core.common.result.AppResult
@@ -23,6 +23,7 @@ data class WorkspaceEntry(
  */
 class WorkspaceFileAccess(
     private val root: File,
+    private val globalRootCanonical: File? = null,
 ) {
     private val rootCanonical: File = root.absoluteFile.canonicalFile
 
@@ -122,19 +123,32 @@ class WorkspaceFileAccess(
         return resolved
     }
 
+    fun withBase(workspaceBase: String): WorkspaceFileAccess {
+        val clean = workspaceBase.trim().removePrefix("/workspace/").removePrefix("/workspace").removePrefix("/")
+        if (clean.isBlank()) return this
+        val target = File(root, clean)
+        val canonical = target.canonicalFile
+        return if (isInside(rootCanonical, canonical)) WorkspaceFileAccess(canonical, rootCanonical) else this
+    }
+
     private fun resolve(path: String): File? {
         val trimmed = path.trim()
         val segments = trimmed.split('/').filter { it.isNotEmpty() && it != "." }
         if (segments.any { it == ".." }) return null
         if (trimmed.startsWith("/") && segments.first() != "workspace") return null
-        val relative = if (segments.firstOrNull() == "workspace") segments.drop(1) else segments
-        var candidate = root
+        
+        // 如果是 /workspace/xxx 绝对路径，从全局工作区顶层根目录 globalRootCanonical 开始解析
+        val isAbsoluteWorkspace = trimmed.startsWith("/workspace")
+        val baseRoot = if (isAbsoluteWorkspace) (globalRootCanonical ?: rootCanonical) else root
+        val relative = if (isAbsoluteWorkspace) segments.drop(1) else segments
+        var candidate = baseRoot
         for (segment in relative) {
             candidate = File(candidate, segment)
         }
-        if (candidate == root) return root
+        if (candidate == baseRoot) return baseRoot
         val canonical = candidate.canonicalFile
-        return canonical.takeIf { isInside(rootCanonical, it) }
+        val allowedRoot = globalRootCanonical ?: rootCanonical
+        return canonical.takeIf { isInside(allowedRoot, it) }
     }
 
     private fun isInside(root: File, candidate: File): Boolean =

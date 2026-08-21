@@ -71,7 +71,13 @@ extensions.configure<ApplicationExtension> {
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+            manifestPlaceholders["appLabel"] = "太墟 (Debug)"
+        }
         release {
+            manifestPlaceholders["appLabel"] = "太墟"
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

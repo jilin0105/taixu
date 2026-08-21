@@ -91,5 +91,15 @@ object BuiltinMcpPresets {
             isEnabled = false,
             isBuiltin = true,
         ),
+        McpServerConfig(
+            id = "mcp_apktool",
+            name = "Android 逆向与 APK 审计",
+            description = "自动化反编译 APK、解析清单权限、提取硬编码凭据、Smali 敏感代码检索与重打包签名",
+            transportType = McpTransportType.STDIO,
+            command = "npx",
+            args = listOf("-y", "apktool-mcp-server"),
+            isEnabled = false,
+            isBuiltin = true,
+        ),
     )
 }

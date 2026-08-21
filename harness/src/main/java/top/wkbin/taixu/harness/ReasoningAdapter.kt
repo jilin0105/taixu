@@ -41,15 +41,15 @@ object ReasoningAdapter {
         if (model.reasoningMode == ReasoningMode.AUTO) return emptyMap()
         val host = hostOf(model.baseUrl)
         val provider = model.provider.lowercase()
+        val modelName = model.model.lowercase()
         return when {
-            isGemini(host, provider) -> geminiFields(model)
-            isZhipu(host, provider) -> zhipuFields(model)
-            isDoubao(host, provider) -> thinkingTypeFields(model)
+            isGemini(host, provider, modelName) -> geminiFields(model)
+            isZhipu(host, provider, modelName) -> zhipuFields(model)
+            isDoubao(host, provider, modelName) -> thinkingTypeFields(model)
             isOpenRouter(host, provider) -> openRouterFields(model)
             isOpenAiOfficial(host, provider) -> openAiOfficialFields(model)
-            // 未知厂商（自定义 baseURL / 中转站 / OneAPI 等）：绝大多数走 OpenAI 兼容协议，
-            // 按 OpenAI 官方字段注入 reasoning_effort。该字段被 DeepSeek / Qwen / Kimi 等广泛支持；
-            // 极少数不认的模型通常忽略该字段而非报错，比完全注入专有字段更安全。
+            // 中转站/自定义网关（OneAPI / NewAPI / 自建反代等）：
+            // 绝大多数走 OpenAI 兼容协议，注入行业标准的 reasoning_effort（已被 DeepSeek、Qwen、Kimi、OpenAI 等官方及中转网关广泛支持）。
             else -> openAiOfficialFields(model)
         }
     }
@@ -88,7 +88,8 @@ object ReasoningAdapter {
     fun capabilities(model: ModelConfig): ReasoningCapabilities {
         val host = hostOf(model.baseUrl)
         val provider = model.provider.lowercase()
-        val known = isGemini(host, provider) || isZhipu(host, provider) || isDoubao(host, provider) ||
+        val modelName = model.model.lowercase()
+        val known = isGemini(host, provider, modelName) || isZhipu(host, provider, modelName) || isDoubao(host, provider, modelName) ||
             isOpenRouter(host, provider) || isOpenAiOfficial(host, provider)
         if (!known) {
             // 未知厂商（自定义 baseURL）：OpenAI 兼容协议按 OpenAI 官方字段注入 reasoning_effort；
@@ -100,21 +101,21 @@ object ReasoningAdapter {
             }
         }
         // 豆包：只有开关，无强度档位
-        val supportsEffort = !isDoubao(host, provider)
+        val supportsEffort = !isDoubao(host, provider, modelName)
         return ReasoningCapabilities(supportsDisable = true, supportsEffort = supportsEffort)
     }
 
     private fun hostOf(baseUrl: String): String =
         runCatching { URI(baseUrl.trim()).host?.lowercase() }.getOrNull().orEmpty()
 
-    private fun isGemini(host: String, provider: String) =
-        host.contains("generativelanguage.googleapis.com") || provider.contains("gemini")
+    private fun isGemini(host: String, provider: String, modelName: String = "") =
+        host.contains("generativelanguage.googleapis.com") || provider.contains("gemini") || modelName.contains("gemini")
 
-    private fun isZhipu(host: String, provider: String) =
-        host.contains("bigmodel.cn") || provider.contains("智谱") || provider.contains("glm")
+    private fun isZhipu(host: String, provider: String, modelName: String = "") =
+        host.contains("bigmodel.cn") || provider.contains("智谱") || provider.contains("glm") || modelName.contains("glm")
 
-    private fun isDoubao(host: String, provider: String) =
-        host.contains("volces.com") || provider.contains("豆包") || provider.contains("doubao")
+    private fun isDoubao(host: String, provider: String, modelName: String = "") =
+        host.contains("volces.com") || provider.contains("豆包") || provider.contains("doubao") || modelName.contains("doubao")
 
     private fun isOpenRouter(host: String, provider: String) =
         host.contains("openrouter.ai") || provider.contains("openrouter")
@@ -170,10 +171,10 @@ object ReasoningAdapter {
     }
 
     private fun ReasoningEffort?.budgetTokens(): Int = when (this) {
-        ReasoningEffort.LOW -> 2048
-        ReasoningEffort.MEDIUM -> 8192
-        ReasoningEffort.HIGH -> 16384
-        null -> 8192
+        ReasoningEffort.LOW -> 1024
+        ReasoningEffort.MEDIUM -> 2048
+        ReasoningEffort.HIGH -> 8192
+        null -> 2048
     }
 
     private fun ReasoningEffort.glmBudget(): Int = when (this) {
@@ -185,8 +186,8 @@ object ReasoningAdapter {
     private fun geminiBudget(model: ModelConfig): Int = when {
         model.reasoningMode == ReasoningMode.DISABLED -> 0
         model.reasoningEffort == ReasoningEffort.LOW -> 1024
-        model.reasoningEffort == ReasoningEffort.MEDIUM -> 8192
-        model.reasoningEffort == ReasoningEffort.HIGH -> 16384
-        else -> 8192
+        model.reasoningEffort == ReasoningEffort.MEDIUM -> 2048
+        model.reasoningEffort == ReasoningEffort.HIGH -> 8192
+        else -> 2048
     }
 }

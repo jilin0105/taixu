@@ -244,16 +244,16 @@ internal class AnthropicApi(
                 model.topP?.let { put("top_p", it) }
             }
             put("stream", stream)
-            val dynamicTools = ProviderClient.buildDynamicTools(model.dynamicMcpTools)
-            if (model.toolCallMode == ToolCallMode.JSON_TEXT && dynamicTools.isNotEmpty()) {
+            val dynamicTools = if (model.pureChatMode) emptyList() else ProviderClient.buildDynamicTools(model.dynamicMcpTools)
+            if (!model.pureChatMode && model.toolCallMode == ToolCallMode.JSON_TEXT && dynamicTools.isNotEmpty()) {
                 // JSON 文本模式：工具定义写进 system，模型用文本输出工具调用
                 systemPrompt.append("\n\n## 可用工具 JSON 定义（必须严格按此 name 与参数输出）\n")
                     .append(ProviderClient.buildToolsTextDescription(dynamicTools))
             }
-            if (systemPrompt.isNotEmpty()) put("system", systemPrompt.toString())
+            if (!model.pureChatMode && systemPrompt.isNotEmpty()) put("system", systemPrompt.toString())
             put("messages", JsonArray(anthropicMessages))
-            // 仅 NATIVE 模式注入标准 tools；JSON_TEXT / DISABLED 均不注入
-            if (model.toolCallMode == ToolCallMode.NATIVE && dynamicTools.isNotEmpty()) {
+            // 仅 NATIVE 模式注入标准 tools；纯净模式与 JSON_TEXT / DISABLED 均不注入
+            if (!model.pureChatMode && model.toolCallMode == ToolCallMode.NATIVE && dynamicTools.isNotEmpty()) {
                 put(
                     "tools",
                     buildJsonArray {
@@ -278,6 +278,9 @@ internal class AnthropicApi(
             .header("anthropic-version", ANTHROPIC_VERSION)
             .apply {
                 model.apiKey?.let { header("x-api-key", it) }
+                ProviderClient.parseCustomHeaders(model.customHeaders).forEach { (name, value) ->
+                    header(name, value)
+                }
             }
             .post(requestBody.toString().toRequestBody(JSON_MEDIA_TYPE))
             .build()

@@ -54,7 +54,7 @@ class GenericRecipeInstallerTest {
             launchType = "pty",
             version = "1.0.0",
             installMethod = "NPM",
-            installScript = "npm install -g @anthropic-ai/claude-code",
+            installSteps = listOf("npm install -g @anthropic-ai/claude-code"),
             launchCommand = "claude",
             verifyCommand = "claude --version",
             commandLinks = listOf("claude"),

@@ -22,7 +22,8 @@ class AgentSkillPluginSerializationTest {
         val encoded = json.encodeToString(presets)
         val decoded = json.decodeFromString<List<AgentSkill>>(encoded)
         assertEquals(presets.size, decoded.size)
-        assertEquals("linux_ops", decoded.first().id)
+        assertEquals("agent_context", decoded.first().id)
+        assertNotNull(decoded.find { it.id == "linux_ops" })
     }
 
     @Test

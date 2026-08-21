@@ -400,6 +400,10 @@ class SettingsViewModel @Inject constructor(
         reasoningMode: String? = null,
         reasoningEffort: String? = null,
         toolCallMode: String? = null,
+        contextTokens: Int? = null,
+        customHeaders: String = "",
+        pureChatMode: Boolean = false,
+        visionEnabled: Boolean = true,
     ) {
         viewModelScope.launch {
             val existing = aiModelDao.observeAll().first()
@@ -424,6 +428,10 @@ class SettingsViewModel @Inject constructor(
                     reasoningMode = reasoningMode?.ifBlank { null },
                     reasoningEffort = reasoningEffort?.ifBlank { null },
                     toolCallMode = toolCallMode?.ifBlank { null },
+                    contextTokens = contextTokens,
+                    customHeaders = customHeaders.trim(),
+                    pureChatMode = pureChatMode,
+                    visionEnabled = visionEnabled,
                 ),
             )
         }

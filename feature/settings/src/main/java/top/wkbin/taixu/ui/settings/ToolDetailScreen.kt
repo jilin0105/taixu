@@ -84,6 +84,7 @@ fun ToolDetailScreen(
     toolId: String,
     onBack: () -> Unit,
     onLaunchTerminal: (toolId: String) -> Unit,
+    onStartAiHealing: (toolId: String, toolName: String, errorLogs: List<String>) -> Unit = { _, _, _ -> },
     viewModel: ToolDetailViewModel = hiltViewModel(),
 ) {
     androidx.compose.runtime.LaunchedEffect(toolId) {
@@ -125,9 +126,58 @@ fun ToolDetailScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            // ── 错误提示 ──
-            state.error?.let { error ->
-                NoticeBanner(text = error, isError = true)
+            // ── 错误提示 / AI 自愈入口 ──
+            if (tool.state == ToolState.FAILED.name || state.error != null) {
+                RuntimeCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            RuntimeIcon(
+                                name = RuntimeIconName.Brain,
+                                modifier = Modifier.size(24.dp),
+                                tint = MaterialTheme.colorScheme.error,
+                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    text = "工具安装/环境自检未通过",
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                                Text(
+                                    text = state.error ?: "可呼叫太墟 Agent 在 PRoot 沙箱内自主排查与自愈",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                onStartAiHealing(
+                                    tool.id,
+                                    tool.name,
+                                    state.error?.let { listOf(it) } ?: emptyList(),
+                                )
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        ) {
+                            Text("呼叫自愈", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
             }
 
             // ── 1. 工具概览卡片 ──

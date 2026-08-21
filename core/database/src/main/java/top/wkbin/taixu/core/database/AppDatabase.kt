@@ -4,8 +4,22 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [ToolEntity::class, InstallLogEntity::class, InstallTaskEntity::class, RuntimeEntity::class, RuntimeDependencyRefEntity::class, HarnessMessageEntity::class, HarnessSessionEntity::class, AiModelEntity::class, WorkspaceEntity::class, TerminalSessionEntity::class],
-    version = 20,
+    entities = [
+        ToolEntity::class,
+        InstallLogEntity::class,
+        InstallTaskEntity::class,
+        RuntimeEntity::class,
+        RuntimeDependencyRefEntity::class,
+        HarnessMessageEntity::class,
+        HarnessSessionEntity::class,
+        AiModelEntity::class,
+        WorkspaceEntity::class,
+        TerminalSessionEntity::class,
+        AgentMemoryEntity::class,
+        AgentPlanEntity::class,
+        AgentScratchpadEntity::class,
+    ],
+    version = 22,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -18,4 +32,5 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun aiModelDao(): AiModelDao
     abstract fun workspaceDao(): WorkspaceDao
     abstract fun terminalSessionDao(): TerminalSessionDao
+    abstract fun agentContextDao(): AgentContextDao
 }

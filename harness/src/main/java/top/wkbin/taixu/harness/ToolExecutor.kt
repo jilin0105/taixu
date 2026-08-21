@@ -27,11 +27,12 @@ class ToolExecutor @Inject constructor(
     private val secretRedactor: SecretRedactor,
     private val subagentOrchestrator: SubagentOrchestrator? = null,
     private val mcpManager: top.wkbin.taixu.harness.mcp.McpManager? = null,
+    private val contextExecutor: AgentContextExecutor? = null,
 ) {
-    suspend fun execute(toolCall: ToolCall, sessionId: String = ""): ToolResult {
+    suspend fun execute(toolCall: ToolCall, sessionId: String = "", workspace: String = ""): ToolResult {
         val now = System.currentTimeMillis()
         val outcome = try {
-            executeTool(toolCall.tool, toolCall.args, toolCall.rawToolName, sessionId)
+            executeTool(toolCall.tool, toolCall.args, toolCall.rawToolName, sessionId, workspace)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (throwable: Throwable) {
@@ -74,38 +75,48 @@ class ToolExecutor @Inject constructor(
         args: JsonObject,
         rawToolName: String?,
         sessionId: String,
-    ): Pair<Boolean, String> = when (tool) {
-        HarnessTool.READ -> {
-            val path = requireString(args, "path")
-            val offset = args["offset"]?.jsonPrimitive?.content?.trim()?.toIntOrNull()
-            val limit = args["limit"]?.jsonPrimitive?.content?.trim()?.toIntOrNull()
-            fileAccess.read(path, offset, limit).toToolOutput()
+        workspace: String,
+    ): Pair<Boolean, String> {
+        val activeFileAccess = if (workspace.isNotBlank()) fileAccess.withBase(workspace) else fileAccess
+        return when (tool) {
+            HarnessTool.READ -> {
+                val path = requireString(args, "path")
+                val offset = args["offset"]?.jsonPrimitive?.content?.trim()?.toIntOrNull()
+                val limit = args["limit"]?.jsonPrimitive?.content?.trim()?.toIntOrNull()
+                activeFileAccess.read(path, offset, limit).toToolOutput()
+            }
+            HarnessTool.WRITE -> {
+                val path = requireString(args, "path")
+                val content = requireString(args, "content")
+                activeFileAccess.write(path, content).toToolOutput("已写入 $path")
+            }
+            HarnessTool.EDIT -> {
+                val path = requireString(args, "path")
+                val oldText = requireString(args, "oldText")
+                val newText = requireString(args, "newText")
+                activeFileAccess.edit(path, oldText, newText).toToolOutput("已修改 $path")
+            }
+            HarnessTool.BASE -> executeBase(args, workspace)
+            HarnessTool.MEMORY -> contextExecutor?.executeMemory(args, sessionId, "") ?: (false to "未初始化记忆执行器")
+            HarnessTool.PLAN -> contextExecutor?.executePlan(args, sessionId) ?: (false to "未初始化计划执行器")
+            HarnessTool.SCRATCHPAD -> contextExecutor?.executeScratchpad(args, sessionId) ?: (false to "未初始化草稿执行器")
+            HarnessTool.SUBAGENT -> subagentOrchestrator?.executeSubagents(args, sessionId) ?: (false to "未初始化子智能体编排器")
+            HarnessTool.MCP -> mcpManager?.executeTool(rawToolName ?: "mcp", args) ?: (false to "未初始化 MCP 管理器")
         }
-        HarnessTool.WRITE -> {
-            val path = requireString(args, "path")
-            val content = requireString(args, "content")
-            fileAccess.write(path, content).toToolOutput("已写入 $path")
-        }
-        HarnessTool.EDIT -> {
-            val path = requireString(args, "path")
-            val oldText = requireString(args, "oldText")
-            val newText = requireString(args, "newText")
-            fileAccess.edit(path, oldText, newText).toToolOutput("已修改 $path")
-        }
-        HarnessTool.BASE -> executeBase(args)
-        HarnessTool.SUBAGENT -> subagentOrchestrator?.executeSubagents(args, sessionId) ?: (false to "未初始化子智能体编排器")
-        HarnessTool.MCP -> mcpManager?.executeTool(rawToolName ?: "mcp", args) ?: (false to "未初始化 MCP 管理器")
     }
 
-    private suspend fun executeBase(args: JsonObject): Pair<Boolean, String> {
+    private suspend fun executeBase(args: JsonObject, workspace: String): Pair<Boolean, String> {
         val command = requireString(args, "command")
         require(command.length <= MAX_COMMAND_LENGTH) { "命令过长（${command.length} 字符，上限 $MAX_COMMAND_LENGTH）" }
-        val cwd = args["cwd"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: DEFAULT_CWD
+        val cwd = args["cwd"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            ?: (if (workspace.isNotBlank()) (if (workspace.startsWith("/")) workspace else "/workspace/$workspace") else DEFAULT_CWD)
+        val timeoutMs = args["timeout_seconds"]?.jsonPrimitive?.content?.toLongOrNull()?.let { it * 1000L }
+            ?: BASE_TIMEOUT_MS
         val result = linuxRuntime.execute(
             ShellCommand(
                 commandLine = command,
                 workingDirectory = cwd,
-                timeoutMs = BASE_TIMEOUT_MS,
+                timeoutMs = timeoutMs,
             ),
         )
         val stdout = result.stdout.trim()
@@ -131,7 +142,7 @@ class ToolExecutor @Inject constructor(
     }
 
     companion object {
-        const val BASE_TIMEOUT_MS = 5 * 60 * 1000L
+        const val BASE_TIMEOUT_MS = 60 * 1000L
         const val MAX_OUTPUT_LENGTH = 64 * 1024
         const val TRUNCATE_KEEP_LENGTH = 60 * 1024
         const val MAX_COMMAND_LENGTH = 32 * 1024
