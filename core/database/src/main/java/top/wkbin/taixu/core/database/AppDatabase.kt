@@ -5,8 +5,8 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [ToolEntity::class, InstallLogEntity::class, InstallTaskEntity::class, RuntimeEntity::class, RuntimeDependencyRefEntity::class, HarnessMessageEntity::class, HarnessSessionEntity::class, AiModelEntity::class, WorkspaceEntity::class, TerminalSessionEntity::class],
-    version = 15,
-    exportSchema = false,
+    version = 16,
+    exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun toolDao(): ToolDao

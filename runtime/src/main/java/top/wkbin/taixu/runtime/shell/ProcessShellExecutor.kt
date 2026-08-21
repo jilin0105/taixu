@@ -8,6 +8,7 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.io.File
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -77,7 +78,28 @@ class ProcessShellExecutor @Inject constructor(
     }
 
     private suspend fun readFully(stream: java.io.InputStream): String = try {
-        stream.bufferedReader().use { it.readText() }
+        stream.use { input ->
+            val kept = ByteArrayOutputStream(MAX_CAPTURE_BYTES)
+            val buffer = ByteArray(READ_BUFFER_BYTES)
+            var totalBytes = 0L
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                totalBytes += read
+                val remaining = MAX_CAPTURE_BYTES - kept.size()
+                if (remaining > 0) kept.write(buffer, 0, minOf(read, remaining))
+            }
+            buildString {
+                append(kept.toByteArray().toString(Charsets.UTF_8))
+                if (totalBytes > kept.size()) {
+                    append("\n\n[进程输出已截断：共 ")
+                    append(totalBytes)
+                    append(" 字节，仅保留前 ")
+                    append(kept.size())
+                    append(" 字节]")
+                }
+            }
+        }
     } catch (cancellation: kotlinx.coroutines.CancellationException) {
         throw cancellation
     } catch (io: java.io.IOException) {
@@ -92,5 +114,7 @@ class ProcessShellExecutor @Inject constructor(
     private companion object {
         const val TIMEOUT_EXIT_CODE = 124
         const val PROCESS_TEARDOWN_TIMEOUT_MS = 1_000L
+        const val MAX_CAPTURE_BYTES = 4 * 1024 * 1024
+        const val READ_BUFFER_BYTES = 16 * 1024
     }
 }

@@ -3,6 +3,7 @@
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import top.wkbin.taixu.runtime.shell.SessionConfig
 import top.wkbin.taixu.runtime.EnvironmentResolver
+import top.wkbin.taixu.core.model.StorageMountBinding
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -85,6 +86,32 @@ class ProotCommandBuilderTest {
             workspaceDir = File("/w"),
             config = SessionConfig(),
             ptyMarker = "/tmp/unsafe",
+        )
+    }
+
+    @Test
+    fun doesNotImplicitlyMountSharedStorage() {
+        val args = ProotCommandBuilder(EnvironmentResolver()).build(
+            prootBinary = File("/p"),
+            rootfsDir = File("/r"),
+            workspaceDir = File("/w"),
+            command = ShellCommand(commandLine = "true"),
+            mounts = emptyList(),
+        )
+
+        assert(args.none { it.contains(":/sdcard") })
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsMountOverCriticalGuestPath() {
+        ProotCommandBuilder(EnvironmentResolver()).build(
+            prootBinary = File("/p"),
+            rootfsDir = File("/r"),
+            workspaceDir = File("/w"),
+            command = ShellCommand(commandLine = "true"),
+            mounts = listOf(
+                StorageMountBinding("bad", "bad", "/storage/emulated/0", "/root", enabled = true),
+            ),
         )
     }
 

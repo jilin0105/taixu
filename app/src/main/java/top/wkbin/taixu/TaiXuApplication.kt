@@ -3,6 +3,7 @@ package top.wkbin.taixu
 import android.app.Application
 import top.wkbin.taixu.core.common.logging.CrashReporter
 import top.wkbin.taixu.harness.HarnessLoop
+import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.service.AgentForegroundService
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
@@ -17,13 +18,16 @@ import kotlinx.coroutines.launch
 class TaiXuApplication : Application() {
     @Inject lateinit var crashReporter: CrashReporter
     @Inject lateinit var harnessLoop: HarnessLoop
+    @Inject lateinit var settingsDataStore: SettingsDataStore
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     override fun onCreate() {
         super.onCreate()
-        configureCursorWindow()
         crashReporter.install()
+        appScope.launch(Dispatchers.IO) {
+            runCatching { settingsDataStore.migrateLegacyProtectedValues() }
+        }
         // Agent 开始执行时拉起前台服务，保证后台存活 + 通知进度；结束后由服务发带回复框的通知。
         appScope.launch {
             harnessLoop.running.collectLatest { running ->
@@ -31,16 +35,6 @@ class TaiXuApplication : Application() {
                     runCatching { AgentForegroundService.start(this@TaiXuApplication) }
                 }
             }
-        }
-    }
-
-    private fun configureCursorWindow() {
-        try {
-            val field = android.database.CursorWindow::class.java.getDeclaredField("sCursorWindowSize")
-            field.isAccessible = true
-            field.set(null, 100 * 1024 * 1024) // 100 MB CursorWindow
-        } catch (_: Throwable) {
-            // Ignore if restricted on custom OS
         }
     }
 

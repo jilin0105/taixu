@@ -12,6 +12,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 
 data class WorkspaceProject(
@@ -41,7 +42,7 @@ class WorkspaceManager @Inject constructor(
 ) {
     fun observeProjects(): Flow<List<WorkspaceProject>> = workspaceDao.observeAll().map { entities ->
         entities.mapNotNull(::projectFromEntity)
-    }
+    }.flowOn(Dispatchers.IO)
 
     suspend fun listProjects(): List<WorkspaceProject> = withContext(Dispatchers.IO) {
         pathManager.workspaceDir.mkdirs()
@@ -343,7 +344,10 @@ class WorkspaceManager @Inject constructor(
         }.trimEnd('/')
     }
 
-    private fun sizeOf(file: File): Long = file.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+    private fun sizeOf(file: File): Long = file.walkTopDown()
+        .onEnter { directory -> !java.nio.file.Files.isSymbolicLink(directory.toPath()) }
+        .filter { it.isFile && !java.nio.file.Files.isSymbolicLink(it.toPath()) }
+        .sumOf { it.length() }
 
     private fun isValidProjectName(name: String): Boolean {
         if (name.isEmpty() || name.length > MAX_PROJECT_NAME_LENGTH) return false

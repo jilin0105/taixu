@@ -13,6 +13,7 @@ import top.wkbin.taixu.runtime.shell.SessionConfig
 import top.wkbin.taixu.runtime.shell.ManagedProcess
 import top.wkbin.taixu.runtime.shell.ProcessType
 import top.wkbin.taixu.core.datastore.SettingsDataStore
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -80,7 +81,17 @@ class OpenClawToolInstaller @Inject constructor(
         }
     }
 
-    override suspend fun launch(): CommandResult = execute("openclaw gateway --allow-unconfigured --host 0.0.0.0 --port 18789")
+    override suspend fun launch(): CommandResult {
+        val dataDir = ToolLayout.toolDataDirectory(toolId)
+        return execute(
+            command = "mkdir -p $dataDir && openclaw gateway --allow-unconfigured --bind lan --port 18789",
+            environment = mapOf(
+                "OPENCLAW_GATEWAY_TOKEN" to resolveAccessToken(),
+                "OPENCLAW_STATE_DIR" to dataDir,
+                "OPENCLAW_CONFIG_PATH" to "$dataDir/openclaw.json",
+            ),
+        )
+    }
 
     override suspend fun verify(): CommandResult = execute("openclaw --version")
 
@@ -91,15 +102,11 @@ class OpenClawToolInstaller @Inject constructor(
     )
 
     override suspend fun startService(): ManagedProcess {
-        val token = runCatching { settingsDataStore.toolAccessToken(toolId).first() }.getOrNull()
-        val tokenEnv = if (!token.isNullOrBlank()) {
-            mapOf(
-                "OPENCLAW_TOKEN" to token,
-                "OPENCLAW_GATEWAY_TOKEN" to token,
-                "TOKEN" to token,
-            )
-        } else emptyMap()
-        val tokenFlag = if (!token.isNullOrBlank()) " --token $token" else ""
+        val token = resolveAccessToken()
+        val tokenEnv = mapOf(
+            "OPENCLAW_TOKEN" to token,
+            "OPENCLAW_GATEWAY_TOKEN" to token,
+        )
 
         val dataDir = ToolLayout.toolDataDirectory(toolId)
         val toolDir = ToolLayout.toolDirectory(toolId)
@@ -108,11 +115,7 @@ class OpenClawToolInstaller @Inject constructor(
             "openclaw-gateway",
             ShellCommand(
                 commandLine = "mkdir -p $dataDir && " +
-                    "openclaw gateway --allow-unconfigured --host 0.0.0.0 --port 18789$tokenFlag || " +
-                    "openclaw gateway run --allow-unconfigured --host 0.0.0.0 --port 18789$tokenFlag || " +
-                    "openclaw gateway --host 0.0.0.0 --port 18789$tokenFlag || " +
-                    "openclaw gateway --allow-unconfigured --host 0.0.0.0$tokenFlag || " +
-                    "openclaw gateway",
+                    "exec openclaw gateway --allow-unconfigured --bind lan --port 18789",
                 environment = providerManager.environment() + mapOf(
                     "HOST" to "0.0.0.0",
                     "PORT" to "18789",
@@ -121,6 +124,8 @@ class OpenClawToolInstaller @Inject constructor(
                     "OPENCLAW_GATEWAY_HOST" to "0.0.0.0",
                     "OPENCLAW_GATEWAY_PORT" to "18789",
                     "OPENCLAW_HOME" to dataDir,
+                    "OPENCLAW_STATE_DIR" to dataDir,
+                    "OPENCLAW_CONFIG_PATH" to "$dataDir/openclaw.json",
                     "XDG_CONFIG_HOME" to dataDir,
                     "npm_config_prefix" to toolDir,
                     "NPM_CONFIG_PREFIX" to toolDir,
@@ -151,9 +156,20 @@ class OpenClawToolInstaller @Inject constructor(
         if (result.isFailure) error(result.errorOrNull()?.message ?: "依赖安装失败：$name")
     }
 
-    private suspend fun execute(command: String) = linuxRuntime.execute(
-        ShellCommand(command, environment = providerManager.environment()),
+    private suspend fun execute(
+        command: String,
+        environment: Map<String, String> = emptyMap(),
+    ) = linuxRuntime.execute(
+        ShellCommand(command, environment = providerManager.environment() + environment),
     )
+
+    private suspend fun resolveAccessToken(): String =
+        runCatching { settingsDataStore.toolAccessToken(toolId).first() }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?: UUID.randomUUID().toString().replace("-", "").also {
+                settingsDataStore.setToolAccessToken(toolId, it)
+            }
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<InstallEvent>.executeAndReport(
         result: CommandResult,

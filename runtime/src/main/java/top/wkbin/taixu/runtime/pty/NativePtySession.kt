@@ -5,11 +5,6 @@ import top.wkbin.taixu.runtime.shell.SessionConfig
 import top.wkbin.taixu.runtime.shell.TerminalOutput
 import top.wkbin.taixu.runtime.shell.TerminalStream
 import java.io.IOException
-import java.nio.ByteBuffer
-import java.nio.CharBuffer
-import java.nio.charset.CharsetDecoder
-import java.nio.charset.CodingErrorAction
-import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -45,12 +40,10 @@ class NativePtySession(
     private val masterFd: Int = pair[0]
     private val childPid: Int = pair[1]
 
-    private val outputChannel = Channel<TerminalOutput>(Channel.BUFFERED)
+    private val outputChannel = Channel<TerminalOutput>(OUTPUT_BUFFER_CAPACITY)
     private val closed = AtomicBoolean(false)
     private val sessionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val decoder: CharsetDecoder = StandardCharsets.UTF_8.newDecoder()
-        .onMalformedInput(CodingErrorAction.REPLACE)
-        .onUnmappableCharacter(CodingErrorAction.REPLACE)
+    private val utf8Decoder = IncrementalUtf8Decoder(8192)
 
     private val readerJob: Job = sessionScope.launch {
         val buffer = ByteArray(8192)
@@ -61,7 +54,7 @@ class NativePtySession(
                 if (n > 0) {
                     val text = decodeUtf8(buffer, n)
                     if (text.isNotEmpty()) {
-                        outputChannel.trySend(TerminalOutput(TerminalStream.STDOUT, text))
+                        outputChannel.send(TerminalOutput(TerminalStream.STDOUT, text))
                     }
                 }
             }
@@ -70,18 +63,19 @@ class NativePtySession(
         } catch (io: IOException) {
             // fd 在关闭时被另一线程 close，视为 EOF
         }
+        decodeUtf8End().takeIf { it.isNotEmpty() }?.let {
+            outputChannel.send(TerminalOutput(TerminalStream.STDOUT, it))
+        }
         NativePty.waitPid(childPid)
         outputChannel.close()
     }
 
     /** 流式 UTF-8 解码，避免多字节字符跨 read 被截断。 */
     private fun decodeUtf8(buffer: ByteArray, length: Int): String {
-        val bytes = ByteBuffer.wrap(buffer, 0, length)
-        val chars = CharBuffer.allocate(length * 2)
-        decoder.decode(bytes, chars, false)
-        chars.flip()
-        return chars.toString()
+        return utf8Decoder.decode(buffer, length)
     }
+
+    private fun decodeUtf8End(): String = utf8Decoder.finish()
 
     override val output: Flow<TerminalOutput> = outputChannel.receiveAsFlow()
 

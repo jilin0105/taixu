@@ -5,11 +5,12 @@ import androidx.room.Entity
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
+import androidx.room.Index
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 
 /** Harness 会话：一条会话聚合一批消息，并记录使用的模型。 */
-@Entity(tableName = "harness_sessions")
+@Entity(tableName = "harness_sessions", indices = [Index(value = ["updatedAt"])])
 data class HarnessSessionEntity(
     @PrimaryKey val id: String,
     val title: String,

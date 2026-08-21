@@ -20,6 +20,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -94,7 +95,7 @@ class McpManager @Inject constructor(
         val serverId = parts[1]
         val targetToolName = parts.subList(2, parts.size).joinToString("__")
 
-        val server = settingsDataStore.mcpServers.first().firstOrNull { it.id == serverId }
+        val server = settingsDataStore.mcpServers.first().firstOrNull { it.id == serverId && it.isEnabled }
             ?: return@withContext false to "未找到 MCP 服务：$serverId"
 
         try {
@@ -123,13 +124,14 @@ class McpManager @Inject constructor(
             )
         )
         val fullInput = "$rpcInit\n$rpcList\n"
-        val cmdStr = "${server.command} ${server.args.joinToString(" ")}"
+        val cmdStr = stdioCommand(server)
 
         val result = linuxRuntime.execute(
             ShellCommand(
-                commandLine = "printf '%s' '$fullInput' | $cmdStr",
+                commandLine = "printf '%s' ${shellQuote(fullInput)} | $cmdStr",
                 workingDirectory = "/root",
                 timeoutMs = 15000,
+                environment = server.env,
             )
         )
 
@@ -171,13 +173,14 @@ class McpManager @Inject constructor(
                 params = json.encodeToJsonElement(McpCallToolParams(name = toolName, arguments = args)),
             )
         )
-        val cmdStr = "${server.command} ${server.args.joinToString(" ")}"
+        val cmdStr = stdioCommand(server)
 
         val result = linuxRuntime.execute(
             ShellCommand(
-                commandLine = "printf '%s\\n' '$rpcCall' | $cmdStr",
+                commandLine = "printf '%s\\n' ${shellQuote(rpcCall)} | $cmdStr",
                 workingDirectory = "/root",
                 timeoutMs = 30000,
+                environment = server.env,
             )
         )
 
@@ -211,11 +214,13 @@ class McpManager @Inject constructor(
 
     private suspend fun discoverSseTools(server: McpServerConfig): List<McpToolInfo> {
         val request = Request.Builder()
-            .url(server.serverUrl.trimEnd('/') + "/tools")
+            .url(validatedHttpEndpoint(server.serverUrl, "tools"))
             .get()
             .build()
-        val response = httpClient.newCall(request).execute()
-        val body = response.body.string()
+        val body = httpClient.newCall(request).execute().use { response ->
+            check(response.isSuccessful) { "MCP HTTP ${response.code}" }
+            readBodyLimited(response)
+        }
         val list = json.decodeFromString<McpToolsListResponse>(body)
         return list.tools.map {
             McpToolInfo(
@@ -237,15 +242,52 @@ class McpManager @Inject constructor(
             )
         )
         val request = Request.Builder()
-            .url(server.serverUrl.trimEnd('/') + "/call")
+            .url(validatedHttpEndpoint(server.serverUrl, "call"))
             .post(payload.toRequestBody("application/json".toMediaType()))
             .build()
-        val response = httpClient.newCall(request).execute()
-        val body = response.body.string()
+        val body = httpClient.newCall(request).execute().use { response ->
+            check(response.isSuccessful) { "MCP HTTP ${response.code}" }
+            readBodyLimited(response)
+        }
         val rpcResp = json.decodeFromString<JsonRpcResponse>(body)
         val callRes = rpcResp.result?.let { json.decodeFromJsonElement<McpCallToolResult>(it) }
         val text = callRes?.content?.joinToString("\n") { it.text.orEmpty() } ?: body
         return !(callRes?.isError ?: false) to text
+    }
+
+    private fun stdioCommand(server: McpServerConfig): String {
+        require(server.command.isNotBlank()) { "MCP 启动命令不能为空" }
+        require('\u0000' !in server.command && '\n' !in server.command && '\r' !in server.command) {
+            "MCP 启动命令包含非法字符"
+        }
+        return (listOf(server.command) + server.args).joinToString(" ", transform = ::shellQuote)
+    }
+
+    private fun shellQuote(value: String): String = "'${value.replace("'", "'\\\"'\\\"'")}'"
+
+    private fun validatedHttpEndpoint(baseUrl: String, operation: String): okhttp3.HttpUrl {
+        val url = (baseUrl.trimEnd('/') + "/$operation").toHttpUrl()
+        val local = url.host == "localhost" || url.host == "127.0.0.1" || url.host == "::1"
+        require(url.isHttps || local) { "远程 MCP 服务必须使用 HTTPS" }
+        return url
+    }
+
+    private fun readBodyLimited(response: okhttp3.Response): String {
+        val body = response.body
+        val advertised = body.contentLength()
+        require(advertised < 0 || advertised <= MAX_HTTP_RESPONSE_BYTES) { "MCP 响应超过大小限制" }
+        val bytes = body.byteStream().use { input ->
+            val output = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(16 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                require(output.size() + read <= MAX_HTTP_RESPONSE_BYTES) { "MCP 响应超过大小限制" }
+                output.write(buffer, 0, read)
+            }
+            output.toByteArray()
+        }
+        return bytes.toString(Charsets.UTF_8)
     }
 
     private fun getPresetToolsForServer(server: McpServerConfig): List<McpToolInfo> = when (server.id) {
@@ -305,5 +347,9 @@ class McpManager @Inject constructor(
             ),
         )
         else -> emptyList()
+    }
+
+    private companion object {
+        const val MAX_HTTP_RESPONSE_BYTES = 4 * 1024 * 1024
     }
 }

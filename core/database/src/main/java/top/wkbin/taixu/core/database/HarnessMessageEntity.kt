@@ -5,6 +5,7 @@ import androidx.room.Entity
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
+import androidx.room.Index
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 
@@ -12,7 +13,10 @@ import kotlinx.coroutines.flow.Flow
  * Harness 会话消息的持久化形式。消息以类型 + JSON 载荷存储，
  * 序列化格式与 [top.wkbin.taixu.harness.HarnessMessage] 一致。
  */
-@Entity(tableName = "harness_messages")
+@Entity(
+    tableName = "harness_messages",
+    indices = [Index(value = ["sessionId", "createdAt"])],
+)
 data class HarnessMessageEntity(
     @PrimaryKey val id: String,
     val sessionId: String,
@@ -47,4 +51,3 @@ interface HarnessMessageDao {
     @Query("DELETE FROM harness_messages")
     suspend fun clear()
 }
-

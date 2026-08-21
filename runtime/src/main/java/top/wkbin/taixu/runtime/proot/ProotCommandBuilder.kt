@@ -17,6 +17,7 @@ class ProotCommandBuilder @Inject constructor(
         workspaceDir: File,
         homeDir: File = File(rootfsDir.parentFile, "home"),
         optDir: File = File(rootfsDir.parentFile, "opt/taixu"),
+        tmpDir: File = File(rootfsDir.parentFile, "tmp"),
         command: ShellCommand,
         mounts: List<top.wkbin.taixu.core.model.StorageMountBinding> = emptyList(),
     ): List<String> = buildList {
@@ -35,7 +36,7 @@ class ProotCommandBuilder @Inject constructor(
         add("-b")
         add("/sys")
         add("-b")
-        add("${File(rootfsDir.parentFile, "tmp").absolutePath}:/tmp")
+        add("${tmpDir.absolutePath}:/tmp")
         add("-b")
         add("${workspaceDir.absolutePath}:/workspace")
         add("-b")
@@ -65,6 +66,7 @@ class ProotCommandBuilder @Inject constructor(
         workspaceDir: File,
         homeDir: File = File(rootfsDir.parentFile, "home"),
         optDir: File = File(rootfsDir.parentFile, "opt/taixu"),
+        tmpDir: File = File(rootfsDir.parentFile, "tmp"),
         config: top.wkbin.taixu.runtime.shell.SessionConfig,
         ptyMarker: String? = null,
         nativePty: Boolean = false,
@@ -87,7 +89,7 @@ class ProotCommandBuilder @Inject constructor(
         add("-b")
         add("/sys")
         add("-b")
-        add("${File(rootfsDir.parentFile, "tmp").absolutePath}:/tmp")
+        add("${tmpDir.absolutePath}:/tmp")
         add("-b")
         add("${workspaceDir.absolutePath}:/workspace")
         add("-b")
@@ -175,36 +177,47 @@ class ProotCommandBuilder @Inject constructor(
     ) {
         if (mounts.isNotEmpty()) {
             mounts.filter { it.enabled }.forEach { binding ->
-                val hostDir = File(binding.hostPath)
-                if (hostDir.exists()) {
-                    add("-b")
-                    add("${hostDir.absolutePath}:${binding.guestPath}")
-                }
-            }
-        } else {
-            // 默认自动探测并保障基础挂载
-            val download = File("/storage/emulated/0/Download")
-            if (download.exists()) {
+                val argument = validateStorageMount(binding)
                 add("-b")
-                add("${download.absolutePath}:/sdcard/Download")
-            }
-            val docs = File("/storage/emulated/0/Documents")
-            if (docs.exists()) {
-                add("-b")
-                add("${docs.absolutePath}:/sdcard/Documents")
-            }
-            val sdcard = File("/storage/emulated/0")
-            if (sdcard.exists()) {
-                add("-b")
-                add("${sdcard.absolutePath}:/sdcard")
+                add(argument)
             }
         }
     }
+
+    private fun validateStorageMount(
+        binding: top.wkbin.taixu.core.model.StorageMountBinding,
+    ): String {
+        require(':' !in binding.hostPath && '\u0000' !in binding.hostPath) { "宿主挂载路径包含非法字符" }
+        require(':' !in binding.guestPath && '\u0000' !in binding.guestPath) { "容器挂载路径包含非法字符" }
+
+        val guest = normalizeGuestPath(binding.guestPath)
+        require(ALLOWED_GUEST_MOUNT_ROOTS.any { guest == it || guest.startsWith("$it/") }) {
+            "容器挂载仅允许位于 /mnt 或 /sdcard 内"
+        }
+
+        val sharedRoot = File(SHARED_STORAGE_ROOT).canonicalFile
+        val host = File(binding.hostPath).canonicalFile
+        require(host.isDirectory && host.canRead()) { "宿主挂载目录不可访问：${binding.hostPath}" }
+        require(isInside(sharedRoot, host)) { "宿主挂载仅允许位于 $SHARED_STORAGE_ROOT 内" }
+        return "${host.absolutePath}:$guest"
+    }
+
+    private fun normalizeGuestPath(path: String): String {
+        require(path.startsWith('/')) { "容器挂载路径必须是绝对路径" }
+        val segments = path.split('/').filter { it.isNotBlank() && it != "." }
+        require(segments.none { it == ".." }) { "容器挂载路径不允许包含 .." }
+        return "/${segments.joinToString("/")}".trimEnd('/').ifBlank { "/" }
+    }
+
+    private fun isInside(root: File, candidate: File): Boolean =
+        candidate == root || candidate.absolutePath.startsWith(root.absolutePath + File.separator)
 
     private companion object {
         const val GUEST_SHELL = "/bin/sh"
         const val GUEST_KERNEL_RELEASE = "6.17.0-TaiXu"
         val PTY_MARKER = Regex("/opt/taixu/\\.pty-[A-Za-z0-9-]{8,64}")
         val ENVIRONMENT_KEY = Regex("[A-Za-z_][A-Za-z0-9_]*")
+        const val SHARED_STORAGE_ROOT = "/storage/emulated/0"
+        val ALLOWED_GUEST_MOUNT_ROOTS = setOf("/mnt", "/sdcard")
     }
 }

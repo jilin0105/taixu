@@ -8,6 +8,7 @@ import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.common.result.ErrorCode
 import top.wkbin.taixu.core.model.CpuArch
 import top.wkbin.taixu.core.model.RuntimeState
+import top.wkbin.taixu.core.model.StorageMountBinding
 import top.wkbin.taixu.runtime.proot.ProotCommandBuilder
 import top.wkbin.taixu.runtime.pty.PtyManager
 import top.wkbin.taixu.runtime.proot.ProotInstaller
@@ -350,6 +351,7 @@ class LinuxRuntimeImpl @Inject constructor(
     override suspend fun execute(command: ShellCommand, distroId: String?): CommandResult {
         ensureReady()
         val safeDistro = distroId?.lowercase()?.trim()?.takeIf { it.isNotBlank() } ?: _activeDistroId.value
+        val mounts = storageMounts()
         return shellExecutor.execute(
             command = prootCommandBuilder.build(
                 prootBinary = pathManager.activeProotFile(),
@@ -357,7 +359,9 @@ class LinuxRuntimeImpl @Inject constructor(
                 workspaceDir = pathManager.workspaceDir,
                 homeDir = pathManager.homeDir(safeDistro),
                 optDir = pathManager.taixuRootDir,
+                tmpDir = pathManager.tmpDir,
                 command = command,
+                mounts = mounts,
             ),
             timeoutMs = command.timeoutMs,
         )
@@ -369,6 +373,7 @@ class LinuxRuntimeImpl @Inject constructor(
         val markerId = UUID.randomUUID().toString()
         val markerFile = File(pathManager.taixuRootDir, ".pty-$markerId")
         val markerPath = "/opt/taixu/.pty-$markerId"
+        val mounts = storageMounts()
         return try {
             if (ptyManager.nativeAvailable) {
                 ptyManager.openNative(
@@ -378,8 +383,10 @@ class LinuxRuntimeImpl @Inject constructor(
                         workspaceDir = pathManager.workspaceDir,
                         homeDir = pathManager.homeDir(safeDistro),
                         optDir = pathManager.taixuRootDir,
+                        tmpDir = pathManager.tmpDir,
                         config = config,
                         nativePty = true,
+                        mounts = mounts,
                     ),
                     hostEnvironment = pathManager.hostProcessEnvironment(safeDistro),
                     config = config,
@@ -393,8 +400,10 @@ class LinuxRuntimeImpl @Inject constructor(
                         workspaceDir = pathManager.workspaceDir,
                         homeDir = pathManager.homeDir(safeDistro),
                         optDir = pathManager.taixuRootDir,
+                        tmpDir = pathManager.tmpDir,
                         config = config,
                         ptyMarker = markerPath,
+                        mounts = mounts,
                     ),
                     hostEnvironment = pathManager.hostProcessEnvironment(safeDistro),
                     config = config,
@@ -410,6 +419,20 @@ class LinuxRuntimeImpl @Inject constructor(
         }
     }
 
+    private suspend fun storageMounts(): List<StorageMountBinding> = buildList {
+        val sharedEnabled = settingsDataStore.mountSharedStorageEnabled.first()
+        if (sharedEnabled && File("/storage/emulated/0").isDirectory) {
+            add(StorageMountBinding("system-shared", "共享存储", "/storage/emulated/0", "/sdcard", true, true))
+        }
+        if (!sharedEnabled && settingsDataStore.mountDownloadEnabled.first() && File("/storage/emulated/0/Download").isDirectory) {
+            add(StorageMountBinding("system-download", "下载", "/storage/emulated/0/Download", "/sdcard/Download", true, true))
+        }
+        if (!sharedEnabled && settingsDataStore.mountDocumentsEnabled.first() && File("/storage/emulated/0/Documents").isDirectory) {
+            add(StorageMountBinding("system-documents", "文档", "/storage/emulated/0/Documents", "/sdcard/Documents", true, true))
+        }
+        addAll(settingsDataStore.customMountBindings.first().filter { it.enabled })
+    }
+
     private suspend fun resizePty(markerPath: String, columns: Int, rows: Int, distroId: String = "ubuntu") {
         val safeColumns = columns.coerceIn(20, 400)
         val safeRows = rows.coerceIn(5, 200)
@@ -421,6 +444,7 @@ class LinuxRuntimeImpl @Inject constructor(
                     workspaceDir = pathManager.workspaceDir,
                     homeDir = pathManager.homeDir(distroId),
                     optDir = pathManager.taixuRootDir,
+                    tmpDir = pathManager.tmpDir,
                     command = ShellCommand(
                         commandLine = "if test -s '$markerPath'; then " +
                             "stty -F \"\$(cat '$markerPath')\" cols $safeColumns rows $safeRows; " +

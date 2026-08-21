@@ -92,6 +92,7 @@ class RuntimeHealthChecker @Inject constructor(
             prootBinary = pathManager.activeProotFile(),
             rootfsDir = pathManager.rootfsDir,
             workspaceDir = pathManager.workspaceDir,
+            tmpDir = pathManager.tmpDir,
             command = command,
         ),
         timeoutMs = command.timeoutMs,

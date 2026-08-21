@@ -61,8 +61,7 @@ object AppModule {
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase {
         migrateLegacyDatabaseName(context)
         return Room.databaseBuilder(context, AppDatabase::class.java, "taixu.db")
-            .addMigrations(MIGRATION_13_14, MIGRATION_14_15)
-            .fallbackToDestructiveMigration(dropAllTables = true)
+            .addMigrations(MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
             .build()
     }
 
@@ -79,6 +78,15 @@ object AppModule {
     private val MIGRATION_14_15 = object : Migration(14, 15) {
         override fun migrate(db: SupportSQLiteDatabase) {
             db.execSQL("ALTER TABLE terminal_sessions ADD COLUMN distributionId TEXT NOT NULL DEFAULT 'ubuntu'")
+        }
+    }
+
+    /** v15 → v16：为会话消息和高频排序查询补索引，避免历史增长后全表扫描。 */
+    private val MIGRATION_15_16 = object : Migration(15, 16) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_harness_messages_sessionId_createdAt ON harness_messages(sessionId, createdAt)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_harness_sessions_updatedAt ON harness_sessions(updatedAt)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_terminal_sessions_sortOrder ON terminal_sessions(sortOrder)")
         }
     }
 

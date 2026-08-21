@@ -5,13 +5,14 @@ import androidx.room.Entity
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
+import androidx.room.Index
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 
 /**
  * 终端会话元数据（仅持久化配置，不存输出；PTY 进程重启后重建空白 shell）。
  */
-@Entity(tableName = "terminal_sessions")
+@Entity(tableName = "terminal_sessions", indices = [Index(value = ["sortOrder"])])
 data class TerminalSessionEntity(
     @PrimaryKey val id: String,
     val label: String,

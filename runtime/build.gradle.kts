@@ -42,4 +42,5 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
+    testImplementation(libs.junit)
 }

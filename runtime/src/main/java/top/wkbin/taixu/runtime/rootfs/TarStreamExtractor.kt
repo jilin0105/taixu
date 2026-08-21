@@ -231,10 +231,8 @@ class TarStreamExtractor @Inject constructor(
             skipPadding(input, 0)
             return ByteArray(0)
         }
-        if (size > MAX_IN_MEMORY_ENTRY_SIZE) {
-            val out = java.io.ByteArrayOutputStream()
-            copyData(input, size, out)
-            return out.toByteArray()
+        require(size <= MAX_IN_MEMORY_ENTRY_SIZE) {
+            "Tar metadata entry exceeds $MAX_IN_MEMORY_ENTRY_SIZE bytes"
         }
         val bytes = ByteArray(size.toInt())
         var offset = 0

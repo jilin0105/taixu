@@ -39,7 +39,7 @@ class ProcessLinuxSession(
         }
         .redirectErrorStream(true)
         .start()
-    private val outputChannel = Channel<TerminalOutput>(Channel.BUFFERED)
+    private val outputChannel = Channel<TerminalOutput>(OUTPUT_BUFFER_CAPACITY)
     private val closed = AtomicBoolean(false)
     private val sessionScope = CoroutineScope(SupervisorJob() + scope.coroutineContext)
     private val readerJob: Job = sessionScope.launch {
@@ -50,7 +50,7 @@ class ProcessLinuxSession(
                     val read = input.read(buffer)
                     if (read < 0) break
                     if (read > 0) {
-                        outputChannel.trySend(
+                        outputChannel.send(
                             TerminalOutput(
                                 TerminalStream.STDOUT,
                                 String(buffer, 0, read),
@@ -113,5 +113,6 @@ class ProcessLinuxSession(
 
     private companion object {
         const val PROCESS_SHUTDOWN_TIMEOUT_MS = 500L
+        const val OUTPUT_BUFFER_CAPACITY = 1024
     }
 }

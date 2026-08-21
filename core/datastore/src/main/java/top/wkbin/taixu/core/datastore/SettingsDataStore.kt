@@ -479,7 +479,7 @@ class SettingsDataStore @Inject constructor(
 
     /** Persisted access token for generating shareable URLs to web-type tool services. */
     fun toolAccessToken(toolId: String): Flow<String?> = context.settingsDataStore.data.map { prefs ->
-        prefs[stringPreferencesKey("tool_${toolId}_access_token")]
+        prefs[stringPreferencesKey("tool_${toolId}_access_token")]?.let(::decodeProtectedValue)
     }
 
     suspend fun setToolAccessToken(toolId: String, token: String?) {
@@ -487,7 +487,7 @@ class SettingsDataStore @Inject constructor(
             if (token == null) {
                 prefs.remove(stringPreferencesKey("tool_${toolId}_access_token"))
             } else {
-                prefs[stringPreferencesKey("tool_${toolId}_access_token")] = token
+                prefs[stringPreferencesKey("tool_${toolId}_access_token")] = encodeProtectedValue(token)
             }
         }
     }
@@ -501,15 +501,13 @@ class SettingsDataStore @Inject constructor(
         if (raw.isNullOrBlank()) {
             top.wkbin.taixu.core.model.BuiltinMcpPresets.presets
         } else {
-            runCatching {
-                jsonHelper.decodeFromString<List<top.wkbin.taixu.core.model.McpServerConfig>>(raw)
-            }.getOrDefault(top.wkbin.taixu.core.model.BuiltinMcpPresets.presets)
+            decodeMcpServers(raw)
         }
     }
 
     suspend fun setMcpServers(servers: List<top.wkbin.taixu.core.model.McpServerConfig>) {
         context.settingsDataStore.edit { preferences ->
-            preferences[mcpServersKey] = jsonHelper.encodeToString(servers)
+            preferences[mcpServersKey] = encodeMcpServers(servers)
         }
     }
 
@@ -519,14 +517,12 @@ class SettingsDataStore @Inject constructor(
             val current = if (raw.isNullOrBlank()) {
                 top.wkbin.taixu.core.model.BuiltinMcpPresets.presets.toMutableList()
             } else {
-                runCatching {
-                    jsonHelper.decodeFromString<List<top.wkbin.taixu.core.model.McpServerConfig>>(raw).toMutableList()
-                }.getOrDefault(top.wkbin.taixu.core.model.BuiltinMcpPresets.presets.toMutableList())
+                decodeMcpServers(raw).toMutableList()
             }
             val index = current.indexOfFirst { it.id == serverId }
             if (index >= 0) {
                 current[index] = current[index].copy(isEnabled = enabled)
-                preferences[mcpServersKey] = jsonHelper.encodeToString(current)
+                preferences[mcpServersKey] = encodeMcpServers(current)
             }
         }
     }
@@ -537,9 +533,7 @@ class SettingsDataStore @Inject constructor(
             val current = if (raw.isNullOrBlank()) {
                 top.wkbin.taixu.core.model.BuiltinMcpPresets.presets.toMutableList()
             } else {
-                runCatching {
-                    jsonHelper.decodeFromString<List<top.wkbin.taixu.core.model.McpServerConfig>>(raw).toMutableList()
-                }.getOrDefault(top.wkbin.taixu.core.model.BuiltinMcpPresets.presets.toMutableList())
+                decodeMcpServers(raw).toMutableList()
             }
             val index = current.indexOfFirst { it.id == server.id }
             if (index >= 0) {
@@ -547,7 +541,7 @@ class SettingsDataStore @Inject constructor(
             } else {
                 current.add(server)
             }
-            preferences[mcpServersKey] = jsonHelper.encodeToString(current)
+            preferences[mcpServersKey] = encodeMcpServers(current)
         }
     }
 
@@ -557,13 +551,54 @@ class SettingsDataStore @Inject constructor(
             val current = if (raw.isNullOrBlank()) {
                 top.wkbin.taixu.core.model.BuiltinMcpPresets.presets.toMutableList()
             } else {
-                runCatching {
-                    jsonHelper.decodeFromString<List<top.wkbin.taixu.core.model.McpServerConfig>>(raw).toMutableList()
-                }.getOrDefault(top.wkbin.taixu.core.model.BuiltinMcpPresets.presets.toMutableList())
+                decodeMcpServers(raw).toMutableList()
             }
             current.removeAll { it.id == serverId }
-            preferences[mcpServersKey] = jsonHelper.encodeToString(current)
+            preferences[mcpServersKey] = encodeMcpServers(current)
         }
+    }
+
+    /** 一次性升级旧版本明文保存的 MCP 配置和工具访问令牌。 */
+    suspend fun migrateLegacyProtectedValues() {
+        context.settingsDataStore.edit { preferences ->
+            preferences[mcpServersKey]?.takeIf {
+                it.isNotBlank() && !it.startsWith(PROTECTED_VALUE_PREFIX)
+            }?.let { legacy ->
+                preferences[mcpServersKey] = encodeProtectedValue(legacy)
+            }
+            preferences.asMap().forEach { (key, rawValue) ->
+                if (key.name.startsWith("tool_") && key.name.endsWith("_access_token")) {
+                    val legacy = rawValue as? String ?: return@forEach
+                    if (legacy.isNotBlank() && !legacy.startsWith(PROTECTED_VALUE_PREFIX)) {
+                        preferences[stringPreferencesKey(key.name)] = encodeProtectedValue(legacy)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun encodeProtectedValue(value: String): String = PROTECTED_VALUE_PREFIX + secretManager.encrypt(value)
+
+    /** 兼容升级前的明文值；下一次保存时会自动转为 Keystore 密文。 */
+    private fun decodeProtectedValue(value: String): String? =
+        if (value.startsWith(PROTECTED_VALUE_PREFIX)) {
+            secretManager.decrypt(value.removePrefix(PROTECTED_VALUE_PREFIX))
+        } else {
+            value
+        }
+
+    private fun encodeMcpServers(servers: List<top.wkbin.taixu.core.model.McpServerConfig>): String =
+        encodeProtectedValue(jsonHelper.encodeToString(servers))
+
+    private fun decodeMcpServers(raw: String): List<top.wkbin.taixu.core.model.McpServerConfig> =
+        decodeProtectedValue(raw)?.let { decoded ->
+            runCatching {
+                jsonHelper.decodeFromString<List<top.wkbin.taixu.core.model.McpServerConfig>>(decoded)
+            }.getOrNull()
+        } ?: top.wkbin.taixu.core.model.BuiltinMcpPresets.presets
+
+    private companion object {
+        const val PROTECTED_VALUE_PREFIX = "enc:v1:"
     }
 }
 
