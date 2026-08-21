@@ -81,17 +81,38 @@ object AttachmentHelper {
             if (size == 0L) size = targetFile.length()
 
             val guestPath = "/attachments/${targetFile.name}"
-            val base64 = if (isImage && targetFile.length() < 6 * 1024 * 1024) {
+            val base64 = if (isImage) {
                 runCatching {
-                    val bytes = targetFile.readBytes()
-                    val mime = when (targetFile.extension.lowercase()) {
-                        "png" -> "image/png"
-                        "webp" -> "image/webp"
-                        "gif" -> "image/gif"
-                        else -> "image/jpeg"
+                    val boundsOptions = android.graphics.BitmapFactory.Options().apply {
+                        inJustDecodeBounds = true
                     }
-                    val encoded = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-                    "data:$mime;base64,$encoded"
+                    android.graphics.BitmapFactory.decodeFile(targetFile.absolutePath, boundsOptions)
+
+                    var inSampleSize = 1
+                    val maxDimension = 2048
+                    if (boundsOptions.outHeight > maxDimension || boundsOptions.outWidth > maxDimension) {
+                        val halfHeight = boundsOptions.outHeight / 2
+                        val halfWidth = boundsOptions.outWidth / 2
+                        while ((halfHeight / inSampleSize) >= maxDimension || (halfWidth / inSampleSize) >= maxDimension) {
+                            inSampleSize *= 2
+                        }
+                    }
+
+                    val decodeOptions = android.graphics.BitmapFactory.Options().apply {
+                        this.inSampleSize = inSampleSize
+                    }
+                    val bitmap = android.graphics.BitmapFactory.decodeFile(targetFile.absolutePath, decodeOptions)
+                    if (bitmap != null) {
+                        val baos = java.io.ByteArrayOutputStream()
+                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, baos)
+                        val bytes = baos.toByteArray()
+                        val encoded = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                        "data:image/jpeg;base64,$encoded"
+                    } else {
+                        val bytes = targetFile.readBytes()
+                        val encoded = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                        "data:image/jpeg;base64,$encoded"
+                    }
                 }.getOrNull()
             } else null
 
