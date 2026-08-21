@@ -120,17 +120,27 @@ class EnvironmentRepairer @Inject constructor(
             val mirrorScript = """
                 rm -rf /var/lib/dpkg/updates/* /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock* 2>/dev/null || true
                 DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>/dev/null || true
+                mkdir -p /etc/apt/sources.list.d
+                # 停用所有自带官方源与旧源，避免与新源冲突或引发 404
+                for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+                    if [ -f "${'$'}f" ] && [ "${'$'}(basename "${'$'}f")" != "taixu-mirrors.list" ]; then
+                        mv "${'$'}f" "${'$'}f.taixu-disabled" 2>/dev/null || true
+                    fi
+                done
                 if [ -f /etc/os-release ]; then
                     . /etc/os-release
                     if [ "${'$'}ID" = "ubuntu" ]; then
-                        sed -i 's|http://ports.ubuntu.com/ubuntu-ports|https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true
-                        sed -i 's|http://archive.ubuntu.com/ubuntu|https://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true
-                        sed -i 's|http://security.ubuntu.com/ubuntu|https://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true
+                        CN="${'$'}{VERSION_CODENAME:-noble}"
+                        printf "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports %s main restricted universe multiverse\ndeb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports %s-updates main restricted universe multiverse\ndeb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports %s-security main restricted universe multiverse\ndeb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports %s-backports main restricted universe multiverse\n" "${'$'}CN" "${'$'}CN" "${'$'}CN" "${'$'}CN" > /etc/apt/sources.list.d/taixu-mirrors.list
                     elif [ "${'$'}ID" = "debian" ] || [ "${'$'}ID_LIKE" = "debian" ]; then
-                        sed -i 's|http://deb.debian.org/debian|https://mirrors.tuna.tsinghua.edu.cn/debian|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true
-                        sed -i 's|http://security.debian.org/debian-security|https://mirrors.tuna.tsinghua.edu.cn/debian-security|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true
+                        CN="${'$'}{VERSION_CODENAME:-bookworm}"
+                        printf "deb https://mirrors.tuna.tsinghua.edu.cn/debian %s main contrib non-free non-free-firmware\ndeb https://mirrors.tuna.tsinghua.edu.cn/debian %s-updates main contrib non-free non-free-firmware\ndeb https://mirrors.tuna.tsinghua.edu.cn/debian-security %s-security main contrib non-free non-free-firmware\n" "${'$'}CN" "${'$'}CN" "${'$'}CN" > /etc/apt/sources.list.d/taixu-mirrors.list
+                    elif [ "${'$'}ID" = "kali" ]; then
+                        printf "deb https://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main contrib non-free\n" > /etc/apt/sources.list.d/taixu-mirrors.list
                     fi
                 fi
+                # 清理旧的 apt lists 缓存，确保重新从镜像拉取完整的 index
+                rm -rf /var/lib/apt/lists/* 2>/dev/null || true
             """.trimIndent()
             executeCommand(mirrorScript, logs)
 

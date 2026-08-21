@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.runtime.rootfs
+package top.wkbin.taixu.runtime.rootfs
 
 import com.github.luben.zstd.ZstdInputStream
 import org.tukaani.xz.XZInputStream
@@ -37,22 +37,25 @@ class RootfsInstaller @Inject constructor(
         route: RegistryRoute,
         onProgress: suspend (DownloadProgress) -> Unit = {},
     ): AppResult<File> = withContext(Dispatchers.IO) {
-        recoverInterruptedUpdate()
+        val distroId = distribution.id.lowercase()
+        val distroTargetDir = pathManager.rootfsDir(distroId)
+        val staging = prepareStaging(distroId)
+        recoverInterruptedUpdate(distroId)
         try {
-            val staging = prepareStaging()
             val version = pullInto(distribution, route, staging, onProgress)
             rootfsValidator.validate(staging)
-            if (pathManager.isRootfsInstalled()) preserveUserDirectories(pathManager.rootfsDir, staging)
-            replaceRootfs(staging, retainBackup = false)
-            markInstalled(version)
-            logger.i("Installed ${distribution.imageReference} through OCI into ${pathManager.rootfsDir}")
-            AppResult.Success(pathManager.rootfsDir)
+            if (pathManager.isDistroInstalled(distroId)) preserveUserDirectories(distroTargetDir, staging)
+            replaceRootfs(distroId, staging, retainBackup = false)
+            markInstalled(distroId, version)
+            pathManager.homeDir(distroId).mkdirs()
+            logger.i("Installed ${distribution.imageReference} through OCI into $distroTargetDir")
+            AppResult.Success(distroTargetDir)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (throwable: Throwable) {
-            SafeFileTree.delete(pathManager.stagingRootfsDir)
-            logger.e("Failed to install OCI rootfs", throwable)
-            failure("OCI RootFS 安装失败", throwable)
+            SafeFileTree.delete(pathManager.stagingRootfsDir(distroId))
+            logger.e("Failed to install OCI rootfs for $distroId", throwable)
+            failure("OCI RootFS ($distroId) 安装失败", throwable)
         }
     }
 
@@ -61,42 +64,58 @@ class RootfsInstaller @Inject constructor(
         route: RegistryRoute,
         onProgress: suspend (DownloadProgress) -> Unit = {},
     ): AppResult<File> = withContext(Dispatchers.IO) {
-        if (!pathManager.isRootfsInstalled()) return@withContext installOci(distribution, route, onProgress)
+        val distroId = distribution.id.lowercase()
+        val distroTargetDir = pathManager.rootfsDir(distroId)
+        if (!pathManager.isDistroInstalled(distroId)) return@withContext installOci(distribution, route, onProgress)
         try {
-            val staging = prepareStaging()
+            val staging = prepareStaging(distroId)
             val version = pullInto(distribution, route, staging, onProgress)
             rootfsValidator.validate(staging)
-            preserveUserDirectories(pathManager.rootfsDir, staging)
-            replaceRootfs(staging, retainBackup = true)
+            preserveUserDirectories(distroTargetDir, staging)
+            replaceRootfs(distroId, staging, retainBackup = true)
             pendingUpdateVersion = version
-            pathManager.rootfsUpdatePendingMarker().writeText("rootfs-version=$version\n")
-            AppResult.Success(pathManager.rootfsDir)
+            pathManager.rootfsUpdatePendingMarker(distroId).writeText("rootfs-version=$version\n")
+            AppResult.Success(distroTargetDir)
         } catch (cancellation: CancellationException) {
-            rollbackPendingUpdate()
+            rollbackPendingUpdate(distroId)
             throw cancellation
         } catch (throwable: Throwable) {
-            SafeFileTree.delete(pathManager.stagingRootfsDir)
-            if (pendingUpdateBackup != null || pathManager.rootfsPreviousDir().exists()) {
-                rollbackPendingUpdate()
+            SafeFileTree.delete(pathManager.stagingRootfsDir(distroId))
+            if (pendingUpdateBackup != null || pathManager.rootfsPreviousDir(distroId).exists()) {
+                rollbackPendingUpdate(distroId)
             }
-            logger.e("Failed to update OCI rootfs", throwable)
-            failure("OCI RootFS 更新失败", throwable)
+            logger.e("Failed to update OCI rootfs for $distroId", throwable)
+            failure("OCI RootFS ($distroId) 更新失败", throwable)
         }
     }
 
-    suspend fun rollbackPendingUpdate(): Boolean = withContext(NonCancellable + Dispatchers.IO) {
-        val backup = pendingUpdateBackup ?: pathManager.rootfsPreviousDir().takeIf { it.exists() }
+    suspend fun uninstallDistro(distroId: String): AppResult<Unit> = withContext(Dispatchers.IO) {
+        val safeId = distroId.lowercase().trim()
+        val dir = pathManager.distroDir(safeId)
+        if (!dir.exists()) {
+            return@withContext AppResult.Success(Unit)
+        }
+        try {
+            SafeFileTree.delete(dir)
+            logger.i("Uninstalled distro $safeId from disk")
+            AppResult.Success(Unit)
+        } catch (e: Exception) {
+            logger.e("Failed to uninstall distro $safeId", e)
+            AppResult.Failure(AppError(ErrorCode.IO, "卸载系统失败：${e.message}", e))
+        }
+    }
+
+    suspend fun rollbackPendingUpdate(distroId: String = "ubuntu"): Boolean = withContext(NonCancellable + Dispatchers.IO) {
+        val backup = pendingUpdateBackup ?: pathManager.rootfsPreviousDir(distroId).takeIf { it.exists() }
             ?: return@withContext false
-        val rootfs = pathManager.rootfsDir
+        val rootfs = pathManager.rootfsDir(distroId)
         if (rootfs.exists()) {
-            // 先把（损坏的）新目录移到一边，再恢复备份；任一步失败都不删任何数据。
             val broken = File(rootfs.parentFile, "rootfs.broken")
             SafeFileTree.delete(broken)
             if (!rootfs.renameTo(broken)) {
                 throw IllegalStateException("无法移开当前 RootFS（旧版本仍保留在 ${backup.path}）")
             }
             if (!backup.renameTo(rootfs)) {
-                // 尽力还原现场（broken 仍留在磁盘，可手动恢复）
                 runCatching { broken.renameTo(rootfs) }
                 throw IllegalStateException("无法恢复旧 RootFS（旧版本仍保留在 ${backup.path}）")
             }
@@ -106,24 +125,24 @@ class RootfsInstaller @Inject constructor(
         }
         pendingUpdateBackup = null
         pendingUpdateVersion = null
-        pathManager.rootfsUpdatePendingMarker().delete()
+        pathManager.rootfsUpdatePendingMarker(distroId).delete()
         true
     }
 
-    suspend fun finalizePendingUpdate() = withContext(NonCancellable + Dispatchers.IO) {
-        pendingUpdateVersion?.let(::markInstalled)
+    suspend fun finalizePendingUpdate(distroId: String = "ubuntu") = withContext(NonCancellable + Dispatchers.IO) {
+        pendingUpdateVersion?.let { markInstalled(distroId, it) }
         pendingUpdateBackup?.takeIf { it.exists() }?.let(SafeFileTree::delete)
         pendingUpdateBackup = null
         pendingUpdateVersion = null
-        pathManager.rootfsUpdatePendingMarker().delete()
+        pathManager.rootfsUpdatePendingMarker(distroId).delete()
     }
 
-    private fun prepareStaging(): File {
+    private fun prepareStaging(distroId: String): File {
         pathManager.ensureDirectories()
-        return pathManager.stagingRootfsDir.also {
-            SafeFileTree.delete(it)
-            it.mkdirs()
-        }
+        val staging = pathManager.stagingRootfsDir(distroId)
+        SafeFileTree.delete(staging)
+        staging.mkdirs()
+        return staging
     }
 
     private suspend fun pullInto(
@@ -158,8 +177,6 @@ class RootfsInstaller @Inject constructor(
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (ociFailure: Throwable) {
-            // OCI 线路（DaoCloud / Docker Hub）全部失败时，用清华 TUNA 镜像站的
-            // lxc-images 极简 rootfs 兜底，保证国内网络环境下至少能装出可用沙箱。
             if (route == RegistryRoute.OFFICIAL || !lxcImagesClient.supports(distribution.id)) {
                 throw ociFailure
             }
@@ -179,14 +196,13 @@ class RootfsInstaller @Inject constructor(
         }
     }
 
-    private fun replaceRootfs(staging: File, retainBackup: Boolean) {
-        val rootfs = pathManager.rootfsDir
-        val backup = pathManager.rootfsPreviousDir()
+    private fun replaceRootfs(distroId: String, staging: File, retainBackup: Boolean) {
+        val rootfs = pathManager.rootfsDir(distroId)
+        val backup = pathManager.rootfsPreviousDir(distroId)
         SafeFileTree.delete(backup)
         if (rootfs.exists() && !rootfs.renameTo(backup)) error("无法暂存旧 RootFS")
         if (!staging.renameTo(rootfs)) {
             if (!backup.renameTo(rootfs)) {
-                // 恢复失败时旧版本仍保留在 backup，绝不丢数据；日志明确位置便于人工恢复。
                 logger.e("RootFS: 启用新版本失败，且恢复旧版本也失败（旧版本保留在 ${backup.path}）")
                 error("无法启用新 RootFS，且恢复失败（旧版本保留在 ${backup.path}）")
             }
@@ -206,18 +222,18 @@ class RootfsInstaller @Inject constructor(
         }
     }
 
-    private fun markInstalled(version: String) {
-        pathManager.metadataDir.mkdirs()
-        pathManager.rootfsInstalledMarker().writeText("rootfs-version=$version\n")
+    private fun markInstalled(distroId: String, version: String) {
+        pathManager.metadataDir(distroId).mkdirs()
+        pathManager.rootfsInstalledMarker(distroId).writeText("rootfs-version=$version\n")
     }
 
-    private fun recoverInterruptedUpdate() {
-        val backup = pathManager.rootfsPreviousDir()
+    private fun recoverInterruptedUpdate(distroId: String) {
+        val backup = pathManager.rootfsPreviousDir(distroId)
         if (!backup.exists()) {
-            pathManager.rootfsUpdatePendingMarker().delete()
+            pathManager.rootfsUpdatePendingMarker(distroId).delete()
             return
         }
-        val rootfs = pathManager.rootfsDir
+        val rootfs = pathManager.rootfsDir(distroId)
         if (rootfs.exists()) {
             val broken = File(rootfs.parentFile, "rootfs.broken")
             SafeFileTree.delete(broken)
@@ -229,8 +245,8 @@ class RootfsInstaller @Inject constructor(
             runCatching { SafeFileTree.delete(broken) }
         }
         check(backup.renameTo(rootfs)) { "无法恢复上一次未提交的 RootFS 更新（旧版本保留在 ${backup.path}）" }
-        pathManager.rootfsUpdatePendingMarker().delete()
-        logger.w("Recovered previous RootFS after an interrupted update")
+        pathManager.rootfsUpdatePendingMarker(distroId).delete()
+        logger.w("Recovered previous RootFS after an interrupted update for $distroId")
     }
 
     private fun failure(prefix: String, throwable: Throwable): AppResult<File> = AppResult.Failure(

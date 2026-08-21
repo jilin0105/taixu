@@ -38,10 +38,16 @@ sealed interface AppDestination : NavKey
 @Serializable data class WorkspaceExplorerDestination(val projectName: String, val initialPath: String = "") : AppDestination
 @Serializable data class CodeEditorDestination(val projectName: String, val relativePath: String) : AppDestination
 @Serializable data object SettingsDestination : AppDestination
+@Serializable data object AgentEcoSettingsDestination : AppDestination
+@Serializable data object LinuxEnvSettingsDestination : AppDestination
+@Serializable data object AppearanceSettingsDestination : AppDestination
+@Serializable data object SystemDevSettingsDestination : AppDestination
+@Serializable data object AboutCommunityDestination : AppDestination
 @Serializable data object AgentSettingsDestination : AppDestination
 @Serializable data object McpSettingsDestination : AppDestination
 @Serializable data object ToolCenterDestination : AppDestination
 @Serializable data class ToolDetailDestination(val toolId: String) : AppDestination
+@Serializable data object DistroManagementDestination : AppDestination
 @Serializable data object StorageMountSettingsDestination : AppDestination
 @Serializable data object ModelProfilesDestination : AppDestination
 @Serializable data class ModelEditorDestination(val modelId: String? = null) : AppDestination
@@ -133,13 +139,43 @@ fun TaiXuNavHost() {
             entry<SettingsDestination> {
                 SettingsScreen(
                     onNavigate = ::navigateMain,
+                    onOpenAgentEco = { settingsStack.push(AgentEcoSettingsDestination) },
+                    onOpenLinuxEnv = { settingsStack.push(LinuxEnvSettingsDestination) },
+                    onOpenAppearance = { settingsStack.push(AppearanceSettingsDestination) },
+                    onOpenSystemDev = { settingsStack.push(SystemDevSettingsDestination) },
+                    onOpenAboutCommunity = { settingsStack.push(AboutCommunityDestination) },
+                )
+            }
+            entry<AppearanceSettingsDestination> {
+                top.wkbin.taixu.ui.settings.AppearanceSettingsScreen(onBack = ::popBack)
+            }
+            entry<AgentEcoSettingsDestination> {
+                top.wkbin.taixu.ui.settings.AgentEcoSettingsScreen(
+                    onBack = ::popBack,
                     onOpenModelProfiles = { settingsStack.push(ModelProfilesDestination) },
+                    onOpenToolCenter = { settingsStack.push(ToolCenterDestination) },
                     onOpenAgentSettings = { settingsStack.push(AgentSettingsDestination) },
                     onOpenMcpSettings = { settingsStack.push(McpSettingsDestination) },
-                    onOpenToolCenter = { settingsStack.push(ToolCenterDestination) },
+                )
+            }
+            entry<LinuxEnvSettingsDestination> {
+                top.wkbin.taixu.ui.settings.LinuxEnvironmentSettingsScreen(
+                    onBack = ::popBack,
+                    onOpenDistroManagement = { settingsStack.push(DistroManagementDestination) },
                     onOpenStorageMounts = { settingsStack.push(StorageMountSettingsDestination) },
+                )
+            }
+            entry<SystemDevSettingsDestination> {
+                top.wkbin.taixu.ui.settings.SystemDevSettingsScreen(
+                    onBack = ::popBack,
                     onOpenDeveloper = { settingsStack.push(DeveloperDestination) },
                 )
+            }
+            entry<AboutCommunityDestination> {
+                top.wkbin.taixu.ui.settings.AboutCommunityScreen(onBack = ::popBack)
+            }
+            entry<DistroManagementDestination> {
+                top.wkbin.taixu.ui.settings.DistroManagementScreen(onBack = ::popBack)
             }
             entry<AgentSettingsDestination> {
                 AgentSettingsScreen(onBack = ::popBack)

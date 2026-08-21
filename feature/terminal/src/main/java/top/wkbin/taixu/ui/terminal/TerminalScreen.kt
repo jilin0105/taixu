@@ -81,7 +81,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.ui.components.NoticeBanner
 import top.wkbin.taixu.ui.components.RuntimeIcon
@@ -111,13 +111,27 @@ fun TerminalScreen(
     val activeId by viewModel.activeId.collectAsStateWithLifecycle()
     val workspaces by viewModel.workspaces.collectAsStateWithLifecycle()
     val distributionName by viewModel.distributionName.collectAsStateWithLifecycle()
+    val installedDistros by viewModel.installedDistros.collectAsStateWithLifecycle()
+    val configuredFontSize by viewModel.terminalFontSize.collectAsStateWithLifecycle()
+    val colorScheme by viewModel.terminalColorScheme.collectAsStateWithLifecycle()
+    val hapticsEnabled by viewModel.terminalHapticsEnabled.collectAsStateWithLifecycle()
+
     val context = LocalContext.current
     val view = LocalView.current
     val density = LocalDensity.current
 
-    var fontSizeSp by remember { mutableFloatStateOf(13.5f) }
+    var fontSizeSp by remember(configuredFontSize) { mutableFloatStateOf(configuredFontSize.toFloat()) }
     var terminalPxWidth by remember { mutableFloatStateOf(0f) }
     var terminalPxHeight by remember { mutableFloatStateOf(0f) }
+
+    val (termBg, termHeaderBg, termTextDefault, termBorder) = remember(colorScheme) {
+        when (colorScheme) {
+            "matrix" -> listOf(Color(0xFF0A0F0D), Color(0xFF101B14), Color(0xFF10B981), Color(0xFF1A3324))
+            "amber" -> listOf(Color(0xFF140F0A), Color(0xFF1F170F), Color(0xFFF59E0B), Color(0xFF3B2B1B))
+            "aurora" -> listOf(Color(0xFF0D1424), Color(0xFF141F36), Color(0xFF38BDF8), Color(0xFF1E3A5F))
+            else -> listOf(Color(0xFF0F1117), Color(0xFF181A22), Color(0xFFE2E2E9), Color(0xFF282A36))
+        }
+    }
 
     val (terminalCharWidth, terminalLineHeight) = remember(fontSizeSp) {
         val paint = android.graphics.Paint().apply {
@@ -241,16 +255,16 @@ fun TerminalScreen(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
-                color = TermBg,
+                color = termBg,
                 shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, TermBorder),
+                border = BorderStroke(1.dp, termBorder),
             ) {
                 Column {
                     // 终端窗口装饰条
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .background(TermHeaderBg)
+                            .background(termHeaderBg)
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -278,7 +292,7 @@ fun TerminalScreen(
                                     .clickable(onClick = copyScreen)
                                     .padding(horizontal = 6.dp, vertical = 2.dp),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = TermDimText,
+                                color = termTextDefault.copy(alpha = 0.6f),
                             )
                             Text(
                                 "粘贴",
@@ -287,7 +301,7 @@ fun TerminalScreen(
                                     .clickable(onClick = pasteToTerminal)
                                     .padding(horizontal = 6.dp, vertical = 2.dp),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = TermDimText,
+                                color = termTextDefault.copy(alpha = 0.6f),
                             )
                         }
                     }
@@ -304,9 +318,9 @@ fun TerminalScreen(
                     ) {
                         when {
                             error != null -> Text(
-                                "Error: $error",
-                                Modifier.padding(12.dp),
-                                color = Color(0xFFFF3366),
+                                error.orEmpty(),
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(12.dp),
                                 fontFamily = FontFamily.Monospace,
                             )
                             screen.isEmpty() || screen.all { it.cells.isEmpty() } -> Text(
@@ -331,6 +345,9 @@ fun TerminalScreen(
                                         line = line,
                                         showCursor = cursor.visible && index == cursor.row,
                                         cursorColumn = cursor.column,
+                                        fontSizeSp = fontSizeSp,
+                                        termBg = termBg,
+                                        termTextDefault = termTextDefault,
                                     )
                                 }
                             }
@@ -400,23 +417,23 @@ fun TerminalScreen(
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                ExtraKey("ESC", isAccent = true) { viewModel.sendText("\u001B") }
-                ExtraKey("Tab", isAccent = true) { viewModel.sendText("\u0009") }
-                ExtraKey("Ctrl+C", isDanger = true) { viewModel.sendText("\u0003") }
-                ExtraKey("Ctrl+D") { viewModel.sendText("\u0004") }
-                ExtraKey("Ctrl+Z") { viewModel.sendText("\u001A") }
-                ExtraKey("↑") { viewModel.sendText("\u001B[A") }
-                ExtraKey("↓") { viewModel.sendText("\u001B[B") }
-                ExtraKey("←") { viewModel.sendText("\u001B[D") }
-                ExtraKey("→") { viewModel.sendText("\u001B[C") }
-                ExtraKey("|") { viewModel.sendText("|") }
-                ExtraKey("/") { viewModel.sendText("/") }
-                ExtraKey("-") { viewModel.sendText("-") }
-                ExtraKey("~") { viewModel.sendText("~") }
-                ExtraKey("$") { viewModel.sendText("$") }
-                ExtraKey("&&") { viewModel.sendText(" && ") }
-                ExtraKey("cd ..") { viewModel.sendText("cd ..\r") }
-                ExtraKey("Clear") { viewModel.sendText("clear\r") }
+                ExtraKey("ESC", isAccent = true, hapticsEnabled = hapticsEnabled) { viewModel.sendText("\u001B") }
+                ExtraKey("Tab", isAccent = true, hapticsEnabled = hapticsEnabled) { viewModel.sendText("\u0009") }
+                ExtraKey("Ctrl+C", isDanger = true, hapticsEnabled = hapticsEnabled) { viewModel.sendText("\u0003") }
+                ExtraKey("Ctrl+D", hapticsEnabled = hapticsEnabled) { viewModel.sendText("\u0004") }
+                ExtraKey("Ctrl+Z", hapticsEnabled = hapticsEnabled) { viewModel.sendText("\u001A") }
+                ExtraKey("↑", hapticsEnabled = hapticsEnabled) { viewModel.sendText("\u001B[A") }
+                ExtraKey("↓", hapticsEnabled = hapticsEnabled) { viewModel.sendText("\u001B[B") }
+                ExtraKey("←", hapticsEnabled = hapticsEnabled) { viewModel.sendText("\u001B[D") }
+                ExtraKey("→", hapticsEnabled = hapticsEnabled) { viewModel.sendText("\u001B[C") }
+                ExtraKey("|", hapticsEnabled = hapticsEnabled) { viewModel.sendText("|") }
+                ExtraKey("/", hapticsEnabled = hapticsEnabled) { viewModel.sendText("/") }
+                ExtraKey("-", hapticsEnabled = hapticsEnabled) { viewModel.sendText("-") }
+                ExtraKey("~", hapticsEnabled = hapticsEnabled) { viewModel.sendText("~") }
+                ExtraKey("$", hapticsEnabled = hapticsEnabled) { viewModel.sendText("$") }
+                ExtraKey("&&", hapticsEnabled = hapticsEnabled) { viewModel.sendText(" && ") }
+                ExtraKey("cd ..", hapticsEnabled = hapticsEnabled) { viewModel.sendText("cd ..\r") }
+                ExtraKey("Clear", hapticsEnabled = hapticsEnabled) { viewModel.sendText("clear\r") }
             }
 
             error?.let { NoticeBanner(it, isError = true) }
@@ -445,11 +462,12 @@ fun TerminalScreen(
     if (showCreateSession) {
         CreateTerminalDialog(
             workspaces = workspaces,
+            installedDistros = installedDistros,
             nextSessionIndex = handles.size + 1,
             onDismiss = { showCreateSession = false },
-            onCreate = { label, workDir ->
+            onCreate = { label, workDir, distroId ->
                 showCreateSession = false
-                viewModel.createSession(label, workDir)
+                viewModel.createSession(label, workDir, distroId)
             },
         )
     }
@@ -458,12 +476,14 @@ fun TerminalScreen(
 @Composable
 private fun CreateTerminalDialog(
     workspaces: List<top.wkbin.taixu.runtime.WorkspaceProject>,
+    installedDistros: List<top.wkbin.taixu.core.model.InstalledDistro> = emptyList(),
     nextSessionIndex: Int,
     onDismiss: () -> Unit,
-    onCreate: (label: String, workingDirectory: String) -> Unit,
+    onCreate: (label: String, workingDirectory: String, distroId: String?) -> Unit,
 ) {
     var label by remember { mutableStateOf("终端 $nextSessionIndex") }
     var selectedDir by remember { mutableStateOf("/root") }
+    var selectedDistroId by remember { mutableStateOf(installedDistros.firstOrNull { it.isActive }?.id ?: installedDistros.firstOrNull()?.id ?: "ubuntu") }
     val quickLabels = listOf("主终端", "后台构建", "服务调试", "Git运维", "Python环境")
 
     AlertDialog(
@@ -478,9 +498,39 @@ private fun CreateTerminalDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 400.dp),
+                    .heightIn(max = 420.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                if (installedDistros.size > 1) {
+                    Text("目标 Linux 发行版：", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        installedDistros.forEach { d ->
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (selectedDistroId == d.id) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (selectedDistroId == d.id) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f) else Color.Transparent,
+                                ),
+                                modifier = Modifier.clickable { selectedDistroId = d.id },
+                            ) {
+                                Text(
+                                    d.displayName,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (selectedDistroId == d.id) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                )
+                            }
+                        }
+                    }
+                    androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                }
+
                 Text("终端标签名称：", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                 androidx.compose.material3.OutlinedTextField(
                     value = label,
@@ -548,7 +598,7 @@ private fun CreateTerminalDialog(
         },
         confirmButton = {
             androidx.compose.material3.Button(
-                onClick = { onCreate(label.ifBlank { "终端 $nextSessionIndex" }, selectedDir) },
+                onClick = { onCreate(label.ifBlank { "终端 $nextSessionIndex" }, selectedDir, selectedDistroId) },
                 shape = RoundedCornerShape(8.dp),
             ) {
                 Text("创建终端")
@@ -665,6 +715,9 @@ private fun SessionListDialog(
                     items(handles.size) { index ->
                         val handle = handles[index]
                         val active = handle.id == activeId
+                        val distroName = runCatching {
+                            top.wkbin.taixu.runtime.DistributionCatalog.require(handle.distributionId).displayName
+                        }.getOrDefault(handle.distributionId)
                         Surface(
                             shape = RoundedCornerShape(10.dp),
                             color = if (active) Color(0xFF13243B) else Color(0xFF0F1626),
@@ -693,6 +746,17 @@ private fun SessionListDialog(
                                             handle.label,
                                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                                         )
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                            shape = RoundedCornerShape(4.dp),
+                                        ) {
+                                            Text(
+                                                distroName,
+                                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                                color = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                            )
+                                        }
                                         if (active) {
                                             Surface(
                                                 color = Color(0xFF00F0FF).copy(alpha = 0.15f),
@@ -753,6 +817,7 @@ private fun ExtraKey(
     label: String,
     isAccent: Boolean = false,
     isDanger: Boolean = false,
+    hapticsEnabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
@@ -776,7 +841,9 @@ private fun ExtraKey(
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = {
-                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                if (hapticsEnabled) {
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                }
                 onClick()
             }),
         color = bg,
@@ -806,6 +873,9 @@ private fun TerminalLineRow(
     line: TerminalLine,
     showCursor: Boolean,
     cursorColumn: Int,
+    fontSizeSp: Float = 13.5f,
+    termBg: Color = TermBg,
+    termTextDefault: Color = TermTextDefault,
 ) {
     Text(
         text = buildAnnotatedString {
@@ -813,28 +883,33 @@ private fun TerminalLineRow(
                 val isCursor = showCursor && cellIndex == cursorColumn
                 withStyle(
                     SpanStyle(
-                        color = if (isCursor) TermBg else (cell.foreground?.let(::Color) ?: TermTextDefault),
+                        color = if (isCursor) termBg else (cell.foreground?.let(::Color) ?: termTextDefault),
                         background = if (isCursor) Color(0xFF00F0FF) else Color.Unspecified,
                         fontWeight = if (cell.bold) FontWeight.Bold else FontWeight.Normal,
                     ),
-                ) { append(cell.character) }
+                ) {
+                    append(cell.character)
+                }
             }
             if (showCursor && cursorColumn >= line.cells.size) {
                 withStyle(
                     SpanStyle(
-                        color = TermBg,
+                        color = termBg,
                         background = Color(0xFF00F0FF),
                     ),
                 ) { append(" ") }
             }
         },
         fontFamily = FontFamily.Monospace,
-        color = TermTextDefault,
-        style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, lineHeight = 18.sp),
+        color = termTextDefault,
+        style = MaterialTheme.typography.bodySmall.copy(
+            fontSize = fontSizeSp.sp,
+            lineHeight = (fontSizeSp * 1.35f).sp,
+        ),
     )
 }
 
 private fun doShowKeyboard(view: View, context: Context) {
     val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager ?: return
-    imm.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+    imm.showSoftInput(view, 0)
 }

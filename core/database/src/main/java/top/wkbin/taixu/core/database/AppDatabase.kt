@@ -1,11 +1,11 @@
-﻿package top.wkbin.taixu.core.database
+package top.wkbin.taixu.core.database
 
 import androidx.room.Database
 import androidx.room.RoomDatabase
 
 @Database(
     entities = [ToolEntity::class, InstallLogEntity::class, InstallTaskEntity::class, RuntimeEntity::class, RuntimeDependencyRefEntity::class, HarnessMessageEntity::class, HarnessSessionEntity::class, AiModelEntity::class, WorkspaceEntity::class, TerminalSessionEntity::class],
-    version = 14,
+    version = 15,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {

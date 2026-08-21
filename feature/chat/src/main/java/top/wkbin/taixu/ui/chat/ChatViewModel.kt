@@ -22,6 +22,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+import top.wkbin.taixu.ui.terminal.TerminalSessionManager
+
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     private val harnessLoop: HarnessLoop,
@@ -29,7 +31,20 @@ class ChatViewModel @Inject constructor(
     private val aiModelDao: AiModelDao,
     private val workspaceManager: WorkspaceManager,
     private val settingsDataStore: SettingsDataStore,
+    private val linuxRuntime: top.wkbin.taixu.runtime.LinuxRuntime,
+    private val terminalSessionManager: TerminalSessionManager,
 ) : ViewModel() {
+
+    val activeDistroId: StateFlow<String> = linuxRuntime.activeDistroId
+    val installedDistros: StateFlow<List<top.wkbin.taixu.core.model.InstalledDistro>> = linuxRuntime.installedDistros
+
+    fun switchDistro(distroId: String) {
+        viewModelScope.launch {
+            // 先关闭所有旧系统 PTY 会话，再切换发行版
+            terminalSessionManager.closeAllSessions()
+            linuxRuntime.switchActiveDistro(distroId)
+        }
+    }
 
     val messages: StateFlow<List<HarnessMessage>> = harnessLoop.messages
     val running: StateFlow<Boolean> = harnessLoop.running

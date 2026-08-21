@@ -1,6 +1,7 @@
 package top.wkbin.taixu.runtime
 
 import top.wkbin.taixu.core.common.result.AppResult
+import top.wkbin.taixu.core.model.InstalledDistro
 import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.runtime.shell.CommandResult
 import top.wkbin.taixu.runtime.shell.LinuxSession
@@ -13,35 +14,39 @@ import kotlinx.coroutines.flow.StateFlow
 
 interface LinuxRuntime {
     val state: StateFlow<RuntimeState>
+    val activeDistroId: StateFlow<String>
+    val installedDistros: StateFlow<List<InstalledDistro>>
 
     suspend fun initialize(request: RuntimeInstallRequest = RuntimeInstallRequest("ubuntu")): AppResult<Unit>
-
     suspend fun restoreInstalledState(): Boolean
+    suspend fun updateRootfs(distroId: String? = null): AppResult<Unit>
+    suspend fun healthCheck(distroId: String? = null): RuntimeHealth
 
-    suspend fun updateRootfs(): AppResult<Unit>
+    suspend fun switchActiveDistro(distroId: String): AppResult<Unit>
+    suspend fun installDistro(request: RuntimeInstallRequest, onProgress: suspend (DownloadProgress) -> Unit = {}): AppResult<Unit>
+    suspend fun uninstallDistro(distroId: String): AppResult<Unit>
+    fun refreshInstalledDistros()
 
-    suspend fun healthCheck(): RuntimeHealth
-
-    suspend fun execute(command: ShellCommand): CommandResult
-
-    suspend fun startSession(config: SessionConfig = SessionConfig()): LinuxSession
+    suspend fun execute(command: ShellCommand, distroId: String? = null): CommandResult
+    suspend fun startSession(config: SessionConfig = SessionConfig(), distroId: String? = null): LinuxSession
 
     suspend fun startBackground(
         id: String,
         command: ShellCommand,
         toolId: String? = null,
         type: ProcessType = ProcessType.SERVICE,
+        distroId: String? = null,
     ): ManagedProcess
 
     suspend fun stopBackground(id: String): Boolean
     fun listBackground(): List<ManagedProcess>
     suspend fun cleanupDeadBackground(): Int
+    fun observeBackgroundLogs(idOrToolId: String): kotlinx.coroutines.flow.Flow<List<String>> = kotlinx.coroutines.flow.emptyFlow()
+    fun getBackgroundLogs(idOrToolId: String): List<String> = emptyList()
+    fun clearBackgroundLogs(idOrToolId: String) = Unit
 
     suspend fun shutdown()
-
-    fun rootfsPath(): File
-
-    fun rootfsVersion(): String? = null
-
+    fun rootfsPath(distroId: String? = null): File
+    fun rootfsVersion(distroId: String? = null): String? = null
     fun workspacePath(): File
 }

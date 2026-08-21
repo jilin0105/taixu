@@ -12,10 +12,12 @@ import top.wkbin.taixu.runtime.shell.ShellCommand
 import top.wkbin.taixu.runtime.shell.SessionConfig
 import top.wkbin.taixu.runtime.shell.ManagedProcess
 import top.wkbin.taixu.runtime.shell.ProcessType
+import top.wkbin.taixu.core.datastore.SettingsDataStore
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 
 @Singleton
@@ -25,6 +27,7 @@ class OpenClawToolInstaller @Inject constructor(
     private val providerManager: ProviderManager,
     private val remoteScriptRunner: RemoteScriptRunner,
     private val toolCommandLinker: ToolCommandLinker,
+    private val settingsDataStore: SettingsDataStore,
 ) : ToolRuntimeAdapter {
     override val toolId: String = "openclaw"
 
@@ -77,7 +80,7 @@ class OpenClawToolInstaller @Inject constructor(
         }
     }
 
-    override suspend fun launch(): CommandResult = execute("openclaw gateway --allow-unconfigured --host 0.0.0.0")
+    override suspend fun launch(): CommandResult = execute("openclaw gateway --allow-unconfigured --host 0.0.0.0 --port 18789")
 
     override suspend fun verify(): CommandResult = execute("openclaw --version")
 
@@ -87,21 +90,48 @@ class OpenClawToolInstaller @Inject constructor(
         allowSttyResize = false,
     )
 
-    override suspend fun startService(): ManagedProcess = linuxRuntime.startBackground(
-        "openclaw-gateway",
-        ShellCommand(
-            commandLine = "openclaw gateway --allow-unconfigured --host 0.0.0.0",
-            environment = providerManager.environment() + mapOf(
-                "HOST" to "0.0.0.0",
-                "OPENCLAW_HOST" to "0.0.0.0",
-                "OPENCLAW_GATEWAY_HOST" to "0.0.0.0",
-                "OPENCLAW_HOME" to ToolLayout.toolDataDirectory(toolId),
-                "XDG_CONFIG_HOME" to ToolLayout.toolDataDirectory(toolId),
+    override suspend fun startService(): ManagedProcess {
+        val token = runCatching { settingsDataStore.toolAccessToken(toolId).first() }.getOrNull()
+        val tokenEnv = if (!token.isNullOrBlank()) {
+            mapOf(
+                "OPENCLAW_TOKEN" to token,
+                "OPENCLAW_GATEWAY_TOKEN" to token,
+                "TOKEN" to token,
+            )
+        } else emptyMap()
+        val tokenFlag = if (!token.isNullOrBlank()) " --token $token" else ""
+
+        val dataDir = ToolLayout.toolDataDirectory(toolId)
+        val toolDir = ToolLayout.toolDirectory(toolId)
+
+        return linuxRuntime.startBackground(
+            "openclaw-gateway",
+            ShellCommand(
+                commandLine = "mkdir -p $dataDir && " +
+                    "openclaw gateway --allow-unconfigured --host 0.0.0.0 --port 18789$tokenFlag || " +
+                    "openclaw gateway run --allow-unconfigured --host 0.0.0.0 --port 18789$tokenFlag || " +
+                    "openclaw gateway --host 0.0.0.0 --port 18789$tokenFlag || " +
+                    "openclaw gateway --allow-unconfigured --host 0.0.0.0$tokenFlag || " +
+                    "openclaw gateway",
+                environment = providerManager.environment() + mapOf(
+                    "HOST" to "0.0.0.0",
+                    "PORT" to "18789",
+                    "OPENCLAW_PORT" to "18789",
+                    "OPENCLAW_HOST" to "0.0.0.0",
+                    "OPENCLAW_GATEWAY_HOST" to "0.0.0.0",
+                    "OPENCLAW_GATEWAY_PORT" to "18789",
+                    "OPENCLAW_HOME" to dataDir,
+                    "XDG_CONFIG_HOME" to dataDir,
+                    "npm_config_prefix" to toolDir,
+                    "NPM_CONFIG_PREFIX" to toolDir,
+                    "PATH" to "$toolDir/bin:/opt/taixu/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    "NODE_ENV" to "production",
+                ) + tokenEnv,
             ),
-        ),
-        toolId = toolId,
-        type = ProcessType.SERVICE,
-    )
+            toolId = toolId,
+            type = ProcessType.SERVICE,
+        )
+    }
 
     override suspend fun uninstall(deleteData: Boolean): ToolActionResult {
         val dataCleanup = if (deleteData) " && rm -rf ${ToolLayout.toolDataDirectory(toolId)}" else ""

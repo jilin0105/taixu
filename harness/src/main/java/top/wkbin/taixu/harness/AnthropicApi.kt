@@ -42,7 +42,7 @@ internal class AnthropicApi(
         withContext(Dispatchers.IO) {
             val call = okHttpClient.newCall(buildRequest(model, messages, stream = false))
             call.execute().use { response ->
-                val body = response.body?.string().orEmpty()
+                val body = response.body.string()
                 if (!response.isSuccessful) {
                     throw IllegalStateException("Claude 请求失败 HTTP ${response.code}：${extractError(body)}")
                 }
@@ -63,11 +63,10 @@ internal class AnthropicApi(
         try {
             call.execute().use { response ->
                 if (!response.isSuccessful) {
-                    val errorBody = response.body?.string().orEmpty()
+                    val errorBody = response.body.string()
                     throw IllegalStateException("Claude 请求失败 HTTP ${response.code}：${extractError(errorBody)}")
                 }
-                val source = response.body?.source()
-                    ?: throw IllegalStateException("Claude 流式响应无内容")
+                val source = response.body.source()
                 val text = StringBuilder()
                 val reasoningText = StringBuilder()
                 // index -> 工具调用累积器（Claude 以 content block index 标识每个 tool_use）

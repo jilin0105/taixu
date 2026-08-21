@@ -39,6 +39,7 @@ data class ToolDetailUiState(
     val appliedModelId: String? = null,
     val applyingModel: Boolean = false,
     val deviceLanIp: String? = null,
+    val serviceLogs: List<String> = emptyList(),
 ) {
     val isWebService: Boolean get() = manifest?.launchType == "web"
     val servicePort: Int? get() = manifest?.servicePort
@@ -95,6 +96,7 @@ class ToolDetailViewModel @Inject constructor(
         }
     }
 
+    @Suppress("UNCHECKED_CAST")
     val uiState: StateFlow<ToolDetailUiState> = _toolId.flatMapLatest { id ->
         if (id.isBlank()) {
             flowOf(ToolDetailUiState())
@@ -110,8 +112,8 @@ class ToolDetailViewModel @Inject constructor(
                 _appliedModelId,
                 _applyingModel,
                 _deviceLanIp,
+                toolManager.observeServiceLogs(id),
             ) { values ->
-                @Suppress("UNCHECKED_CAST")
                 val tools = values[0] as List<ToolEntity>
                 val autoStart = values[1] as Boolean
                 val token = values[2] as String?
@@ -122,6 +124,7 @@ class ToolDetailViewModel @Inject constructor(
                 val appliedId = values[7] as String?
                 val applying = values[8] as Boolean
                 val lanIp = values[9] as String?
+                val logs = values[10] as List<String>
 
                 val tool = tools.firstOrNull { it.id == id }
                 val manifest = toolManager.manifest(id)
@@ -138,6 +141,7 @@ class ToolDetailViewModel @Inject constructor(
                     appliedModelId = appliedId,
                     applyingModel = applying,
                     deviceLanIp = lanIp,
+                    serviceLogs = logs,
                 )
             }
         }
@@ -269,6 +273,13 @@ class ToolDetailViewModel @Inject constructor(
 
     fun dismissError() {
         _error.value = null
+    }
+
+    fun clearServiceLogs() {
+        val currentId = _toolId.value
+        if (currentId.isNotBlank()) {
+            toolManager.clearServiceLogs(currentId)
+        }
     }
 
     fun verifyTool() {

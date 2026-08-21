@@ -85,6 +85,34 @@ class EnvironmentDoctorTest {
     }
 
     @Test
+    fun reportsWarningWhenUbuntuUsesNonPortsX86Mirror() = runBlocking {
+        val runtime = FakeLinuxRuntime()
+        runtime.state.value = RuntimeState.Ready
+
+        runtime.commandResults["mkdir -p /workspace /tmp && touch /workspace/.doctor_probe && rm -f /workspace/.doctor_probe"] =
+            CommandResult(0, "", "", 1)
+        runtime.commandResults["cat /etc/resolv.conf 2>/dev/null"] =
+            CommandResult(0, "nameserver 114.114.114.114\n", "", 1)
+        runtime.commandResults["test -f /etc/ssl/certs/ca-certificates.crt || test -d /etc/ssl/certs"] =
+            CommandResult(0, "", "", 1)
+        // 错误的 x86 镜像（未带 -ports）
+        runtime.commandResults["cat /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true"] =
+            CommandResult(0, "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu noble main restricted", "", 1)
+        runtime.commandResults["for t in curl git tar xz; do which \$t >/dev/null 2>&1 || echo \$t; done"] =
+            CommandResult(0, "", "", 1)
+        runtime.commandResults["node --version 2>/dev/null || /opt/taixu/bin/node --version 2>/dev/null || /usr/bin/node --version 2>/dev/null"] =
+            CommandResult(0, "v22.22.3\n", "", 1)
+
+        val doctor = EnvironmentDoctor(runtime)
+        val report = doctor.check()
+
+        assertEquals(DoctorStatus.WARNING, report.overallStatus)
+        val aptItem = report.items.first { it.id == "apt_mirrors" }
+        assertEquals(DoctorStatus.WARNING, aptItem.status)
+        assertTrue(aptItem.summary.contains("ubuntu-ports"))
+    }
+
+    @Test
     fun environmentRepairerEmitsAllProgressStepsToCompletion() = runBlocking {
         val runtime = FakeLinuxRuntime()
         runtime.state.value = RuntimeState.Ready

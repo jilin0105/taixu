@@ -196,12 +196,17 @@ class HarnessLoop @Inject constructor(
         _workspace.value = sessionEntity?.workspace.orEmpty()
 
         val liveFlow = _sessionLiveMessages.getOrPut(id) {
-            val history = messageDao.listForSession(id)
-                .mapNotNull { entity ->
-                    runCatching {
-                        json.decodeFromString(HarnessMessage.serializer(), entity.payloadJson)
-                    }.getOrNull()
-                }
+            val history = try {
+                messageDao.listForSession(id)
+                    .mapNotNull { entity ->
+                        runCatching {
+                            json.decodeFromString(HarnessMessage.serializer(), entity.payloadJson)
+                        }.getOrNull()
+                    }
+            } catch (throwable: Throwable) {
+                logger.e("Failed to load history for session $id: ${throwable.message}", throwable)
+                emptyList()
+            }
             MutableStateFlow(history)
         }
 
@@ -849,7 +854,6 @@ class HarnessLoop @Inject constructor(
                     val reasoning = when (message) {
                         is AssistantText -> message.reasoning
                         is ToolCall -> message.reasoning
-                        else -> null
                     }
                     val toolCalls = mutableListOf<ApiToolCall>()
                     if (message is ToolCall) toolCalls.add(apiToolCall(message))
@@ -902,21 +906,61 @@ class HarnessLoop @Inject constructor(
         return "【历史执行结果·状态:" + (if (success) "成功" else "失败") + "】\n" + summary
     }
 
+    private fun sanitizeForStorage(message: HarnessMessage): HarnessMessage = when (message) {
+        is ToolResult -> {
+            if (message.output.length > MAX_STORAGE_STRING_LENGTH) {
+                val head = message.output.take(STORAGE_KEEP_LENGTH)
+                val tail = message.output.takeLast(STORAGE_KEEP_LENGTH)
+                message.copy(
+                    output = "$head\n\n... [工具输出过长（共 ${message.output.length} 字符），已截断保存] ...\n\n$tail",
+                )
+            } else {
+                message
+            }
+        }
+        is AssistantText -> {
+            val text = if (message.text.length > MAX_STORAGE_STRING_LENGTH) {
+                message.text.take(MAX_STORAGE_STRING_LENGTH) + "\n... [文本过长已截断]"
+            } else {
+                message.text
+            }
+            val reasoning = if ((message.reasoning?.length ?: 0) > MAX_STORAGE_STRING_LENGTH) {
+                message.reasoning?.take(MAX_STORAGE_STRING_LENGTH) + "\n... [推理过程过长已截断]"
+            } else {
+                message.reasoning
+            }
+            message.copy(text = text, reasoning = reasoning)
+        }
+        is UserMessage -> {
+            if (message.text.length > MAX_STORAGE_STRING_LENGTH) {
+                message.copy(text = message.text.take(MAX_STORAGE_STRING_LENGTH) + "\n... [用户消息过长已截断]")
+            } else {
+                message
+            }
+        }
+        is ToolCall -> message
+    }
+
     private suspend fun append(sessId: String, message: HarnessMessage) {
         val liveFlow = getOrCreateLiveMessages(sessId)
         liveFlow.value = liveFlow.value + message
         if (sessId == _currentSessionId.value) {
             _messages.value = liveFlow.value
         }
-        messageDao.insert(
-            HarnessMessageEntity(
-                id = message.id,
-                sessionId = sessId,
-                createdAt = message.createdAt,
-                type = message::class.simpleName.orEmpty(),
-                payloadJson = json.encodeToString(HarnessMessage.serializer(), message),
-            ),
-        )
+        val safeMessage = sanitizeForStorage(message)
+        runCatching {
+            messageDao.insert(
+                HarnessMessageEntity(
+                    id = safeMessage.id,
+                    sessionId = sessId,
+                    createdAt = safeMessage.createdAt,
+                    type = safeMessage::class.simpleName.orEmpty(),
+                    payloadJson = json.encodeToString(HarnessMessage.serializer(), safeMessage),
+                ),
+            )
+        }.onFailure { throwable ->
+            logger.e("Failed to insert message into DB for session $sessId: ${throwable.message}", throwable)
+        }
     }
 
     private fun streamAssistant(sessId: String, id: String, createdAt: Long, text: String) {
@@ -974,15 +1018,20 @@ class HarnessLoop @Inject constructor(
         if (sessId == _currentSessionId.value) {
             _messages.value = updated
         }
-        messageDao.insert(
-            HarnessMessageEntity(
-                id = id,
-                sessionId = sessId,
-                createdAt = createdAt,
-                type = message::class.simpleName.orEmpty(),
-                payloadJson = json.encodeToString(HarnessMessage.serializer(), message),
-            ),
-        )
+        val safeMessage = sanitizeForStorage(message)
+        runCatching {
+            messageDao.insert(
+                HarnessMessageEntity(
+                    id = id,
+                    sessionId = sessId,
+                    createdAt = createdAt,
+                    type = safeMessage::class.simpleName.orEmpty(),
+                    payloadJson = json.encodeToString(HarnessMessage.serializer(), safeMessage),
+                ),
+            )
+        }.onFailure { throwable ->
+            logger.e("Failed to persist assistant message to DB: ${throwable.message}", throwable)
+        }
     }
 
     private suspend fun touchSession(sessId: String) {
@@ -1016,6 +1065,8 @@ class HarnessLoop @Inject constructor(
         const val MAX_STREAM_RETRIES = 5
         const val RETRY_BACKOFF_MS = 1_000L
         const val MAX_STATUS_ARG_LENGTH = 60
+        const val MAX_STORAGE_STRING_LENGTH = 128 * 1024
+        const val STORAGE_KEEP_LENGTH = 60 * 1024
 
         val FALLBACK_SYSTEM_PROMPT = """
             你是太墟（TaiXu）内置的 Agent Harness——一个运行在 Android 私有 Linux 沙箱（Debian via PRoot）中的 AI 助手。你通过调用工具完成任务：读写用户工作区的文件、在 Linux 环境执行命令、安装软件、排查问题。

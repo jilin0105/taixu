@@ -1,11 +1,11 @@
 package top.wkbin.taixu.core.tools
 
+import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -16,6 +16,7 @@ import javax.inject.Singleton
  * 插件与工具安装系统通知栏控制器
  * 实时同步并发安装进度、完成与失败状态到 Android 系统通知栏。
  */
+@SuppressLint("MissingPermission")
 @Singleton
 class ToolNotificationNotifier @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -28,18 +29,16 @@ class ToolNotificationNotifier @Inject constructor(
     }
 
     private fun createChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId,
-                "插件与工具安装进度",
-                NotificationManager.IMPORTANCE_LOW,
-            ).apply {
-                description = "展示太墟 PRoot 沙箱内 AI 工具与插件的安装与更新进度"
-                setShowBadge(false)
-            }
-            val systemManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-            systemManager?.createNotificationChannel(channel)
+        val channel = NotificationChannel(
+            channelId,
+            "插件与工具安装进度",
+            NotificationManager.IMPORTANCE_LOW,
+        ).apply {
+            description = "展示太墟 PRoot 沙箱内 AI 工具与插件的安装与更新进度"
+            setShowBadge(false)
         }
+        val systemManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        systemManager?.createNotificationChannel(channel)
     }
 
     fun showProgress(toolId: String, toolName: String, message: String, progress: Float?) {

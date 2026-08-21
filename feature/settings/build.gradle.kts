@@ -40,6 +40,7 @@ dependencies {
     implementation(project(":feature:components"))
     implementation(project(":core:datastore"))
     implementation(project(":core:database"))
+    implementation(project(":core:network"))
     implementation(project(":runtime"))
     implementation(project(":tools"))
     implementation(project(":harness"))

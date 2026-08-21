@@ -31,7 +31,7 @@ internal class ChatApi(
     suspend fun chat(model: ModelConfig, messages: List<ApiMessage>): ChatResult =
         withContext(Dispatchers.IO) {
             okHttpClient.newCall(buildRequest(model, messages, stream = false)).execute().use { response ->
-                val body = response.body?.string().orEmpty()
+                val body = response.body.string()
                 if (!response.isSuccessful) {
                     throw IllegalStateException(ProviderClient.formatHttpErrorMessage(response.code, body))
                 }
@@ -69,11 +69,10 @@ internal class ChatApi(
         try {
             call.execute().use { response ->
                 if (!response.isSuccessful) {
-                    val rawBody = response.body?.string().orEmpty().take(512)
+                    val rawBody = response.body.string().take(512)
                     throw IllegalStateException(ProviderClient.formatHttpErrorMessage(response.code, rawBody))
                 }
-                val source = response.body?.source()
-                    ?: throw IllegalStateException("LLM 流式响应无内容")
+                val source = response.body.source()
                 val text = StringBuilder()
                 // 推理模型的 thinking 内容（如 DeepSeek-R1 的 reasoning_content），后续轮次需原样传回
                 val reasoningText = StringBuilder()

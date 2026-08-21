@@ -72,7 +72,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import top.wkbin.taixu.core.database.AiModelEntity
@@ -122,6 +122,8 @@ fun ChatScreen(
     val pendingMessages by viewModel.pendingMessages.collectAsStateWithLifecycle()
     val currentSessionId by viewModel.currentSessionId.collectAsStateWithLifecycle()
     val sessionRunStates by viewModel.sessionRunStates.collectAsStateWithLifecycle()
+    val activeDistroId by viewModel.activeDistroId.collectAsStateWithLifecycle()
+    val installedDistros by viewModel.installedDistros.collectAsStateWithLifecycle()
 
     var showSessions by remember { mutableStateOf(false) }
     var showNewSession by remember { mutableStateOf(false) }
@@ -132,6 +134,10 @@ fun ChatScreen(
     val context = LocalContext.current
 
     val activeModel = remember(models) { models.firstOrNull { it.isActive } }
+    val distroDisplayName = remember(activeDistroId) {
+        runCatching { top.wkbin.taixu.runtime.DistributionCatalog.require(activeDistroId).displayName }
+            .getOrDefault(activeDistroId)
+    }
 
     val toolResults = remember(messages) {
         messages.filterIsInstance<ToolResult>().associateBy { it.toolCallId }
@@ -181,7 +187,7 @@ fun ChatScreen(
         topBar = {
             RuntimeTopBar(
                 title = "智枢",
-                statusText = if (workspace.isNotBlank()) workspace else "独立沙箱会话",
+                statusText = "${if (workspace.isNotBlank()) workspace else "默认工作区"} · $distroDisplayName",
             ) {
                 // 模型快速切换胶囊
                 Surface(
@@ -611,98 +617,130 @@ private fun ChatPaneContent(
             onRemove = { att -> attachments = attachments.filter { it.id != att.id } },
         )
 
-        Row(
-            Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        // 现代化一体化输入胶囊 (Unified Chat Input Capsule)
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp, bottom = 8.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            border = androidx.compose.foundation.BorderStroke(
+                1.dp,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+            ),
         ) {
-            // 🖼️ 选择相册图片
-            IconButton(
-                onClick = { imagePickerLauncher.launch("image/*") },
+            Row(
                 modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                RuntimeIcon(
-                    name = RuntimeIconName.Image,
-                    modifier = Modifier.size(20.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            }
-
-            // 📎 选择文件附件
-            IconButton(
-                onClick = { filePickerLauncher.launch("*/*") },
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-            ) {
-                RuntimeIcon(
-                    name = RuntimeIconName.Attach,
-                    modifier = Modifier.size(20.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            }
-
-            OutlinedTextField(
-                value = input,
-                onValueChange = onInputChanged,
-                modifier = Modifier.weight(1f),
-                placeholder = {
-                    Text(
-                        if (running) "正在执行… 输入内容可排队"
-                        else "输入指令… 支持附带图片与文件",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                // 🖼️ 选择相册图片（无边框内嵌轻量图标）
+                IconButton(
+                    onClick = { imagePickerLauncher.launch("image/*") },
+                    modifier = Modifier.size(36.dp),
+                ) {
+                    RuntimeIcon(
+                        name = RuntimeIconName.Image,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                },
-                minLines = 1,
-                maxLines = 4,
-                shape = RoundedCornerShape(14.dp),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { doSend() }),
-                textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
-            )
-            if (running) {
-                // 运行中：输入非空或有附件时提供"排队发送"，同时保留"停止"
-                if (input.isNotBlank() || attachments.isNotEmpty()) {
-                    Button(
-                        onClick = doSend,
-                        modifier = Modifier.size(44.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(0.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                        ),
-                    ) {
-                        RuntimeIcon(RuntimeIconName.Plus, Modifier.size(20.dp), MaterialTheme.colorScheme.onSecondaryContainer)
+                }
+
+                // 📎 选择文件附件（无边框内嵌轻量图标）
+                IconButton(
+                    onClick = { filePickerLauncher.launch("*/*") },
+                    modifier = Modifier.size(36.dp),
+                ) {
+                    RuntimeIcon(
+                        name = RuntimeIconName.Attach,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                // 📝 中间无边框弹性输入框
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 4.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    if (input.isEmpty()) {
+                        Text(
+                            text = if (running) "正在执行… 输入可排队" else "输入指令… 支持附带图片与文件",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        )
                     }
+                    androidx.compose.foundation.text.BasicTextField(
+                        value = input,
+                        onValueChange = onInputChanged,
+                        modifier = Modifier.fillMaxWidth(),
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+                        minLines = 1,
+                        maxLines = 5,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = { doSend() }),
+                    )
                 }
-                Button(
-                    onClick = onStop,
-                    modifier = Modifier.size(44.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(0.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                ) {
-                    RuntimeIcon(RuntimeIconName.Stop, Modifier.size(20.dp), Color.White)
-                }
-            } else {
-                Button(
-                    onClick = doSend,
-                    enabled = input.isNotBlank() || attachments.isNotEmpty(),
-                    modifier = Modifier.size(44.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(0.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary,
-                    ),
-                ) {
-                    RuntimeIcon(RuntimeIconName.ArrowUp, Modifier.size(20.dp), MaterialTheme.colorScheme.onPrimary)
+
+                // 🚀 右侧发送 / 排队 / 停止按钮
+                val canSend = input.isNotBlank() || attachments.isNotEmpty()
+                if (running) {
+                    if (canSend) {
+                        IconButton(
+                            onClick = doSend,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.secondaryContainer),
+                        ) {
+                            RuntimeIcon(
+                                RuntimeIconName.Plus,
+                                Modifier.size(18.dp),
+                                MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = onStop,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.error),
+                    ) {
+                        RuntimeIcon(
+                            RuntimeIconName.Stop,
+                            Modifier.size(18.dp),
+                            Color.White,
+                        )
+                    }
+                } else {
+                    IconButton(
+                        onClick = doSend,
+                        enabled = canSend,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (canSend) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                            ),
+                    ) {
+                        RuntimeIcon(
+                            name = RuntimeIconName.ArrowUp,
+                            modifier = Modifier.size(18.dp),
+                            tint = if (canSend) MaterialTheme.colorScheme.onPrimary
+                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                        )
+                    }
                 }
             }
         }

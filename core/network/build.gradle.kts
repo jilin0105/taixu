@@ -1,4 +1,4 @@
-﻿plugins {
+plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
@@ -20,6 +20,8 @@ kotlin {
 }
 
 dependencies {
+    implementation(project(":core:model"))
+    implementation(libs.kotlinx.serialization.json.jvm)
     implementation(libs.okhttp)
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.okhttp)

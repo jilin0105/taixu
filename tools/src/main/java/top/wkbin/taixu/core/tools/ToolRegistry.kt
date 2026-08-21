@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.core.tools
+package top.wkbin.taixu.core.tools
 
 import android.content.Context
 import android.util.Base64
@@ -111,7 +111,7 @@ class ToolRegistry @Inject constructor(
                 throw RegistrySecurityException("工具清单请求被重定向到非 HTTPS 地址")
             }
             check(it.isSuccessful) { "HTTP ${it.code}" }
-            val body = it.body ?: error("服务器返回空内容")
+            val body = it.body
             check(body.contentLength() <= MAX_REGISTRY_BYTES) { "工具清单超过大小限制" }
             val output = ByteArrayOutputStream(minOf(body.contentLength().coerceAtLeast(0), MAX_REGISTRY_BYTES).toInt())
             body.byteStream().use { input ->

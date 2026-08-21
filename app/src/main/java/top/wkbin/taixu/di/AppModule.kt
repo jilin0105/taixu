@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.di
+package top.wkbin.taixu.di
 
 import android.content.Context
 import androidx.room.Room
@@ -61,7 +61,8 @@ object AppModule {
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase {
         migrateLegacyDatabaseName(context)
         return Room.databaseBuilder(context, AppDatabase::class.java, "taixu.db")
-            .addMigrations(MIGRATION_13_14)
+            .addMigrations(MIGRATION_13_14, MIGRATION_14_15)
+            .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
     }
 
@@ -71,6 +72,13 @@ object AppModule {
             db.execSQL("ALTER TABLE harness_models ADD COLUMN temperature REAL DEFAULT NULL")
             db.execSQL("ALTER TABLE harness_models ADD COLUMN maxTokens INTEGER DEFAULT NULL")
             db.execSQL("ALTER TABLE harness_models ADD COLUMN topP REAL DEFAULT NULL")
+        }
+    }
+
+    /** v14 → v15：终端会话表新增所属发行版列（distributionId），默认归属 ubuntu。 */
+    private val MIGRATION_14_15 = object : Migration(14, 15) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE terminal_sessions ADD COLUMN distributionId TEXT NOT NULL DEFAULT 'ubuntu'")
         }
     }
 

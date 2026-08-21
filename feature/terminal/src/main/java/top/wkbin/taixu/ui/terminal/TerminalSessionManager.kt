@@ -24,6 +24,7 @@ class TerminalSessionHandle internal constructor(
     val id: String,
     val label: String,
     val workingDirectory: String,
+    val distributionId: String = "ubuntu",
     internal val session: LinuxSession,
     internal val buffer: AnsiTerminalBuffer,
 ) {
@@ -43,7 +44,7 @@ class TerminalSessionHandle internal constructor(
  * 多会话终端管理器（单例，跨页面存活）。
  *
  * 每个会话 = 一个真 PTY（NativePtySession）+ 独立 AnsiTerminalBuffer。
- * 会话元数据（标签/工作目录/顺序）持久化到 Room，App 重启后重建同名会话壳；
+ * 会话元数据（标签/工作目录/顺序/发行版）持久化到 Room，App 重启后重建同名会话壳；
  * 切换会话时原会话继续在后台运行（命令不中断）。
  */
 @Singleton
@@ -80,6 +81,7 @@ class TerminalSessionManager @Inject constructor(
                         id = row.id,
                         label = row.label,
                         workingDirectory = row.workingDirectory,
+                        distributionId = row.distributionId,
                     )
                 }
                 _activeId.value = _handles.value.firstOrNull()?.id ?: _activeId.value
@@ -95,15 +97,19 @@ class TerminalSessionManager @Inject constructor(
     suspend fun createSession(
         label: String = "会话 ${_handles.value.size + 1}",
         workingDirectory: String = DEFAULT_CWD,
+        distributionId: String? = null,
         id: String = UUID.randomUUID().toString(),
     ): TerminalSessionHandle {
+        val targetDistro = distributionId?.trim()?.takeIf { it.isNotBlank() } ?: linuxRuntime.activeDistroId.value
         val session = linuxRuntime.startSession(
-            SessionConfig(workingDirectory = workingDirectory),
+            config = SessionConfig(workingDirectory = workingDirectory),
+            distroId = targetDistro,
         )
         val handle = TerminalSessionHandle(
             id = id,
             label = label,
             workingDirectory = workingDirectory,
+            distributionId = targetDistro,
             session = session,
             buffer = AnsiTerminalBuffer(),
         )
@@ -112,6 +118,7 @@ class TerminalSessionManager @Inject constructor(
                 id = id,
                 label = label,
                 workingDirectory = workingDirectory,
+                distributionId = targetDistro,
                 createdAt = System.currentTimeMillis(),
                 sortOrder = terminalSessionDao.nextOrder(),
             ),
@@ -132,7 +139,7 @@ class TerminalSessionManager @Inject constructor(
      * 1. 若已有该工作目录的会话，直接切换为活动会话；
      * 2. 若没有，创建以项目名称命名且处于该工作目录的新会话，并切换为活动。
      */
-    suspend fun openOrSwitchToProject(project: String, workingDirectory: String): TerminalSessionHandle {
+    suspend fun openOrSwitchToProject(project: String, workingDirectory: String, distributionId: String? = null): TerminalSessionHandle {
         ensureActive()
         val existing = _handles.value.firstOrNull { it.workingDirectory == workingDirectory }
         if (existing != null) {
@@ -142,6 +149,7 @@ class TerminalSessionManager @Inject constructor(
         val handle = createSession(
             label = project.ifBlank { "工作区" },
             workingDirectory = workingDirectory,
+            distributionId = distributionId,
         )
         _activeId.value = handle.id
         return handle
@@ -166,6 +174,22 @@ class TerminalSessionManager @Inject constructor(
         } else if (_activeId.value == id) {
             _activeId.value = remaining.lastOrNull()?.id ?: remaining.firstOrNull()?.id
         }
+    }
+
+    /**
+     * 关闭并销毁所有终端会话，清空 Room 记录与内存状态。
+     * 切换发行版前必须调用，防止旧系统 PTY 与新系统 Buffer 并发冲突。
+     * 调用后调用方应在新发行版就绪后再调用 [ensureActive] 重建默认会话。
+     */
+    suspend fun closeAllSessions() {
+        val snapshot = _handles.value.toList()
+        snapshot.forEach { handle ->
+            runCatching { handle.session.close() }
+        }
+        terminalSessionDao.deleteAll()
+        _handles.value = emptyList()
+        _activeId.value = null
+        restoredOnce = false   // 下次 ensureActive 可重新从 Room 恢复（此时 Room 已空，会新建）
     }
 
     fun write(id: String, data: ByteArray) {

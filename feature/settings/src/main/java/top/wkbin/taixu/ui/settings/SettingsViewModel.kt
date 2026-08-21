@@ -31,7 +31,126 @@ class SettingsViewModel @Inject constructor(
     private val connectionTester: AgentModelConnectionTester,
     private val privilegeManager: PrivilegeManager,
     private val mcpManager: top.wkbin.taixu.harness.mcp.McpManager,
+    private val linuxRuntime: top.wkbin.taixu.runtime.LinuxRuntime,
+    private val appUpdateManager: top.wkbin.taixu.core.network.AppUpdateManager,
 ) : ViewModel() {
+
+    val installedDistros = linuxRuntime.installedDistros
+    val activeDistroId = linuxRuntime.activeDistroId
+    val runtimeState = linuxRuntime.state
+
+    // ---- 终端外观与显示定制 ----
+    val terminalFontSize: StateFlow<Int> = settingsDataStore.terminalFontSize
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 13)
+
+    val terminalColorScheme: StateFlow<String> = settingsDataStore.terminalColorScheme
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "obsidian")
+
+    val terminalHapticsEnabled: StateFlow<Boolean> = settingsDataStore.terminalHapticsEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    val appFontScale: StateFlow<Float> = settingsDataStore.appFontScale
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 1.0f)
+
+    fun setTerminalFontSize(sizeSp: Int) {
+        viewModelScope.launch { settingsDataStore.setTerminalFontSize(sizeSp) }
+    }
+
+    fun setTerminalColorScheme(scheme: String) {
+        viewModelScope.launch { settingsDataStore.setTerminalColorScheme(scheme) }
+    }
+
+    fun setTerminalHapticsEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsDataStore.setTerminalHapticsEnabled(enabled) }
+    }
+
+    fun setAppFontScale(scale: Float) {
+        viewModelScope.launch { settingsDataStore.setAppFontScale(scale) }
+    }
+
+    // ---- 应用版本更新机制 ----
+    val autoCheckUpdates: StateFlow<Boolean> = settingsDataStore.autoCheckUpdates
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    private val _updateCheckState = MutableStateFlow<top.wkbin.taixu.core.model.UpdateCheckState>(top.wkbin.taixu.core.model.UpdateCheckState.Idle)
+    val updateCheckState: StateFlow<top.wkbin.taixu.core.model.UpdateCheckState> = _updateCheckState.asStateFlow()
+
+    private val _downloadProgress = MutableStateFlow<Float?>(null)
+    val downloadProgress: StateFlow<Float?> = _downloadProgress.asStateFlow()
+
+    private val _isDownloading = MutableStateFlow(false)
+    val isDownloading: StateFlow<Boolean> = _isDownloading.asStateFlow()
+
+    fun setAutoCheckUpdates(enabled: Boolean) {
+        viewModelScope.launch { settingsDataStore.setAutoCheckUpdates(enabled) }
+    }
+
+    fun checkForUpdates(currentVersion: String = "0.1.0") {
+        viewModelScope.launch {
+            _updateCheckState.value = top.wkbin.taixu.core.model.UpdateCheckState.Checking
+            val res = appUpdateManager.checkUpdate(currentVersion)
+            res.onSuccess { info ->
+                _updateCheckState.value = top.wkbin.taixu.core.model.UpdateCheckState.Success(info)
+            }.onFailure { err ->
+                _updateCheckState.value = top.wkbin.taixu.core.model.UpdateCheckState.Error(err.message ?: "检查更新失败，请检查网络")
+            }
+        }
+    }
+
+    fun downloadAndInstall(apkUrl: String) {
+        viewModelScope.launch {
+            _isDownloading.value = true
+            _downloadProgress.value = 0f
+            val res = appUpdateManager.downloadApk(apkUrl) { downloaded, total ->
+                if (total != null && total > 0) {
+                    _downloadProgress.value = downloaded.toFloat() / total.toFloat()
+                } else {
+                    _downloadProgress.value = null
+                }
+            }
+            _isDownloading.value = false
+            res.onSuccess { apkFile ->
+                _downloadProgress.value = 1f
+                appUpdateManager.installApk(apkFile)
+            }.onFailure { err ->
+                _downloadProgress.value = null
+                _updateCheckState.value = top.wkbin.taixu.core.model.UpdateCheckState.Error("下载更新包失败：${err.message}")
+            }
+        }
+    }
+
+    fun clearUpdateState() {
+        _updateCheckState.value = top.wkbin.taixu.core.model.UpdateCheckState.Idle
+        _downloadProgress.value = null
+        _isDownloading.value = false
+    }
+
+    fun switchActiveDistro(distroId: String) {
+        viewModelScope.launch {
+            linuxRuntime.switchActiveDistro(distroId)
+        }
+    }
+
+    fun installDistro(
+        request: top.wkbin.taixu.runtime.RuntimeInstallRequest,
+        onProgress: suspend (top.wkbin.taixu.runtime.DownloadProgress) -> Unit,
+        onResult: (Boolean, String) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val res = linuxRuntime.installDistro(request, onProgress)
+            if (res is top.wkbin.taixu.core.common.result.AppResult.Success) {
+                onResult(true, "安装成功")
+            } else {
+                onResult(false, res.errorOrNull()?.message ?: "安装失败")
+            }
+        }
+    }
+
+    fun uninstallDistro(distroId: String) {
+        viewModelScope.launch {
+            linuxRuntime.uninstallDistro(distroId)
+        }
+    }
 
     val mcpServers: StateFlow<List<top.wkbin.taixu.core.model.McpServerConfig>> = settingsDataStore.mcpServers
         .stateIn(viewModelScope, SharingStarted.Eagerly, top.wkbin.taixu.core.model.BuiltinMcpPresets.presets)

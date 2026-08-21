@@ -118,9 +118,9 @@ class ToolExecutor @Inject constructor(
         return result.isSuccess to body
     }
 
-    private fun AppResult<out Any>.toToolOutput(successMessage: String = ""): Pair<Boolean, String> = when (this) {
+    private fun AppResult<Any>.toToolOutput(successMessage: String = ""): Pair<Boolean, String> = when (this) {
         is AppResult.Success -> true to successMessage.ifBlank { data.toString() }
-        is AppResult.Failure -> false to (error.message ?: "操作失败")
+        is AppResult.Failure -> false to error.message
     }
 
     private fun requireString(args: JsonObject, key: String): String {

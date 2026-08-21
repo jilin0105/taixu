@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.runtime
+package top.wkbin.taixu.runtime
 
 import android.content.Context
 import top.wkbin.taixu.core.common.files.SafeFileTree
@@ -22,9 +22,20 @@ class RuntimePathManager @Inject constructor(
     val baseDir: File = File(appFilesDir, "linux-runtime")
     val binDir: File = File(baseDir, "bin")
     val prootFile: File = File(binDir, "proot")
-    val rootfsDir: File = File(baseDir, "rootfs")
+    val distrosDir: File = File(baseDir, "distros")
+    val legacyRootfsDir: File = File(baseDir, "rootfs")
+    val rootfsDir: File get() {
+        val installed = listInstalledDistroIds().firstOrNull() ?: "ubuntu"
+        val target = rootfsDir(installed)
+        return if (target.exists()) target else legacyRootfsDir
+    }
     val stagingRootfsDir: File = File(baseDir, "rootfs.staging")
-    val homeDir: File = File(baseDir, "home")
+    val legacyHomeDir: File = File(baseDir, "home")
+    val homeDir: File get() {
+        val installed = listInstalledDistroIds().firstOrNull() ?: "ubuntu"
+        val target = homeDir(installed)
+        return if (target.exists()) target else legacyHomeDir
+    }
     val optDir: File = File(baseDir, "opt")
     val workspaceDir: File = File(baseDir, "workspace")
     val cacheDir: File = File(baseDir, "cache")
@@ -40,6 +51,43 @@ class RuntimePathManager @Inject constructor(
         "libandroid-shmem.so" to "libandroid-shmem.so",
     )
 
+    // ==================== 多系统发行版路径解析 ====================
+
+    fun distroDir(distroId: String): File = File(distrosDir, distroId.lowercase().trim())
+    fun rootfsDir(distroId: String): File = File(distroDir(distroId), "rootfs")
+    fun homeDir(distroId: String): File = File(distroDir(distroId), "home")
+    fun metadataDir(distroId: String): File = File(distroDir(distroId), "metadata")
+    fun stagingRootfsDir(distroId: String): File = File(distroDir(distroId), "rootfs.staging")
+    fun rootfsPreviousDir(distroId: String): File = File(distroDir(distroId), "rootfs.previous")
+    fun rootfsInstalledMarker(distroId: String): File = File(metadataDir(distroId), "rootfs.installed")
+    fun rootfsUpdatePendingMarker(distroId: String): File = File(metadataDir(distroId), "rootfs.update.pending")
+
+    fun isDistroInstalled(distroId: String): Boolean =
+        rootfsInstalledMarker(distroId).isFile && rootfsValidator.isValid(rootfsDir(distroId))
+
+    fun listInstalledDistroIds(): List<String> {
+        if (!distrosDir.exists()) return emptyList()
+        return distrosDir.listFiles()
+            .orEmpty()
+            .filter { it.isDirectory && isDistroInstalled(it.name) }
+            .map { it.name }
+    }
+
+    fun rootfsVersion(distroId: String): String? = rootfsInstalledMarker(distroId)
+        .takeIf { it.isFile }
+        ?.useLines { lines ->
+            lines.firstOrNull()?.substringAfter("rootfs-version=", "")?.trim()
+        }
+        ?.takeIf { it.isNotBlank() }
+
+    fun distroSizeBytes(distroId: String): Long {
+        val dir = distroDir(distroId)
+        if (!dir.exists()) return 0L
+        return runCatching {
+            dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        }.getOrDefault(0L)
+    }
+
     /**
      * Android 10+ blocks execve() from writable app data for apps targeting API 29+.
      * The small Android-native PRoot fallback is therefore shipped as an extracted
@@ -51,8 +99,7 @@ class RuntimePathManager @Inject constructor(
         listOf(
             baseDir,
             binDir,
-            rootfsDir,
-            homeDir,
+            distrosDir,
             optDir,
             taixuRootDir,
             taixuRuntimesDir,
@@ -64,7 +111,6 @@ class RuntimePathManager @Inject constructor(
             tmpDir,
             logsDir,
             metadataDir,
-            File(rootfsDir, ".l2s"),
         ).forEach { it.mkdirs() }
     }
 
@@ -76,14 +122,46 @@ class RuntimePathManager @Inject constructor(
             .forEach { it.delete() }
     }
 
-    /** Move legacy in-rootfs user data to the persistent app-private bind mounts once. */
-    fun migratePersistentDirectories() {
+    /**
+     * 老版本单 rootfs 向多系统目录拓扑平滑迁移：
+     * 如果 linux-runtime/rootfs 存在且包含系统，将其平移至 linux-runtime/distros/<defaultDistroId>/
+     */
+    fun migrateLegacySingleDistro(defaultDistroId: String = "ubuntu") {
         ensureDirectories()
-        migrateMissingPersistentFiles(File(rootfsDir, "root"), homeDir)
+        val targetDistroDir = distroDir(defaultDistroId)
+        val targetRootfs = rootfsDir(defaultDistroId)
+        val targetHome = homeDir(defaultDistroId)
+        val targetMeta = metadataDir(defaultDistroId)
+
+        if (legacyRootfsDir.exists() && rootfsValidator.isValid(legacyRootfsDir) && !targetRootfs.exists()) {
+            targetDistroDir.mkdirs()
+            targetMeta.mkdirs()
+            legacyRootfsDir.renameTo(targetRootfs)
+
+            val legacyMarker = rootfsInstalledMarker()
+            if (legacyMarker.exists()) {
+                val targetMarker = rootfsInstalledMarker(defaultDistroId)
+                legacyMarker.renameTo(targetMarker)
+            } else {
+                rootfsInstalledMarker(defaultDistroId).writeText("rootfs-version=legacy-migrated\n")
+            }
+
+            if (legacyHomeDir.exists() && !targetHome.exists()) {
+                legacyHomeDir.renameTo(targetHome)
+            }
+        }
+    }
+
+    /** Move legacy in-rootfs user data to the persistent app-private bind mounts once. */
+    fun migratePersistentDirectories(distroId: String = "ubuntu") {
+        ensureDirectories()
+        val rfs = rootfsDir(distroId)
+        val hDir = homeDir(distroId)
+        migrateMissingPersistentFiles(File(rfs, "root"), hDir)
         // Import data created before the project adopted the TaiXu name.
         migrateMissingPersistentFiles(File(optDir, LEGACY_OPT_NAME), taixuRootDir)
-        migrateMissingPersistentFiles(File(rootfsDir, "opt/$LEGACY_OPT_NAME"), taixuRootDir)
-        migrateMissingPersistentFiles(File(rootfsDir, "opt/taixu"), taixuRootDir)
+        migrateMissingPersistentFiles(File(rfs, "opt/$LEGACY_OPT_NAME"), taixuRootDir)
+        migrateMissingPersistentFiles(File(rfs, "opt/taixu"), taixuRootDir)
     }
 
     private fun migrateMissingPersistentFiles(source: File, target: File) {
@@ -111,8 +189,9 @@ class RuntimePathManager @Inject constructor(
      * the `.so` suffix, so copy the bundled library to the exact SONAME expected by
      * the linker in the app-private runtime directory before launching PRoot.
      */
-    fun hostProcessEnvironment(): Map<String, String> {
+    fun hostProcessEnvironment(distroId: String = "ubuntu"): Map<String, String> {
         ensureDirectories()
+        val rfs = rootfsDir(distroId)
         hostLibraries.forEach { (bundledName, hostName) ->
             val bundledFile = File(nativeLibraryDir, bundledName)
             val hostFile = File(binDir, hostName)
@@ -128,22 +207,16 @@ class RuntimePathManager @Inject constructor(
             }
         }
         return buildMap {
-            put("PROOT_L2S_DIR", File(rootfsDir, ".l2s").absolutePath)
+            put("PROOT_L2S_DIR", File(rfs, ".l2s").apply { mkdirs() }.absolutePath)
             if (isUsableNativeArtifact(bundledProotLoaderFile, MIN_PROOT_LOADER_BYTES)) {
-                // The Termux PRoot build deliberately keeps its tracee loader
-                // outside the main binary. Without this override it searches
-                // /data/data/com.termux/files/usr/libexec/proot/loader.
                 put("PROOT_LOADER", bundledProotLoaderFile.absolutePath)
             }
             if (isUsableNativeArtifact(bundledProotLoader32File, MIN_PROOT_LOADER_BYTES)) {
                 put("PROOT_LOADER_32", bundledProotLoader32File.absolutePath)
             }
-            // Do not inherit Termux's TMPDIR when this app runs standalone.
-            // PRoot uses it before entering the guest rootfs for its probes.
             put("TMPDIR", tmpDir.absolutePath)
             put("TMP", tmpDir.absolutePath)
             put("TEMP", tmpDir.absolutePath)
-            // Termux PRoot uses this variable for its own host-side probes.
             put("PROOT_TMP_DIR", tmpDir.absolutePath)
             if (hostLibraries.values.any { File(binDir, it).isFile }) {
                 put("LD_LIBRARY_PATH", binDir.absolutePath)
@@ -170,8 +243,7 @@ class RuntimePathManager @Inject constructor(
             isUsableNativeArtifact(bundledProotLoaderFile, MIN_PROOT_LOADER_BYTES)
 
     fun isRootfsInstalled(): Boolean =
-        rootfsInstalledMarker().isFile &&
-            rootfsValidator.isValid(rootfsDir)
+        listInstalledDistroIds().isNotEmpty() || (rootfsInstalledMarker().isFile && rootfsValidator.isValid(legacyRootfsDir))
 
     private fun isUsableProot(file: File): Boolean =
         file.isFile && file.length() > MIN_PROOT_BYTES && (file.canExecute() || file == bundledProotFile)

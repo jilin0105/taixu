@@ -23,6 +23,7 @@ import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.core.model.DoctorReport
 import top.wkbin.taixu.core.model.RepairProgress
 import top.wkbin.taixu.core.model.RuntimeState
+import top.wkbin.taixu.ui.terminal.TerminalSessionManager
 import top.wkbin.taixu.runtime.DistributionCatalog
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.doctor.EnvironmentDoctor
@@ -53,10 +54,13 @@ class HomeViewModel @Inject constructor(
     private val settingsDataStore: SettingsDataStore,
     private val environmentDoctor: EnvironmentDoctor,
     private val environmentRepairer: EnvironmentRepairer,
+    private val terminalSessionManager: TerminalSessionManager,
     private val logger: AppLogger,
 ) : ViewModel() {
 
     val runtimeState: StateFlow<RuntimeState> = linuxRuntime.state
+    val installedDistros = linuxRuntime.installedDistros
+    val activeDistroId = linuxRuntime.activeDistroId
 
     private val _initializing = MutableStateFlow(false)
     val initializing: StateFlow<Boolean> = _initializing.asStateFlow()
@@ -176,8 +180,8 @@ class HomeViewModel @Inject constructor(
             val androidVer = "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
 
             viewModelScope.launch {
-                val selectedDistroId = runCatching { settingsDataStore.selectedDistribution.first() }.getOrDefault("ubuntu")
-                val distroDisplayName = DistributionCatalog.require(selectedDistroId).displayName
+                val currentDistro = linuxRuntime.activeDistroId.value
+                val distroDisplayName = DistributionCatalog.require(currentDistro).displayName
 
                 _metrics.value = SystemResourceMetrics(
                     memoryUsedMb = usedMemMb,
@@ -198,6 +202,17 @@ class HomeViewModel @Inject constructor(
             }
         } catch (e: Exception) {
             logger.w("HomeViewModel: Failed to refresh metrics: ${e.message}", e)
+        }
+    }
+
+    fun switchDistro(distroId: String) {
+        viewModelScope.launch {
+            // 1. 先关闭所有旧系统的终端会话（PTY 进程），防止并发冲突崩溃
+            terminalSessionManager.closeAllSessions()
+            // 2. 切换活动发行版（更新 DataStore + 刷新列表）
+            linuxRuntime.switchActiveDistro(distroId)
+            // 3. 刷新仪表盘数据
+            refreshMetrics()
         }
     }
 

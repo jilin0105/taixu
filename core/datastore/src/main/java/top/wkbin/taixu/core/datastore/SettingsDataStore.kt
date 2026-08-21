@@ -68,14 +68,113 @@ class SettingsDataStore @Inject constructor(
         }
     }
 
+    // 终端外观与显示定制
+    private val terminalFontSizeKey = androidx.datastore.preferences.core.intPreferencesKey("terminal_font_size")
+    private val terminalColorSchemeKey = stringPreferencesKey("terminal_color_scheme")
+    private val terminalHapticsEnabledKey = booleanPreferencesKey("terminal_haptics_enabled")
+    private val appFontScaleKey = androidx.datastore.preferences.core.floatPreferencesKey("app_font_scale")
+
+    val terminalFontSize: Flow<Int> = context.settingsDataStore.data.map { prefs ->
+        prefs[terminalFontSizeKey] ?: 13
+    }
+
+    suspend fun setTerminalFontSize(sizeSp: Int) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[terminalFontSizeKey] = sizeSp.coerceIn(10, 24)
+        }
+    }
+
+    val terminalColorScheme: Flow<String> = context.settingsDataStore.data.map { prefs ->
+        prefs[terminalColorSchemeKey] ?: "obsidian"
+    }
+
+    suspend fun setTerminalColorScheme(scheme: String) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[terminalColorSchemeKey] = scheme
+        }
+    }
+
+    val terminalHapticsEnabled: Flow<Boolean> = context.settingsDataStore.data.map { prefs ->
+        prefs[terminalHapticsEnabledKey] ?: true
+    }
+
+    suspend fun setTerminalHapticsEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[terminalHapticsEnabledKey] = enabled
+        }
+    }
+
+    val appFontScale: Flow<Float> = context.settingsDataStore.data.map { prefs ->
+        prefs[appFontScaleKey] ?: 1.0f
+    }
+
+    suspend fun setAppFontScale(scale: Float) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[appFontScaleKey] = scale
+        }
+    }
+
+    private val autoCheckUpdatesKey = booleanPreferencesKey("auto_check_updates")
+
+    val autoCheckUpdates: Flow<Boolean> = context.settingsDataStore.data.map { preferences ->
+        preferences[autoCheckUpdatesKey] ?: true
+    }
+
+    suspend fun setAutoCheckUpdates(enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[autoCheckUpdatesKey] = enabled
+        }
+    }
+
     val developerMode: Flow<Boolean> = context.settingsDataStore.data.map { preferences ->
         preferences[developerModeKey] ?: false
     }
+
+    private val installedDistributionsKey = stringPreferencesKey("installed_distributions_json")
 
     val onboardingCompleted: Flow<Boolean> = context.settingsDataStore.data.map { it[onboardingCompletedKey] ?: false }
     suspend fun setOnboardingCompleted(value: Boolean) { context.settingsDataStore.edit { it[onboardingCompletedKey] = value } }
     val selectedDistribution: Flow<String> = context.settingsDataStore.data.map { it[selectedDistributionKey] ?: "ubuntu" }
     suspend fun setSelectedDistribution(value: String) { context.settingsDataStore.edit { it[selectedDistributionKey] = value } }
+
+    /** 已安装的 Linux 发行版 ID 列表 */
+    val installedDistributions: Flow<List<String>> = context.settingsDataStore.data.map { prefs ->
+        val json = prefs[installedDistributionsKey]
+        if (!json.isNullOrBlank()) {
+            runCatching { jsonHelper.decodeFromString<List<String>>(json) }.getOrDefault(listOf(prefs[selectedDistributionKey] ?: "ubuntu"))
+        } else {
+            listOf(prefs[selectedDistributionKey] ?: "ubuntu")
+        }
+    }
+
+    suspend fun setInstalledDistributions(list: List<String>) {
+        context.settingsDataStore.edit {
+            it[installedDistributionsKey] = jsonHelper.encodeToString(list.distinct())
+        }
+    }
+
+    suspend fun addInstalledDistribution(id: String) {
+        context.settingsDataStore.edit { prefs ->
+            val json = prefs[installedDistributionsKey]
+            val current = if (!json.isNullOrBlank()) {
+                runCatching { jsonHelper.decodeFromString<List<String>>(json).toMutableList() }.getOrDefault(mutableListOf())
+            } else mutableListOf(prefs[selectedDistributionKey] ?: "ubuntu")
+            if (id !in current) current.add(id)
+            prefs[installedDistributionsKey] = jsonHelper.encodeToString(current.distinct())
+        }
+    }
+
+    suspend fun removeInstalledDistribution(id: String) {
+        context.settingsDataStore.edit { prefs ->
+            val json = prefs[installedDistributionsKey]
+            val current = if (!json.isNullOrBlank()) {
+                runCatching { jsonHelper.decodeFromString<List<String>>(json).toMutableList() }.getOrDefault(mutableListOf())
+            } else mutableListOf(prefs[selectedDistributionKey] ?: "ubuntu")
+            current.remove(id)
+            prefs[installedDistributionsKey] = jsonHelper.encodeToString(current.distinct())
+        }
+    }
+
     val mirrorPolicy: Flow<String> = context.settingsDataStore.data.map { it[mirrorPolicyKey] ?: "auto" }
     suspend fun setMirrorPolicy(value: String) { context.settingsDataStore.edit { it[mirrorPolicyKey] = value } }
 

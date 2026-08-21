@@ -55,7 +55,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.database.ToolEntity
 import top.wkbin.taixu.core.model.ToolState
@@ -524,14 +524,15 @@ private fun ToolCard(
             ) {
                 // Secondary actions
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(
+                    FilledTonalButton(
                         onClick = onOpenDetail,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                     ) {
-                        Text("详情", style = MaterialTheme.typography.labelSmall)
+                        Text("详情配置", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
                     }
 
                     TextButton(
@@ -543,12 +544,6 @@ private fun ToolCard(
 
                     if (isInstalled) {
                         TextButton(
-                            onClick = onVerify,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                        ) {
-                            Text("自检", style = MaterialTheme.typography.labelSmall)
-                        }
-                        TextButton(
                             onClick = onUninstall,
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                         ) {
@@ -557,38 +552,23 @@ private fun ToolCard(
                     }
                 }
 
-                // Primary actions
+                // Primary actions (Install / Retry / Update)
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (isUpdateAvailable) {
-                        FilledTonalButton(
+                        Button(
                             onClick = onUpdate,
-                            shape = RoundedCornerShape(10.dp),
+                            shape = RoundedCornerShape(8.dp),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                         ) {
                             Text("更新", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
                         }
-                    }
-
-                    if (isInstalled) {
-                        Button(
-                            onClick = onLaunch,
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                        ) {
-                            RuntimeIcon(
-                                name = RuntimeIconName.Play,
-                                modifier = Modifier.size(15.dp),
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text("启动", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
-                        }
                     } else if (isFailed) {
                         FilledTonalButton(
                             onClick = onInstall,
-                            shape = RoundedCornerShape(10.dp),
+                            shape = RoundedCornerShape(8.dp),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                         ) {
                             RuntimeIcon(
@@ -598,10 +578,10 @@ private fun ToolCard(
                             Spacer(Modifier.width(4.dp))
                             Text("重试", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
                         }
-                    } else if (!isInstalling) {
+                    } else if (!isInstalled && !isInstalling) {
                         Button(
                             onClick = onInstall,
-                            shape = RoundedCornerShape(10.dp),
+                            shape = RoundedCornerShape(8.dp),
                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                         ) {
                             RuntimeIcon(
@@ -609,7 +589,7 @@ private fun ToolCard(
                                 modifier = Modifier.size(15.dp),
                             )
                             Spacer(Modifier.width(4.dp))
-                            Text("一键安装", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                            Text("安装", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }

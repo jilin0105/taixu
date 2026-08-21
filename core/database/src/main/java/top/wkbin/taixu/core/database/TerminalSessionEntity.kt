@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.core.database
+package top.wkbin.taixu.core.database
 
 import androidx.room.Dao
 import androidx.room.Entity
@@ -18,6 +18,7 @@ data class TerminalSessionEntity(
     val workingDirectory: String,
     val createdAt: Long,
     val sortOrder: Int,
+    val distributionId: String = "ubuntu",
 )
 
 @Dao
@@ -36,4 +37,7 @@ interface TerminalSessionDao {
 
     @Query("DELETE FROM terminal_sessions WHERE id = :id")
     suspend fun delete(id: String)
+
+    @Query("DELETE FROM terminal_sessions")
+    suspend fun deleteAll()
 }

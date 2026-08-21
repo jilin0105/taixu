@@ -22,6 +22,7 @@ class TaiXuApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        configureCursorWindow()
         crashReporter.install()
         // Agent 开始执行时拉起前台服务，保证后台存活 + 通知进度；结束后由服务发带回复框的通知。
         appScope.launch {
@@ -30,6 +31,16 @@ class TaiXuApplication : Application() {
                     runCatching { AgentForegroundService.start(this@TaiXuApplication) }
                 }
             }
+        }
+    }
+
+    private fun configureCursorWindow() {
+        try {
+            val field = android.database.CursorWindow::class.java.getDeclaredField("sCursorWindowSize")
+            field.isAccessible = true
+            field.set(null, 100 * 1024 * 1024) // 100 MB CursorWindow
+        } catch (_: Throwable) {
+            // Ignore if restricted on custom OS
         }
     }
 

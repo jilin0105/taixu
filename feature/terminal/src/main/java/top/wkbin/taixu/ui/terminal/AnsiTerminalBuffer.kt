@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.ui.terminal
+package top.wkbin.taixu.ui.terminal
 
 data class TerminalCell(
     val character: Char,
@@ -50,26 +50,34 @@ class AnsiTerminalBuffer(
         altRows.add(mutableListOf())
     }
 
-    fun resize(newColumns: Int) {
+    fun resize(newColumns: Int) = synchronized(this) {
         columns = newColumns.coerceIn(MIN_COLUMNS, MAX_COLUMNS)
         cursorColumn = cursorColumn.coerceAtMost(columns)
     }
 
-    fun append(text: String): List<TerminalLine> {
+    fun append(text: String): List<TerminalLine> = synchronized(this) {
         text.forEach(::consume)
-        return snapshot()
+        snapshotLocked()
     }
 
-    fun cursor(): TerminalCursor = TerminalCursor(
-        row = cursorRow,
-        column = cursorColumn,
-        visible = cursorVisible,
-    )
+    fun cursor(): TerminalCursor = synchronized(this) {
+        TerminalCursor(
+            row = cursorRow,
+            column = cursorColumn,
+            visible = cursorVisible,
+        )
+    }
 
-    fun snapshot(): List<TerminalLine> = activeRows.map { row ->
-        var end = row.size
-        while (end > 0 && row[end - 1].character == ' ') end -= 1
-        TerminalLine(row.take(end))
+    fun snapshot(): List<TerminalLine> = synchronized(this) {
+        snapshotLocked()
+    }
+
+    /** 内部快照，调用方必须已持有 this 锁。 */
+    private fun snapshotLocked(): List<TerminalLine> = activeRows.map { row ->
+        val copy = ArrayList(row)          // 先拷贝一份，防止 row 在 map 过程中被写入
+        var end = copy.size
+        while (end > 0 && copy[end - 1].character == ' ') end -= 1
+        TerminalLine(copy.subList(0, end).toList())
     }
 
     private fun consume(character: Char) {

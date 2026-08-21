@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.core.tools
+package top.wkbin.taixu.core.tools
 
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -28,7 +28,7 @@ class AgentModelConnectionTester @Inject constructor(private val http: OkHttpCli
             .apply { if (!apiKey.isNullOrBlank()) header("Authorization", "Bearer $apiKey") }
             .post(body.toRequestBody("application/json".toMediaType())).build()
         http.newCall(request).execute().use { response ->
-            val text = response.body?.string().orEmpty()
+            val text = response.body.string()
             check(response.isSuccessful) { "连接失败 HTTP ${response.code}：${text.take(240)}" }
         }
     }
@@ -41,7 +41,7 @@ class AgentModelConnectionTester @Inject constructor(private val http: OkHttpCli
             .apply { if (!apiKey.isNullOrBlank()) header("x-api-key", apiKey) }
             .post(body.toRequestBody("application/json".toMediaType())).build()
         http.newCall(request).execute().use { response ->
-            val text = response.body?.string().orEmpty()
+            val text = response.body.string()
             check(response.isSuccessful) { "连接失败 HTTP ${response.code}：${text.take(240)}" }
         }
     }

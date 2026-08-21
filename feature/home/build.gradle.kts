@@ -40,5 +40,6 @@ dependencies {
     implementation(libs.kotlinx.serialization.json.jvm)
     implementation(project(":feature:components"))
     implementation(project(":runtime"))
+    implementation(project(":feature:terminal"))
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

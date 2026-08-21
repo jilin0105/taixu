@@ -26,22 +26,40 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class TerminalViewModel @Inject constructor(
     private val terminalManager: TerminalSessionManager,
     private val workspaceManager: WorkspaceManager,
     private val settingsDataStore: SettingsDataStore,
+    private val linuxRuntime: top.wkbin.taixu.runtime.LinuxRuntime,
 ) : ViewModel() {
     private var initialized = false
 
-    val distributionName: StateFlow<String> = settingsDataStore.selectedDistribution
-        .map { distroId -> DistributionCatalog.require(distroId).displayName }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, "Ubuntu 24.04 LTS")
+    val installedDistros = linuxRuntime.installedDistros
+    val activeDistroId = linuxRuntime.activeDistroId
 
     val handles: StateFlow<List<TerminalSessionHandle>> = terminalManager.handles
     val activeId: StateFlow<String?> = terminalManager.activeId
 
     private val activeHandle: Flow<TerminalSessionHandle?> = terminalManager.activeHandle
+
+    val distributionName: StateFlow<String> = activeHandle
+        .flatMapLatest { handle ->
+            val distroId = handle?.distributionId ?: linuxRuntime.activeDistroId.value
+            flowOf(DistributionCatalog.require(distroId).displayName)
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "Ubuntu 24.04 LTS")
+
+    val terminalFontSize: StateFlow<Int> = settingsDataStore.terminalFontSize
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 13)
+
+    val terminalColorScheme: StateFlow<String> = settingsDataStore.terminalColorScheme
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "obsidian")
+
+    val terminalHapticsEnabled: StateFlow<Boolean> = settingsDataStore.terminalHapticsEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
     val screen: StateFlow<List<TerminalLine>> = activeHandle
         .flatMapLatest { it?.screen ?: flowOf(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -158,11 +176,17 @@ class TerminalViewModel @Inject constructor(
     val workspaces: StateFlow<List<top.wkbin.taixu.runtime.WorkspaceProject>> = workspaceManager.observeProjects()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    fun createSession(label: String = "", workingDirectory: String = "/root") {
+    fun createSession(label: String = "", workingDirectory: String = "/root", distroId: String? = null) {
         viewModelScope.launch {
             runCatching {
-                val finalLabel = label.trim().ifBlank { "终端 ${handles.value.size + 1}" }
-                terminalManager.createSession(label = finalLabel, workingDirectory = workingDirectory.trim().ifBlank { "/root" })
+                val targetDistro = distroId?.takeIf { it.isNotBlank() } ?: activeDistroId.value
+                val distroShortName = DistributionCatalog.require(targetDistro).id.replaceFirstChar { it.uppercase() }
+                val finalLabel = label.trim().ifBlank { "$distroShortName ${handles.value.size + 1}" }
+                terminalManager.createSession(
+                    label = finalLabel,
+                    workingDirectory = workingDirectory.trim().ifBlank { "/root" },
+                    distributionId = targetDistro,
+                )
             }.onFailure { _error.value = it.message ?: "新建会话失败" }
         }
     }

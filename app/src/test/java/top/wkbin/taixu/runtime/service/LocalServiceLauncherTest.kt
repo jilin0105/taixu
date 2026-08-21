@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.runtime.service
+package top.wkbin.taixu.runtime.service
 
 import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.model.RuntimeState
@@ -75,20 +75,28 @@ class LocalServiceLauncherTest {
 
     private class FakeRuntime : top.wkbin.taixu.runtime.LinuxRuntime {
         override val state = MutableStateFlow<RuntimeState>(RuntimeState.Ready)
+        override val activeDistroId = MutableStateFlow("ubuntu")
+        override val installedDistros = MutableStateFlow<List<top.wkbin.taixu.core.model.InstalledDistro>>(emptyList())
         var stoppedProcessId: String? = null
         var sessionToStop: LinuxSession? = null
 
+        override fun refreshInstalledDistros() = Unit
+        override suspend fun switchActiveDistro(distroId: String): AppResult<Unit> = AppResult.Success(Unit)
+        override suspend fun installDistro(request: RuntimeInstallRequest, onProgress: suspend (top.wkbin.taixu.runtime.DownloadProgress) -> Unit): AppResult<Unit> = AppResult.Success(Unit)
+        override suspend fun uninstallDistro(distroId: String): AppResult<Unit> = AppResult.Success(Unit)
+
         override suspend fun initialize(request: RuntimeInstallRequest): AppResult<Unit> = AppResult.Success(Unit)
         override suspend fun restoreInstalledState(): Boolean = false
-        override suspend fun updateRootfs(): AppResult<Unit> = AppResult.Success(Unit)
-        override suspend fun healthCheck(): RuntimeHealth = error("unused")
-        override suspend fun execute(command: ShellCommand): CommandResult = error("unused")
-        override suspend fun startSession(config: SessionConfig): LinuxSession = error("unused")
+        override suspend fun updateRootfs(distroId: String?): AppResult<Unit> = AppResult.Success(Unit)
+        override suspend fun healthCheck(distroId: String?): RuntimeHealth = error("unused")
+        override suspend fun execute(command: ShellCommand, distroId: String?): CommandResult = error("unused")
+        override suspend fun startSession(config: SessionConfig, distroId: String?): LinuxSession = error("unused")
         override suspend fun startBackground(
             id: String,
             command: ShellCommand,
             toolId: String?,
             type: top.wkbin.taixu.runtime.shell.ProcessType,
+            distroId: String?,
         ): ManagedProcess = error("unused")
         override fun listBackground(): List<ManagedProcess> = emptyList()
         override suspend fun cleanupDeadBackground(): Int = 0
@@ -98,7 +106,7 @@ class LocalServiceLauncherTest {
             return true
         }
         override suspend fun shutdown() = Unit
-        override fun rootfsPath() = error("unused")
+        override fun rootfsPath(distroId: String?) = error("unused")
         override fun workspacePath() = error("unused")
     }
 

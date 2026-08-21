@@ -215,7 +215,7 @@ class McpManager @Inject constructor(
             .get()
             .build()
         val response = httpClient.newCall(request).execute()
-        val body = response.body?.string().orEmpty()
+        val body = response.body.string()
         val list = json.decodeFromString<McpToolsListResponse>(body)
         return list.tools.map {
             McpToolInfo(
@@ -241,7 +241,7 @@ class McpManager @Inject constructor(
             .post(payload.toRequestBody("application/json".toMediaType()))
             .build()
         val response = httpClient.newCall(request).execute()
-        val body = response.body?.string().orEmpty()
+        val body = response.body.string()
         val rpcResp = json.decodeFromString<JsonRpcResponse>(body)
         val callRes = rpcResp.result?.let { json.decodeFromJsonElement<McpCallToolResult>(it) }
         val text = callRes?.content?.joinToString("\n") { it.text.orEmpty() } ?: body

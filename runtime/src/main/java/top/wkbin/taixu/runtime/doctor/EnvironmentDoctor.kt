@@ -179,6 +179,20 @@ class EnvironmentDoctor @Inject constructor(
         }.getOrNull()
 
         val content = sourcesCheck?.stdout.orEmpty()
+        val hasInvalidUbuntuMirror = (content.contains("/ubuntu ") || content.contains("/ubuntu/")) &&
+            !content.contains("ubuntu-ports")
+
+        if (hasInvalidUbuntuMirror) {
+            return DoctorItem(
+                id = "apt_mirrors",
+                category = DoctorCategory.PACKAGE_MANAGER,
+                title = "APT 软件包源",
+                status = DoctorStatus.WARNING,
+                summary = "APT 源配置异常 (Ubuntu ARM64 需使用 ubuntu-ports 源)",
+                detail = "检测到 ARM64 架构下使用了 x86 镜像路径，会导致软件包 404 错误。请点击一键修复自动纠正。",
+            )
+        }
+
         val hasDomesticMirror = content.contains("tsinghua.edu.cn", ignoreCase = true) ||
             content.contains("aliyun.com", ignoreCase = true) ||
             content.contains("ustc.edu.cn", ignoreCase = true) ||

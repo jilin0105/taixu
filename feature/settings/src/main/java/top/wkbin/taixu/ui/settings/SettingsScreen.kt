@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings as AndroidSettings
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -60,7 +61,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -82,12 +83,11 @@ import top.wkbin.taixu.ui.components.SectionHeader
 @Composable
 fun SettingsScreen(
     onNavigate: (MainDestination) -> Unit,
-    onOpenModelProfiles: () -> Unit,
-    onOpenAgentSettings: () -> Unit,
-    onOpenMcpSettings: () -> Unit = {},
-    onOpenToolCenter: () -> Unit = {},
-    onOpenDeveloper: () -> Unit,
-    onOpenStorageMounts: () -> Unit = {},
+    onOpenAgentEco: () -> Unit,
+    onOpenLinuxEnv: () -> Unit,
+    onOpenAppearance: () -> Unit,
+    onOpenSystemDev: () -> Unit,
+    onOpenAboutCommunity: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val models by viewModel.models.collectAsStateWithLifecycle()
@@ -95,39 +95,456 @@ fun SettingsScreen(
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val skills by viewModel.allSkills.collectAsStateWithLifecycle()
     val executionMode by viewModel.executionMode.collectAsStateWithLifecycle()
-    val switchingMode by viewModel.switchingMode.collectAsStateWithLifecycle()
+    val installedDistros by viewModel.installedDistros.collectAsStateWithLifecycle()
+    val activeDistroId by viewModel.activeDistroId.collectAsStateWithLifecycle()
+    val terminalFontSize by viewModel.terminalFontSize.collectAsStateWithLifecycle()
+
+    val themeLabel = when (themeMode) {
+        "light" -> "浅色"
+        "dark" -> "曜石"
+        else -> "跟随系统"
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             RuntimeTopBar(
                 title = "太墟 · 乾坤",
-                statusText = "系统设置与模型管理",
+                statusText = "系统设置与控制中枢",
             )
         },
         bottomBar = { RuntimeBottomBar(MainDestination.Settings, onNavigate) },
     ) { padding ->
-        HomePage(
-            modifier = Modifier.padding(padding),
-            count = models.size,
-            activeSkillsCount = skills.count { it.isEnabled },
-            developer = developer,
-            themeMode = themeMode,
-            executionMode = executionMode,
-            switchingMode = switchingMode,
-            onSwitchExecutionMode = viewModel::switchExecutionMode,
-            onThemeModeChanged = viewModel::setThemeMode,
-            openModels = onOpenModelProfiles,
-            openAgentSettings = onOpenAgentSettings,
-            openMcpSettings = onOpenMcpSettings,
-            openToolCenter = onOpenToolCenter,
-            openStorageMounts = onOpenStorageMounts,
-            setDeveloper = viewModel::setDeveloperMode,
-            openDeveloper = onOpenDeveloper,
-        )
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            item {
+                Text(
+                    text = "系统与配置分类",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
+                )
+            }
+
+            // 1. 智能体与 AI 模型生态
+            item {
+                SettingsCategoryCard(
+                    icon = RuntimeIconName.Globe,
+                    iconTint = MaterialTheme.colorScheme.primary,
+                    iconBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                    title = "智能体与 AI 模型",
+                    subtitle = "模型档案 · 插件工具中心 · 技能与 MCP 生态",
+                    badge = if (models.isEmpty()) "未配置模型" else "${models.size} 个模型 · ${skills.count { it.isEnabled }} 技能",
+                    onClick = onOpenAgentEco,
+                )
+            }
+
+            // 2. Linux 容器沙箱与存储
+            item {
+                SettingsCategoryCard(
+                    icon = RuntimeIconName.Storage,
+                    iconTint = Color(0xFF10B981),
+                    iconBg = Color(0xFF10B981).copy(alpha = 0.12f),
+                    title = "Linux 容器与存储",
+                    subtitle = "多发行版管理 · 宿主存储映射 · 运行特权模式",
+                    badge = "${installedDistros.size} 套系统 · ${executionMode.name}",
+                    onClick = onOpenLinuxEnv,
+                )
+            }
+
+            // 3. 外观、字号与终端定制
+            item {
+                SettingsCategoryCard(
+                    icon = RuntimeIconName.Terminal,
+                    iconTint = Color(0xFF8B5CF6),
+                    iconBg = Color(0xFF8B5CF6).copy(alpha = 0.12f),
+                    title = "外观、字号与终端定制",
+                    subtitle = "深浅色主题 · 应用字号缩放 · 终端配色与字体",
+                    badge = "$themeLabel · ${terminalFontSize}sp",
+                    onClick = onOpenAppearance,
+                )
+            }
+
+            // 4. 系统保活与开发者诊断
+            item {
+                SettingsCategoryCard(
+                    icon = RuntimeIconName.Shield,
+                    iconTint = Color(0xFFF59E0B),
+                    iconBg = Color(0xFFF59E0B).copy(alpha = 0.12f),
+                    title = "系统保活与开发者诊断",
+                    subtitle = "后台电池优化白名单 · 调试监控 · PRoot 控制台",
+                    badge = if (developer) "诊断模式已开启" else "运行平稳",
+                    onClick = onOpenSystemDev,
+                )
+            }
+
+            // 5. 关于、更新与官方社区
+            item {
+                SettingsCategoryCard(
+                    icon = RuntimeIconName.Package,
+                    iconTint = Color(0xFF3B82F6),
+                    iconBg = Color(0xFF3B82F6).copy(alpha = 0.12f),
+                    title = "关于、更新与官方社区",
+                    subtitle = "检查新版本 · GitHub 开源仓库 · 官方 QQ 交流群",
+                    badge = "v0.1.0 稳定版",
+                    onClick = onOpenAboutCommunity,
+                )
+            }
+        }
     }
 }
 
+/**
+ * 现代高质感大类导航卡片
+ */
+@Composable
+private fun SettingsCategoryCard(
+    icon: RuntimeIconName,
+    iconTint: Color,
+    iconBg: Color,
+    title: String,
+    subtitle: String,
+    badge: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    RuntimeCard(
+        modifier = modifier.fillMaxWidth(),
+        onClick = onClick,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+        contentPadding = PaddingValues(16.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(iconBg)
+                    .border(1.dp, iconTint.copy(alpha = 0.25f), RoundedCornerShape(14.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                RuntimeIcon(icon, Modifier.size(22.dp), tint = iconTint)
+            }
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shape = RoundedCornerShape(6.dp),
+                ) {
+                    Text(
+                        text = badge,
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.Medium),
+                        color = iconTint,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                    )
+                }
+            }
+
+            RuntimeIcon(
+                name = RuntimeIconName.ChevronRight,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+            )
+        }
+    }
+}
+
+/**
+ * 二级子页 1：智能体与 AI 模型生态
+ */
+@Composable
+fun AgentEcoSettingsScreen(
+    onBack: () -> Unit,
+    onOpenModelProfiles: () -> Unit,
+    onOpenToolCenter: () -> Unit,
+    onOpenAgentSettings: () -> Unit,
+    onOpenMcpSettings: () -> Unit,
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
+    val models by viewModel.models.collectAsStateWithLifecycle()
+    val skills by viewModel.allSkills.collectAsStateWithLifecycle()
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = { RuntimeTopBar("智能体与模型", onBack) },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item {
+                Text(
+                    text = "模型档案与提供商",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+                )
+                SettingsGroup {
+                    SettingsRow(
+                        icon = RuntimeIconName.Globe,
+                        title = "模型档案管理",
+                        subtitle = "配置 OpenAI / DeepSeek / Claude / 本地大模型密钥与端点",
+                        value = if (models.isEmpty()) "未配置" else "${models.size} 个模型",
+                        onClick = onOpenModelProfiles,
+                    )
+                }
+            }
+
+            item {
+                Text(
+                    text = "工具与插件生态",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+                )
+                SettingsGroup {
+                    SettingsRow(
+                        icon = RuntimeIconName.Package,
+                        title = "插件与工具生态中心",
+                        subtitle = "一键安装 Claude Code、OpenClaw 等 AI CLI 与开发环境",
+                        onClick = onOpenToolCenter,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(
+                        icon = RuntimeIconName.Code,
+                        title = "Agent 智能体管理",
+                        subtitle = "思考流呈现、上下文压缩阈值与技能插件",
+                        value = "${skills.count { it.isEnabled }} 个技能",
+                        onClick = onOpenAgentSettings,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(
+                        icon = RuntimeIconName.Code,
+                        title = "MCP 协议生态与服务",
+                        subtitle = "管理 SQLite、Git、Fetch 等 Model Context Protocol 协议服务",
+                        onClick = onOpenMcpSettings,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 二级子页 2：Linux 容器沙箱与存储
+ */
+@Composable
+fun LinuxEnvironmentSettingsScreen(
+    onBack: () -> Unit,
+    onOpenDistroManagement: () -> Unit,
+    onOpenStorageMounts: () -> Unit,
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
+    val executionMode by viewModel.executionMode.collectAsStateWithLifecycle()
+    val switchingMode by viewModel.switchingMode.collectAsStateWithLifecycle()
+    val installedDistros by viewModel.installedDistros.collectAsStateWithLifecycle()
+
+    var showExecutionModeDialog by remember { mutableStateOf(false) }
+    var privilegeResultMessage by remember { mutableStateOf<String?>(null) }
+
+    if (showExecutionModeDialog) {
+        ExecutionModeDialog(
+            currentMode = executionMode,
+            switching = switchingMode,
+            onSelectMode = { mode ->
+                showExecutionModeDialog = false
+                viewModel.switchExecutionMode(mode) { success, msg ->
+                    privilegeResultMessage = if (success) null else msg
+                }
+            },
+            onDismiss = { showExecutionModeDialog = false },
+        )
+    }
+
+    privilegeResultMessage?.let { errorMsg ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { privilegeResultMessage = null },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RuntimeIcon(RuntimeIconName.Alert, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.error)
+                    Text("运行模式授权未通过")
+                }
+            },
+            text = { Text(errorMsg, style = MaterialTheme.typography.bodyMedium) },
+            confirmButton = {
+                TextButton(onClick = { privilegeResultMessage = null }) {
+                    Text("知道了")
+                }
+            },
+        )
+    }
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = { RuntimeTopBar("Linux 容器与存储", onBack) },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item {
+                Text(
+                    text = "容器系统与沙箱管理",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+                )
+                SettingsGroup {
+                    SettingsRow(
+                        icon = RuntimeIconName.Storage,
+                        title = "Linux 发行版管理",
+                        subtitle = "多沙箱并存 · 镜像拉取 · 一键切换主系统",
+                        value = "${installedDistros.size} 套系统",
+                        onClick = onOpenDistroManagement,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(
+                        icon = RuntimeIconName.Folder,
+                        title = "存储挂载与共享",
+                        subtitle = "PRoot 宿主存储映射 (-b /sdcard)",
+                        onClick = onOpenStorageMounts,
+                    )
+                }
+            }
+
+            item {
+                Text(
+                    text = "系统底层特权",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+                )
+                SettingsGroup {
+                    SettingsRow(
+                        icon = RuntimeIconName.Shield,
+                        title = "系统运行特权模式",
+                        subtitle = "PRoot 用户态沙箱 · Shizuku · Root · ADB",
+                        value = executionMode.name,
+                        onClick = { showExecutionModeDialog = true },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 二级子页 3：系统保活与开发者诊断
+ */
+@Composable
+fun SystemDevSettingsScreen(
+    onBack: () -> Unit,
+    onOpenDeveloper: () -> Unit,
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
+    val developer by viewModel.developerMode.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var showBatteryDialog by remember { mutableStateOf(false) }
+    var batteryExempted by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
+
+    if (showBatteryDialog) {
+        BatteryOptimizationDialog(
+            exempted = batteryExempted,
+            onRefresh = { batteryExempted = isIgnoringBatteryOptimizations(context) },
+            onDismiss = { showBatteryDialog = false },
+        )
+    }
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = { RuntimeTopBar("保活与诊断", onBack) },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item {
+                Text(
+                    text = "进程保活与唤醒",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+                )
+                SettingsGroup {
+                    SettingsRow(
+                        icon = RuntimeIconName.Shield,
+                        title = "电池优化与后台保活",
+                        subtitle = "豁免系统电池限制，防止 Agent 息屏被冻结",
+                        value = if (batteryExempted) "已豁免" else "未豁免",
+                        onClick = { showBatteryDialog = true },
+                    )
+                }
+            }
+
+            item {
+                Text(
+                    text = "开发者调试与控制台",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+                )
+                SettingsGroup {
+                    ToggleRow(
+                        icon = RuntimeIconName.Terminal,
+                        title = "开发者诊断模式",
+                        subtitle = "开启底层健康监控与调试控制台",
+                        checked = developer,
+                        change = viewModel::setDeveloperMode,
+                    )
+                    if (developer) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        SettingsRow(
+                            icon = RuntimeIconName.Logs,
+                            title = "开发者控制台",
+                            subtitle = "实时查看 PRoot 进程与命令追踪",
+                            onClick = onOpenDeveloper,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 模型档案管理全屏独立页面
+ */
 @Composable
 fun ModelProfilesScreen(
     onBack: () -> Unit,
@@ -151,6 +568,9 @@ fun ModelProfilesScreen(
     }
 }
 
+/**
+ * 模型编辑与连接测试全屏独立页面
+ */
 @Composable
 fun ModelEditorScreen(
     modelId: String?,
@@ -189,234 +609,142 @@ fun ModelEditorScreen(
     }
 }
 
+/**
+ * 二级子页 4：关于、版本更新与官方社区
+ */
 @Composable
-private fun HomePage(
-    modifier: Modifier,
-    count: Int,
-    activeSkillsCount: Int,
-    developer: Boolean,
-    themeMode: String,
-    executionMode: ExecutionMode,
-    switchingMode: Boolean,
-    onSwitchExecutionMode: (ExecutionMode, (Boolean, String) -> Unit) -> Unit,
-    onThemeModeChanged: (String) -> Unit,
-    openModels: () -> Unit,
-    openAgentSettings: () -> Unit,
-    openMcpSettings: () -> Unit = {},
-    openToolCenter: () -> Unit,
-    openStorageMounts: () -> Unit,
-    setDeveloper: (Boolean) -> Unit,
-    openDeveloper: () -> Unit,
+fun AboutCommunityScreen(
+    onBack: () -> Unit,
+    viewModel: SettingsViewModel = hiltViewModel(),
 ) {
-    var showThemeDialog by remember { mutableStateOf(false) }
-    var showAboutDialog by remember { mutableStateOf(false) }
-    var showExecutionModeDialog by remember { mutableStateOf(false) }
-    var showBatteryDialog by remember { mutableStateOf(false) }
-    var privilegeResultMessage by remember { mutableStateOf<String?>(null) }
+    val autoCheckUpdates by viewModel.autoCheckUpdates.collectAsStateWithLifecycle()
+    val updateCheckState by viewModel.updateCheckState.collectAsStateWithLifecycle()
+    val downloadProgress by viewModel.downloadProgress.collectAsStateWithLifecycle()
+    val isDownloading by viewModel.isDownloading.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
-    var batteryExempted by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
+    var showAboutDialog by remember { mutableStateOf(false) }
 
-    val themeLabel = when (themeMode) {
-        "light" -> "素白浅色"
-        "dark" -> "深邃曜石"
-        else -> "跟随系统"
-    }
-
-    if (showThemeDialog) {
-        ThemeSelectionDialog(
-            currentTheme = themeMode,
-            onSelect = onThemeModeChanged,
-            onDismiss = { showThemeDialog = false },
-        )
+    // 版本更新弹窗
+    when (val state = updateCheckState) {
+        is top.wkbin.taixu.core.model.UpdateCheckState.Success -> {
+            if (state.info.hasUpdate) {
+                UpdateInfoDialog(
+                    info = state.info,
+                    downloadProgress = downloadProgress,
+                    isDownloading = isDownloading,
+                    onDownload = { state.info.apkDownloadUrl?.let { viewModel.downloadAndInstall(it) } },
+                    onOpenBrowser = { openBrowser(context, state.info.releaseUrl) },
+                    onDismiss = { viewModel.clearUpdateState() },
+                )
+            } else {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { viewModel.clearUpdateState() },
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            RuntimeIcon(RuntimeIconName.Check, Modifier.size(22.dp), tint = Color(0xFF2E7D32))
+                            Text("已是最新版本", fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    text = {
+                        Text("当前太墟版本 v${state.info.currentVersion} 已是最新稳定版，无需更新。")
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { viewModel.clearUpdateState() }) {
+                            Text("确定")
+                        }
+                    },
+                )
+            }
+        }
+        is top.wkbin.taixu.core.model.UpdateCheckState.Error -> {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { viewModel.clearUpdateState() },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        RuntimeIcon(RuntimeIconName.Alert, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.error)
+                        Text("检查更新失败")
+                    }
+                },
+                text = { Text(state.message) },
+                confirmButton = {
+                    TextButton(onClick = { viewModel.clearUpdateState() }) {
+                        Text("知道了")
+                    }
+                },
+            )
+        }
+        else -> Unit
     }
 
     if (showAboutDialog) {
         AboutAppDialog(onDismiss = { showAboutDialog = false })
     }
 
-    if (showExecutionModeDialog) {
-        ExecutionModeDialog(
-            currentMode = executionMode,
-            switching = switchingMode,
-            onSelectMode = { mode ->
-                showExecutionModeDialog = false
-                onSwitchExecutionMode(mode) { success, msg ->
-                    privilegeResultMessage = if (success) null else msg
-                }
-            },
-            onDismiss = { showExecutionModeDialog = false },
-        )
-    }
-
-    if (showBatteryDialog) {
-        BatteryOptimizationDialog(
-            exempted = batteryExempted,
-            onRefresh = { batteryExempted = isIgnoringBatteryOptimizations(context) },
-            onDismiss = { showBatteryDialog = false },
-        )
-    }
-
-    privilegeResultMessage?.let { errorMsg ->
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { privilegeResultMessage = null },
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    RuntimeIcon(RuntimeIconName.Alert, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.error)
-                    Text("运行模式授权未通过")
-                }
-            },
-            text = { Text(errorMsg, style = MaterialTheme.typography.bodyMedium) },
-            confirmButton = {
-                TextButton(onClick = { privilegeResultMessage = null }) {
-                    Text("知道了")
-                }
-            },
-        )
-    }
-
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        // 1. 视觉与偏好
-        item {
-            Text(
-                text = "视觉与偏好",
-                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
-            )
-            SettingsGroup {
-                SettingsRow(
-                    icon = RuntimeIconName.Globe,
-                    title = "外观与主题",
-                    subtitle = "深浅色模式与 Material 3 Expressive 风格",
-                    value = themeLabel,
-                    onClick = { showThemeDialog = true },
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = { RuntimeTopBar("关于与社区", onBack) },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item {
+                Text(
+                    text = "应用版本与更新",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
                 )
-            }
-        }
-
-        // 2. 运行模式与特权
-        item {
-            Text(
-                text = "运行模式与特权",
-                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
-            )
-            SettingsGroup {
-                SettingsRow(
-                    icon = RuntimeIconName.Shield,
-                    title = "系统运行模式",
-                    subtitle = "沙箱 · Shizuku · Root · ADB",
-                    value = executionMode.name,
-                    onClick = { showExecutionModeDialog = true },
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                SettingsRow(
-                    icon = RuntimeIconName.Shield,
-                    title = "电池优化与后台运行",
-                    subtitle = "豁免电池优化，防止 Agent 后台执行被冻结",
-                    value = if (batteryExempted) "已豁免" else "未豁免",
-                    onClick = { showBatteryDialog = true },
-                )
-            }
-        }
-
-        // 3. 智能体与模型
-        item {
-            Text(
-                text = "智能体与模型",
-                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
-            )
-            SettingsGroup {
-                SettingsRow(
-                    icon = RuntimeIconName.Package,
-                    title = "插件与工具中心",
-                    subtitle = "一键安装 Claude Code、OpenClaw 等 AI CLI 与工具",
-                    onClick = openToolCenter,
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                SettingsRow(
-                    icon = RuntimeIconName.Code,
-                    title = "Agent 智能体管理",
-                    subtitle = "思考流呈现、上下文压缩阈值与技能插件",
-                    value = "$activeSkillsCount 个技能",
-                    onClick = openAgentSettings,
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                SettingsRow(
-                    icon = RuntimeIconName.Code,
-                    title = "MCP 插件生态与协议",
-                    subtitle = "管理 SQLite、Git、Fetch 等 Model Context Protocol 协议服务",
-                    onClick = openMcpSettings,
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                SettingsRow(
-                    icon = RuntimeIconName.Globe,
-                    title = "模型档案管理",
-                    subtitle = "配置 OpenAI / DeepSeek / Claude API 密钥",
-                    value = if (count == 0) "未配置" else "$count 个模型",
-                    onClick = openModels,
-                )
-            }
-        }
-
-        // 4. 存储与系统
-        item {
-            Text(
-                text = "存储与系统",
-                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
-            )
-            SettingsGroup {
-                SettingsRow(
-                    icon = RuntimeIconName.Folder,
-                    title = "存储挂载与共享",
-                    subtitle = "PRoot 宿主存储映射 (-b /sdcard)",
-                    onClick = openStorageMounts,
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                ToggleRow(
-                    icon = RuntimeIconName.Terminal,
-                    title = "开发者诊断模式",
-                    subtitle = "开启底层健康监控与调试控制台",
-                    checked = developer,
-                    change = setDeveloper,
-                )
-                if (developer) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                SettingsGroup {
                     SettingsRow(
-                        icon = RuntimeIconName.Logs,
-                        title = "开发者控制台",
-                        subtitle = "实时查看 PRoot 进程与命令追踪",
-                        onClick = openDeveloper,
+                        icon = RuntimeIconName.Refresh,
+                        title = "检查新版本",
+                        subtitle = "基于 GitHub Releases 自动检测与在线升级",
+                        value = if (updateCheckState is top.wkbin.taixu.core.model.UpdateCheckState.Checking) "检查中…" else "v0.1.0",
+                        onClick = { viewModel.checkForUpdates("0.1.0") },
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    ToggleRow(
+                        icon = RuntimeIconName.Refresh,
+                        title = "启动时自动检查更新",
+                        subtitle = "应用启动时在后台静默检测新版本",
+                        checked = autoCheckUpdates,
+                        change = viewModel::setAutoCheckUpdates,
                     )
                 }
             }
-        }
 
-        // 5. 关于与版本
-        item {
-            Text(
-                text = "关于",
-                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
-            )
-            SettingsGroup {
-                SettingsRow(
-                    icon = RuntimeIconName.Package,
-                    title = "太墟 · TaiXu",
-                    subtitle = "Android 原生 Linux 沙箱与 AI 结对中枢",
-                    value = "v0.1.0",
-                    onClick = { showAboutDialog = true },
+            item {
+                Text(
+                    text = "官方社区与开源",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
                 )
+                SettingsGroup {
+                    SettingsRow(
+                        icon = RuntimeIconName.Globe,
+                        title = "GitHub 开源项目",
+                        subtitle = "https://github.com/wkbin/taixu · 欢迎 Star 支持",
+                        onClick = { openBrowser(context, "https://github.com/wkbin/taixu") },
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(
+                        icon = RuntimeIconName.Chat,
+                        title = "官方 QQ 交流群",
+                        subtitle = "群号: 964382207 · 点击一键加群 / 复制群号",
+                        value = "964382207",
+                        onClick = { joinQqGroup(context, "964382207") },
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(
+                        icon = RuntimeIconName.Package,
+                        title = "关于太墟 · TaiXu",
+                        subtitle = "Android 原生 Linux PRoot 沙箱与 AI 结对中枢",
+                        onClick = { showAboutDialog = true },
+                    )
+                }
             }
         }
     }
@@ -733,6 +1061,7 @@ private fun ThemeOptionItem(
 
 @Composable
 private fun AboutAppDialog(onDismiss: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -747,12 +1076,144 @@ private fun AboutAppDialog(onDismiss: () -> Unit) {
                 Text("版本: v0.1.0 (Material 3 Expressive)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 Text("架构: aarch64 · chroot-less user-space virtualization", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("协议: Apache-2.0 License", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(4.dp))
+                OutlinedButton(
+                    onClick = { joinQqGroup(context, "964382207") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                ) {
+                    RuntimeIcon(RuntimeIconName.Chat, Modifier.size(16.dp), MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("加入 QQ 交流群 (964382207)")
+                }
             }
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("确定") }
         },
     )
+}
+
+@Composable
+private fun UpdateInfoDialog(
+    info: top.wkbin.taixu.core.model.AppUpdateInfo,
+    downloadProgress: Float?,
+    isDownloading: Boolean,
+    onDownload: () -> Unit,
+    onOpenBrowser: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { if (!isDownloading) onDismiss() },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary)
+                Text("发现新版本 v${info.latestVersion}", fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Text(
+                        text = "当前版本: v${info.currentVersion}  ➔  最新版本: v${info.latestVersion}",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    )
+                }
+
+                if (info.releaseNotes.isNotBlank()) {
+                    Text(
+                        text = "更新日志：",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                    )
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            text = info.releaseNotes,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(12.dp),
+                        )
+                    }
+                }
+
+                if (isDownloading) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("正在下载更新安装包...", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                        if (downloadProgress != null) {
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = { downloadProgress },
+                                modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                            )
+                        } else {
+                            androidx.compose.material3.LinearProgressIndicator(
+                                modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (info.apkDownloadUrl != null) {
+                Button(
+                    onClick = onDownload,
+                    enabled = !isDownloading,
+                ) {
+                    Text(if (isDownloading) "正在下载…" else "应用内立即更新")
+                }
+            } else {
+                Button(onClick = onOpenBrowser) {
+                    Text("前往 GitHub 下载")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isDownloading) {
+                Text("稍后再说")
+            }
+        },
+    )
+}
+
+private fun joinQqGroup(context: Context, groupId: String = "964382207") {
+    val uri = Uri.parse("mqqapi://card/show_pslcard?src_type=internal&version=1&uin=$groupId&card_type=group&source=qrcode")
+    val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    runCatching {
+        context.startActivity(intent)
+    }.onFailure {
+        // 剪贴板兜底
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+        val clip = android.content.ClipData.newPlainText("太墟官方交流群", groupId)
+        clipboard?.setPrimaryClip(clip)
+        android.widget.Toast.makeText(context, "已复制 QQ 群号：$groupId，可打开 QQ 搜索加入", android.widget.Toast.LENGTH_LONG).show()
+    }
+}
+
+private fun openBrowser(context: Context, url: String) {
+    runCatching {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    }.onFailure {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+        val clip = android.content.ClipData.newPlainText("URL", url)
+        clipboard?.setPrimaryClip(clip)
+        android.widget.Toast.makeText(context, "已复制链接：$url", android.widget.Toast.LENGTH_SHORT).show()
+    }
 }
 
 @Composable
@@ -845,7 +1306,7 @@ private fun ModelsPage(
 }
 
 @Composable
-private fun SettingsGroup(content: @Composable () -> Unit) {
+internal fun SettingsGroup(content: @Composable () -> Unit) {
     RuntimeCard(
         Modifier.fillMaxWidth(),
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -857,7 +1318,7 @@ private fun SettingsGroup(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun SettingsRow(
+internal fun SettingsRow(
     icon: RuntimeIconName,
     title: String,
     subtitle: String,
@@ -911,6 +1372,8 @@ private fun SettingsRow(
                         fontWeight = FontWeight.SemiBold,
                     ),
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -921,7 +1384,7 @@ private fun SettingsRow(
 }
 
 @Composable
-private fun ToggleRow(
+internal fun ToggleRow(
     icon: RuntimeIconName,
     title: String,
     subtitle: String,

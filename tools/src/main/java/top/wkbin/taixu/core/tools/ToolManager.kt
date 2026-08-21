@@ -83,6 +83,19 @@ class ToolManager @Inject constructor(
             .forEach { linuxRuntime.stopBackground(it.id) }
     }
 
+    /** Observe real-time output logs for a tool's background service. */
+    fun observeServiceLogs(toolId: String): Flow<List<String>> =
+        linuxRuntime.observeBackgroundLogs(toolId)
+
+    /** Get snapshot of service logs for a tool. */
+    fun getServiceLogs(toolId: String): List<String> =
+        linuxRuntime.getBackgroundLogs(toolId)
+
+    /** Clear service logs for a tool. */
+    fun clearServiceLogs(toolId: String) {
+        linuxRuntime.clearBackgroundLogs(toolId)
+    }
+
     fun isToolSupported(toolId: String): Boolean = getAdapter(toolId) != null
 
     fun startInstall(toolId: String): Job {
@@ -258,7 +271,7 @@ class ToolManager @Inject constructor(
                         toolRepository.updateStateAndInstalledVersion(
                             id = toolId,
                             state = failureState(preservePreviousInstall, previousTool),
-                            installedVersion = if (preservePreviousInstall) previousTool?.installedVersion else null,
+                            installedVersion = if (preservePreviousInstall) previousTool.installedVersion else null,
                         )
                         if (!preservePreviousInstall) releaseRuntimeReferences(toolId)
                         notificationNotifier.showFailed(toolId, toolName, safeEvent.message)
@@ -293,7 +306,7 @@ class ToolManager @Inject constructor(
                 toolRepository.updateStateAndInstalledVersion(
                     id = toolId,
                     state = failureState(preservePreviousInstall, previousTool, cancelled = true),
-                    installedVersion = if (preservePreviousInstall) previousTool?.installedVersion else null,
+                    installedVersion = if (preservePreviousInstall) previousTool.installedVersion else null,
                 )
                 updateTask(toolId, TASK_CANCELLED, "用户取消安装")
                 if (!preservePreviousInstall) releaseRuntimeReferences(toolId)
@@ -319,7 +332,7 @@ class ToolManager @Inject constructor(
                 toolRepository.updateStateAndInstalledVersion(
                     id = toolId,
                     state = failureState(preservePreviousInstall, previousTool),
-                    installedVersion = if (preservePreviousInstall) previousTool?.installedVersion else null,
+                    installedVersion = if (preservePreviousInstall) previousTool.installedVersion else null,
                 )
                 if (!preservePreviousInstall) releaseRuntimeReferences(toolId)
                 updateTask(toolId, TASK_FAILED, event.message)
@@ -344,7 +357,7 @@ class ToolManager @Inject constructor(
                     toolRepository.updateStateAndInstalledVersion(
                         id = toolId,
                         state = failureState(preservePreviousInstall, previousTool),
-                        installedVersion = if (preservePreviousInstall) previousTool?.installedVersion else null,
+                        installedVersion = if (preservePreviousInstall) previousTool.installedVersion else null,
                     )
                     if (!preservePreviousInstall) releaseRuntimeReferences(toolId)
                     val event = InstallEvent.Failed(toolId, "安装流程未完成")
