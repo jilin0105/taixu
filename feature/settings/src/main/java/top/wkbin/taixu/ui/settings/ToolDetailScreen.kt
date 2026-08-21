@@ -131,7 +131,12 @@ fun ToolDetailScreen(
             }
 
             // ── 1. 工具概览卡片 ──
-            ToolOverviewCard(tool = tool, manifest = manifest, gatewayRunning = state.gatewayRunning)
+            ToolOverviewCard(
+                tool = tool,
+                manifest = manifest,
+                gatewayRunning = state.gatewayRunning,
+                gatewayOperating = state.gatewayOperating,
+            )
 
             // ── 2. 网关/服务管理（仅 Web 类工具） ──
             if (state.isWebService) {
@@ -156,15 +161,16 @@ fun ToolDetailScreen(
                 )
             }
 
-            // ── 3. 模型配置（支持 AI 插件与通用工具环境注入） ──
-            ModelApplyCard(
-                toolName = tool.name,
-                category = tool.category,
-                models = state.models,
-                appliedModelId = state.appliedModelId,
-                applying = state.applyingModel,
-                onApply = viewModel::applyModel,
-            )
+            // ── 3. 模型配置（仅 AI 类工具：AI Agent / Coding Agent，非 AI 的纯开发工具不需要模型注入） ──
+            if (tool.category == "AI_AGENT" || tool.category == "CODING_AGENT") {
+                ModelApplyCard(
+                    toolName = tool.name,
+                    models = state.models,
+                    appliedModelId = state.appliedModelId,
+                    applying = state.applyingModel,
+                    onApply = viewModel::applyModel,
+                )
+            }
 
             // ── 4. 自启动配置 ──
             if (state.isWebService) {
@@ -179,6 +185,7 @@ fun ToolDetailScreen(
             if (state.isWebService) {
                 AccessLinkCard(
                     state = state,
+                    running = state.gatewayRunning,
                     onGenerate = viewModel::generateToken,
                     onClear = viewModel::clearToken,
                     onCopy = { url ->
@@ -286,6 +293,7 @@ private fun ToolOverviewCard(
     tool: top.wkbin.taixu.core.database.ToolEntity,
     manifest: top.wkbin.taixu.core.model.ToolManifest?,
     gatewayRunning: Boolean,
+    gatewayOperating: Boolean,
 ) {
     val isInstalled = tool.state == ToolState.INSTALLED.name || tool.state == ToolState.UPDATE_AVAILABLE.name
     val rawVersion = (tool.installedVersion ?: tool.manifestVersion).trim()
@@ -370,6 +378,7 @@ private fun ToolOverviewCard(
 
             StatusBadge(
                 text = when {
+                    gatewayOperating -> "启动中"
                     gatewayRunning -> "运行中"
                     tool.state == ToolState.UPDATE_AVAILABLE.name -> "可更新"
                     isInstalled -> "已就绪"
@@ -377,12 +386,13 @@ private fun ToolOverviewCard(
                     else -> "未安装"
                 },
                 color = when {
+                    gatewayOperating -> Color(0xFFFB8C00)
                     gatewayRunning -> Color(0xFF2E7D32)
                     isInstalled -> Color(0xFF2E7D32)
                     tool.state == ToolState.FAILED.name -> MaterialTheme.colorScheme.error
                     else -> MaterialTheme.colorScheme.outline
                 },
-                pulsing = gatewayRunning,
+                pulsing = gatewayRunning || gatewayOperating,
             )
         }
 
@@ -429,16 +439,30 @@ private fun GatewayManagementCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
+                    val statusColor = when {
+                        running -> Color(0xFF4CAF50)
+                        operating -> Color(0xFFFB8C00)
+                        else -> MaterialTheme.colorScheme.outline
+                    }
+                    val statusText = when {
+                        running -> "运行中"
+                        operating -> "启动中…"
+                        else -> "已停止"
+                    }
                     Box(
                         modifier = Modifier
                             .size(8.dp)
                             .clip(CircleShape)
-                            .background(if (running) Color(0xFF4CAF50) else MaterialTheme.colorScheme.outline),
+                            .background(statusColor),
                     )
                     Text(
-                        text = if (running) "运行中" else "已停止",
+                        text = statusText,
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (running) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = when {
+                            running -> Color(0xFF2E7D32)
+                            operating -> Color(0xFFFB8C00)
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                     )
                     if (port != null) {
                         Text(
@@ -605,13 +629,11 @@ private fun ServiceLogsCard(
 @Composable
 private fun ModelApplyCard(
     toolName: String,
-    category: String,
     models: List<AiModelEntity>,
     appliedModelId: String?,
     applying: Boolean,
     onApply: (AiModelEntity) -> Unit,
 ) {
-    val isAiTool = category == "AI_AGENT" || category == "CODING_AGENT"
     RuntimeCard(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -637,7 +659,7 @@ private fun ModelApplyCard(
                 shape = RoundedCornerShape(6.dp),
             ) {
                 Text(
-                    text = if (isAiTool) "AI 插件" else "通用工具",
+                    text = "AI 插件",
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
@@ -646,11 +668,7 @@ private fun ModelApplyCard(
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            text = if (isAiTool) {
-                "一键将已配置的 AI 模型（API Key、Base URL 与 Model）注入至 $toolName，插件重启后生效。"
-            } else {
-                "为 $toolName 环境注入全局 AI 模型环境变量（如 API Key 与 Base URL），便于在终端脚本与工具中直接调用。"
-            },
+            text = "一键将已配置的 AI 模型（API Key、Base URL 与 Model）注入至 $toolName，插件重启后生效。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -800,6 +818,7 @@ private fun AutoStartCard(
 @Composable
 private fun AccessLinkCard(
     state: ToolDetailUiState,
+    running: Boolean,
     onGenerate: () -> Unit,
     onClear: () -> Unit,
     onCopy: (String) -> Unit,
@@ -834,13 +853,13 @@ private fun AccessLinkCard(
             }
 
             Surface(
-                color = Color(0xFF2E7D32).copy(alpha = 0.12f),
+                color = if (running) Color(0xFF2E7D32).copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceContainerHighest,
                 shape = RoundedCornerShape(6.dp),
             ) {
                 Text(
-                    text = "已绑定 0.0.0.0",
+                    text = if (running) "已绑定 0.0.0.0" else "服务未启动",
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
-                    color = Color(0xFF2E7D32),
+                    color = if (running) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                 )
             }
@@ -848,7 +867,11 @@ private fun AccessLinkCard(
 
         Spacer(Modifier.height(4.dp))
         Text(
-            text = "网关服务已绑定全网卡 (0.0.0.0)。同局域网设备打开【局域网 IP 链接】即可直接操作，无需 localhost 映射。",
+            text = if (running) {
+                "网关服务已绑定全网卡 (0.0.0.0)。同局域网设备打开【局域网 IP 链接】即可直接操作，无需 localhost 映射。"
+            } else {
+                "服务尚未启动，请先在【网关服务】卡片中点击启动，启动成功后将在此展示可访问链接。Token 可提前生成，启动时自动注入。"
+            },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -904,7 +927,7 @@ private fun AccessLinkCard(
 
         Spacer(Modifier.height(8.dp))
 
-        if (currentUrl != null) {
+        if (running && currentUrl != null) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(10.dp),
@@ -937,6 +960,22 @@ private fun AccessLinkCard(
                         )
                     }
                 }
+            }
+        } else if (!running) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+            ) {
+                Text(
+                    text = "启动网关后此处将展示可访问链接",
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+                )
             }
         }
 

@@ -16,6 +16,8 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -72,15 +74,28 @@ class ToolManager @Inject constructor(
     /** Expose manifest metadata for detail screens. */
     fun manifest(toolId: String): ToolManifest? = toolRepository.manifest(toolId)
 
-    /** Check whether a background gateway process is currently alive for this tool. */
-    fun isGatewayRunning(toolId: String): Boolean =
-        linuxRuntime.listBackground().any { it.toolId == toolId && it.session.isAlive }
+    /** Check whether a background gateway process is alive AND its port is listening (web services). */
+    fun isGatewayRunning(toolId: String): Boolean {
+        val spec = serviceSpec(toolId)
+        return linuxRuntime.listBackground().any {
+            it.toolId == toolId && it.session.isAlive && (spec == null || isPortOpen(spec.port))
+        }
+    }
 
     /** Stop a running gateway service for the given tool. */
     suspend fun stopGateway(toolId: String) {
         linuxRuntime.listBackground()
             .filter { it.toolId == toolId }
             .forEach { linuxRuntime.stopBackground(it.id) }
+    }
+
+    /**
+     * Restart a running gateway service. Used to apply config changes (new token,
+     * model environment) that are injected via environment variables at process start.
+     */
+    suspend fun restartGateway(toolId: String): ManagedProcess {
+        stopGateway(toolId)
+        return startGateway(toolId)
     }
 
     /** Observe real-time output logs for a tool's background service. */
@@ -483,10 +498,44 @@ class ToolManager @Inject constructor(
 
     suspend fun startGateway(toolId: String): ManagedProcess {
         requireInstalledTool(toolId)
-        return requireNotNull(requireAdapter(toolId).startService()) {
+        val process = requireNotNull(requireAdapter(toolId).startService()) {
             "工具不提供后台服务：$toolId"
         }
+        val spec = serviceSpec(toolId)
+        if (spec != null) {
+            awaitPortOrThrow(toolId, process, spec)
+        }
+        return process
     }
+
+    /**
+     * Wait until the service port is listening (or the process exits / timeout).
+     * On failure the spawned process is stopped so we never report "running" for a dead gateway.
+     */
+    private suspend fun awaitPortOrThrow(toolId: String, process: ManagedProcess, spec: LocalServiceSpec) {
+        val deadline = System.currentTimeMillis() + spec.startupTimeoutMs
+        while (true) {
+            coroutineContext.ensureActive()
+            if (!process.session.isAlive) {
+                linuxRuntime.stopBackground(process.id)
+                throw IllegalStateException("网关进程启动后立即退出，请查看服务日志：$toolId")
+            }
+            if (isPortOpen(spec.port)) return
+            if (System.currentTimeMillis() > deadline) break
+            delay(spec.pollIntervalMs)
+        }
+        linuxRuntime.stopBackground(process.id)
+        throw IllegalStateException(
+            "网关未在 ${spec.startupTimeoutMs / 1000} 秒内就绪（端口 ${spec.port} 未监听），已自动停止：$toolId",
+        )
+    }
+
+    private fun isPortOpen(port: Int): Boolean = runCatching {
+        java.net.Socket().use { socket ->
+            socket.connect(java.net.InetSocketAddress("127.0.0.1", port), PORT_PROBE_TIMEOUT_MS)
+        }
+        true
+    }.getOrDefault(false)
 
     private suspend fun requireInstalledTool(toolId: String): ToolEntity {
         val tool = toolRepository.findById(toolId)
@@ -662,6 +711,7 @@ class ToolManager @Inject constructor(
         const val TASK_FAILED = "FAILED"
         const val TASK_CANCELLED = "CANCELLED"
         const val TASK_INTERRUPTED = "INTERRUPTED"
+        const val PORT_PROBE_TIMEOUT_MS = 250
     }
 
 }

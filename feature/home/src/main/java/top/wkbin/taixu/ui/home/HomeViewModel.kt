@@ -65,6 +65,10 @@ class HomeViewModel @Inject constructor(
     private val _initializing = MutableStateFlow(false)
     val initializing: StateFlow<Boolean> = _initializing.asStateFlow()
 
+    // 发行版切换中（关闭旧会话 + 切换 + 刷新指标期间置位，防止重复点击与无反馈停顿）
+    private val _switchingDistro = MutableStateFlow(false)
+    val switchingDistro: StateFlow<Boolean> = _switchingDistro.asStateFlow()
+
     private val _metrics = MutableStateFlow(SystemResourceMetrics())
     val metrics: StateFlow<SystemResourceMetrics> = _metrics.asStateFlow()
 
@@ -206,13 +210,21 @@ class HomeViewModel @Inject constructor(
     }
 
     fun switchDistro(distroId: String) {
+        if (_switchingDistro.value) return
         viewModelScope.launch {
-            // 1. 先关闭所有旧系统的终端会话（PTY 进程），防止并发冲突崩溃
-            terminalSessionManager.closeAllSessions()
-            // 2. 切换活动发行版（更新 DataStore + 刷新列表）
-            linuxRuntime.switchActiveDistro(distroId)
-            // 3. 刷新仪表盘数据
-            refreshMetrics()
+            _switchingDistro.value = true
+            try {
+                // 1. 先关闭所有旧系统的终端会话（PTY 进程），防止并发冲突崩溃
+                terminalSessionManager.closeAllSessions()
+                // 2. 切换活动发行版（更新 DataStore + 刷新列表）
+                linuxRuntime.switchActiveDistro(distroId)
+                // 3. 刷新仪表盘数据
+                refreshMetrics()
+            } catch (e: Exception) {
+                logger.w("HomeViewModel: Failed to switch distro: ${e.message}", e)
+            } finally {
+                _switchingDistro.value = false
+            }
         }
     }
 

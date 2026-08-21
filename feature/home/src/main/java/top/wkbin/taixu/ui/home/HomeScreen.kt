@@ -10,7 +10,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.draw.rotate
 import androidx.compose.foundation.layout.Arrangement
@@ -93,6 +92,7 @@ fun HomeScreen(
     val isRepairing by viewModel.isRepairing.collectAsStateWithLifecycle()
     val installedDistros by viewModel.installedDistros.collectAsStateWithLifecycle()
     val activeDistroId by viewModel.activeDistroId.collectAsStateWithLifecycle()
+    val switchingDistro by viewModel.switchingDistro.collectAsStateWithLifecycle()
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -130,6 +130,7 @@ fun HomeScreen(
                 metrics = metrics,
                 installedDistros = installedDistros,
                 activeDistroId = activeDistroId,
+                switchingDistro = switchingDistro,
                 onSwitchDistro = viewModel::switchDistro,
                 onInitialize = viewModel::initializeRuntime,
                 onCancel = viewModel::cancelInitialization,
@@ -585,12 +586,14 @@ private fun DoctorItemRow(item: DoctorItem) {
 /**
  * 运行时引擎主状态卡片
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun RuntimeEngineStatusCard(
     state: RuntimeState,
     metrics: SystemResourceMetrics,
     installedDistros: List<top.wkbin.taixu.core.model.InstalledDistro> = emptyList(),
     activeDistroId: String = "ubuntu",
+    switchingDistro: Boolean = false,
     onSwitchDistro: (String) -> Unit = {},
     onInitialize: () -> Unit,
     onCancel: () -> Unit,
@@ -646,21 +649,30 @@ private fun RuntimeEngineStatusCard(
                 }
             }
 
-            // 多系统快速切换 Chips（安装了 2 套及以上时展示）
+            // 多系统快速切换 Chips（安装了 2 套及以上时展示，自动换行，避免横向滚动）
             if (ready && installedDistros.size > 1) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
+                androidx.compose.foundation.layout.FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
                         text = "切换系统:",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(end = 2.dp),
+                        modifier = Modifier
+                            .padding(end = 2.dp)
+                            .align(androidx.compose.ui.Alignment.CenterVertically),
                     )
+                    if (switchingDistro) {
+                        CircularProgressIndicator(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .align(androidx.compose.ui.Alignment.CenterVertically),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                     installedDistros.forEach { d ->
                         val isSelected = d.id.equals(activeDistroId, ignoreCase = true)
                         Surface(
@@ -670,12 +682,12 @@ private fun RuntimeEngineStatusCard(
                                 1.dp,
                                 if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else Color.Transparent,
                             ),
-                            modifier = Modifier.clickable {
+                            modifier = Modifier.clickable(enabled = !switchingDistro) {
                                 if (!isSelected) onSwitchDistro(d.id)
                             },
                         ) {
                             Text(
-                                text = d.displayName,
+                                text = if (isSelected && switchingDistro) "切换中…" else d.displayName,
                                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal),
                                 color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),

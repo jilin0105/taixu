@@ -1,5 +1,6 @@
 package top.wkbin.taixu.runtime.tools
 
+import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.core.model.RuntimeName
 import top.wkbin.taixu.core.model.RuntimeRequirement
 import top.wkbin.taixu.core.tools.DependencyManager
@@ -12,10 +13,12 @@ import top.wkbin.taixu.runtime.shell.ShellCommand
 import top.wkbin.taixu.runtime.shell.SessionConfig
 import top.wkbin.taixu.runtime.shell.ManagedProcess
 import top.wkbin.taixu.runtime.shell.ProcessType
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 
 @Singleton
@@ -25,6 +28,7 @@ class HermesToolInstaller @Inject constructor(
     private val providerManager: ProviderManager,
     private val remoteScriptRunner: RemoteScriptRunner,
     private val toolCommandLinker: ToolCommandLinker,
+    private val settingsDataStore: SettingsDataStore,
 ) : ToolRuntimeAdapter {
     override val toolId: String = "hermes-agent"
 
@@ -88,15 +92,31 @@ class HermesToolInstaller @Inject constructor(
         allowSttyResize = false,
     )
 
-    override suspend fun startService(): ManagedProcess = linuxRuntime.startBackground(
-        "hermes-dashboard",
-        ShellCommand(
-            commandLine = "hermes dashboard --no-open --host 0.0.0.0 --port 9119",
-            environment = providerManager.environment() + mapOf("HOST" to "0.0.0.0"),
-        ),
-        toolId = toolId,
-        type = ProcessType.SERVICE,
-    )
+    override suspend fun startService(): ManagedProcess {
+        val token = resolveAccessToken()
+        return linuxRuntime.startBackground(
+            "hermes-dashboard",
+            ShellCommand(
+                commandLine = "hermes dashboard --no-open --host 0.0.0.0 --port 9119",
+                environment = providerManager.environment() + mapOf(
+                    "HOST" to "0.0.0.0",
+                    // 与 OpenClaw 对齐：网关启动时注入访问 Token，供 Dashboard 鉴权使用
+                    "HERMES_DASHBOARD_TOKEN" to token,
+                    "TAIXU_GATEWAY_TOKEN" to token,
+                ),
+            ),
+            toolId = toolId,
+            type = ProcessType.SERVICE,
+        )
+    }
+
+    private suspend fun resolveAccessToken(): String =
+        runCatching { settingsDataStore.toolAccessToken(toolId).first() }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?: UUID.randomUUID().toString().replace("-", "").also {
+                settingsDataStore.setToolAccessToken(toolId, it)
+            }
     override suspend fun uninstall(deleteData: Boolean): ToolActionResult {
         val dataCleanup = if (deleteData) " && rm -rf ${ToolLayout.toolDataDirectory(toolId)}" else ""
         val link = toolCommandLinker.remove("hermes", providerManager.environment())
