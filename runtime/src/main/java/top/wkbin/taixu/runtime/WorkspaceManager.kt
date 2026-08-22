@@ -570,6 +570,35 @@ class WorkspaceManager @Inject constructor(
             }
             """.trimIndent()
         )
+
+        // 7. gradle/wrapper/gradle-wrapper.properties (配置国内腾讯云 Gradle 镜像)
+        val wrapperDir = File(projectDir, "gradle/wrapper").apply { mkdirs() }
+        File(wrapperDir, "gradle-wrapper.properties").writeText(
+            """
+            distributionBase=GRADLE_USER_HOME
+            distributionPath=wrapper/dists
+            distributionUrl=https\://mirrors.cloud.tencent.com/gradle/gradle-8.7-bin.zip
+            zipStoreBase=GRADLE_USER_HOME
+            zipStorePath=wrapper/dists
+            """.trimIndent()
+        )
+
+        // 8. gradlew 自适应启动脚本
+        val gradlewFile = File(projectDir, "gradlew")
+        gradlewFile.writeText(
+            """
+            #!/bin/sh
+            DIR="$(cd "$(dirname "${'$'}0")" && pwd)"
+            if [ -f "${'$'}DIR/gradle/wrapper/gradle-wrapper.jar" ]; then
+                exec java -jar "${'$'}DIR/gradle/wrapper/gradle-wrapper.jar" "${'$'}@"
+            elif command -v gradle >/dev/null 2>&1; then
+                exec gradle "${'$'}@"
+            else
+                exec /usr/bin/gradle "${'$'}@"
+            fi
+            """.trimIndent()
+        )
+        runCatching { gradlewFile.setExecutable(true) }
     }
 
     private fun generateFlutterTemplate(projectDir: File, name: String, packageName: String) {

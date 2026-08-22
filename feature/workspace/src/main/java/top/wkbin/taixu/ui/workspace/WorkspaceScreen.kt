@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -218,6 +219,7 @@ fun WorkspaceScreen(
                         busy = busy,
                         onOpenExplorer = { onOpenExplorer(project.name) },
                         onOpenTerminal = { onOpenTerminal(project.name) },
+                        onOpenAgent = { onNavigate(MainDestination.Agent) },
                         onRunProject = { viewModel.runProject(project) },
                         onDelete = { deleteTarget = project },
                     )
@@ -228,8 +230,9 @@ fun WorkspaceScreen(
         }
     }
 
-    // 运行/构建进度弹窗
+    // 运行/构建进度与实时日志弹窗
     buildProgress?.let { progress ->
+        var showBuildLog by remember { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { if (!progress.isRunning) viewModel.dismissBuildProgress() },
             title = {
@@ -244,8 +247,11 @@ fun WorkspaceScreen(
                 }
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(progress.step, style = MaterialTheme.typography.bodyMedium)
+                Column(
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text(progress.step, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium))
                     if (progress.isRunning) {
                         androidx.compose.material3.LinearProgressIndicator(
                             progress = { progress.progress },
@@ -258,6 +264,62 @@ fun WorkspaceScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = if (progress.isSuccess == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+
+                    // 构建日志折叠面板
+                    if (progress.logOutput.isNotBlank()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            TextButton(
+                                onClick = { showBuildLog = !showBuildLog },
+                                contentPadding = PaddingValues(0.dp),
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    RuntimeIcon(if (showBuildLog) RuntimeIconName.ArrowUp else RuntimeIconName.ChevronDown, Modifier.size(14.dp))
+                                    Text(if (showBuildLog) "收起构建日志" else "查看构建日志", style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
+
+                            if (showBuildLog) {
+                                TextButton(
+                                    onClick = {
+                                        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                                        clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("TaiXu Build Log", progress.logOutput))
+                                    },
+                                    contentPadding = PaddingValues(0.dp),
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                        RuntimeIcon(RuntimeIconName.Copy, Modifier.size(12.dp))
+                                        Text("复制日志", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
+                            }
+                        }
+
+                        if (showBuildLog) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp),
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(10.dp).verticalScroll(rememberScrollState()),
+                                ) {
+                                    Text(
+                                        text = progress.logOutput,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 11.sp,
+                                            lineHeight = 15.sp,
+                                        ),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             },
@@ -493,6 +555,7 @@ private fun ProjectCard(
     busy: Boolean,
     onOpenExplorer: () -> Unit,
     onOpenTerminal: () -> Unit,
+    onOpenAgent: () -> Unit,
     onRunProject: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -616,6 +679,20 @@ private fun ProjectCard(
                             RuntimeIcon(RuntimeIconName.Play, Modifier.size(14.dp), tint = typeBadgeColor)
                             Text("运行到手机", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold), color = typeBadgeColor)
                         }
+                    }
+                }
+
+                // Agent 协同
+                TextButton(
+                    onClick = onOpenAgent,
+                    enabled = !busy,
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        RuntimeIcon(RuntimeIconName.Sparkles, Modifier.size(15.dp), MaterialTheme.colorScheme.primary)
+                        Text("Agent", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                     }
                 }
 
