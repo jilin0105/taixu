@@ -90,14 +90,14 @@
   {
     "schemaVersion": 1,
     "id": "android-devtools",
-    "name": "Android 统一开发套件 (acli & SDK Tools)",
-    "description": "包含 Android 统一命令行 (acli)、OpenJDK 17、ADB 调试桥、aapt 与 zipalign 等 Android 开发与设备调试工具链。",
+    "name": "Google Android CLI & SDK 工具链",
+    "description": "Google 官方原生 Android CLI (android)、OpenJDK 17、Gradle 8.7+、AAPT/ADB 与 Android Agent Skills 智能体套件，支持 Agentic 自动化工程脚手架、诊断、构建与极速真机部署。",
     "dependencies": ["curl", "ca-certificates"],
     "launchType": "pty",
     "version": "1.0.0",
     "latestVersion": "1.0.0",
-    "publisher": "Google & Erik Hellman",
-    "homepage": "https://github.com/ErikHellman/cli-for-android",
+    "publisher": "Google",
+    "homepage": "https://developer.android.com/tools/agents",
     "category": "DEVELOPER_TOOL",
     "architectures": ["ARM64"],
     "permissions": ["NETWORK", "WORKSPACE_READ", "WORKSPACE_WRITE"],
@@ -114,15 +114,16 @@
       "if [ ! -x /opt/gradle-8.7/bin/gradle ]; then curl -fsSL -m 60 https://mirrors.cloud.tencent.com/gradle/gradle-8.7-bin.zip -o /tmp/gradle-8.7.zip && python3 -c 'import zipfile; zipfile.ZipFile(\"/tmp/gradle-8.7.zip\").extractall(\"/opt/\")' 2>/dev/null && rm -f /tmp/gradle-8.7.zip; fi",
       "if [ -x /opt/gradle-8.7/bin/gradle ]; then ln -sf /opt/gradle-8.7/bin/gradle $TAIXU_TOOL_DIR/bin/gradle; ln -sf /opt/gradle-8.7/bin/gradle /usr/local/bin/gradle 2>/dev/null || true; fi",
       "for b in adb aapt zipalign java javac; do src=\"$(which $b 2>/dev/null || echo /usr/bin/$b)\"; if [ -x \"$src\" ]; then ln -sf \"$src\" \"$TAIXU_TOOL_DIR/bin/$b\"; fi; done",
-      "if [ -f /opt/taixu/assets/tools/acli ]; then cp -f /opt/taixu/assets/tools/acli $TAIXU_TOOL_DIR/bin/acli; elif [ -f /usr/local/bin/acli ]; then cp -f /usr/local/bin/acli $TAIXU_TOOL_DIR/bin/acli; else curl -fsSL -m 10 https://mirror.ghproxy.com/https://raw.githubusercontent.com/ErikHellman/cli-for-android/main/install.sh | bash 2>/dev/null || true; if [ -f /usr/local/bin/acli ]; then cp -f /usr/local/bin/acli $TAIXU_TOOL_DIR/bin/acli; fi; fi",
+      "if [ -f /opt/taixu/assets/tools/android ]; then cp -f /opt/taixu/assets/tools/android $TAIXU_TOOL_DIR/bin/android; elif [ -f /usr/local/bin/android ]; then cp -f /usr/local/bin/android $TAIXU_TOOL_DIR/bin/android; fi",
       "chmod +x $TAIXU_TOOL_DIR/bin/* 2>/dev/null || true"
     ],
-    "launchCommand": "acli doctor 2>/dev/null || gradle -v 2>/dev/null || aapt version",
-    "verifyCommand": "test -x /opt/gradle-8.7/bin/gradle || gradle -v 2>&1 || aapt version 2>&1 || java -version 2>&1",
-    "commandLinks": ["acli", "adb", "aapt", "zipalign", "java", "javac", "gradle"],
+    "launchCommand": "android doctor",
+    "verifyCommand": "android --version 2>&1 || gradle -v 2>&1 || aapt version 2>&1 || java -version 2>&1",
+    "commandLinks": ["android", "adb", "aapt", "zipalign", "java", "javac", "gradle"],
     "environment": {
       "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk-arm64",
-      "ACLI_CONFIG_DIR": "/opt/taixu/data/acli"
+      "ANDROID_HOME": "/opt/android-sdk",
+      "ANDROID_SDK_ROOT": "/opt/android-sdk"
     }
   },
   {

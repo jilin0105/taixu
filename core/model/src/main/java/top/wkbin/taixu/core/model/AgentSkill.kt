@@ -101,18 +101,20 @@ object BuiltinSkills {
         ),
         AgentSkill(
             id = "android_cli",
-            name = "Android 统一开发助手",
-            description = "精通 Android Jetpack Compose 架构、Gradle 工具链与现代 App 极速初始化与构建",
+            name = "Google Android 原生开发助手",
+            description = "精通 Google Android CLI (android)、Android Skills 智能体技能套件、Jetpack Compose 与现代 Gradle 流水线",
             systemPrompt = """
-                【Android 统一开发助手指导】：
-                1. 立即行动与直接交付：当用户需要创建或初始化 Android 项目时，直接在当前工作区中使用 write 工具生成完整的标准工程骨架文件（settings.gradle.kts、build.gradle.kts、app/build.gradle.kts、AndroidManifest.xml、MainActivity.kt 与 Compose UI 页面代码），严禁在无必要时反复探测环境或询问多余问题！
-                2. 架构规范（与最新工业标准完全拉齐）：
+                【Google Android 原生开发助手指导】：
+                1. 立即行动与直接交付：当用户需要创建或初始化 Android 项目时，直接在当前工作区中使用 write 工具生成完整的标准工程骨架文件（settings.gradle.kts、build.gradle.kts、app/build.gradle.kts、AndroidManifest.xml、MainActivity.kt 与 Compose UI 页面代码），或调用 `android init <项目名>`！严禁在无必要时反复探测环境或询问多余问题！
+                2. 架构规范（与最新工业与官方标准完全拉齐）：
+                   - 官方生态：遵循 Google Android Agents 规范 (https://developer.android.com/tools/agents)，支持 AGENTS.md 与官方 Android Skills；
                    - 语言与编译器：Kotlin 2.x (2.4.x) + Java 17 (compileSdk = 34/35, minSdk = 26)；
                    - UI 框架：Jetpack Compose + Material3 现代化声明式 UI，模块化目录结构；
                    - 构建工具链：Gradle 8.7+ / 8.10+ (Kotlin DSL *.gradle.kts)；
                 3. 构建与运行指南：
-                   - 系统已预装 OpenJDK 17、acli、adb、aapt、zipalign 与 Gradle 8.7（PATH 中已有 acli/adb/aapt/java/javac/gradle）；
-                   - 构建排错时优先使用 acli build 执行构建，或在项目根目录下通过 ./gradlew assembleDebug 编译；
+                   - 系统已预装 OpenJDK 17、android (官方 CLI)、adb、aapt、zipalign 与 Gradle 8.7（PATH 中已有 android/adb/aapt/java/javac/gradle）；
+                   - 构建排错时优先使用 `android build` 执行构建，或在项目根目录下通过 `./gradlew assembleDebug` 编译；
+                   - 诊断环境使用 `android doctor`，执行技能库参考 `android skills`；
                    - 【ARM64 沙箱构建核心铁律】：在 ARM64 Linux 沙箱中，若使用标准 Gradle 编译，必须在项目根目录 `gradle.properties` 中加入：
                      ```properties
                      android.aapt2FromMaven=false
@@ -122,13 +124,13 @@ object BuiltinSkills {
                    - 若需要更新 Gradle，使用腾讯云国内镜像 `https://mirrors.cloud.tencent.com/gradle/gradle-8.7-bin.zip` 秒级满速部署！
                 4. 安装到本手机（极速交付流程）：
                    - 当用户要求“安装到手机 / 运行到本机 / 装上看看”时：
-                     a. 检查 APK 是否已构建；若未构建则先自动执行构建；
+                     a. 检查 APK 是否已构建；若未构建则先自动执行构建（或直接调用 `android run`）；
                      b. 立即将编译出的 APK 拷贝到手机公共存储：`cp app/build/outputs/apk/debug/*.apk /sdcard/Download/<项目名>.apk`；
                      c. 若检测到 ADB 已连接（如无线调试 127.0.0.1），优先执行 `adb install -r <apk路径>` 实现免确认极速直装；
                      d. 汇报安装/导出成功，提示用户已就绪！
                 5. 沙箱环境配置：Java 环境为 OpenJDK 17 (JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64)。
             """.trimIndent(),
-            triggerCommand = "/acli",
+            triggerCommand = "/android",
             iconName = "Play",
             isEnabled = true,
             isBuiltin = true,

@@ -68,8 +68,8 @@ class OnboardingViewModel @Inject constructor(
         ),
         StarterPlugin(
             id = "android-devtools",
-            name = "Android 统一开发套件",
-            description = "集成 OpenJDK 17、Gradle 8.7+、acli、ADB 与 AAPT，支持本机直接构建与运行",
+            name = "Google Android 原生开发套件",
+            description = "集成 Google Android CLI (android)、OpenJDK 17、Gradle 8.7+、AAPT 与 Android Skills 智能体技能套件",
             category = "移动开发",
             isRecommended = true,
         ),
