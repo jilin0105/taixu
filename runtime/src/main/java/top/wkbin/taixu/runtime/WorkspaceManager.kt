@@ -591,6 +591,10 @@ class WorkspaceManager @Inject constructor(
             DIR="$(cd "$(dirname "${'$'}0")" && pwd)"
             if [ -f "${'$'}DIR/gradle/wrapper/gradle-wrapper.jar" ]; then
                 exec java -jar "${'$'}DIR/gradle/wrapper/gradle-wrapper.jar" "${'$'}@"
+            elif [ -x /opt/gradle-8.7/bin/gradle ]; then
+                exec /opt/gradle-8.7/bin/gradle "${'$'}@"
+            elif [ -x /usr/local/bin/gradle ]; then
+                exec /usr/local/bin/gradle "${'$'}@"
             elif command -v gradle >/dev/null 2>&1; then
                 exec gradle "${'$'}@"
             else
