@@ -541,76 +541,126 @@ fun ToolCenterScreen(
                             }
                         }
 
-                        Text(
-                            "组件清单（基础环境必选，扩展工具按需勾选）：",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
+                        val uninstalledComponents = bundle.components.filter { it.id !in installedComponentIds }
+                        val installedComponentsList = bundle.components.filter { it.id in installedComponentIds }
 
-                        bundle.components.forEach { comp ->
-                            val isChecked = comp.isRequired || comp.id in selectedComponents
-                            val isInstalled = comp.id in installedComponentIds
+                        // 1. 待装配组件分组 (Uninstalled Components)
+                        if (uninstalledComponents.isNotEmpty()) {
+                            Text(
+                                "待装配组件 (${uninstalledComponents.size})：",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
 
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .clickable(enabled = !isInstallingComponents && !comp.isRequired) {
-                                        viewModel.toggleComponent(comp)
-                                    },
-                                shape = RoundedCornerShape(10.dp),
-                                border = androidx.compose.foundation.BorderStroke(
-                                    1.dp,
-                                    if (isChecked) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                                ),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (isChecked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
-                                    else MaterialTheme.colorScheme.surfaceContainerLow,
-                                ),
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            uninstalledComponents.forEach { comp ->
+                                val isUninstalledRequired = comp.isRequired
+                                val isChecked = isUninstalledRequired || comp.id in selectedComponents
+
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable(enabled = !isInstallingComponents && !isUninstalledRequired) {
+                                            viewModel.toggleComponent(comp)
+                                        },
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.dp,
+                                        if (isChecked) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                    ),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (isChecked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
+                                        else MaterialTheme.colorScheme.surfaceContainerLow,
+                                    ),
                                 ) {
-                                    androidx.compose.material3.Checkbox(
-                                        checked = isChecked,
-                                        onCheckedChange = { if (!comp.isRequired) viewModel.toggleComponent(comp) },
-                                        enabled = !isInstallingComponents && !comp.isRequired,
-                                    )
+                                    Row(
+                                        modifier = Modifier.padding(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    ) {
+                                        androidx.compose.material3.Checkbox(
+                                            checked = isChecked,
+                                            onCheckedChange = { if (!isUninstalledRequired) viewModel.toggleComponent(comp) },
+                                            enabled = !isInstallingComponents && !isUninstalledRequired,
+                                        )
 
-                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            Text(comp.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
-                                            if (comp.isRequired) {
-                                                Surface(
-                                                    shape = RoundedCornerShape(4.dp),
-                                                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                                ) {
-                                                    Text(
-                                                        "必选基座",
-                                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                                                    )
+                                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                Text(comp.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                                                if (isUninstalledRequired) {
+                                                    Surface(
+                                                        shape = RoundedCornerShape(4.dp),
+                                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                                    ) {
+                                                        Text(
+                                                            "必选基座",
+                                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                                            color = MaterialTheme.colorScheme.primary,
+                                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                                        )
+                                                    }
                                                 }
                                             }
-                                            if (isInstalled) {
-                                                Surface(
-                                                    shape = RoundedCornerShape(4.dp),
-                                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                                                ) {
-                                                    Text(
-                                                        "已就绪",
-                                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                                                        color = MaterialTheme.colorScheme.primary,
-                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                                                    )
-                                                }
-                                            }
+                                            Text(comp.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
-                                        Text(comp.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+
+                        // 2. 已装配就绪分组 (Installed Components)
+                        if (installedComponentsList.isNotEmpty()) {
+                            Text(
+                                "已装配就绪 (${installedComponentsList.size})：",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = Color(0xFF2E7D32),
+                                modifier = Modifier.padding(top = 6.dp),
+                            )
+
+                            installedComponentsList.forEach { comp ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2E7D32).copy(alpha = 0.25f)),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.45f)),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(20.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFF2E7D32).copy(alpha = 0.15f)),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            RuntimeIcon(
+                                                name = RuntimeIconName.Check,
+                                                modifier = Modifier.size(12.dp),
+                                                tint = Color(0xFF2E7D32),
+                                            )
+                                        }
+
+                                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                Text(comp.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                                                Surface(
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    color = Color(0xFF2E7D32).copy(alpha = 0.15f),
+                                                ) {
+                                                    Text(
+                                                        "✓ 已就绪",
+                                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                                        color = Color(0xFF2E7D32),
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                                    )
+                                                }
+                                            }
+                                            Text(comp.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
                                     }
                                 }
                             }
@@ -618,11 +668,18 @@ fun ToolCenterScreen(
                     }
                 },
                 confirmButton = {
-                    Button(
-                        onClick = viewModel::installActiveBundleComponents,
-                        enabled = !isInstallingComponents && selectedComponents.isNotEmpty(),
-                    ) {
-                        Text("开始装配 (${selectedComponents.size})")
+                    val uninstalledComponents = bundle.components.filter { it.id !in installedComponentIds }
+                    if (uninstalledComponents.isEmpty()) {
+                        Button(onClick = viewModel::closeBundleSetup) {
+                            Text("全部组件已就绪")
+                        }
+                    } else {
+                        Button(
+                            onClick = viewModel::installActiveBundleComponents,
+                            enabled = !isInstallingComponents && selectedComponents.isNotEmpty(),
+                        ) {
+                            Text(if (selectedComponents.isEmpty()) "请勾选待装配组件" else "开始装配 (${selectedComponents.size})")
+                        }
                     }
                 },
                 dismissButton = {

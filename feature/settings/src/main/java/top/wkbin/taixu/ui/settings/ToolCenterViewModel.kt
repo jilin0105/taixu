@@ -141,9 +141,9 @@ class ToolCenterViewModel @Inject constructor(
 
     fun openBundleSetup(bundle: top.wkbin.taixu.core.model.PluginBundle) {
         val installed = _installedComponentIds.value
-        // 必选组件强制预选 + 已安装的组件预选 + 默认勾选
-        val initialSelected = bundle.components.filter { it.isRequired || it.id in installed }.map { it.id }.toSet()
-        _selectedComponents.value = if (initialSelected.isEmpty()) bundle.components.map { it.id }.toSet() else initialSelected
+        // 只默认勾选尚未安装的必选基座；已安装的组件不再勾选
+        val uninstalledRequired = bundle.components.filter { it.id !in installed && it.isRequired }.map { it.id }.toSet()
+        _selectedComponents.value = uninstalledRequired
         _activeBundle.value = bundle
     }
 
@@ -152,7 +152,10 @@ class ToolCenterViewModel @Inject constructor(
     }
 
     fun toggleComponent(component: top.wkbin.taixu.core.model.PluginComponent) {
-        if (component.isRequired) return // 必选基础环境锁定，不可取消
+        val installed = _installedComponentIds.value
+        if (component.id in installed) return // 已安装组件无需重复勾选
+        val isUninstalledRequired = component.isRequired && component.id !in installed
+        if (isUninstalledRequired) return // 尚未安装的必选基座锁定勾选
         val current = _selectedComponents.value
         _selectedComponents.value = if (component.id in current) current - component.id else current + component.id
     }
