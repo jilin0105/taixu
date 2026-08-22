@@ -108,57 +108,94 @@ class ToolCenterViewModel @Inject constructor(
         }
     }
 
-    // ==================== 开发环境套件聚合管理 ====================
-    val devSuites: List<top.wkbin.taixu.core.model.DevEnvironmentSuite> = top.wkbin.taixu.core.model.BuiltinDevSuites.presets
-    private val _showSuiteDialog = MutableStateFlow(false)
-    val showSuiteDialog: StateFlow<Boolean> = _showSuiteDialog.asStateFlow()
-
-    private val _selectedSuites = MutableStateFlow<Set<String>>(
-        top.wkbin.taixu.core.model.BuiltinDevSuites.presets.filter { it.isDefaultSelected }.map { it.id }.toSet(),
-    )
-    val selectedSuites: StateFlow<Set<String>> = _selectedSuites.asStateFlow()
-
-    private val _isInstallingSuites = MutableStateFlow(false)
-    val isInstallingSuites: StateFlow<Boolean> = _isInstallingSuites.asStateFlow()
-
-    private val _suiteInstallProgress = MutableStateFlow<String?>(null)
-    val suiteInstallProgress: StateFlow<String?> = _suiteInstallProgress.asStateFlow()
-
-    fun openSuiteDialog() {
-        _showSuiteDialog.value = true
+    init {
+        syncRegistry()
+        refreshInstalledStatus()
     }
 
-    fun closeSuiteDialog() {
-        if (!_isInstallingSuites.value) {
-            _showSuiteDialog.value = false
-        }
-    }
+    // ==================== 聚合大插件套件与子组件状态管理 ====================
+    val pluginBundles: List<top.wkbin.taixu.core.model.PluginBundle> = top.wkbin.taixu.core.model.BuiltinPluginBundles.bundles
 
-    fun toggleSuite(id: String) {
-        val current = _selectedSuites.value
-        _selectedSuites.value = if (id in current) current - id else current + id
-    }
+    private val _installedComponentIds = MutableStateFlow<Set<String>>(emptySet())
+    val installedComponentIds: StateFlow<Set<String>> = _installedComponentIds.asStateFlow()
 
-    fun installSelectedSuites() {
-        val selected = _selectedSuites.value.toSet()
-        if (selected.isEmpty()) return
+    private val _activeBundle = MutableStateFlow<top.wkbin.taixu.core.model.PluginBundle?>(null)
+    val activeBundle: StateFlow<top.wkbin.taixu.core.model.PluginBundle?> = _activeBundle.asStateFlow()
 
+    private val _selectedComponents = MutableStateFlow<Set<String>>(emptySet())
+    val selectedComponents: StateFlow<Set<String>> = _selectedComponents.asStateFlow()
+
+    private val _isInstallingComponents = MutableStateFlow(false)
+    val isInstallingComponents: StateFlow<Boolean> = _isInstallingComponents.asStateFlow()
+
+    private val _componentInstallProgress = MutableStateFlow<String?>(null)
+    val componentInstallProgress: StateFlow<String?> = _componentInstallProgress.asStateFlow()
+
+    fun refreshInstalledStatus() {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            _isInstallingSuites.value = true
             try {
-                toolManager.batchInstallSuites(selected).collect { event ->
-                    if (event is top.wkbin.taixu.runtime.tools.InstallEvent.Progress) {
-                        _suiteInstallProgress.value = event.message
-                    }
-                }
-                syncRegistry()
-                _showSuiteDialog.value = false
+                val installed = toolManager.probeInstalledComponents()
+                _installedComponentIds.value = installed
             } catch (e: Exception) {
-                logger.w("Batch install suites failed: ${e.message}", e)
-            } finally {
-                _isInstallingSuites.value = false
-                _suiteInstallProgress.value = null
+                logger.w("Failed to probe installed components: ${e.message}", e)
             }
         }
     }
+
+    fun openBundleSetup(bundle: top.wkbin.taixu.core.model.PluginBundle) {
+        val installed = _installedComponentIds.value
+        // 必选组件强制预选 + 已安装的组件预选 + 默认勾选
+        val initialSelected = bundle.components.filter { it.isRequired || it.id in installed }.map { it.id }.toSet()
+        _selectedComponents.value = if (initialSelected.isEmpty()) bundle.components.map { it.id }.toSet() else initialSelected
+        _activeBundle.value = bundle
+    }
+
+    fun closeBundleSetup() {
+        if (!_isInstallingComponents.value) {
+            _activeBundle.value = null
+        }
+    }
+
+    fun toggleComponent(component: top.wkbin.taixu.core.model.PluginComponent) {
+        if (component.isRequired) return // 必选基础环境锁定，不可取消
+        val current = _selectedComponents.value
+        _selectedComponents.value = if (component.id in current) current - component.id else current + component.id
+    }
+
+    fun installActiveBundleComponents() {
+        val selected = _selectedComponents.value
+        if (selected.isEmpty()) return
+
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            _isInstallingComponents.value = true
+            try {
+                toolManager.batchInstallComponents(selected).collect { event ->
+                    if (event is top.wkbin.taixu.runtime.tools.InstallEvent.Progress) {
+                        _componentInstallProgress.value = event.message
+                    }
+                }
+                refreshInstalledStatus()
+                syncRegistry()
+                _activeBundle.value = null
+            } catch (e: Exception) {
+                logger.w("Batch install components failed: ${e.message}", e)
+            } finally {
+                _isInstallingComponents.value = false
+                _componentInstallProgress.value = null
+            }
+        }
+    }
+
+    // 兼容原 devSuites 接口
+    val devSuites: List<top.wkbin.taixu.core.model.PluginBundle> get() = pluginBundles
+    val showSuiteDialog: StateFlow<Boolean> = MutableStateFlow(false).asStateFlow()
+    val selectedSuites: StateFlow<Set<String>> = MutableStateFlow(emptySet<String>()).asStateFlow()
+    val isInstallingSuites: StateFlow<Boolean> = _isInstallingComponents
+    val suiteInstallProgress: StateFlow<String?> = _componentInstallProgress
+    fun openSuiteDialog() {
+        pluginBundles.firstOrNull()?.let { openBundleSetup(it) }
+    }
+    fun closeSuiteDialog() = closeBundleSetup()
+    fun toggleSuite(id: String) {}
+    fun installSelectedSuites() {}
 }

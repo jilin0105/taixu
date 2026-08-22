@@ -85,12 +85,21 @@ fun ToolCenterScreen(
     val viewingLogsToolId by viewModel.viewingLogsToolId.collectAsStateWithLifecycle()
     val toolLogs by viewModel.toolLogs.collectAsStateWithLifecycle()
 
+    val installedComponentIds by viewModel.installedComponentIds.collectAsStateWithLifecycle()
+    val activeBundle by viewModel.activeBundle.collectAsStateWithLifecycle()
+    val selectedComponents by viewModel.selectedComponents.collectAsStateWithLifecycle()
+    val isInstallingComponents by viewModel.isInstallingComponents.collectAsStateWithLifecycle()
+    val componentInstallProgress by viewModel.componentInstallProgress.collectAsStateWithLifecycle()
+
     val categories = listOf(
-        "ALL" to "全部工具",
+        "ALL" to "全部生态",
+        "BUNDLES" to "全栈开发套件",
         "CODING_AGENT" to "编程助手",
         "AI_AGENT" to "智能体生态",
-        "DEVELOPER_TOOL" to "开发工具",
     )
+
+    val showBundles = selectedCategory == "ALL" || selectedCategory == "BUNDLES"
+    val showTools = selectedCategory != "BUNDLES"
 
     val filteredTools = tools.filter {
         selectedCategory == "ALL" || it.category.equals(selectedCategory, ignoreCase = true)
@@ -104,7 +113,10 @@ fun ToolCenterScreen(
                 statusText = "已集成 ${tools.count { it.state == ToolState.INSTALLED.name }} 个已就绪工具",
                 onBack = onBack,
                 actions = {
-                    IconButton(onClick = viewModel::syncRegistry) {
+                    IconButton(onClick = {
+                        viewModel.syncRegistry()
+                        viewModel.refreshInstalledStatus()
+                    }) {
                         RuntimeIcon(
                             name = RuntimeIconName.Refresh,
                             modifier = Modifier.size(20.dp),
@@ -120,76 +132,11 @@ fun ToolCenterScreen(
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
-            // 🛠️ 开发者环境套件 (Dev Suites) 聚合卡片
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
-                ),
-            ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            RuntimeIcon(
-                                name = RuntimeIconName.Package,
-                                modifier = Modifier.size(20.dp),
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                            )
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "开发者运行环境套件 (Dev Suites)",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                            Text(
-                                text = "Python 3 · Node.js · JDK 17 · Android SDK · C/C++ · Flutter",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.End,
-                    ) {
-                        FilledTonalButton(
-                            onClick = viewModel::openSuiteDialog,
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                RuntimeIcon(RuntimeIconName.Sparkles, Modifier.size(14.dp))
-                                Text("准备开发环境", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
-                            }
-                        }
-                    }
-                }
-            }
-
             // Category Filter Bar
             LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(categories) { (catId, label) ->
@@ -206,35 +153,171 @@ fun ToolCenterScreen(
                 }
             }
 
-            if (filteredTools.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        RuntimeIcon(
-                            name = RuntimeIconName.Package,
-                            modifier = Modifier.size(48.dp),
-                            tint = MaterialTheme.colorScheme.outline,
-                        )
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                // 1. 聚合大套件专区 (Plugin Bundles)
+                if (showBundles) {
+                    item {
                         Text(
-                            text = "暂无匹配的工具或插件",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            text = "开发者全栈套件 (Dev Bundles)",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(bottom = 2.dp),
                         )
                     }
+
+                    items(viewModel.pluginBundles, key = { it.id }) { bundle ->
+                        val installedCount = bundle.components.count { it.id in installedComponentIds }
+                        val isCoreReady = bundle.components.filter { it.isRequired }.all { it.id in installedComponentIds }
+
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable { viewModel.openBundleSetup(bundle) },
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (isCoreReady) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                                else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                            ),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(40.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                if (isCoreReady) MaterialTheme.colorScheme.primaryContainer
+                                                else MaterialTheme.colorScheme.surfaceContainerHighest,
+                                            ),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        RuntimeIcon(
+                                            name = when (bundle.iconName) {
+                                                "Android" -> RuntimeIconName.Android
+                                                "Flutter" -> RuntimeIconName.Flutter
+                                                "Globe" -> RuntimeIconName.Globe
+                                                else -> RuntimeIconName.Code
+                                            },
+                                            modifier = Modifier.size(22.dp),
+                                            tint = if (isCoreReady) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        ) {
+                                            Text(
+                                                text = bundle.name,
+                                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                            )
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = if (isCoreReady) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                                else MaterialTheme.colorScheme.surfaceContainerHighest,
+                                            ) {
+                                                Text(
+                                                    text = if (isCoreReady) "已就绪 ($installedCount/${bundle.components.size})" else "未装配 ($installedCount/${bundle.components.size})",
+                                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                                    color = if (isCoreReady) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = bundle.summary,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2,
+                                        )
+                                    }
+                                }
+
+                                // 子组件标签胶囊列表
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    bundle.components.forEach { comp ->
+                                        val isInstalled = comp.id in installedComponentIds
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = if (isInstalled) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                                            else MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.6f),
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                            ) {
+                                                if (comp.isRequired) {
+                                                    RuntimeIcon(RuntimeIconName.Shield, Modifier.size(10.dp), tint = MaterialTheme.colorScheme.primary)
+                                                }
+                                                Text(
+                                                    text = if (comp.isRequired) "${comp.name} (必选)" else comp.name,
+                                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                                    color = if (isInstalled) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.End,
+                                ) {
+                                    FilledTonalButton(
+                                        onClick = { viewModel.openBundleSetup(bundle) },
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            RuntimeIcon(RuntimeIconName.Tune, Modifier.size(14.dp))
+                                            Text(
+                                                text = if (isCoreReady) "组件管理与配置" else "装配套件",
+                                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
+
+                // 2. 独立 Agent 工具与服务专区
+                if (showTools && filteredTools.isNotEmpty()) {
+                    if (showBundles) {
+                        item {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "智能体生态与服务 (Agents & Services)",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(bottom = 2.dp),
+                            )
+                        }
+                    }
+
                     items(filteredTools, key = { it.id }) { tool ->
                         ToolCard(
                             tool = tool,
@@ -352,28 +435,40 @@ fun ToolCenterScreen(
             )
         }
 
-        // 🛠️ 准备开发环境聚合弹窗 (Dev Suites Dialog)
-        val showSuiteDialog by viewModel.showSuiteDialog.collectAsStateWithLifecycle()
-        val selectedSuites by viewModel.selectedSuites.collectAsStateWithLifecycle()
-        val isInstallingSuites by viewModel.isInstallingSuites.collectAsStateWithLifecycle()
-        val suiteProgressMsg by viewModel.suiteInstallProgress.collectAsStateWithLifecycle()
-
-        if (showSuiteDialog) {
+        // 🛠️ 聚合大插件子组件装配弹窗 (Bundle Component Setup Dialog)
+        activeBundle?.let { bundle ->
             AlertDialog(
-                onDismissRequest = viewModel::closeSuiteDialog,
-                title = { Text("准备开发环境", fontWeight = FontWeight.Bold) },
+                onDismissRequest = viewModel::closeBundleSetup,
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        RuntimeIcon(
+                            name = when (bundle.iconName) {
+                                "Android" -> RuntimeIconName.Android
+                                "Flutter" -> RuntimeIconName.Flutter
+                                "Globe" -> RuntimeIconName.Globe
+                                else -> RuntimeIconName.Code
+                            },
+                            modifier = Modifier.size(22.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        Text("装配 ${bundle.name}", fontWeight = FontWeight.Bold)
+                    }
+                },
                 text = {
                     Column(
                         modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         Text(
-                            "请选择需要准备的开发环境。系统将自动去重并执行批量原子安全装配：",
+                            bundle.description,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
 
-                        if (isInstallingSuites) {
+                        if (isInstallingComponents) {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(10.dp),
@@ -382,27 +477,38 @@ fun ToolCenterScreen(
                                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         androidx.compose.material3.CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                                        Text(suiteProgressMsg ?: "正在执行批量装配流水线...", style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                                        Text(componentInstallProgress ?: "正在执行批量原子装配流水线...", style = MaterialTheme.typography.bodySmall, maxLines = 2)
                                     }
                                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)))
                                 }
                             }
                         }
 
-                        viewModel.devSuites.forEach { suite ->
-                            val isChecked = suite.id in selectedSuites
+                        Text(
+                            "组件清单（基础环境必选，扩展工具按需勾选）：",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+
+                        bundle.components.forEach { comp ->
+                            val isChecked = comp.isRequired || comp.id in selectedComponents
+                            val isInstalled = comp.id in installedComponentIds
+
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(10.dp))
-                                    .clickable(enabled = !isInstallingSuites) { viewModel.toggleSuite(suite.id) },
+                                    .clickable(enabled = !isInstallingComponents && !comp.isRequired) {
+                                        viewModel.toggleComponent(comp)
+                                    },
                                 shape = RoundedCornerShape(10.dp),
                                 border = androidx.compose.foundation.BorderStroke(
                                     1.dp,
                                     if (isChecked) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                                 ),
                                 colors = CardDefaults.cardColors(
-                                    containerColor = if (isChecked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                                    containerColor = if (isChecked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
                                     else MaterialTheme.colorScheme.surfaceContainerLow,
                                 ),
                             ) {
@@ -413,12 +519,41 @@ fun ToolCenterScreen(
                                 ) {
                                     androidx.compose.material3.Checkbox(
                                         checked = isChecked,
-                                        onCheckedChange = { viewModel.toggleSuite(suite.id) },
-                                        enabled = !isInstallingSuites,
+                                        onCheckedChange = { if (!comp.isRequired) viewModel.toggleComponent(comp) },
+                                        enabled = !isInstallingComponents && !comp.isRequired,
                                     )
+
                                     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Text(suite.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
-                                        Text(suite.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            Text(comp.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                                            if (comp.isRequired) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                                ) {
+                                                    Text(
+                                                        "必选基座",
+                                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                                    )
+                                                }
+                                            }
+                                            if (isInstalled) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                                ) {
+                                                    Text(
+                                                        "已就绪",
+                                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Text(comp.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
                             }
@@ -427,15 +562,15 @@ fun ToolCenterScreen(
                 },
                 confirmButton = {
                     Button(
-                        onClick = viewModel::installSelectedSuites,
-                        enabled = !isInstallingSuites && selectedSuites.isNotEmpty(),
+                        onClick = viewModel::installActiveBundleComponents,
+                        enabled = !isInstallingComponents && selectedComponents.isNotEmpty(),
                     ) {
-                        Text(if (isInstallingSuites) "正在装配..." else "开始安装 (${selectedSuites.size})")
+                        Text(if (isInstallingComponents) "正在装配..." else "开始装配 (${selectedComponents.size})")
                     }
                 },
                 dismissButton = {
-                    if (!isInstallingSuites) {
-                        TextButton(onClick = viewModel::closeSuiteDialog) {
+                    if (!isInstallingComponents) {
+                        TextButton(onClick = viewModel::closeBundleSetup) {
                             Text("取消")
                         }
                     }

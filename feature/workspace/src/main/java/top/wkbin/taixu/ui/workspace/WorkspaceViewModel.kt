@@ -22,67 +22,100 @@ class WorkspaceViewModel @Inject constructor(
     private val toolManager: top.wkbin.taixu.core.tools.ToolManager,
 ) : ViewModel() {
 
-    // ==================== 开发环境套件弹窗状态 ====================
-    val devSuites: List<top.wkbin.taixu.core.model.DevEnvironmentSuite> = top.wkbin.taixu.core.model.BuiltinDevSuites.presets
-    private val _showDevSuiteDialog = MutableStateFlow(false)
-    val showDevSuiteDialog: StateFlow<Boolean> = _showDevSuiteDialog.asStateFlow()
+    // ==================== 聚合开发套件与子组件状态 ====================
+    val pluginBundles: List<top.wkbin.taixu.core.model.PluginBundle> = top.wkbin.taixu.core.model.BuiltinPluginBundles.bundles
 
-    private val _selectedDevSuites = MutableStateFlow<Set<String>>(emptySet())
-    val selectedDevSuites: StateFlow<Set<String>> = _selectedDevSuites.asStateFlow()
+    private val _installedComponentIds = MutableStateFlow<Set<String>>(emptySet())
+    val installedComponentIds: StateFlow<Set<String>> = _installedComponentIds.asStateFlow()
 
-    private val _isInstallingSuites = MutableStateFlow(false)
-    val isInstallingSuites: StateFlow<Boolean> = _isInstallingSuites.asStateFlow()
+    private val _activeBundleForSetup = MutableStateFlow<top.wkbin.taixu.core.model.PluginBundle?>(null)
+    val activeBundleForSetup: StateFlow<top.wkbin.taixu.core.model.PluginBundle?> = _activeBundleForSetup.asStateFlow()
+
+    private val _selectedComponents = MutableStateFlow<Set<String>>(emptySet())
+    val selectedComponents: StateFlow<Set<String>> = _selectedComponents.asStateFlow()
+
+    private val _isInstallingComponents = MutableStateFlow(false)
+    val isInstallingComponents: StateFlow<Boolean> = _isInstallingComponents.asStateFlow()
 
     private val _suiteInstallProgress = MutableStateFlow<String?>(null)
     val suiteInstallProgress: StateFlow<String?> = _suiteInstallProgress.asStateFlow()
 
-    fun openDevEnvironmentDialog(suggestedSuiteId: String? = null) {
-        val initial = if (suggestedSuiteId != null) {
-            when (suggestedSuiteId) {
-                "android_sdk" -> setOf("jdk17", "android_sdk")
-                "flutter" -> setOf("jdk17", "android_sdk", "flutter")
-                else -> setOf(suggestedSuiteId)
-            }
-        } else {
-            devSuites.filter { it.isDefaultSelected }.map { it.id }.toSet()
+    init {
+        refreshInstalledStatus()
+    }
+
+    fun refreshInstalledStatus() {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                _installedComponentIds.value = toolManager.probeInstalledComponents()
+            } catch (_: Exception) {}
         }
-        _selectedDevSuites.value = initial
-        _showDevSuiteDialog.value = true
+    }
+
+    fun openDevEnvironmentDialog(suggestedSuiteId: String? = null) {
+        val targetBundle = if (suggestedSuiteId != null) {
+            when (suggestedSuiteId) {
+                "android_sdk", "android-suite" -> pluginBundles.firstOrNull { it.id == "android-suite" }
+                "flutter", "flutter-suite" -> pluginBundles.firstOrNull { it.id == "flutter-suite" }
+                else -> pluginBundles.firstOrNull { it.id == suggestedSuiteId }
+            } ?: pluginBundles.first()
+        } else {
+            pluginBundles.first()
+        }
+        val installed = _installedComponentIds.value
+        val initial = targetBundle.components.filter { it.isRequired || it.id in installed }.map { it.id }.toSet()
+        _selectedComponents.value = if (initial.isEmpty()) targetBundle.components.map { it.id }.toSet() else initial
+        _activeBundleForSetup.value = targetBundle
+    }
+
+    fun selectBundleTab(bundle: top.wkbin.taixu.core.model.PluginBundle) {
+        val installed = _installedComponentIds.value
+        val initial = bundle.components.filter { it.isRequired || it.id in installed }.map { it.id }.toSet()
+        _selectedComponents.value = if (initial.isEmpty()) bundle.components.map { it.id }.toSet() else initial
+        _activeBundleForSetup.value = bundle
     }
 
     fun closeDevEnvironmentDialog() {
-        if (!_isInstallingSuites.value) {
-            _showDevSuiteDialog.value = false
+        if (!_isInstallingComponents.value) {
+            _activeBundleForSetup.value = null
         }
     }
 
-    fun toggleDevSuite(suiteId: String) {
-        val current = _selectedDevSuites.value
-        _selectedDevSuites.value = if (suiteId in current) current - suiteId else current + suiteId
+    fun toggleComponent(component: top.wkbin.taixu.core.model.PluginComponent) {
+        if (component.isRequired) return // 锁定必选
+        val current = _selectedComponents.value
+        _selectedComponents.value = if (component.id in current) current - component.id else current + component.id
     }
 
-    fun installSelectedSuites() {
-        val selected = _selectedDevSuites.value.toSet()
+    fun installSelectedComponents() {
+        val selected = _selectedComponents.value
         if (selected.isEmpty()) return
 
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            _isInstallingSuites.value = true
+            _isInstallingComponents.value = true
             try {
-                toolManager.batchInstallSuites(selected).collect { event ->
+                toolManager.batchInstallComponents(selected).collect { event ->
                     if (event is top.wkbin.taixu.runtime.tools.InstallEvent.Progress) {
                         _suiteInstallProgress.value = event.message
                     }
                 }
-                _message.value = "开发环境已成功部署！"
-                _showDevSuiteDialog.value = false
+                refreshInstalledStatus()
+                _message.value = "开发套件组件已成功装配！"
+                _activeBundleForSetup.value = null
             } catch (e: Exception) {
                 _message.value = "部署失败：${e.message}"
             } finally {
-                _isInstallingSuites.value = false
+                _isInstallingComponents.value = false
                 _suiteInstallProgress.value = null
             }
         }
     }
+
+    // 兼容原 devSuites 接口
+    val devSuites: List<top.wkbin.taixu.core.model.PluginBundle> get() = pluginBundles
+    val showDevSuiteDialog: StateFlow<Boolean> get() = MutableStateFlow(_activeBundleForSetup.value != null).asStateFlow()
+    val selectedDevSuites: StateFlow<Set<String>> get() = _selectedComponents
+    val isInstallingSuites: StateFlow<Boolean> get() = _isInstallingComponents
 
     // ==================== 项目列表状态 ====================
     val projects: StateFlow<List<WorkspaceProject>> = workspaceManager.observeProjects()

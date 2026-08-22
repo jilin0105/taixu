@@ -585,28 +585,46 @@ fun WorkspaceScreen(
         )
     }
 
-    // 🛠️ 准备开发环境聚合弹窗 (Dev Suites Dialog)
-    val showDevSuiteDialog by viewModel.showDevSuiteDialog.collectAsStateWithLifecycle()
-    val selectedDevSuites by viewModel.selectedDevSuites.collectAsStateWithLifecycle()
-    val isInstallingSuites by viewModel.isInstallingSuites.collectAsStateWithLifecycle()
+    // 🛠️ 准备开发环境聚合弹窗 (Bundle Component Setup Dialog)
+    val activeBundleForSetup by viewModel.activeBundleForSetup.collectAsStateWithLifecycle()
+    val installedComponentIds by viewModel.installedComponentIds.collectAsStateWithLifecycle()
+    val selectedComponents by viewModel.selectedComponents.collectAsStateWithLifecycle()
+    val isInstallingComponents by viewModel.isInstallingComponents.collectAsStateWithLifecycle()
     val suiteProgressMsg by viewModel.suiteInstallProgress.collectAsStateWithLifecycle()
 
-    if (showDevSuiteDialog) {
+    activeBundleForSetup?.let { bundle ->
         AlertDialog(
             onDismissRequest = viewModel::closeDevEnvironmentDialog,
-            title = { Text("准备开发环境", fontWeight = FontWeight.Bold) },
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    RuntimeIcon(
+                        name = when (bundle.iconName) {
+                            "Android" -> RuntimeIconName.Android
+                            "Flutter" -> RuntimeIconName.Flutter
+                            "Globe" -> RuntimeIconName.Globe
+                            else -> RuntimeIconName.Code
+                        },
+                        modifier = Modifier.size(22.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Text("装配 ${bundle.name}", fontWeight = FontWeight.Bold)
+                }
+            },
             text = {
                 Column(
                     modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     Text(
-                        "请选择需要准备的开发环境。系统将自动去重并执行批量原子安全装配：",
+                        bundle.description,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
 
-                    if (isInstallingSuites) {
+                    if (isInstallingComponents) {
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(10.dp),
@@ -622,20 +640,31 @@ fun WorkspaceScreen(
                         }
                     }
 
-                    viewModel.devSuites.forEach { suite ->
-                        val isChecked = suite.id in selectedDevSuites
+                    Text(
+                        "组件清单（基础环境必选，扩展工具按需勾选）：",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+
+                    bundle.components.forEach { comp ->
+                        val isChecked = comp.isRequired || comp.id in selectedComponents
+                        val isInstalled = comp.id in installedComponentIds
+
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
-                                .clickable(enabled = !isInstallingSuites) { viewModel.toggleDevSuite(suite.id) },
+                                .clickable(enabled = !isInstallingComponents && !comp.isRequired) {
+                                    viewModel.toggleComponent(comp)
+                                },
                             shape = RoundedCornerShape(10.dp),
                             border = androidx.compose.foundation.BorderStroke(
                                 1.dp,
                                 if (isChecked) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                             ),
                             colors = CardDefaults.cardColors(
-                                containerColor = if (isChecked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                                containerColor = if (isChecked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
                                 else MaterialTheme.colorScheme.surfaceContainerLow,
                             ),
                         ) {
@@ -646,12 +675,41 @@ fun WorkspaceScreen(
                             ) {
                                 androidx.compose.material3.Checkbox(
                                     checked = isChecked,
-                                    onCheckedChange = { viewModel.toggleDevSuite(suite.id) },
-                                    enabled = !isInstallingSuites,
+                                    onCheckedChange = { if (!comp.isRequired) viewModel.toggleComponent(comp) },
+                                    enabled = !isInstallingComponents && !comp.isRequired,
                                 )
+
                                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                    Text(suite.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
-                                    Text(suite.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text(comp.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                                        if (comp.isRequired) {
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                            ) {
+                                                Text(
+                                                    "必选基座",
+                                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                                )
+                                            }
+                                        }
+                                        if (isInstalled) {
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                            ) {
+                                                Text(
+                                                    "已就绪",
+                                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                                )
+                                            }
+                                        }
+                                    }
+                                    Text(comp.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         }
@@ -660,14 +718,14 @@ fun WorkspaceScreen(
             },
             confirmButton = {
                 Button(
-                    onClick = viewModel::installSelectedSuites,
-                    enabled = !isInstallingSuites && selectedDevSuites.isNotEmpty(),
+                    onClick = viewModel::installSelectedComponents,
+                    enabled = !isInstallingComponents && selectedComponents.isNotEmpty(),
                 ) {
-                    Text(if (isInstallingSuites) "正在装配..." else "开始安装 (${selectedDevSuites.size})")
+                    Text(if (isInstallingComponents) "正在装配..." else "开始装配 (${selectedComponents.size})")
                 }
             },
             dismissButton = {
-                if (!isInstallingSuites) {
+                if (!isInstallingComponents) {
                     TextButton(onClick = viewModel::closeDevEnvironmentDialog) {
                         Text("取消")
                     }

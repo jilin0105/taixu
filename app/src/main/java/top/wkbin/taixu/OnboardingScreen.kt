@@ -340,7 +340,7 @@ private fun PluginSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
                                 overflow = TextOverflow.Ellipsis,
                             )
                             Text(
-                                text = suite.subtitle,
+                                text = suite.summary,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

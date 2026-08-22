@@ -58,10 +58,10 @@ class OnboardingViewModel @Inject constructor(
     }.stateIn(viewModelScope, SharingStarted.Eagerly, OnboardingStatus())
     val runtimeState: StateFlow<RuntimeState> = linuxRuntime.state
 
-    val devSuites: List<top.wkbin.taixu.core.model.DevEnvironmentSuite> = top.wkbin.taixu.core.model.BuiltinDevSuites.presets
+    val devSuites: List<top.wkbin.taixu.core.model.PluginBundle> = top.wkbin.taixu.core.model.BuiltinPluginBundles.bundles
 
     private val _selectedSuites = MutableStateFlow<Set<String>>(
-        top.wkbin.taixu.core.model.BuiltinDevSuites.presets.filter { it.isDefaultSelected }.map { it.id }.toSet(),
+        top.wkbin.taixu.core.model.BuiltinPluginBundles.bundles.map { it.id }.toSet(),
     )
     val selectedSuites = _selectedSuites.asStateFlow()
 
