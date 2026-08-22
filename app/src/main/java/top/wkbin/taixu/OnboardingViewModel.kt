@@ -84,6 +84,12 @@ class OnboardingViewModel @Inject constructor(
             description = "集成 APKTool、JADX-CLI 全自动 Java 源码反编译器与 Smali 代码审计环境",
             category = "安全逆向",
         ),
+        StarterPlugin(
+            id = "flutter-devtools",
+            name = "Flutter 跨平台开发套件",
+            description = "集成 Flutter SDK (ARM64)、Dart、Gradle 8.x 与国内镜像加速，跨平台 App 秒级打包",
+            category = "跨端开发",
+        ),
     )
 
     private val _selectedPlugins = MutableStateFlow<Set<String>>(setOf("base-devtools"))

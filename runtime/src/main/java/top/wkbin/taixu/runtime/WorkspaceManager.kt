@@ -46,6 +46,8 @@ class WorkspaceManager @Inject constructor(
 
     suspend fun listProjects(): List<WorkspaceProject> = withContext(Dispatchers.IO) {
         pathManager.workspaceDir.mkdirs()
+        // 自动播种内置开箱即用示例工程 (android-demo, flutter-demo)
+        top.wkbin.taixu.runtime.samples.WorkspaceSampleSeeder.ensureBuiltinSamples(pathManager.workspaceDir, workspaceDao)
         // 目录为准；缺失的目录从 Room 补录
         val known = workspaceDao.listAll().associateBy { it.name }
         val knownPaths = known.values.mapNotNull { runCatching { File(it.path).canonicalPath }.getOrNull() }.toSet()

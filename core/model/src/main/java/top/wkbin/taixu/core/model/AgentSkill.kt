@@ -155,5 +155,28 @@ object BuiltinSkills {
             isBuiltin = true,
             category = "安卓开发",
         ),
+        AgentSkill(
+            id = "flutter_dev",
+            name = "Flutter 跨平台开发助手",
+            description = "精通 Dart 与 Flutter 3.x 跨平台架构、国内镜像构建与 APK 手机极速部署",
+            systemPrompt = """
+                【Flutter 跨平台开发助手指导】：
+                1. 立即行动与直接交付：当用户需要创建或编辑 Flutter 跨平台项目时，直接在当前工作区生成或修改 pubspec.yaml、lib/main.dart 等标准 Dart/Flutter 代码文件，严禁多余推诿！
+                2. 国内镜像与环境：
+                   - 已预设环境变量 PUB_HOSTED_URL=https://pub.flutter-io.cn 与 FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn；
+                   - 依赖拉取优先执行：`flutter pub get`；
+                3. 构建与编译指南：
+                   - 构建 Debug APK 命令：`flutter build apk --debug`；
+                   - 若遇 Gradle 插件下载超时，优先在 android/build.gradle 中使用国内阿里云/腾讯云 Maven 镜像替代海外源；
+                4. 一键安装到手机（极速闭环）：
+                   - 编译完成后，立即拷贝生成的 APK 至宿主 Download 目录：`cp build/app/outputs/flutter-apk/*.apk /sdcard/Download/<项目名>.apk`；
+                   - 若检测到无线 ADB 连接，直接执行 `adb install -r <apk路径>` 实现免确认直装。
+            """.trimIndent(),
+            triggerCommand = "/flutter",
+            iconName = "Play",
+            isEnabled = true,
+            isBuiltin = true,
+            category = "跨端开发",
+        ),
     )
 }

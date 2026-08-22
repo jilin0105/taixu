@@ -235,5 +235,40 @@
     "environment": {
       "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk-arm64"
     }
+  },
+  {
+    "schemaVersion": 1,
+    "id": "flutter-devtools",
+    "name": "Flutter 跨平台开发套件",
+    "description": "包含 Flutter SDK (ARM64)、Dart、OpenJDK 17、Gradle 8.x 与国内镜像环境，支持跨平台 Flutter App 极速构建与直接安装运行。",
+    "dependencies": ["curl", "ca-certificates", "git"],
+    "launchType": "pty",
+    "version": "3.24.0",
+    "latestVersion": "3.24.0",
+    "publisher": "Flutter Community",
+    "homepage": "https://flutter.dev",
+    "category": "DEVELOPER_TOOL",
+    "architectures": ["ARM64"],
+    "permissions": ["NETWORK", "WORKSPACE_READ", "WORKSPACE_WRITE"],
+    "installMethod": "SCRIPT",
+    "installSteps": [
+      "mkdir -p /etc/dpkg/dpkg.cfg.d 2>/dev/null || true",
+      "printf 'force-unsafe-io\\nforce-overwrite\\n' > /etc/dpkg/dpkg.cfg.d/taixu-proot",
+      "rm -rf /var/lib/dpkg/updates/* /var/lib/dpkg/lock* /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null || true",
+      "DEBIAN_FRONTEND=noninteractive apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openjdk-17-jdk-headless git curl wget xz-utils ca-certificates adb aapt zipalign || true",
+      "mkdir -p $TAIXU_TOOL_DIR/bin $TAIXU_TOOL_DIR/sdk",
+      "if [ ! -f $TAIXU_TOOL_DIR/sdk/bin/flutter ]; then (cd $TAIXU_TOOL_DIR && (git clone -b stable --depth 1 https://mirrors.tuna.tsinghua.edu.cn/git/flutter-sdk.git sdk 2>/dev/null || git clone -b stable --depth 1 https://gitee.com/mirrors/Flutter.git sdk 2>/dev/null || true)); fi",
+      "if [ -f $TAIXU_TOOL_DIR/sdk/bin/flutter ]; then ln -sf $TAIXU_TOOL_DIR/sdk/bin/flutter $TAIXU_TOOL_DIR/bin/flutter; ln -sf $TAIXU_TOOL_DIR/sdk/bin/dart $TAIXU_TOOL_DIR/bin/dart; fi",
+      "for b in java javac adb aapt zipalign; do src=\"$(which $b 2>/dev/null || echo /usr/bin/$b)\"; if [ -x \"$src\" ]; then ln -sf \"$src\" \"$TAIXU_TOOL_DIR/bin/$b\"; fi; done",
+      "chmod +x $TAIXU_TOOL_DIR/bin/* 2>/dev/null || true"
+    ],
+    "launchCommand": "flutter --version",
+    "verifyCommand": "flutter --version 2>&1 || dart --version 2>&1 || test -f $TAIXU_TOOL_DIR/sdk/bin/flutter",
+    "commandLinks": ["flutter", "dart", "adb", "aapt", "zipalign", "java", "javac"],
+    "environment": {
+      "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk-arm64",
+      "PUB_HOSTED_URL": "https://pub.flutter-io.cn",
+      "FLUTTER_STORAGE_BASE_URL": "https://storage.flutter-io.cn"
+    }
   }
 ]
