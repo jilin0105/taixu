@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 import top.wkbin.taixu.core.tools.ProviderEndpointPolicy
@@ -219,16 +220,15 @@ class OnboardingViewModel @Inject constructor(
 
     fun installSelectedPluginsAndProceed() {
         val selected = _selectedPlugins.value.toList()
-        if (selected.isEmpty()) {
-            _page.value = 2
-            return
-        }
-        viewModelScope.launch {
+        _page.value = 2
+        if (selected.isEmpty()) return
+
+        viewModelScope.launch(Dispatchers.IO) {
             _isInstallingPlugins.value = true
             try {
                 selected.forEachIndexed { index, toolId ->
                     val pluginName = starterPlugins.find { it.id == toolId }?.name ?: toolId
-                    _pluginInstallProgress.value = "正在安装 [${index + 1}/${selected.size}] $pluginName..."
+                    _pluginInstallProgress.value = "正在后台装配 [${index + 1}/${selected.size}] $pluginName..."
                     runCatching {
                         toolManager.install(toolId).collect { event ->
                             if (event is top.wkbin.taixu.runtime.tools.InstallEvent.Progress) {
@@ -240,7 +240,6 @@ class OnboardingViewModel @Inject constructor(
             } finally {
                 _isInstallingPlugins.value = false
                 _pluginInstallProgress.value = null
-                _page.value = 2
             }
         }
     }

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.shape.CircleShape
@@ -217,184 +218,199 @@ private fun PluginSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
     val isInstalling by viewModel.isInstallingPlugins.collectAsStateWithLifecycle()
     val progressMessage by viewModel.pluginInstallProgress.collectAsStateWithLifecycle()
 
-    LazyColumn(
-        modifier = modifier,
-        contentPadding = PaddingValues(24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item {
-            Column(
-                Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer),
-                    contentAlignment = Alignment.Center,
+    Column(modifier = modifier.fillMaxSize()) {
+        // 套件列表区域（独立滚动）
+        LazyColumn(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                Column(
+                    Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    RuntimeIcon(
-                        name = RuntimeIconName.Package,
-                        modifier = Modifier.size(24.dp),
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primaryContainer),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        RuntimeIcon(
+                            name = RuntimeIconName.Package,
+                            modifier = Modifier.size(24.dp),
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
+                    Text("初始套件装配", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold))
+                    Text(
+                        "选择你所需的初始工具链，太墟将自动完成预装与配置；后续可随时在工坊中自由增删。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     )
                 }
-                Text("初始套件装配", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold))
-                Text(
-                    "选择你所需的初始工具链，太墟将自动完成预装与配置；后续可随时在工坊中自由增删。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                )
             }
-        }
 
-        // 安装进度卡片
-        if (isInstalling) {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+            // 安装进度卡片
+            if (isInstalling) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                Text(
+                                    text = progressMessage ?: "正在装配初始插件...",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            LinearProgressIndicator(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(4.dp)
+                                    .clip(RoundedCornerShape(2.dp)),
                                 color = MaterialTheme.colorScheme.primary,
                             )
-                            Text(
-                                text = progressMessage ?: "正在装配初始插件...",
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
                         }
-                        LinearProgressIndicator(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(4.dp)
-                                .clip(RoundedCornerShape(2.dp)),
-                            color = MaterialTheme.colorScheme.primary,
-                        )
                     }
                 }
             }
-        }
 
-        // 插件选择列表
-        items(plugins.size) { index ->
-            val plugin = plugins[index]
-            val isChecked = plugin.id in selected
+            // 插件选择列表
+            items(plugins.size) { index ->
+                val plugin = plugins[index]
+                val isChecked = plugin.id in selected
 
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .clickable(enabled = !isInstalling) { viewModel.togglePlugin(plugin.id) },
-                shape = RoundedCornerShape(14.dp),
-                border = androidx.compose.foundation.BorderStroke(
-                    1.dp,
-                    if (isChecked) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                ),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isChecked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
-                    else MaterialTheme.colorScheme.surfaceContainerLow,
-                ),
-            ) {
-                Row(
-                    modifier = Modifier.padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable(enabled = !isInstalling) { viewModel.togglePlugin(plugin.id) },
+                    shape = RoundedCornerShape(14.dp),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (isChecked) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                    ),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isChecked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                        else MaterialTheme.colorScheme.surfaceContainerLow,
+                    ),
                 ) {
-                    androidx.compose.material3.Checkbox(
-                        checked = isChecked,
-                        onCheckedChange = { viewModel.togglePlugin(plugin.id) },
-                        enabled = !isInstalling,
-                    )
-
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        androidx.compose.material3.Checkbox(
+                            checked = isChecked,
+                            onCheckedChange = { viewModel.togglePlugin(plugin.id) },
+                            enabled = !isInstalling,
+                        )
+
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
-                            Text(
-                                text = plugin.name,
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                            if (plugin.isRecommended) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text(
+                                    text = plugin.name,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                )
+                                if (plugin.isRecommended) {
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = MaterialTheme.colorScheme.tertiaryContainer,
+                                    ) {
+                                        Text(
+                                            text = "推荐",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                        )
+                                    }
+                                }
                                 Surface(
                                     shape = RoundedCornerShape(4.dp),
-                                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                 ) {
                                     Text(
-                                        text = "推荐",
+                                        text = plugin.category,
                                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
                                     )
                                 }
                             }
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            ) {
-                                Text(
-                                    text = plugin.category,
-                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                                )
-                            }
+                            Text(
+                                text = plugin.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
-                        Text(
-                            text = plugin.description,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
                     }
                 }
             }
         }
 
-        // 底部操作区
-        item {
+        // 底部常驻操作区（固定在屏幕底端）
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp,
+            modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
+        ) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Button(
                     onClick = viewModel::installSelectedPluginsAndProceed,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
                     shape = RoundedCornerShape(12.dp),
-                    enabled = !isInstalling,
                 ) {
                     Text(
-                        text = if (selected.isNotEmpty()) "安装所选套件 (${selected.size}) 并继续" else "下一步",
+                        text = if (isInstalling) "已转入后台装配 · 直接进入太墟" else (if (selected.isNotEmpty()) "安装所选套件 (${selected.size}) 并继续" else "下一步"),
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
 
-                TextButton(
-                    onClick = viewModel::skipPlugins,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !isInstalling,
-                ) {
-                    Text("跳过，稍后在工坊安装", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (!isInstalling) {
+                    TextButton(
+                        onClick = viewModel::skipPlugins,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("跳过，稍后在工坊安装", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }
