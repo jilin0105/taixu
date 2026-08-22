@@ -115,6 +115,7 @@ fun TaiXuNavHost() {
                     onNavigate = ::navigateMain,
                     onOpenExplorer = { projectName -> workspaceStack.push(WorkspaceExplorerDestination(projectName)) },
                     onOpenTerminal = { project -> workspaceStack.push(TerminalDestination(project = project)) },
+                    onOpenToolCenter = { workspaceStack.push(ToolCenterDestination) },
                 )
             }
             entry<WorkspaceExplorerDestination> { destination ->

@@ -85,6 +85,7 @@ fun WorkspaceScreen(
     onNavigate: (MainDestination) -> Unit,
     onOpenExplorer: (String) -> Unit,
     onOpenTerminal: (String) -> Unit,
+    onOpenToolCenter: () -> Unit = {},
     viewModel: WorkspaceViewModel = hiltViewModel(),
 ) {
     val projects by viewModel.projects.collectAsStateWithLifecycle()
@@ -136,7 +137,7 @@ fun WorkspaceScreen(
                 statusText = "${projects.size} 个活动工程",
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { viewModel.openDevEnvironmentDialog() }, enabled = !busy) {
+                    IconButton(onClick = onOpenToolCenter, enabled = !busy) {
                         RuntimeIcon(RuntimeIconName.Package, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                     }
                     IconButton(onClick = { showCreate = true }, enabled = !busy) {
@@ -335,18 +336,17 @@ fun WorkspaceScreen(
             confirmButton = {
                 if (!progress.isRunning) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        // 缺少环境时展示一键准备环境按钮
+                        // 缺少环境时展示前往插件中心准备环境按钮
                         if (progress.suggestedSuiteId != null) {
                             Button(
                                 onClick = {
-                                    val suggested = progress.suggestedSuiteId
                                     viewModel.dismissBuildProgress()
-                                    viewModel.openDevEnvironmentDialog(suggested)
+                                    onOpenToolCenter()
                                 },
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     RuntimeIcon(RuntimeIconName.Package, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onPrimary)
-                                    Text("一键准备开发环境")
+                                    Text("前往插件中心准备环境")
                                 }
                             }
                         }
@@ -582,155 +582,6 @@ fun WorkspaceScreen(
                 ) { Text("确认删除", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } },
-        )
-    }
-
-    // 🛠️ 准备开发环境聚合弹窗 (Bundle Component Setup Dialog)
-    val activeBundleForSetup by viewModel.activeBundleForSetup.collectAsStateWithLifecycle()
-    val installedComponentIds by viewModel.installedComponentIds.collectAsStateWithLifecycle()
-    val selectedComponents by viewModel.selectedComponents.collectAsStateWithLifecycle()
-    val isInstallingComponents by viewModel.isInstallingComponents.collectAsStateWithLifecycle()
-    val suiteProgressMsg by viewModel.suiteInstallProgress.collectAsStateWithLifecycle()
-
-    activeBundleForSetup?.let { bundle ->
-        AlertDialog(
-            onDismissRequest = viewModel::closeDevEnvironmentDialog,
-            title = {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    RuntimeIcon(
-                        name = when (bundle.iconName) {
-                            "Android" -> RuntimeIconName.Android
-                            "Flutter" -> RuntimeIconName.Flutter
-                            "Globe" -> RuntimeIconName.Globe
-                            else -> RuntimeIconName.Code
-                        },
-                        modifier = Modifier.size(22.dp),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                    Text("装配 ${bundle.name}", fontWeight = FontWeight.Bold)
-                }
-            },
-            text = {
-                Column(
-                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Text(
-                        bundle.description,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-
-                    if (isInstallingComponents) {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    androidx.compose.material3.CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                                    Text(suiteProgressMsg ?: "正在执行批量装配流水线...", style = MaterialTheme.typography.bodySmall, maxLines = 2)
-                                }
-                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)))
-                            }
-                        }
-                    }
-
-                    Text(
-                        "组件清单（基础环境必选，扩展工具按需勾选）：",
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
-
-                    bundle.components.forEach { comp ->
-                        val isChecked = comp.isRequired || comp.id in selectedComponents
-                        val isInstalled = comp.id in installedComponentIds
-
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable(enabled = !isInstallingComponents && !comp.isRequired) {
-                                    viewModel.toggleComponent(comp)
-                                },
-                            shape = RoundedCornerShape(10.dp),
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                if (isChecked) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                            ),
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (isChecked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
-                                else MaterialTheme.colorScheme.surfaceContainerLow,
-                            ),
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                androidx.compose.material3.Checkbox(
-                                    checked = isChecked,
-                                    onCheckedChange = { if (!comp.isRequired) viewModel.toggleComponent(comp) },
-                                    enabled = !isInstallingComponents && !comp.isRequired,
-                                )
-
-                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        Text(comp.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
-                                        if (comp.isRequired) {
-                                            Surface(
-                                                shape = RoundedCornerShape(4.dp),
-                                                color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                            ) {
-                                                Text(
-                                                    "必选基座",
-                                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                                                )
-                                            }
-                                        }
-                                        if (isInstalled) {
-                                            Surface(
-                                                shape = RoundedCornerShape(4.dp),
-                                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                                            ) {
-                                                Text(
-                                                    "已就绪",
-                                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                                                    color = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                                                )
-                                            }
-                                        }
-                                    }
-                                    Text(comp.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = viewModel::installSelectedComponents,
-                    enabled = !isInstallingComponents && selectedComponents.isNotEmpty(),
-                ) {
-                    Text(if (isInstallingComponents) "正在装配..." else "开始装配 (${selectedComponents.size})")
-                }
-            },
-            dismissButton = {
-                if (!isInstallingComponents) {
-                    TextButton(onClick = viewModel::closeDevEnvironmentDialog) {
-                        Text("取消")
-                    }
-                }
-            },
         )
     }
 }
