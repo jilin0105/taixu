@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
 import top.wkbin.taixu.core.common.logging.AppLogger
@@ -236,4 +237,142 @@ class PrivilegeManager @Inject constructor(
             ExecutionMode.PROOT -> Unit
         }
     }
+
+    // ============================ HostBridge 支持 ============================
+
+    /**
+     * 在宿主侧以当前特权模式执行 Shell 命令。
+     * - SHIZUKU 模式：通过 Shizuku Binder 以 ADB 级别 (shell uid) 执行
+     * - ROOT 模式：通过 su 以 root uid 执行
+     * - PROOT / ADB 模式：不支持，返回错误
+     *
+     * 这是打破"循环权限依赖"的关键能力：
+     * 沙箱内无法直接执行需要 shell/root 权限的 Android 命令（如 settings put、pm grant、appops set），
+     * 但通过 HostBridge → PrivilegeManager.executeShellCommand 可以绕过沙箱限制，
+     * 在宿主侧以特权身份执行。
+     */
+    suspend fun executeShellCommand(command: String): ShellExecResult = withContext(Dispatchers.IO) {
+        val mode = runCatching { settingsDataStore.executionMode.first() }
+            .getOrDefault(ExecutionMode.PROOT)
+
+        when (mode) {
+            ExecutionMode.SHIZUKU -> executeViaShizuku(command)
+            ExecutionMode.ROOT -> executeViaRoot(command)
+            ExecutionMode.PROOT, ExecutionMode.ADB -> ShellExecResult(
+                success = false,
+                exitCode = -1,
+                stdout = "",
+                stderr = "当前运行模式 ($mode) 不支持宿主 Shell 执行。请在设置中切换到 Shizuku 或 Root 模式。",
+            )
+        }
+    }
+
+    /**
+     * 获取当前特权状态摘要（不执行命令，仅探测可用性）。
+     */
+    suspend fun getPrivilegeInfo(): PrivilegeInfo = withContext(Dispatchers.IO) {
+        val shizukuAvailable = runCatching {
+            Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        }.getOrDefault(false)
+
+        val rootAvailable = runCatching {
+            val process = ProcessBuilder("su", "-c", "echo ok").start()
+            val completed = process.waitFor(3, TimeUnit.SECONDS)
+            if (!completed) {
+                process.destroyForcibly()
+                false
+            } else {
+                process.exitValue() == 0
+            }
+        }.getOrDefault(false)
+
+        val mode = runCatching { settingsDataStore.executionMode.first() }
+            .getOrDefault(ExecutionMode.PROOT)
+
+        PrivilegeInfo(
+            mode = mode.id,
+            shizukuAvailable = shizukuAvailable,
+            rootAvailable = rootAvailable,
+        )
+    }
+
+    /**
+     * 通过 Shizuku 以 ADB 级别 (shell uid, UID 2000) 执行命令。
+     */
+    private fun executeViaShizuku(command: String): ShellExecResult {
+        if (!runCatching { Shizuku.pingBinder() }.getOrDefault(false)) {
+            return ShellExecResult(false, -1, "", "Shizuku 服务未运行。请打开 Shizuku App 并确保服务已启动。")
+        }
+        if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+            return ShellExecResult(false, -1, "", "Shizuku 未授权。请在 Shizuku App 中授予太墟访问权限。")
+        }
+
+        return try {
+            // Shizuku.newProcess(cmd[], env[], dir) — 反射调用
+            val newProcessMethod = Shizuku::class.java.getDeclaredMethod(
+                "newProcess",
+                Array<String>::class.java,
+                Array<String>::class.java,
+                String::class.java,
+            )
+            newProcessMethod.isAccessible = true
+            val process = newProcessMethod.invoke(
+                null,
+                arrayOf("/system/bin/sh", "-c", command),
+                null,
+                null,
+            ) as Process
+
+            val completed = process.waitFor(30, TimeUnit.SECONDS)
+            if (!completed) {
+                process.destroyForcibly()
+                return ShellExecResult(false, -1, "", "命令执行超时 (30s)")
+            }
+
+            val stdout = process.inputStream.bufferedReader().readText()
+            val stderr = process.errorStream.bufferedReader().readText()
+            val exitCode = process.exitValue()
+            ShellExecResult(exitCode == 0, exitCode, stdout, stderr)
+        } catch (e: Exception) {
+            logger.e("Shizuku shell execution failed", e)
+            ShellExecResult(false, -1, "", "Shizuku 执行失败: ${e.message}")
+        }
+    }
+
+    /**
+     * 通过 su 以 root uid (UID 0) 执行命令。
+     */
+    private fun executeViaRoot(command: String): ShellExecResult {
+        return try {
+            val process = ProcessBuilder("su", "-c", command).start()
+            val completed = process.waitFor(30, TimeUnit.SECONDS)
+            if (!completed) {
+                process.destroyForcibly()
+                return ShellExecResult(false, -1, "", "命令执行超时 (30s)")
+            }
+
+            val stdout = process.inputStream.bufferedReader().readText()
+            val stderr = process.errorStream.bufferedReader().readText()
+            val exitCode = process.exitValue()
+            ShellExecResult(exitCode == 0, exitCode, stdout, stderr)
+        } catch (e: Exception) {
+            logger.e("Root shell execution failed", e)
+            ShellExecResult(false, -1, "", "Root 执行失败: ${e.message}")
+        }
+    }
 }
+
+/** Shell 命令执行结果。 */
+data class ShellExecResult(
+    val success: Boolean,
+    val exitCode: Int,
+    val stdout: String,
+    val stderr: String,
+)
+
+/** 特权状态摘要。 */
+data class PrivilegeInfo(
+    val mode: String,
+    val shizukuAvailable: Boolean,
+    val rootAvailable: Boolean,
+)

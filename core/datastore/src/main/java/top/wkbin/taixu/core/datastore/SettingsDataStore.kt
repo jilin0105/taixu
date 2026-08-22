@@ -302,6 +302,62 @@ class SettingsDataStore @Inject constructor(
     val autoWorkspaceCwd: Flow<Boolean> = context.settingsDataStore.data.map { it[autoWorkspaceCwdKey] ?: true }
     suspend fun setAutoWorkspaceCwd(value: Boolean) { context.settingsDataStore.edit { it[autoWorkspaceCwdKey] = value } }
 
+    /**
+     * 上下文 Token 预算（默认 128000）。当模型未单独配置 contextTokens 时作为兜底，
+     * apiMessages 据此做滑动窗口裁剪，防止长会话撞上下文窗口上限。
+     */
+    private val contextBudgetTokensKey = androidx.datastore.preferences.core.intPreferencesKey("agent_context_budget_tokens")
+    val contextBudgetTokens: Flow<Int> = context.settingsDataStore.data.map { it[contextBudgetTokensKey] ?: 128_000 }
+    suspend fun setContextBudgetTokens(value: Int) { context.settingsDataStore.edit { it[contextBudgetTokensKey] = value.coerceIn(4_000, 2_000_000) } }
+
+    /**
+     * 单轮最多允许执行的工具调用数量（默认 12）。超过则本轮回填占位结果并提示模型，
+     * 防止一次爆发大量工具调用耗尽上下文或陷入失控循环。
+     */
+    private val maxToolsPerRoundKey = androidx.datastore.preferences.core.intPreferencesKey("agent_max_tools_per_round")
+    val maxToolsPerRound: Flow<Int> = context.settingsDataStore.data.map { it[maxToolsPerRoundKey] ?: 12 }
+    suspend fun setMaxToolsPerRound(value: Int) { context.settingsDataStore.edit { it[maxToolsPerRoundKey] = value.coerceIn(1, 50) } }
+
+    /**
+     * 连续失败熔断阈值（默认 8）。当连续 N 轮工具调用全部失败时，主动终止循环并提示用户，
+     * 避免模型在"调用→失败→再调用"中死循环空转。
+     */
+    private val maxConsecutiveFailuresKey = androidx.datastore.preferences.core.intPreferencesKey("agent_max_consecutive_failures")
+    val maxConsecutiveFailures: Flow<Int> = context.settingsDataStore.data.map { it[maxConsecutiveFailuresKey] ?: 8 }
+    suspend fun setMaxConsecutiveFailures(value: Int) { context.settingsDataStore.edit { it[maxConsecutiveFailuresKey] = value.coerceIn(1, 50) } }
+
+    /**
+     * 危险命令闸门：对 base 执行的破坏性 shell 命令做保护。
+     * true = 拦截（命中危险模式时拒绝执行并提示用户，默认）；
+     * false = 放行（遵循既有系统提示词约定，由模型自行判断）。
+     */
+    private val destructiveGuardEnabledKey = booleanPreferencesKey("agent_destructive_guard_enabled")
+    val destructiveGuardEnabled: Flow<Boolean> = context.settingsDataStore.data.map { it[destructiveGuardEnabledKey] ?: true }
+    suspend fun setDestructiveGuardEnabled(value: Boolean) { context.settingsDataStore.edit { it[destructiveGuardEnabledKey] = value } }
+
+    // ==================== 内置 ADB（宿主桥接插件） ====================
+
+    private val adbWirelessPortKey = androidx.datastore.preferences.core.intPreferencesKey("adb_wireless_debug_port")
+    private val adbPairedOnceKey = booleanPreferencesKey("adb_wireless_paired_once")
+
+    /** 无线调试主端口（开发者选项里"无线调试"显示的 IP:PORT），0 表示未配置。 */
+    val adbWirelessPort: Flow<Int> = context.settingsDataStore.data.map { it[adbWirelessPortKey] ?: 0 }
+    suspend fun setAdbWirelessPort(port: Int) {
+        context.settingsDataStore.edit { it[adbWirelessPortKey] = port.coerceIn(0, 65535) }
+    }
+
+    /** 是否完成过一次无线调试配对（用于启动引导与状态展示）。 */
+    val adbPairedOnce: Flow<Boolean> = context.settingsDataStore.data.map { it[adbPairedOnceKey] ?: false }
+    suspend fun setAdbPairedOnce(value: Boolean) {
+        context.settingsDataStore.edit { it[adbPairedOnceKey] = value }
+    }
+
+    /** 同步读取插件启用状态（供运行时启停判断）。 */
+    suspend fun isPluginEnabled(pluginId: String): Boolean = allPlugins.first().any { it.id == pluginId && it.isEnabled }
+
+    /** 插件启用状态的响应式流。 */
+    fun isPluginEnabledFlow(pluginId: String): Flow<Boolean> = allPlugins.map { list -> list.any { it.id == pluginId && it.isEnabled } }
+
     private val jsonHelper = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     /** 获取所有 Skill（预置 + 用户自定义），根据用户启用状态计算 isEnabled */

@@ -10,6 +10,7 @@ import top.wkbin.taixu.core.model.CpuArch
 import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.core.model.StorageMountBinding
 import top.wkbin.taixu.runtime.proot.ProotCommandBuilder
+import top.wkbin.taixu.runtime.bridge.HostBridge
 import top.wkbin.taixu.runtime.pty.PtyManager
 import top.wkbin.taixu.runtime.proot.ProotInstaller
 import top.wkbin.taixu.runtime.rootfs.RootfsInstaller
@@ -46,6 +47,7 @@ class LinuxRuntimeImpl @Inject constructor(
     private val healthChecker: RuntimeHealthChecker,
     private val processRegistry: ProcessRegistry,
     private val settingsDataStore: top.wkbin.taixu.core.datastore.SettingsDataStore,
+    private val hostBridge: HostBridge,
     private val logger: AppLogger,
 ) : LinuxRuntime {
 
@@ -220,6 +222,7 @@ class LinuxRuntimeImpl @Inject constructor(
                 settingsDataStore.addInstalledDistribution(distroId)
                 refreshInstalledDistros()
 
+                hostBridge.start()
                 _state.value = RuntimeState.Ready
                 logger.i("Linux runtime initialized and ready with distro: $distroId")
                 AppResult.Success(Unit)
@@ -279,6 +282,8 @@ class LinuxRuntimeImpl @Inject constructor(
             return@withContext false
         }
         runCatching { configureChinaMirrors(effectiveDistro) }
+        runCatching { configureEnvironment(effectiveDistro) }
+        hostBridge.start()
         _state.value = RuntimeState.Ready
         logger.i("Linux runtime restored from disk and ready with distro: $effectiveDistro")
         true
@@ -486,6 +491,7 @@ class LinuxRuntimeImpl @Inject constructor(
 
     override suspend fun shutdown() {
         processRegistry.stopAll()
+        hostBridge.stop()
         _state.value = RuntimeState.NotInitialized
         logger.i("Linux runtime shut down")
     }
@@ -801,6 +807,12 @@ class LinuxRuntimeImpl @Inject constructor(
             export LANG=C.UTF-8
             export PATH=/root/.local/bin:/opt/taixu/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
             export HOME=/root
+            # HostBridge — 沙箱通过 localhost HTTP 桥接触发宿主侧操作
+            export TAIXU_BRIDGE_URL="http://127.0.0.1:7980"
+            export TAIXU_BRIDGE_PORT=7980
+            # Android 二进制参考路径（用 taixu-android-exec 包装器执行）
+            export ANDROID_BIN_PATH="/system/bin:/system/xbin"
+            export ANDROID_LIB_PATH="/system/lib64:/system/lib:/vendor/lib64:/vendor/lib"
             """.trimIndent() + "\n",
         )
         val home = pathManager.homeDir(distroId)
@@ -813,6 +825,37 @@ class LinuxRuntimeImpl @Inject constructor(
             	version = HTTP/1.1
             """.trimIndent() + "\n",
         )
+        // 安装 HostBridge 沙箱脚本与密钥
+        installHostBridgeScripts(distroId)
+    }
+
+    /**
+     * 安装宿主桥接沙箱端脚本与 API 密钥。
+     *
+     * 写入三个文件到 /opt/taixu/（bind-mounted 到沙箱）：
+     * - bin/taixu-host        — 桥接 CLI（install-apk / shell / health）
+     * - bin/taixu-android-exec — Android 二进制执行包装器（设置正确的 linker 环境）
+     * - .bridge-key           — API 认证密钥
+     */
+    private fun installHostBridgeScripts(distroId: String) {
+        val binDir = pathManager.taixuBinDir(distroId)
+        binDir.mkdirs()
+        val rootDir = pathManager.taixuRootDir(distroId)
+
+        // taixu-host — 宿主桥接 CLI
+        val hostScript = File(binDir, "taixu-host")
+        hostScript.writeText(TAIXU_HOST_SCRIPT)
+        runCatching { android.system.Os.chmod(hostScript.absolutePath, 0x1ED) } // 0755
+
+        // taixu-android-exec — Android 二进制执行包装器
+        val androidExecScript = File(binDir, "taixu-android-exec")
+        androidExecScript.writeText(TAIXU_ANDROID_EXEC_SCRIPT)
+        runCatching { android.system.Os.chmod(androidExecScript.absolutePath, 0x1ED) }
+
+        // API 密钥 — 每次配置时刷新（确保 app 重启后密钥同步）
+        File(rootDir, ".bridge-key").writeText(hostBridge.bridgeKey)
+
+        logger.i("HostBridge scripts installed for distro: $distroId")
     }
 
     private fun createWorkspace() {
@@ -861,5 +904,80 @@ class LinuxRuntimeImpl @Inject constructor(
 
     companion object {
         const val MIN_FREE_BYTES = 600L * 1024L * 1024L
+
+        val TAIXU_HOST_SCRIPT = listOf(
+            "#!/bin/sh",
+            "# TaiXu Host Bridge CLI",
+            "# Usage: taixu-host install-apk <path> | taixu-host shell <cmd> | taixu-host health",
+            "",
+            "BRIDGE_URL=\"http://127.0.0.1:7980\"",
+            "KEY_FILE=\"/opt/taixu/.bridge-key\"",
+            "",
+            "if [ -f \"\${KEY_FILE}\" ]; then",
+            "  BRIDGE_KEY=\$(cat \"\${KEY_FILE}\" 2>/dev/null | tr -d '[:space:]')",
+            "else",
+            "  BRIDGE_KEY=\"\"",
+            "fi",
+            "",
+            "if ! command -v curl >/dev/null 2>&1; then",
+            "  echo '{\"success\":false,\"error\":\"curl not installed\"}' >&2; exit 1",
+            "fi",
+            "",
+            "AUTH=\"\"",
+            "if [ -n \"\${BRIDGE_KEY}\" ]; then AUTH=\"Authorization: Bearer \${BRIDGE_KEY}\"; fi",
+            "",
+            "case \"\$1\" in",
+            "  install-apk)",
+            "    [ -z \"\$2\" ] && { echo 'Usage: taixu-host install-apk <path>' >&2; exit 1; }",
+            "    [ ! -f \"\$2\" ] && { echo \"{\\\"success\\\":false,\\\"error\\\":\\\"Not found: \$2\\\"}\" >&2; exit 1; }",
+            "    if [ -n \"\${AUTH}\" ]; then",
+            "      curl -s -X POST \"\${BRIDGE_URL}/api/install-apk\" -H 'Content-Type: application/json' -H \"\${AUTH}\" -d \"{\\\"path\\\":\\\"\$2\\\"}\"",
+            "    else",
+            "      curl -s -X POST \"\${BRIDGE_URL}/api/install-apk\" -H 'Content-Type: application/json' -d \"{\\\"path\\\":\\\"\$2\\\"}\"",
+            "    fi",
+            "    echo \"\"",
+            "    ;;",
+            "  shell)",
+            "    [ -z \"\$2\" ] && { echo 'Usage: taixu-host shell <command>' >&2; exit 1; }",
+            "    shift; CMD=\"\$*\"",
+            "    if command -v jq >/dev/null 2>&1; then",
+            "      BODY=\$(jq -nc --arg c \"\${CMD}\" '{command:\$c}')",
+            "    else",
+            "      ESC=\$(printf '%s' \"\${CMD}\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g' | tr '\\n' ' ')",
+            "      BODY=\"{\\\"command\\\":\\\"\${ESC}\\\"}\"",
+            "    fi",
+            "    if [ -n \"\${AUTH}\" ]; then",
+            "      curl -s -X POST \"\${BRIDGE_URL}/api/shell\" -H 'Content-Type: application/json' -H \"\${AUTH}\" -d \"\${BODY}\"",
+            "    else",
+            "      curl -s -X POST \"\${BRIDGE_URL}/api/shell\" -H 'Content-Type: application/json' -d \"\${BODY}\"",
+            "    fi",
+            "    echo \"\"",
+            "    ;;",
+            "  health|status)",
+            "    if [ -n \"\${AUTH}\" ]; then curl -s \"\${BRIDGE_URL}/api/health\" -H \"\${AUTH}\"; else curl -s \"\${BRIDGE_URL}/api/health\"; fi",
+            "    echo \"\"",
+            "    ;;",
+            "  *)",
+            "    echo \"TaiXu Host Bridge CLI\"",
+            "    echo \"  taixu-host install-apk <path>   Install APK on host\"",
+            "    echo \"  taixu-host shell <command>       Run host shell (needs Shizuku/root)\"",
+            "    echo \"  taixu-host health                Bridge health\"",
+            "    exit 1;;",
+            "esac",
+        ).joinToString("\n") + "\n"
+
+        val TAIXU_ANDROID_EXEC_SCRIPT = listOf(
+            "#!/bin/sh",
+            "# TaiXu Android Binary Executor",
+            "# Sets up correct linker env for Android system binaries in PRoot sandbox.",
+            "# Usage: taixu-android-exec /system/bin/settings put global captive_portal_http_url ''",
+            "",
+            "[ -z \"\$1\" ] && { echo 'Usage: taixu-android-exec <binary> [args...]' >&2; exit 1; }",
+            "export LD_LIBRARY_PATH=/system/lib64:/system/lib:/vendor/lib64:/vendor/lib",
+            "export ANDROID_DATA=/data",
+            "export ANDROID_ROOT=/system",
+            "unset LD_PRELOAD",
+            "exec \"\$@\"",
+        ).joinToString("\n") + "\n"
     }
 }

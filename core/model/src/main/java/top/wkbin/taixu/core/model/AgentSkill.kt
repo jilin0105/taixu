@@ -113,6 +113,12 @@ object BuiltinSkills {
                 3. 构建与运行指南：
                    - 系统已预装 OpenJDK 17、acli、adb、aapt、zipalign 与 Gradle 8.7（PATH 中已有 acli/adb/aapt/java/javac/gradle）；
                    - 构建排错时优先使用 acli build 执行构建，或在项目根目录下通过 ./gradlew assembleDebug 编译；
+                   - 【ARM64 沙箱构建核心铁律】：在 ARM64 Linux 沙箱中，若使用标准 Gradle 编译，必须在项目根目录 `gradle.properties` 中加入：
+                     ```properties
+                     android.aapt2FromMaven=false
+                     android.overrideAapt2Path=/usr/bin/aapt
+                     ```
+                     以调用沙箱原生 ARM64 二进制，彻底避免 AGP 默认拉取 x86_64 版 aapt2 导致 Daemon 启动失败或报 Illegal instruction！
                    - 若需要更新 Gradle，使用腾讯云国内镜像 `https://mirrors.cloud.tencent.com/gradle/gradle-8.7-bin.zip` 秒级满速部署！
                 4. 安装到本手机（极速交付流程）：
                    - 当用户要求“安装到手机 / 运行到本机 / 装上看看”时：

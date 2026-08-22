@@ -1,5 +1,6 @@
 package top.wkbin.taixu.runtime.proot
 
+import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.runtime.EnvironmentResolver
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import java.io.File
@@ -9,6 +10,7 @@ import javax.inject.Singleton
 @Singleton
 class ProotCommandBuilder @Inject constructor(
     private val environmentResolver: EnvironmentResolver,
+    private val logger: AppLogger,
 ) {
 
     fun build(
@@ -148,6 +150,7 @@ class ProotCommandBuilder @Inject constructor(
 
     /** Android host paths used by the PRoot tracer and Android linker. */
     private fun MutableList<String>.addHostSystemBindings() {
+        val skipped = mutableListOf<String>()
         listOf(
             "/apex",
             "/data/app",
@@ -167,7 +170,13 @@ class ProotCommandBuilder @Inject constructor(
             if (hostPath.exists() && hostPath.canRead()) {
                 add("-b")
                 add(path)
+            } else {
+                skipped.add(path)
             }
+        }
+        // 记录被跳过的绑定——这些缺失会导致沙箱内 Android 二进制无法执行（"无 linker"问题）
+        if (skipped.isNotEmpty()) {
+            logger.w("HostSystemBindings: ${skipped.size} path(s) skipped (not exist/unreadable): $skipped")
         }
     }
 

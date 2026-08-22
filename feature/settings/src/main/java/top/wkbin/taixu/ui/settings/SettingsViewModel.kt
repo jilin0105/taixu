@@ -238,6 +238,18 @@ class SettingsViewModel @Inject constructor(
     val autoWorkspaceCwd: StateFlow<Boolean> = settingsDataStore.autoWorkspaceCwd
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
+    val destructiveGuardEnabled: StateFlow<Boolean> = settingsDataStore.destructiveGuardEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    val contextBudgetTokens: StateFlow<Int> = settingsDataStore.contextBudgetTokens
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 128_000)
+
+    val maxToolsPerRound: StateFlow<Int> = settingsDataStore.maxToolsPerRound
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 12)
+
+    val maxConsecutiveFailures: StateFlow<Int> = settingsDataStore.maxConsecutiveFailures
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 8)
+
     val allSkills: StateFlow<List<top.wkbin.taixu.core.model.AgentSkill>> = settingsDataStore.allSkills
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
@@ -266,6 +278,22 @@ class SettingsViewModel @Inject constructor(
 
     fun setAutoWorkspaceCwd(value: Boolean) {
         viewModelScope.launch { settingsDataStore.setAutoWorkspaceCwd(value) }
+    }
+
+    fun setDestructiveGuardEnabled(value: Boolean) {
+        viewModelScope.launch { settingsDataStore.setDestructiveGuardEnabled(value) }
+    }
+
+    fun setContextBudgetTokens(value: Int) {
+        viewModelScope.launch { settingsDataStore.setContextBudgetTokens(value) }
+    }
+
+    fun setMaxToolsPerRound(value: Int) {
+        viewModelScope.launch { settingsDataStore.setMaxToolsPerRound(value) }
+    }
+
+    fun setMaxConsecutiveFailures(value: Int) {
+        viewModelScope.launch { settingsDataStore.setMaxConsecutiveFailures(value) }
     }
 
     fun toggleSkill(skillId: String, enabled: Boolean) {

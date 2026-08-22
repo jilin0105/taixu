@@ -68,6 +68,10 @@ fun AgentSettingsScreen(
     val compactionThreshold by viewModel.contextCompactionThreshold.collectAsStateWithLifecycle()
     val maxToolRounds by viewModel.maxToolRounds.collectAsStateWithLifecycle()
     val autoWorkspaceCwd by viewModel.autoWorkspaceCwd.collectAsStateWithLifecycle()
+    val destructiveGuardEnabled by viewModel.destructiveGuardEnabled.collectAsStateWithLifecycle()
+    val maxToolsPerRound by viewModel.maxToolsPerRound.collectAsStateWithLifecycle()
+    val maxConsecutiveFailures by viewModel.maxConsecutiveFailures.collectAsStateWithLifecycle()
+    val contextBudgetTokens by viewModel.contextBudgetTokens.collectAsStateWithLifecycle()
     val skills by viewModel.allSkills.collectAsStateWithLifecycle()
     val plugins by viewModel.allPlugins.collectAsStateWithLifecycle()
 
@@ -120,6 +124,24 @@ fun AgentSettingsScreen(
                         currentValue = maxToolRounds,
                         onValueChange = viewModel::setMaxToolRounds,
                     )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    AgentToggleRow(
+                        icon = RuntimeIconName.Shield,
+                        title = "危险命令闸门",
+                        subtitle = if (destructiveGuardEnabled) "拦截 rm -rf /、mkfs、dd 写设备等不可逆高危命令" else "已关闭，base 工具将直接执行模型发出的任何 shell 命令",
+                        checked = destructiveGuardEnabled,
+                        onCheckedChange = viewModel::setDestructiveGuardEnabled,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    ToolsPerRoundSliderRow(
+                        currentValue = maxToolsPerRound,
+                        onValueChange = viewModel::setMaxToolsPerRound,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    ConsecutiveFailuresSliderRow(
+                        currentValue = maxConsecutiveFailures,
+                        onValueChange = viewModel::setMaxConsecutiveFailures,
+                    )
                 }
             }
 
@@ -144,6 +166,11 @@ fun AgentSettingsScreen(
                         ThresholdSliderRow(
                             currentThreshold = compactionThreshold,
                             onThresholdChange = viewModel::setContextCompactionThreshold,
+                        )
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        ContextBudgetSliderRow(
+                            currentValue = contextBudgetTokens,
+                            onValueChange = viewModel::setContextBudgetTokens,
                         )
                     }
                 }
@@ -379,6 +406,123 @@ private fun ThresholdSliderRow(
             onValueChangeFinished = { onThresholdChange(sliderVal.toInt()) },
             valueRange = 5f..40f,
             steps = 6,
+        )
+    }
+}
+
+@Composable
+private fun ContextBudgetSliderRow(
+    currentValue: Int,
+    onValueChange: (Int) -> Unit,
+) {
+    var sliderVal by remember(currentValue) { mutableFloatStateOf(currentValue.toFloat()) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("上下文 Token 预算上限", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+            Text(
+                "${sliderVal.toInt()} tok",
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        Text(
+            "模型未单独配置 contextTokens 时生效；长会话历史超出预算将自动折叠早期内容",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Slider(
+            value = sliderVal,
+            onValueChange = { sliderVal = it },
+            onValueChangeFinished = { onValueChange(sliderVal.toInt()) },
+            valueRange = 8000f..1000000f,
+            steps = 48, // 步长约 2 万 tok
+        )
+    }
+}
+
+@Composable
+private fun ToolsPerRoundSliderRow(
+    currentValue: Int,
+    onValueChange: (Int) -> Unit,
+) {
+    var sliderVal by remember(currentValue) { mutableFloatStateOf(currentValue.toFloat()) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("单轮最大工具调用数", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+            Text(
+                "${sliderVal.toInt()} 个",
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        Text(
+            "防止模型一次性爆发大量工具调用耗尽上下文或失控循环",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Slider(
+            value = sliderVal,
+            onValueChange = { sliderVal = it },
+            onValueChangeFinished = { onValueChange(sliderVal.toInt()) },
+            valueRange = 1f..30f,
+            steps = 29,
+        )
+    }
+}
+
+@Composable
+private fun ConsecutiveFailuresSliderRow(
+    currentValue: Int,
+    onValueChange: (Int) -> Unit,
+) {
+    var sliderVal by remember(currentValue) { mutableFloatStateOf(currentValue.toFloat()) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("连续失败熔断阈值", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+            Text(
+                "${sliderVal.toInt()} 轮",
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        Text(
+            "连续多轮工具调用全部失败时主动终止，避免陷入死循环空转",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Slider(
+            value = sliderVal,
+            onValueChange = { sliderVal = it },
+            onValueChangeFinished = { onValueChange(sliderVal.toInt()) },
+            valueRange = 2f..30f,
+            steps = 28,
         )
     }
 }

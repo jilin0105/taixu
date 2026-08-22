@@ -50,5 +50,20 @@ object BuiltinPlugins {
             isEnabled = false,
             isBuiltin = true,
         ),
+        AgentPlugin(
+            id = "host_bridge",
+            name = "宿主桥接 · 内置 ADB",
+            description = "沙箱内通过 127.0.0.1:7980 访问宿主能力：APK 静默安装、特权 Shell 执行。优先使用内置无线调试 ADB（无需 Root 与外部 Shizuku），亦可回退 Shizuku/Root。",
+            version = "1.0.0",
+            author = "TaiXu System",
+            permissions = listOf(
+                "本地回环网络监听 (127.0.0.1)",
+                "安装未知来源应用 (REQUEST_INSTALL_PACKAGES)",
+                "无线调试配对与连接 (Android 11+)",
+            ),
+            iconName = "Cable",
+            isEnabled = true,
+            isBuiltin = true,
+        ),
     )
 }

@@ -8,6 +8,7 @@ import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -25,6 +26,7 @@ class ToolExecutor @Inject constructor(
     private val fileAccess: WorkspaceFileAccess,
     private val linuxRuntime: LinuxRuntime,
     private val secretRedactor: SecretRedactor,
+    private val settingsDataStore: top.wkbin.taixu.core.datastore.SettingsDataStore,
     private val subagentOrchestrator: SubagentOrchestrator? = null,
     private val mcpManager: top.wkbin.taixu.harness.mcp.McpManager? = null,
     private val contextExecutor: AgentContextExecutor? = null,
@@ -108,6 +110,11 @@ class ToolExecutor @Inject constructor(
     private suspend fun executeBase(args: JsonObject, workspace: String): Pair<Boolean, String> {
         val command = requireString(args, "command")
         require(command.length <= MAX_COMMAND_LENGTH) { "命令过长（${command.length} 字符，上限 $MAX_COMMAND_LENGTH）" }
+        // 危险命令闸门：命中破坏性模式时直接拒绝，避免模型在沙箱内误执行不可逆操作。
+        if (isDestructiveGuardEnabled() && isDestructiveCommand(command)) {
+            return false to "已拦截危险命令（破坏性操作保护已开启）：该命令匹配到高危模式。" +
+                "如确需执行，请在 Agent 设置中关闭「危险命令闸门」，或在命令前加注释确认其安全性。"
+        }
         val cwd = args["cwd"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
             ?: (if (workspace.isNotBlank()) (if (workspace.startsWith("/")) workspace else "/workspace/$workspace") else DEFAULT_CWD)
         val timeoutMs = args["timeout_seconds"]?.jsonPrimitive?.content?.toLongOrNull()?.let { it * 1000L }
@@ -129,6 +136,18 @@ class ToolExecutor @Inject constructor(
         return result.isSuccess to body
     }
 
+    private suspend fun isDestructiveGuardEnabled(): Boolean =
+        runCatching { settingsDataStore.destructiveGuardEnabled.first() }.getOrDefault(true)
+
+    /**
+     * 破坏性命令高危模式匹配。仅覆盖明确不可逆或高风险的模式，
+     * 避免误伤正常开发命令（如带参数的 rm 删除单一构建产物）。
+     */
+    private fun isDestructiveCommand(command: String): Boolean {
+        val normalized = command.trim()
+        return DESTRUCTIVE_PATTERNS.any { pattern -> pattern.containsMatchIn(normalized) }
+    }
+
     private fun AppResult<Any>.toToolOutput(successMessage: String = ""): Pair<Boolean, String> = when (this) {
         is AppResult.Success -> true to successMessage.ifBlank { data.toString() }
         is AppResult.Failure -> false to error.message
@@ -148,5 +167,18 @@ class ToolExecutor @Inject constructor(
         const val MAX_COMMAND_LENGTH = 32 * 1024
         const val MAX_ARG_LENGTH = 1024 * 1024
         const val DEFAULT_CWD = "/root"
+
+        // 高危破坏性模式：全盘删除、格式化、写设备、关机、fork 炸弹、危险重定向、chmod 全盘提权等。
+        private val DESTRUCTIVE_PATTERNS = listOf(
+            Regex("""\brm\s+-rf?\s+/(?!workspace\b)"""),       // rm -rf / 绝对根（排除 /workspace）
+            Regex("""\brm\s+-rf?\s+--no-preserve-root"""),
+            Regex("""\bmkfs\.""", RegexOption.IGNORE_CASE),
+            Regex("""\bdd\s+if=.*\bof=/dev/""", RegexOption.IGNORE_CASE),
+            Regex("""\b(shutdown|reboot|halt|poweroff)\b"""),
+            Regex("""\b:\(\)\s*\{\s*:\|:&\s*\}"""),             // fork 炸弹
+            Regex(""">\s*/dev/sd[a-z]"""),
+            Regex("""\bchmod\s+-R\s+777\s+/"""),
+            Regex("""\btruncate\s+-s\s+0\s+/(?!workspace\b)""", RegexOption.IGNORE_CASE),
+        )
     }
 }

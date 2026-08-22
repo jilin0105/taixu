@@ -69,11 +69,12 @@
 - 支持 OpenAI 兼容 `chat/completions` 接口，以及 Anthropic Messages API 适配。
 - 支持 SSE 流式文本、`reasoning_content` / `reasoning` 推理增量与分片 `tool_calls` 参数累积。
 - **指令如律**：支持 `/run`、`/install`、`/init`、`/git` 等快捷指令，精简高频开发链路，让意图直达行动。
+- **专精赋能**：支持挂载 `@Android 统一开发助手`、`@Android 逆向与代码审计`、`@全栈构建与排错` 等专精技能，从工程骨架生成、现代 Compose UI 编写到构建后一键安装至本机。
 - **诸智共鸣**：支持主智能体派发并观测多个专业子智能体（Researcher, Coder, Tester），在隔离上下文中并发推进复杂工程。
+- **多模态视觉感知**：支持超大手机照片（>6MB/20MB）原生自适应下采样与高保真压缩，直接将高清视觉流交付多模态模型，对话气泡内嵌图像预览。
 - 内置 `read`、`write`、`edit`、`base` 等工作区与 Linux 执行工具。
 - 支持 MCP STDIO 与 SSE 服务，能够发现工具定义、动态注入模型并执行调用。
 - 会话、消息、工具执行、模型档案与推理内容通过 Room 持久化。
-- 支持图片视觉输入与文件附件；文件会复制到受控附件目录并映射进 Linux 沙箱。
 - 能从 Markdown 检查项提取任务计划，在对话中展示步骤与进度。
 
 模型并不天然拥有行动能力。Harness 的意义，是把“我认为应该如此”变成“我已经执行，并看见结果如此”。
@@ -97,6 +98,7 @@
 工作区是 Agent、终端与文件系统共享的坐标原点。
 
 - 创建、选择和管理项目工作区。
+- **动态基准感知**：会话绑定工作区子目录时，Agent 的相对路径操作自动对齐项目根目录，杜绝路径错位。
 - 浏览目录与文件，进行受边界约束的读取和写入。
 - 将对话会话绑定到项目，让工具默认在正确上下文中行动。
 - 在宽屏或折叠屏上启用 Agent 与终端双栏联动；手机上保持单栏路径。
@@ -117,12 +119,15 @@
 | OpenClaw | Web Gateway | LAN Gateway、访问令牌、状态目录与后台进程管理 |
 | Hermes Agent | Web Dashboard | Python 依赖、Dashboard 服务与后台进程管理 |
 | Base DevTools | 一次性工具包 | ripgrep、fd、jq、tmux |
-| Android DevTools | PTY / 工具包 | ADB、OpenJDK 17、Gradle、AAPT、zipalign |
+| Android DevTools | PTY / 工具包 | OpenJDK 17、Gradle 8.7+、ADB、AAPT、acli、zipalign |
 | Android RE Tools | PTY / 工具包 | APKTool、JADX-CLI、Smali 逆向分析环境 |
 | Hello Tool | 测试工具 | 验证安装、启动、校验与回滚链路 |
 
 工具系统同时具备：
 
+- **步骤化配方架构 (`installSteps`)**：配方全面拆解为清晰的命令列表，告别单行转义地狱，安装过程进度透明。
+- **国内 CDN 镜像加速**：深度整合腾讯云 Gradle 镜像、国内 NPM 镜像与 GitHub 代理镜像，海外依赖秒级部署。
+- **沙箱权限与环境自愈**：针对 PRoot 环境下的 dpkg 锁、unzip ownership 冲突及 Python 内存解压提供系统级自愈。
 - 受版本约束的共享 Runtime 依赖解析与引用计数。
 - `/opt/taixu/tools/{toolId}` 程序隔离、`/opt/taixu/data/{toolId}` 数据持久化与稳定命令入口。
 - 安装、更新、验证、卸载、失败回滚和中断恢复事务。

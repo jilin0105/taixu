@@ -28,6 +28,14 @@ import top.wkbin.taixu.core.tools.ProviderEndpointPolicy
 
 data class OnboardingStatus(val loaded: Boolean = false, val completed: Boolean = false)
 
+data class StarterPlugin(
+    val id: String,
+    val name: String,
+    val description: String,
+    val category: String,
+    val isRecommended: Boolean = false,
+)
+
 @HiltViewModel
 class OnboardingViewModel @Inject constructor(
     private val settings: SettingsDataStore,
@@ -36,6 +44,7 @@ class OnboardingViewModel @Inject constructor(
     private val modelDao: AiModelDao,
     private val providerCatalogRepository: AgentProviderCatalog,
     private val modelDiscovery: AgentModelDiscovery,
+    private val toolManager: top.wkbin.taixu.core.tools.ToolManager,
 ) : ViewModel() {
     val providerCatalog = providerCatalogRepository.providers
     private val restoreComplete = MutableStateFlow(false)
@@ -47,6 +56,44 @@ class OnboardingViewModel @Inject constructor(
         OnboardingStatus(loaded = restored, completed = completed && state is RuntimeState.Ready)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, OnboardingStatus())
     val runtimeState: StateFlow<RuntimeState> = linuxRuntime.state
+
+    val starterPlugins = listOf(
+        StarterPlugin(
+            id = "base-devtools",
+            name = "基础开发加速包 (DevTools)",
+            description = "预装 ripgrep、fd、jq、tmux 等高性能代码检索与终端开发利器",
+            category = "系统加速",
+            isRecommended = true,
+        ),
+        StarterPlugin(
+            id = "android-devtools",
+            name = "Android 统一开发套件",
+            description = "集成 OpenJDK 17、Gradle 8.7+、acli、ADB 与 AAPT，支持本机直接构建与运行",
+            category = "移动开发",
+            isRecommended = true,
+        ),
+        StarterPlugin(
+            id = "claude-code",
+            name = "Claude Code Agent",
+            description = "Anthropic 官方终端 Agent 编程助手，支持沙箱自主探索与全栈工程演进",
+            category = "AI 智能体",
+        ),
+        StarterPlugin(
+            id = "android-re-tools",
+            name = "Android 逆向分析套件",
+            description = "集成 APKTool、JADX-CLI 全自动 Java 源码反编译器与 Smali 代码审计环境",
+            category = "安全逆向",
+        ),
+    )
+
+    private val _selectedPlugins = MutableStateFlow<Set<String>>(setOf("base-devtools"))
+    val selectedPlugins = _selectedPlugins.asStateFlow()
+
+    private val _isInstallingPlugins = MutableStateFlow(false)
+    val isInstallingPlugins = _isInstallingPlugins.asStateFlow()
+
+    private val _pluginInstallProgress = MutableStateFlow<String?>(null)
+    val pluginInstallProgress = _pluginInstallProgress.asStateFlow()
 
     private val _distribution = MutableStateFlow("ubuntu")
     val distribution = _distribution.asStateFlow()
@@ -153,6 +200,43 @@ class OnboardingViewModel @Inject constructor(
         if (runtimeState.value is RuntimeState.Initializing) return
         restoreComplete.value = false
         restoreInstalledState()
+    }
+
+    fun togglePlugin(id: String) {
+        val current = _selectedPlugins.value
+        _selectedPlugins.value = if (id in current) current - id else current + id
+    }
+
+    fun skipPlugins() {
+        _page.value = 2
+    }
+
+    fun installSelectedPluginsAndProceed() {
+        val selected = _selectedPlugins.value.toList()
+        if (selected.isEmpty()) {
+            _page.value = 2
+            return
+        }
+        viewModelScope.launch {
+            _isInstallingPlugins.value = true
+            try {
+                selected.forEachIndexed { index, toolId ->
+                    val pluginName = starterPlugins.find { it.id == toolId }?.name ?: toolId
+                    _pluginInstallProgress.value = "正在安装 [${index + 1}/${selected.size}] $pluginName..."
+                    runCatching {
+                        toolManager.install(toolId).collect { event ->
+                            if (event is top.wkbin.taixu.runtime.tools.InstallEvent.Progress) {
+                                _pluginInstallProgress.value = "[$pluginName] ${event.message}"
+                            }
+                        }
+                    }
+                }
+            } finally {
+                _isInstallingPlugins.value = false
+                _pluginInstallProgress.value = null
+                _page.value = 2
+            }
+        }
     }
 
     fun skipModel() = finish()

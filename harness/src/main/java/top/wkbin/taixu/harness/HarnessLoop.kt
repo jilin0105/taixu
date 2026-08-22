@@ -512,6 +512,10 @@ class HarnessLoop @Inject constructor(
         val sessionEntity = sessionDao.findById(sessId)
         val sessionWorkspace = sessionEntity?.workspace.orEmpty()
 
+        val maxToolsPerRound = runCatching { settingsDataStore.maxToolsPerRound.first() }.getOrDefault(12)
+        val maxConsecutiveFailures = runCatching { settingsDataStore.maxConsecutiveFailures.first() }.getOrDefault(8)
+        var consecutiveFailures = 0
+
         var round = 0
         while (round < maxRounds) {
             drainSteeringMessages(sessId)
@@ -648,7 +652,39 @@ class HarnessLoop @Inject constructor(
             }
             val allCalls = result.toolCalls + jsonCalls
             if (allCalls.isEmpty()) return
-            allCalls.forEach { spec ->
+            // 单轮工具数上限：超出部分回填空结果并提示模型，避免一次性爆发失控。
+            val effectiveCalls = if (allCalls.size > maxToolsPerRound) {
+                val dropped = allCalls.size - maxToolsPerRound
+                allCalls.drop(maxToolsPerRound).forEach { spec ->
+                    append(
+                        sessId,
+                        ToolCall(
+                            id = newId(),
+                            createdAt = now(),
+                            tool = HarnessApiMapper.toolByName(spec.name),
+                            args = buildJsonObject {},
+                            reasoning = result.reasoningContent,
+                            rawToolName = spec.name.trim(),
+                        ),
+                    )
+                    append(
+                        sessId,
+                        ToolResult(
+                            id = newId(),
+                            createdAt = now(),
+                            toolCallId = spec.id,
+                            success = false,
+                            output = "本回合工具调用数量（${allCalls.size}）超过单轮上限（$maxToolsPerRound），已跳过本次多余的 $dropped 个调用。" +
+                                "请拆分任务、分步调用工具，避免一次性发起过多工具请求。",
+                        ),
+                    )
+                }
+                allCalls.take(maxToolsPerRound)
+            } else {
+                allCalls
+            }
+            var roundHadSuccess = false
+            effectiveCalls.forEach { spec ->
                 val parsedArgs = try {
                     json.parseToJsonElement(spec.argumentsJson) as? JsonObject
                         ?: throw IllegalArgumentException("参数不是 JSON 对象")
@@ -737,7 +773,28 @@ class HarnessLoop @Inject constructor(
                 val duration = now() - toolStart
                 logAgentEvent(sessId, "ToolResult", "Tool=${tool.name}, Success=${outcome.success}, Duration=${duration}ms, Output=${outcome.output.take(300)}")
                 append(sessId, outcome.copy(durationMs = duration))
+                if (outcome.success) roundHadSuccess = true
                 touchSession(sessId)
+            }
+            // 连续失败熔断：当一轮内所有工具调用均失败时计数，连续超过阈值则主动终止，
+            // 避免模型在"调用→失败→再调用"中死循环空转，浪费资源且无法自拔。
+            if (effectiveCalls.isNotEmpty() && !roundHadSuccess) {
+                consecutiveFailures++
+                if (consecutiveFailures >= maxConsecutiveFailures) {
+                    append(
+                        sessId,
+                        AssistantText(
+                            id = newId(),
+                            createdAt = now(),
+                            text = "连续 $consecutiveFailures 轮工具调用均失败，已主动停止以避免陷入死循环。" +
+                                "请检查：命令是否正确、工作区路径是否存在、依赖是否已安装，或简化任务后重试。",
+                            totalMs = now() - startedAt,
+                        ),
+                    )
+                    return
+                }
+            } else {
+                consecutiveFailures = 0
             }
             round++
         }
@@ -949,6 +1006,8 @@ class HarnessLoop @Inject constructor(
     private suspend fun apiMessages(sessId: String, model: ModelConfig): List<ApiMessage> {
         val compactionEnabled = runCatching { settingsDataStore.contextCompactionEnabled.first() }.getOrDefault(true)
         val threshold = runCatching { settingsDataStore.contextCompactionThreshold.first() }.getOrDefault(15)
+        val budgetTokens = model.contextTokens
+            ?: runCatching { settingsDataStore.contextBudgetTokens.first() }.getOrDefault(128_000)
         val sessionEntity = sessionDao.findById(sessId)
         val sessionWorkspace = sessionEntity?.workspace.orEmpty()
         val thinkingMode = sessionThinkingModes[sessId] ?: false
@@ -958,21 +1017,32 @@ class HarnessLoop @Inject constructor(
         val latestUserText = msgs.filterIsInstance<UserMessage>().lastOrNull()?.text.orEmpty()
         val mentionedNames = extractMentionedNames(latestUserText)
 
+        val systemPrompt = if (!model.pureChatMode) {
+            buildSystemPrompt(sessionWorkspace, toolCallMode, mentionedNames, sessId)
+        } else {
+            ""
+        }
         return buildList {
-            if (!model.pureChatMode) {
-                val systemPrompt = buildSystemPrompt(sessionWorkspace, toolCallMode, mentionedNames, sessId)
+            if (systemPrompt.isNotEmpty()) {
                 add(ApiMessage(role = "system", content = systemPrompt))
             }
             val answeredIds = msgs.filterIsInstance<ToolResult>().mapTo(mutableSetOf()) { it.toolCallId }
 
             val userIndices = msgs.indices.filter { msgs[it] is UserMessage }
-            val shouldCompact = compactionEnabled && userIndices.size > threshold
-
-            val recentTurnCutoffIndex = if (shouldCompact && userIndices.size > 4) {
+            // 预算驱动的滑动窗口：从最近一轮往回累加 token，超出预算则更早的历史进入压缩态。
+            val keepFromIndex = if (compactionEnabled) {
+                computeKeepFromIndex(msgs, budgetTokens, estimateTokens(systemPrompt))
+            } else {
+                0
+            }
+            // 兼容旧阈值逻辑：用户轮次未超阈值时不压缩；超阈值时至少保留最近 4 轮无损。
+            val legacyCutoff = if (userIndices.size > threshold && userIndices.size > 4) {
                 userIndices[userIndices.size - 4]
             } else {
-                msgs.size
+                0
             }
+            val shouldCompact = keepFromIndex > 0 || legacyCutoff > 0
+            val recentTurnCutoffIndex = maxOf(keepFromIndex, legacyCutoff)
 
             // JSON 文本模式：工具调用以文本表达，tool 消息需转成 user 文本（API 不认识 tool 角色）
             val toolNames = mutableMapOf<String, String>()
@@ -982,6 +1052,7 @@ class HarnessLoop @Inject constructor(
                 id = tc.id,
                 function = ApiFunctionCall(name = tc.tool.apiName(), arguments = tc.args.toString()),
             )
+            val isCollapsed = { index: Int -> shouldCompact && index < recentTurnCutoffIndex }
             while (i < msgs.size) {
                 val message = msgs[i]
                 if (toolCallMode == ToolCallMode.JSON_TEXT) {
@@ -993,12 +1064,12 @@ class HarnessLoop @Inject constructor(
                         is ToolResult -> {
                             val name = toolNames[message.toolCallId] ?: "工具"
                             val status = if (message.success) "成功" else "失败"
-                            add(
-                                ApiMessage(
-                                    role = "user",
-                                    content = "【工具 $name 执行结果·$status】\n${message.output}",
-                                ),
-                            )
+                            val content = if (isCollapsed(i) && message.output.length > 240) {
+                                compactToolOutput(message.output, message.success)
+                            } else {
+                                "【工具 $name 执行结果·$status】\n${message.output}"
+                            }
+                            add(ApiMessage(role = "user", content = content))
                             i++
                         }
                         else -> {
@@ -1013,7 +1084,12 @@ class HarnessLoop @Inject constructor(
                         i++
                         continue
                     }
-                    val text = (message as? AssistantText)?.text
+                    // 预算折叠态：早期 assistant 文本压缩为一行占位，避免撑爆上下文。
+                    val text = if (isCollapsed(i) && message is AssistantText && message.text.length > 120) {
+                        foldMessageText("助手", message.text)
+                    } else {
+                        (message as? AssistantText)?.text
+                    }
                     val reasoning = when (message) {
                         is AssistantText -> message.reasoning
                         is ToolCall -> message.reasoning
@@ -1036,7 +1112,7 @@ class HarnessLoop @Inject constructor(
                     )
                     i = j
                 } else if (message is ToolResult) {
-                    val content = if (shouldCompact && i < recentTurnCutoffIndex && message.output.length > 240) {
+                    val content = if (isCollapsed(i) && message.output.length > 240) {
                         compactToolOutput(message.output, message.success)
                     } else {
                         message.output
@@ -1050,7 +1126,17 @@ class HarnessLoop @Inject constructor(
                     )
                     i++
                 } else {
-                    add(HarnessApiMapper.toApiMessage(message))
+                    // 用户消息在早期历史中同样折叠，仅保留极简占位。
+                    val folded = if (isCollapsed(i) && message is UserMessage && message.text.length > 120) {
+                        foldMessageText("用户", message.text)
+                    } else {
+                        null
+                    }
+                    if (folded != null) {
+                        add(ApiMessage(role = "user", content = folded))
+                    } else {
+                        add(HarnessApiMapper.toApiMessage(message))
+                    }
                     i++
                 }
             }
@@ -1068,6 +1154,41 @@ class HarnessLoop @Inject constructor(
         }
         return "【历史执行结果·状态:" + (if (success) "成功" else "失败") + "】\n" + summary
     }
+
+    /** 估算一段文本的 token 数（字符数 / 2.5 近似，无需引入分词依赖，足够做预算判断）。 */
+    private fun estimateTokens(text: String): Int = (text.length / 2.5).toInt()
+
+    /**
+     * 基于上下文预算计算「无损保留起点」索引：从最近一轮往回累加 token，
+     * 当累计逼近 budget 的 85% 时，更早的消息进入折叠/压缩态。
+     * 始终保留最近的完整一轮，避免把模型正在处理的关键上下文裁掉。
+     */
+    private fun computeKeepFromIndex(msgs: List<HarnessMessage>, budget: Int, systemTokens: Int): Int {
+        if (budget <= 0) return 0
+        val limit = (budget * 0.85).toInt() - systemTokens
+        if (limit <= 0) return 0
+        var used = 0
+        // 从末尾往前扫描；找到第一个累加未超预算的位置作为保留起点。
+        for (idx in msgs.indices.reversed()) {
+            val msg = msgs[idx]
+            val tokens = when (msg) {
+                is UserMessage -> estimateTokens(msg.text) + msg.imageUrls.size * 1000
+                is AssistantText -> estimateTokens(msg.text) + estimateTokens(msg.reasoning.orEmpty())
+                is ToolResult -> estimateTokens(msg.output)
+                is ToolCall -> estimateTokens(msg.args.toString()) + estimateTokens(msg.reasoning.orEmpty())
+            }
+            if (used + tokens > limit) {
+                // idx 这一条起往前的全部进入折叠态；保留 idx 之后的。
+                return (idx + 1).coerceIn(0, msgs.size)
+            }
+            used += tokens
+        }
+        return 0
+    }
+
+    /** 早期历史折叠占位：保留角色标识与极简信息，引导模型依赖近期上下文。 */
+    private fun foldMessageText(role: String, text: String): String =
+        "[早期历史已折叠·$role] ${text.take(80).replace('\n', ' ')}…（内容过长，已省略，请依据最近轮次继续）"
 
     private fun sanitizeForStorage(message: HarnessMessage): HarnessMessage = when (message) {
         is ToolResult -> {
