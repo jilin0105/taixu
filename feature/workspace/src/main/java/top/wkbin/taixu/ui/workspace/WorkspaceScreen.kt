@@ -85,9 +85,12 @@ fun WorkspaceScreen(
     val projects by viewModel.projects.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
+    val buildProgress by viewModel.buildProgress.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showCreate by remember { mutableStateOf(false) }
+    var selectedTemplate by remember { mutableStateOf(top.wkbin.taixu.runtime.ProjectTemplate.ANDROID_COMPOSE) }
     var projectName by remember { mutableStateOf("") }
+    var packageName by remember { mutableStateOf("") }
     var projectStorage by remember { mutableStateOf(WorkspaceStorage.INTERNAL) }
     var directoryPath by remember { mutableStateOf("") }
     var internalDirectoryMenuExpanded by remember { mutableStateOf(false) }
@@ -205,7 +208,7 @@ fun WorkspaceScreen(
                 EmptyPanel(
                     icon = RuntimeIconName.Workspace,
                     title = "还没有工坊工程",
-                    description = "点击右上角 ➕ 或在智枢 Agent 中下发指令自动创建代码工程",
+                    description = "点击右上角 ➕ 选择 Android / Flutter 模板或自定义创建工程",
                     modifier = Modifier.padding(top = 24.dp),
                 )
             } else {
@@ -215,6 +218,7 @@ fun WorkspaceScreen(
                         busy = busy,
                         onOpenExplorer = { onOpenExplorer(project.name) },
                         onOpenTerminal = { onOpenTerminal(project.name) },
+                        onRunProject = { viewModel.runProject(project) },
                         onDelete = { deleteTarget = project },
                     )
                 }
@@ -224,25 +228,115 @@ fun WorkspaceScreen(
         }
     }
 
+    // 运行/构建进度弹窗
+    buildProgress?.let { progress ->
+        AlertDialog(
+            onDismissRequest = { if (!progress.isRunning) viewModel.dismissBuildProgress() },
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (progress.isRunning) {
+                        androidx.compose.material3.CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    }
+                    Text(if (progress.isRunning) "正在运行到手机..." else (if (progress.isSuccess == true) "运行就绪" else "运行失败"), fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(progress.step, style = MaterialTheme.typography.bodyMedium)
+                    if (progress.isRunning) {
+                        androidx.compose.material3.LinearProgressIndicator(
+                            progress = { progress.progress },
+                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                        )
+                    }
+                    progress.message?.let { msg ->
+                        Text(
+                            text = msg,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (progress.isSuccess == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                if (!progress.isRunning) {
+                    TextButton(onClick = { viewModel.dismissBuildProgress() }) {
+                        Text("完成")
+                    }
+                }
+            },
+        )
+    }
+
     if (showCreate) {
         AlertDialog(
             onDismissRequest = {
                 showCreate = false
                 projectName = ""
+                packageName = ""
                 directoryPath = ""
                 projectStorage = WorkspaceStorage.INTERNAL
             },
             title = { Text("新建工坊工程", fontWeight = FontWeight.Bold) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text("选择工程模板", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    // 模板选择 Chips
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        top.wkbin.taixu.runtime.ProjectTemplate.entries.forEach { t ->
+                            val isSelected = selectedTemplate == t
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = {
+                                    selectedTemplate = t
+                                    if (projectName.isNotBlank() && packageName.isBlank()) {
+                                        packageName = "com.example.${projectName.lowercase().filter { it.isLetterOrDigit() }}"
+                                    }
+                                },
+                                label = { Text(when(t) {
+                                    top.wkbin.taixu.runtime.ProjectTemplate.ANDROID_COMPOSE -> "Android"
+                                    top.wkbin.taixu.runtime.ProjectTemplate.FLUTTER -> "Flutter"
+                                    top.wkbin.taixu.runtime.ProjectTemplate.EMPTY -> "空工程"
+                                }, style = MaterialTheme.typography.labelSmall) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+
                     OutlinedTextField(
                         value = projectName,
-                        onValueChange = { projectName = it },
-                        label = { Text("工程标识名") },
-                        placeholder = { Text("my-app / fastapi-demo") },
+                        onValueChange = {
+                            projectName = it
+                            if (packageName.isBlank() || packageName.startsWith("com.example.")) {
+                                packageName = "com.example.${it.lowercase().filter { c -> c.isLetterOrDigit() }}"
+                            }
+                        },
+                        label = { Text("工程名称 (Name)") },
+                        placeholder = { Text("MyApplication / demo-app") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
+
+                    if (selectedTemplate != top.wkbin.taixu.runtime.ProjectTemplate.EMPTY) {
+                        OutlinedTextField(
+                            value = packageName,
+                            onValueChange = { packageName = it },
+                            label = { Text("应用包名 (Package Name)") },
+                            placeholder = { Text("com.example.myapp") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
                             selected = projectStorage == WorkspaceStorage.INTERNAL,
@@ -350,8 +444,9 @@ fun WorkspaceScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.create(projectName, projectStorage, directoryPath)
+                        viewModel.create(projectName, projectStorage, directoryPath, selectedTemplate, packageName)
                         projectName = ""
+                        packageName = ""
                         directoryPath = ""
                         projectStorage = WorkspaceStorage.INTERNAL
                         showCreate = false
@@ -364,6 +459,7 @@ fun WorkspaceScreen(
                 TextButton(onClick = {
                     showCreate = false
                     projectName = ""
+                    packageName = ""
                     directoryPath = ""
                     projectStorage = WorkspaceStorage.INTERNAL
                 }) { Text("取消") }
@@ -397,9 +493,23 @@ private fun ProjectCard(
     busy: Boolean,
     onOpenExplorer: () -> Unit,
     onOpenTerminal: () -> Unit,
+    onRunProject: () -> Unit,
     onDelete: () -> Unit,
 ) {
     var moreExpanded by remember { mutableStateOf(false) }
+
+    val typeBadgeColor = when (project.projectType) {
+        top.wkbin.taixu.runtime.ProjectType.ANDROID -> androidx.compose.ui.graphics.Color(0xFF2E7D32)
+        top.wkbin.taixu.runtime.ProjectType.FLUTTER -> androidx.compose.ui.graphics.Color(0xFF0288D1)
+        top.wkbin.taixu.runtime.ProjectType.GENERAL -> MaterialTheme.colorScheme.primary
+    }
+
+    val typeIcon = when (project.projectType) {
+        top.wkbin.taixu.runtime.ProjectType.ANDROID -> RuntimeIconName.Play
+        top.wkbin.taixu.runtime.ProjectType.FLUTTER -> RuntimeIconName.Sparkles
+        top.wkbin.taixu.runtime.ProjectType.GENERAL -> RuntimeIconName.Workspace
+    }
+
     RuntimeCard(
         modifier = Modifier.fillMaxWidth(),
         onClick = onOpenExplorer,
@@ -410,12 +520,28 @@ private fun ProjectCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                IconTile(RuntimeIconName.Workspace, size = 44.dp, color = MaterialTheme.colorScheme.primary)
+                IconTile(typeIcon, size = 44.dp, color = typeBadgeColor)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(
-                        project.name,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            project.name,
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                        )
+                        Surface(
+                            color = typeBadgeColor.copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(4.dp),
+                        ) {
+                            Text(
+                                text = project.projectType.displayName,
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
+                                color = typeBadgeColor,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                            )
+                        }
+                    }
                     Text(
                         project.linuxPath,
                         style = MaterialTheme.typography.bodySmall.copy(
@@ -474,6 +600,25 @@ private fun ProjectCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.End,
             ) {
+                // 如果是可运行工程（Android / Flutter），显示运行到手机按钮
+                if (project.projectType != top.wkbin.taixu.runtime.ProjectType.GENERAL) {
+                    androidx.compose.material3.FilledTonalButton(
+                        onClick = onRunProject,
+                        enabled = !busy,
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        modifier = Modifier.padding(end = 8.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            RuntimeIcon(RuntimeIconName.Play, Modifier.size(14.dp), tint = typeBadgeColor)
+                            Text("运行到手机", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold), color = typeBadgeColor)
+                        }
+                    }
+                }
+
                 // 打开终端
                 TextButton(
                     onClick = onOpenTerminal,
@@ -502,7 +647,6 @@ private fun ProjectCard(
                         Text("浏览代码", style = MaterialTheme.typography.labelMedium)
                     }
                 }
-
             }
         }
     }

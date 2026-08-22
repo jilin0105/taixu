@@ -15,12 +15,40 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 
+enum class ProjectType {
+    ANDROID,
+    FLUTTER,
+    GENERAL;
+
+    val displayName: String
+        get() = when (this) {
+            ANDROID -> "Android"
+            FLUTTER -> "Flutter"
+            GENERAL -> "通用"
+        }
+}
+
+enum class ProjectTemplate {
+    EMPTY,
+    ANDROID_COMPOSE,
+    FLUTTER;
+
+    val displayName: String
+        get() = when (this) {
+            EMPTY -> "空工程 (Empty)"
+            ANDROID_COMPOSE -> "Android (Jetpack Compose)"
+            FLUTTER -> "Flutter 跨平台"
+        }
+}
+
 data class WorkspaceProject(
     val name: String,
     val path: String,
     val linuxPath: String,
     val sizeBytes: Long,
     val ownsDirectory: Boolean = true,
+    val projectType: ProjectType = ProjectType.GENERAL,
+    val packageName: String = "",
 )
 
 enum class WorkspaceStorage { INTERNAL, SHARED }
@@ -72,6 +100,8 @@ class WorkspaceManager @Inject constructor(
         name: String,
         storage: WorkspaceStorage = WorkspaceStorage.INTERNAL,
         directoryPath: String = "",
+        template: ProjectTemplate = ProjectTemplate.EMPTY,
+        packageName: String = "",
     ): AppResult<WorkspaceProject> = withContext(Dispatchers.IO) {
         try {
             val safeName = name.trim()
@@ -96,6 +126,15 @@ class WorkspaceManager @Inject constructor(
             check(!duplicate) { "该目录已关联其他工程" }
             val existed = directory.exists()
             check((existed && directory.isDirectory) || (!existed && directory.mkdirs())) { "无法创建或访问关联目录" }
+
+            // 模板初始化处理
+            val cleanPkg = packageName.trim().ifBlank { "com.example.${safeName.lowercase().filter { it.isLetterOrDigit() }}" }
+            when (template) {
+                ProjectTemplate.ANDROID_COMPOSE -> generateAndroidTemplate(directory, safeName, cleanPkg)
+                ProjectTemplate.FLUTTER -> generateFlutterTemplate(directory, safeName, cleanPkg)
+                ProjectTemplate.EMPTY -> { /* 保持空目录 */ }
+            }
+
             val ownsDirectory = storage == WorkspaceStorage.INTERNAL && !existed
             workspaceDao.upsert(
                 WorkspaceEntity(safeName, directory.absolutePath, System.currentTimeMillis(), ownsDirectory),
@@ -326,12 +365,314 @@ class WorkspaceManager @Inject constructor(
     private fun projectFromEntity(entity: WorkspaceEntity): WorkspaceProject? {
         val directory = File(entity.path)
         if (!directory.isDirectory) return null
+        val type = detectProjectType(directory)
+        val pkg = extractPackageName(directory, type)
         return WorkspaceProject(
             name = entity.name,
             path = entity.path,
             linuxPath = linuxPathFor(directory),
             sizeBytes = sizeOf(directory),
             ownsDirectory = entity.ownsDirectory,
+            projectType = type,
+            packageName = pkg,
+        )
+    }
+
+    private fun detectProjectType(directory: File): ProjectType {
+        return when {
+            File(directory, "pubspec.yaml").exists() -> ProjectType.FLUTTER
+            File(directory, "settings.gradle.kts").exists() ||
+                File(directory, "app/build.gradle.kts").exists() ||
+                File(directory, "build.gradle").exists() -> ProjectType.ANDROID
+            else -> ProjectType.GENERAL
+        }
+    }
+
+    private fun extractPackageName(directory: File, type: ProjectType): String {
+        return runCatching {
+            when (type) {
+                ProjectType.ANDROID -> {
+                    val appBuild = File(directory, "app/build.gradle.kts").takeIf { it.exists() }
+                        ?: File(directory, "app/build.gradle").takeIf { it.exists() }
+                    val content = appBuild?.readText()
+                    val namespaceMatch = Regex("""(?:namespace|applicationId)\s*=\s*["']([^"']+)["']""").find(content ?: "")
+                    namespaceMatch?.groupValues?.get(1) ?: ""
+                }
+                ProjectType.FLUTTER -> {
+                    val pubspec = File(directory, "pubspec.yaml").takeIf { it.exists() }
+                    val nameMatch = Regex("""name:\s*([a-zA-Z0-9_]+)""").find(pubspec?.readText() ?: "")
+                    nameMatch?.groupValues?.get(1) ?: ""
+                }
+                ProjectType.GENERAL -> ""
+            }
+        }.getOrDefault("")
+    }
+
+    private fun generateAndroidTemplate(projectDir: File, name: String, packageName: String) {
+        projectDir.mkdirs()
+        // 1. settings.gradle.kts
+        File(projectDir, "settings.gradle.kts").writeText(
+            """
+            pluginManagement {
+                repositories {
+                    google()
+                    mavenCentral()
+                    gradlePluginPortal()
+                }
+            }
+            dependencyResolutionManagement {
+                repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+                repositories {
+                    google()
+                    mavenCentral()
+                }
+            }
+            rootProject.name = "$name"
+            include(":app")
+            """.trimIndent()
+        )
+
+        // 2. build.gradle.kts
+        File(projectDir, "build.gradle.kts").writeText(
+            """
+            plugins {
+                id("com.android.application") version "8.7.3" apply false
+                id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+                id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
+            }
+            """.trimIndent()
+        )
+
+        // 3. gradle.properties
+        File(projectDir, "gradle.properties").writeText(
+            """
+            org.gradle.jvmargs=-Xmx1024m -Dfile.encoding=UTF-8
+            android.useAndroidX=true
+            android.nonTransitiveRClass=true
+            android.aapt2FromMaven=false
+            android.overrideAapt2Path=/usr/bin/aapt
+            """.trimIndent()
+        )
+
+        // 4. app/build.gradle.kts
+        val appDir = File(projectDir, "app").apply { mkdirs() }
+        File(appDir, "build.gradle.kts").writeText(
+            """
+            plugins {
+                id("com.android.application")
+                id("org.jetbrains.kotlin.android")
+                id("org.jetbrains.kotlin.plugin.compose")
+            }
+
+            android {
+                namespace = "$packageName"
+                compileSdk = 34
+
+                defaultConfig {
+                    applicationId = "$packageName"
+                    minSdk = 26
+                    targetSdk = 34
+                    versionCode = 1
+                    versionName = "1.0.0"
+                }
+
+                compileOptions {
+                    sourceCompatibility = JavaVersion.VERSION_17
+                    targetCompatibility = JavaVersion.VERSION_17
+                }
+
+                buildFeatures {
+                    compose = true
+                }
+            }
+
+            dependencies {
+                implementation(platform("androidx.compose:compose-bom:2024.10.01"))
+                implementation("androidx.compose.ui:ui")
+                implementation("androidx.compose.material3:material3")
+                implementation("androidx.compose.ui:ui-tooling-preview")
+                implementation("androidx.activity:activity-compose:1.9.3")
+            }
+            """.trimIndent()
+        )
+
+        // 5. app/src/main/AndroidManifest.xml
+        val mainDir = File(appDir, "src/main").apply { mkdirs() }
+        File(mainDir, "AndroidManifest.xml").writeText(
+            """
+            <?xml version="1.0" encoding="utf-8"?>
+            <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+                <application
+                    android:allowBackup="true"
+                    android:icon="@android:drawable/sym_def_app_icon"
+                    android:label="$name"
+                    android:theme="@android:style/Theme.Material.NoActionBar">
+                    <activity
+                        android:name=".MainActivity"
+                        android:exported="true">
+                        <intent-filter>
+                            <action android:name="android.intent.action.MAIN" />
+                            <category android:name="android.intent.category.LAUNCHER" />
+                        </intent-filter>
+                    </activity>
+                </application>
+            </manifest>
+            """.trimIndent()
+        )
+
+        // 6. MainActivity.kt
+        val packagePath = packageName.replace('.', '/')
+        val javaDir = File(mainDir, "java/$packagePath").apply { mkdirs() }
+        File(javaDir, "MainActivity.kt").writeText(
+            """
+            package $packageName
+
+            import android.os.Bundle
+            import androidx.activity.ComponentActivity
+            import androidx.activity.compose.setContent
+            import androidx.compose.foundation.layout.*
+            import androidx.compose.material3.*
+            import androidx.compose.runtime.*
+            import androidx.compose.ui.Alignment
+            import androidx.compose.ui.Modifier
+            import androidx.compose.ui.unit.dp
+
+            class MainActivity : ComponentActivity() {
+                override fun onCreate(savedInstanceState: Bundle?) {
+                    super.onCreate(savedInstanceState)
+                    setContent {
+                        MaterialTheme {
+                            Surface(modifier = Modifier.fillMaxSize()) {
+                                var count by remember { mutableIntStateOf(0) }
+                                Column(
+                                    modifier = Modifier.fillMaxSize().padding(24.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Text(
+                                        text = "$name",
+                                        style = MaterialTheme.typography.headlineMedium
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Text(
+                                        text = "点击次数: ${'$'}count",
+                                        style = MaterialTheme.typography.titleLarge
+                                    )
+                                    Spacer(modifier = Modifier.height(24.dp))
+                                    Button(onClick = { count++ }) {
+                                        Text("点我计数 +1")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            """.trimIndent()
+        )
+    }
+
+    private fun generateFlutterTemplate(projectDir: File, name: String, packageName: String) {
+        projectDir.mkdirs()
+        val cleanName = name.lowercase().replace('-', '_').filter { it.isLetterOrDigit() || it == '_' }
+
+        // 1. pubspec.yaml
+        File(projectDir, "pubspec.yaml").writeText(
+            """
+            name: $cleanName
+            description: "$name Flutter Application"
+            publish_to: 'none'
+            version: 1.0.0+1
+
+            environment:
+              sdk: '>=3.0.0 <4.0.0'
+
+            dependencies:
+              flutter:
+                sdk: flutter
+              cupertino_icons: ^1.0.8
+
+            dev_dependencies:
+              flutter_test:
+                sdk: flutter
+              flutter_lints: ^4.0.0
+
+            flutter:
+              uses-material-design: true
+            """.trimIndent()
+        )
+
+        // 2. lib/main.dart
+        val libDir = File(projectDir, "lib").apply { mkdirs() }
+        File(libDir, "main.dart").writeText(
+            """
+            import 'package:flutter/material.dart';
+
+            void main() {
+              runApp(const MyApp());
+            }
+
+            class MyApp extends StatelessWidget {
+              const MyApp({super.key});
+
+              @override
+              Widget build(BuildContext context) {
+                return MaterialApp(
+                  title: '$name',
+                  theme: ThemeData(
+                    colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+                    useMaterial3: true,
+                  ),
+                  home: const MyHomePage(title: '$name'),
+                );
+              }
+            }
+
+            class MyHomePage extends StatefulWidget {
+              const MyHomePage({super.key, required this.title});
+              final String title;
+
+              @override
+              State<MyHomePage> createState() => _MyHomePageState();
+            }
+
+            class _MyHomePageState extends State<MyHomePage> {
+              int _counter = 0;
+
+              void _incrementCounter() {
+                setState(() {
+                  _counter++;
+                });
+              }
+
+              @override
+              Widget build(BuildContext context) {
+                return Scaffold(
+                  appBar: AppBar(
+                    backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+                    title: Text(widget.title),
+                  ),
+                  body: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: <Widget>[
+                        const Text('点击按钮增加计数:'),
+                        Text(
+                          '${'$'}_counter',
+                          style: Theme.of(context).textTheme.headlineMedium,
+                        ),
+                      ],
+                    ),
+                  ),
+                  floatingActionButton: FloatingActionButton(
+                    onPressed: _incrementCounter,
+                    tooltip: 'Increment',
+                    child: const Icon(Icons.add),
+                  ),
+                );
+              }
+            }
+            """.trimIndent()
         )
     }
 

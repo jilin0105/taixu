@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.ui.workspace
+package top.wkbin.taixu.ui.workspace
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class WorkspaceViewModel @Inject constructor(
     private val workspaceManager: WorkspaceManager,
+    private val workspaceBuildRunner: top.wkbin.taixu.runtime.build.WorkspaceBuildRunner,
 ) : ViewModel() {
 
     // ==================== 项目列表状态 ====================
@@ -29,6 +30,10 @@ class WorkspaceViewModel @Inject constructor(
 
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
+
+    // 运行/构建状态
+    private val _buildProgress = MutableStateFlow<top.wkbin.taixu.runtime.build.BuildRunProgress?>(null)
+    val buildProgress: StateFlow<top.wkbin.taixu.runtime.build.BuildRunProgress?> = _buildProgress.asStateFlow()
 
     // ==================== 文件浏览器状态 ====================
     private val _selectedProject = MutableStateFlow<String?>(null)
@@ -69,6 +74,10 @@ class WorkspaceViewModel @Inject constructor(
         _message.value = null
     }
 
+    fun dismissBuildProgress() {
+        _buildProgress.value = null
+    }
+
     fun refresh() {
         viewModelScope.launch {
             workspaceManager.listProjects()
@@ -77,14 +86,29 @@ class WorkspaceViewModel @Inject constructor(
 
     // ==================== 项目级操作 ====================
 
-    fun create(name: String, storage: WorkspaceStorage, directoryPath: String) {
+    fun create(
+        name: String,
+        storage: WorkspaceStorage,
+        directoryPath: String,
+        template: top.wkbin.taixu.runtime.ProjectTemplate = top.wkbin.taixu.runtime.ProjectTemplate.EMPTY,
+        packageName: String = "",
+    ) {
         if (_busy.value) return
         viewModelScope.launch {
             _busy.value = true
-            val result = workspaceManager.createProject(name, storage, directoryPath)
+            val result = workspaceManager.createProject(name, storage, directoryPath, template, packageName)
             _message.value = result.errorOrNull()?.message ?: "项目已创建，目录已关联"
             if (result.isSuccess) workspaceManager.listProjects()
             _busy.value = false
+        }
+    }
+
+    fun runProject(project: WorkspaceProject) {
+        if (_buildProgress.value?.isRunning == true) return
+        viewModelScope.launch {
+            workspaceBuildRunner.runProject(project).collect { progress ->
+                _buildProgress.value = progress
+            }
         }
     }
 
