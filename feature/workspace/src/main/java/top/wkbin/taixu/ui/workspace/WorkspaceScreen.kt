@@ -53,6 +53,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -593,17 +594,23 @@ private fun ProjectCard(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                IconTile(typeIcon, size = 44.dp, color = typeBadgeColor)
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                IconTile(typeIcon, size = 40.dp, color = typeBadgeColor)
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(
-                            project.name,
+                            text = project.name,
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
                         )
                         Surface(
                             color = typeBadgeColor.copy(alpha = 0.15f),
@@ -618,28 +625,14 @@ private fun ProjectCard(
                         }
                     }
                     Text(
-                        project.linuxPath,
+                        text = "${project.linuxPath} · ${project.sizeBytes.toReadableSize()}",
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                         ),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-
-                // 大小胶囊
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    shape = RoundedCornerShape(6.dp),
-                ) {
-                    Text(
-                        text = project.sizeBytes.toReadableSize(),
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Medium,
-                        ),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
 
@@ -647,7 +640,7 @@ private fun ProjectCard(
                     IconButton(
                         onClick = { moreExpanded = true },
                         enabled = !busy,
-                        modifier = Modifier.size(36.dp),
+                        modifier = Modifier.size(32.dp),
                     ) {
                         RuntimeIcon(RuntimeIconName.More, Modifier.size(18.dp), MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -655,6 +648,16 @@ private fun ProjectCard(
                         expanded = moreExpanded,
                         onDismissRequest = { moreExpanded = false },
                     ) {
+                        DropdownMenuItem(
+                            text = { Text("打开专属终端") },
+                            leadingIcon = {
+                                RuntimeIcon(RuntimeIconName.Terminal, Modifier.size(17.dp))
+                            },
+                            onClick = {
+                                moreExpanded = false
+                                onOpenTerminal()
+                            },
+                        )
                         DropdownMenuItem(
                             text = { Text("删除工程", color = MaterialTheme.colorScheme.error) },
                             leadingIcon = {
@@ -669,7 +672,7 @@ private fun ProjectCard(
                 }
             }
 
-            // 快捷操作栏
+            // 快捷操作栏：精简去噪，只保留最核心的直达动作
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -681,7 +684,7 @@ private fun ProjectCard(
                         onClick = onRunProject,
                         enabled = !busy,
                         shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                         modifier = Modifier.padding(end = 8.dp),
                     ) {
                         Row(
@@ -692,9 +695,23 @@ private fun ProjectCard(
                             Text("运行到手机", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold), color = typeBadgeColor)
                         }
                     }
+                } else {
+                    TextButton(
+                        onClick = onOpenTerminal,
+                        enabled = !busy,
+                        modifier = Modifier.padding(end = 4.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            RuntimeIcon(RuntimeIconName.Terminal, Modifier.size(15.dp), MaterialTheme.colorScheme.primary)
+                            Text("终端", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
                 }
 
-                // Agent 协同
+                // Agent 智能结对
                 TextButton(
                     onClick = onOpenAgent,
                     enabled = !busy,
@@ -704,36 +721,7 @@ private fun ProjectCard(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         RuntimeIcon(RuntimeIconName.Sparkles, Modifier.size(15.dp), MaterialTheme.colorScheme.primary)
-                        Text("Agent", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                    }
-                }
-
-                // 打开终端
-                TextButton(
-                    onClick = onOpenTerminal,
-                    enabled = !busy,
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        RuntimeIcon(RuntimeIconName.Terminal, Modifier.size(15.dp), MaterialTheme.colorScheme.primary)
-                        Text("终端", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                    }
-                }
-
-                // 浏览代码
-                Button(
-                    onClick = onOpenExplorer,
-                    enabled = !busy,
-                    shape = RoundedCornerShape(10.dp),
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        RuntimeIcon(RuntimeIconName.Folder, Modifier.size(15.dp), MaterialTheme.colorScheme.onPrimary)
-                        Text("浏览代码", style = MaterialTheme.typography.labelMedium)
+                        Text("Agent 结对", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
