@@ -60,6 +60,7 @@ class ToolManager @Inject constructor(
     private val toolCommandLinker: top.wkbin.taixu.runtime.tools.ToolCommandLinker,
     private val notificationNotifier: ToolNotificationNotifier,
     private val secretRedactor: SecretRedactor,
+    private val assetSynchronizer: top.wkbin.taixu.runtime.scripts.RuntimeAssetSynchronizer,
     installerAdapters: Set<@JvmSuppressWildcards ToolRuntimeAdapter>,
 ) {
     private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -284,6 +285,9 @@ class ToolManager @Inject constructor(
         installMutex.withLock {
             _isBatchInstalling.value = true
             emit(InstallEvent.Started("components"))
+            runCatching {
+                assetSynchronizer.syncAssetsToDistro(distroId)
+            }
             val steps = top.wkbin.taixu.core.model.BuiltinPluginBundles.buildBatchInstallScript(componentIds)
             val selectedComps = top.wkbin.taixu.core.model.BuiltinPluginBundles.bundles.flatMap { it.components }.filter { it.id in componentIds }
             val compNames = selectedComps.joinToString("、") { it.name }

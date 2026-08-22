@@ -52,6 +52,8 @@ class RuntimePathManager @Inject constructor(
 
     fun taixuDataDir(distroId: String): File = File(taixuRootDir(distroId), "data")
 
+    fun taixuScriptsDir(distroId: String): File = File(taixuRootDir(distroId), "scripts")
+
     fun taixuBinDir(distroId: String): File = File(taixuRootDir(distroId), "bin")
 
     fun ensureDistroDirectories(distroId: String) {
@@ -60,6 +62,7 @@ class RuntimePathManager @Inject constructor(
             taixuRootDir(safeId),
             taixuRuntimesDir(safeId),
             taixuToolsDir(safeId),
+            taixuScriptsDir(safeId),
             taixuDataDir(safeId),
             taixuBinDir(safeId),
         ).forEach { it.mkdirs() }

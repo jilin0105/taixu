@@ -48,6 +48,7 @@ class LinuxRuntimeImpl @Inject constructor(
     private val processRegistry: ProcessRegistry,
     private val settingsDataStore: top.wkbin.taixu.core.datastore.SettingsDataStore,
     private val hostBridge: HostBridge,
+    private val assetSynchronizer: top.wkbin.taixu.runtime.scripts.RuntimeAssetSynchronizer,
     private val logger: AppLogger,
 ) : LinuxRuntime {
 
@@ -537,6 +538,11 @@ class LinuxRuntimeImpl @Inject constructor(
         configurePipMirror(distroId)
         installAptStripSetuidHook(distroId)
         installPerlFixScript(distroId)
+        runCatching {
+            kotlinx.coroutines.runBlocking {
+                assetSynchronizer.syncAssetsToDistro(distroId)
+            }
+        }
     }
 
     /**
