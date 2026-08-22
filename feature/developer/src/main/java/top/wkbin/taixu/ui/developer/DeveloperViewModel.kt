@@ -13,6 +13,7 @@ import top.wkbin.taixu.core.tools.ToolManager
 import top.wkbin.taixu.core.tools.ToolRegistry
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.RuntimeHealth
+import top.wkbin.taixu.runtime.RootfsUpdateInfo
 import top.wkbin.taixu.runtime.StorageManager
 import top.wkbin.taixu.runtime.StorageUsage
 import top.wkbin.taixu.runtime.shell.CommandResult
@@ -63,6 +64,8 @@ class DeveloperViewModel @Inject constructor(
     val storage: StateFlow<StorageUsage?> = _storage.asStateFlow()
     private val _rootfsVersion = MutableStateFlow<String?>(null)
     val rootfsVersion: StateFlow<String?> = _rootfsVersion.asStateFlow()
+    private val _rootfsUpdate = MutableStateFlow<RootfsUpdateInfo?>(null)
+    val rootfsUpdate: StateFlow<RootfsUpdateInfo?> = _rootfsUpdate.asStateFlow()
     private var initializationJob: Job? = null
 
     val registryManifestUrl: StateFlow<String> = settingsDataStore.registryManifestUrl
@@ -178,6 +181,33 @@ class DeveloperViewModel @Inject constructor(
         }
     }
 
+    fun checkRootfsUpdate() {
+        if (_busy.value || linuxRuntime.state.value !is RuntimeState.Ready) return
+        viewModelScope.launch {
+            _busy.value = true
+            _message.value = "正在检查 RootFS 的 OCI manifest…"
+            runCatching { linuxRuntime.checkRootfsUpdate() }
+                .onSuccess { result ->
+                    if (result.isSuccess) {
+                        val info = result.getOrNull()!!
+                        _rootfsUpdate.value = info
+                        _message.value = if (info.hasUpdate) {
+                            "检测到 RootFS 新版本，可以更新。"
+                        } else {
+                            "RootFS 已是最新版本。"
+                        }
+                    } else {
+                        _message.value = "RootFS 更新检查失败：${result.errorOrNull()?.message}"
+                    }
+                }
+                .onFailure { throwable ->
+                    logger.e("RootFS update check failed", throwable)
+                    _message.value = "RootFS 更新检查失败：${throwable.message}"
+                }
+            _busy.value = false
+        }
+    }
+
     fun runHealthCheck() {
         if (_busy.value) return
         viewModelScope.launch {
@@ -257,6 +287,33 @@ class DeveloperViewModel @Inject constructor(
                     refreshStorage()
                 }
                 .onFailure { _message.value = "清理失败：${it.message}" }
+            _busy.value = false
+        }
+    }
+
+    fun resetLinuxEnvironment() {
+        if (_busy.value || linuxRuntime.state.value is RuntimeState.Initializing) return
+        viewModelScope.launch {
+            _busy.value = true
+            val distroId = linuxRuntime.activeDistroId.value
+            runCatching {
+                val result = linuxRuntime.resetSandbox(distroId)
+                check(result.isSuccess) { result.errorOrNull()?.message ?: "Linux 环境重置失败" }
+                toolManager.resetDistroState(distroId)
+                // A factory-style runtime reset intentionally restarts the
+                // complete first-run flow: environment download, then model
+                // selection/configuration.
+                settingsDataStore.setOnboardingCompleted(false)
+                result
+            }
+                .onSuccess { result ->
+                    _message.value = if (result.isSuccess) {
+                        "Linux 环境已恢复初始状态，工作区工程未删除。"
+                    } else {
+                        "重置失败：${result.errorOrNull()?.message}"
+                    }
+                }
+                .onFailure { _message.value = "重置失败：${it.message}" }
             _busy.value = false
         }
     }

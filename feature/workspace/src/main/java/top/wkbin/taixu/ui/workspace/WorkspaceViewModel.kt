@@ -12,14 +12,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 @HiltViewModel
 class WorkspaceViewModel @Inject constructor(
     private val workspaceManager: WorkspaceManager,
-    private val workspaceBuildRunner: top.wkbin.taixu.runtime.build.WorkspaceBuildRunner,
+    private val buildCoordinator: WorkspaceBuildTaskCoordinator,
     private val toolManager: top.wkbin.taixu.core.tools.ToolManager,
+    private val linuxRuntime: top.wkbin.taixu.runtime.LinuxRuntime,
 ) : ViewModel() {
 
     // ==================== 聚合开发套件与子组件状态 ====================
@@ -27,6 +29,11 @@ class WorkspaceViewModel @Inject constructor(
 
     private val _installedComponentIds = MutableStateFlow<Set<String>>(emptySet())
     val installedComponentIds: StateFlow<Set<String>> = _installedComponentIds.asStateFlow()
+
+    /** Linux 沙箱是否已初始化就绪（组件探针依赖它，未就绪时探针结果不可信）。 */
+    val runtimeReady: StateFlow<Boolean> = linuxRuntime.state
+        .map { it is top.wkbin.taixu.core.model.RuntimeState.Ready }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     private val _activeBundleForSetup = MutableStateFlow<top.wkbin.taixu.core.model.PluginBundle?>(null)
     val activeBundleForSetup: StateFlow<top.wkbin.taixu.core.model.PluginBundle?> = _activeBundleForSetup.asStateFlow()
@@ -56,7 +63,7 @@ class WorkspaceViewModel @Inject constructor(
         val targetBundle = if (suggestedSuiteId != null) {
             when (suggestedSuiteId) {
                 "android_sdk", "android-suite" -> pluginBundles.firstOrNull { it.id == "android-suite" }
-                "flutter", "flutter-suite" -> pluginBundles.firstOrNull { it.id == "flutter-suite" }
+                "flutter", "flutter-suite", "flutter-core" -> pluginBundles.firstOrNull { it.id == "android-suite" }
                 else -> pluginBundles.firstOrNull { it.id == suggestedSuiteId }
             } ?: pluginBundles.first()
         } else {
@@ -128,8 +135,16 @@ class WorkspaceViewModel @Inject constructor(
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
 
     // 运行/构建状态
-    private val _buildProgress = MutableStateFlow<top.wkbin.taixu.runtime.build.BuildRunProgress?>(null)
-    val buildProgress: StateFlow<top.wkbin.taixu.runtime.build.BuildRunProgress?> = _buildProgress.asStateFlow()
+    val buildProgress: StateFlow<top.wkbin.taixu.runtime.build.BuildRunProgress?> = buildCoordinator.state
+        .map { it?.progress }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), buildCoordinator.state.value?.progress)
+
+    val activeBuildingProjectName: StateFlow<String?> = buildCoordinator.state
+        .map { state -> state?.takeIf { it.progress.isRunning }?.project?.name }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    private val _isBuildDialogVisible = MutableStateFlow<Boolean>(false)
+    val isBuildDialogVisible: StateFlow<Boolean> = _isBuildDialogVisible.asStateFlow()
 
     // ==================== 文件浏览器状态 ====================
     private val _selectedProject = MutableStateFlow<String?>(null)
@@ -170,8 +185,17 @@ class WorkspaceViewModel @Inject constructor(
         _message.value = null
     }
 
+    fun showBuildDialog() {
+        _isBuildDialogVisible.value = true
+    }
+
+    fun hideBuildDialog() {
+        _isBuildDialogVisible.value = false
+    }
+
     fun dismissBuildProgress() {
-        _buildProgress.value = null
+        _isBuildDialogVisible.value = false
+        buildCoordinator.dismiss()
     }
 
     fun refresh() {
@@ -188,11 +212,14 @@ class WorkspaceViewModel @Inject constructor(
         directoryPath: String,
         template: top.wkbin.taixu.runtime.ProjectTemplate = top.wkbin.taixu.runtime.ProjectTemplate.EMPTY,
         packageName: String = "",
+        apkSource: top.wkbin.taixu.runtime.ApkImportSource? = null,
+        exportApkToDownload: Boolean = false,
+        gitUrl: String = "",
     ) {
         if (_busy.value) return
         viewModelScope.launch {
             _busy.value = true
-            val result = workspaceManager.createProject(name, storage, directoryPath, template, packageName)
+            val result = workspaceManager.createProject(name, storage, directoryPath, template, packageName, apkSource, exportApkToDownload, gitUrl)
             _message.value = result.errorOrNull()?.message ?: "项目已创建，目录已关联"
             if (result.isSuccess) workspaceManager.listProjects()
             _busy.value = false
@@ -200,19 +227,21 @@ class WorkspaceViewModel @Inject constructor(
     }
 
     fun runProject(project: WorkspaceProject) {
-        if (_buildProgress.value?.isRunning == true) return
-        viewModelScope.launch {
-            workspaceBuildRunner.runProject(project).collect { progress ->
-                _buildProgress.value = progress
-            }
+        if (buildCoordinator.state.value?.progress?.isRunning == true) {
+            _isBuildDialogVisible.value = true
+            return
         }
+        _isBuildDialogVisible.value = true
+        buildCoordinator.start(project)
+    }
+
+    /** 用户主动取消编译任务 */
+    fun cancelBuild() {
+        buildCoordinator.cancel()
     }
 
     fun launchInstaller(apkPath: String) {
-        val file = java.io.File(apkPath)
-        if (file.exists()) {
-            workspaceBuildRunner.launchPackageInstaller(file)
-        }
+        buildCoordinator.launchPackageInstaller(apkPath)
     }
 
     fun delete(name: String) {

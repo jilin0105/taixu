@@ -26,6 +26,7 @@ import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.ui.terminal.TerminalSessionManager
 import top.wkbin.taixu.runtime.DistributionCatalog
 import top.wkbin.taixu.runtime.LinuxRuntime
+import top.wkbin.taixu.runtime.BackgroundTaskRegistry
 import top.wkbin.taixu.runtime.doctor.EnvironmentDoctor
 import top.wkbin.taixu.runtime.doctor.EnvironmentRepairer
 import javax.inject.Inject
@@ -55,6 +56,7 @@ class HomeViewModel @Inject constructor(
     private val environmentDoctor: EnvironmentDoctor,
     private val environmentRepairer: EnvironmentRepairer,
     private val terminalSessionManager: TerminalSessionManager,
+    private val backgroundTaskRegistry: BackgroundTaskRegistry,
     private val logger: AppLogger,
 ) : ViewModel() {
 
@@ -170,7 +172,7 @@ class HomeViewModel @Inject constructor(
 
             // 3. 活跃进程与后台任务
             val bgProcesses = try { linuxRuntime.listBackground() } catch (e: Exception) { emptyList() }
-            val activeProcs = bgProcesses.size
+            val activeProcs = bgProcesses.size + backgroundTaskRegistry.activeTasks.value.size
 
             // 4. 运行时间 (基于全局应用启动时间戳，切换 Tab 不会重置)
             val elapsedSec = (SystemClock.elapsedRealtime() - APP_START_TIME) / 1000

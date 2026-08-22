@@ -1,4 +1,4 @@
-package top.wkbin.taixu.runtime.samples
+﻿package top.wkbin.taixu.runtime.samples
 
 import top.wkbin.taixu.core.database.WorkspaceDao
 import top.wkbin.taixu.core.database.WorkspaceEntity
@@ -33,6 +33,7 @@ object WorkspaceSampleSeeder {
                     maven("https://maven.aliyun.com/repository/google")
                     maven("https://maven.aliyun.com/repository/public")
                     maven("https://maven.aliyun.com/repository/gradle-plugin")
+                    maven("https://maven.aliyun.com/repository/central")
                     google()
                     mavenCentral()
                     gradlePluginPortal()
@@ -63,14 +64,18 @@ object WorkspaceSampleSeeder {
             """.trimIndent()
         )
 
-        // 3. gradle.properties (重点：配置原生 ARM64 aapt2 避免 x86_64 崩溃)
+        // 3. gradle.properties (通过 QEMU 运行 x86_64 AAPT2，并限制 PRoot 内存峰值)
         File(projectDir, "gradle.properties").writeText(
             """
-            org.gradle.jvmargs=-Xmx1024m -Dfile.encoding=UTF-8
+            org.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+UseSerialGC -Dfile.encoding=UTF-8
+            org.gradle.daemon=false
+            org.gradle.parallel=false
+            org.gradle.workers.max=2
+            org.gradle.caching=true
+            kotlin.daemon.jvmargs=-Xmx512m -XX:MaxMetaspaceSize=256m
             android.useAndroidX=true
             android.nonTransitiveRClass=true
-            android.aapt2FromMaven=false
-            android.overrideAapt2Path=/usr/bin/aapt
+            android.aapt2FromMavenOverride=/opt/taixu/android-sdk-tools/qemu/aapt2
             """.trimIndent()
         )
 
@@ -128,7 +133,7 @@ object WorkspaceSampleSeeder {
                     android:label="TaiXu Android Demo"
                     android:theme="@android:style/Theme.Material.NoActionBar">
                     <activity
-                        android:name=".MainActivity"
+                        android:name="com.example.taixudemo.MainActivity"
                         android:exported="true">
                         <intent-filter>
                             <action android:name="android.intent.action.MAIN" />
@@ -162,7 +167,7 @@ object WorkspaceSampleSeeder {
                     setContent {
                         MaterialTheme {
                             Surface(modifier = Modifier.fillMaxSize()) {
-                                var count by remember { mutableIntStateOf(0) }
+                                val countState = remember { mutableStateOf(0) }
                                 Column(
                                     modifier = Modifier.fillMaxSize().padding(24.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -174,11 +179,11 @@ object WorkspaceSampleSeeder {
                                     )
                                     Spacer(modifier = Modifier.height(16.dp))
                                     Text(
-                                        text = "点击次数: count",
+                                        text = "点击次数: ${'$'}{countState.value}",
                                         style = MaterialTheme.typography.headlineMedium
                                     )
                                     Spacer(modifier = Modifier.height(24.dp))
-                                    Button(onClick = { count++ }) {
+                                    Button(onClick = { countState.value++ }) {
                                         Text("点我计数 +1")
                                     }
                                 }
@@ -196,7 +201,7 @@ object WorkspaceSampleSeeder {
             """
             distributionBase=GRADLE_USER_HOME
             distributionPath=wrapper/dists
-            distributionUrl=https\://mirrors.cloud.tencent.com/gradle/gradle-8.7-bin.zip
+            distributionUrl=https\://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip
             zipStoreBase=GRADLE_USER_HOME
             zipStorePath=wrapper/dists
             """.trimIndent()
@@ -210,6 +215,8 @@ object WorkspaceSampleSeeder {
             DIR="$(cd "$(dirname "${'$'}0")" && pwd)"
             if [ -f "${'$'}DIR/gradle/wrapper/gradle-wrapper.jar" ]; then
                 exec java -jar "${'$'}DIR/gradle/wrapper/gradle-wrapper.jar" "${'$'}@"
+            elif [ -x /opt/gradle-8.9/bin/gradle ]; then
+                exec /opt/gradle-8.9/bin/gradle "${'$'}@"
             elif [ -x /opt/gradle-8.7/bin/gradle ]; then
                 exec /opt/gradle-8.7/bin/gradle "${'$'}@"
             elif [ -x /usr/local/bin/gradle ]; then

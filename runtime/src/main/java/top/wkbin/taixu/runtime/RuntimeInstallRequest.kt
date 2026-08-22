@@ -5,6 +5,15 @@ data class RuntimeInstallRequest(
     val registryRoute: RegistryRoute = RegistryRoute.AUTO,
 )
 
+data class RootfsUpdateInfo(
+    val distroId: String,
+    val imageReference: String,
+    val currentVersion: String?,
+    val currentDigest: String?,
+    val latestDigest: String,
+    val hasUpdate: Boolean,
+)
+
 enum class RegistryRoute { AUTO, OFFICIAL, CHINA_ACCELERATED }
 
 data class DistributionSpec(

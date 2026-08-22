@@ -2,6 +2,8 @@
 .gradle/
 .kotlin/
 **/build/
+!runtime/src/main/java/top/wkbin/taixu/runtime/build/
+!runtime/src/main/java/top/wkbin/taixu/runtime/build/*.kt
 
 # Android Studio / IntelliJ
 .idea/

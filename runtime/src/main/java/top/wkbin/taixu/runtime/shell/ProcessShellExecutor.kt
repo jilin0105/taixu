@@ -7,6 +7,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
@@ -23,6 +24,7 @@ class ProcessShellExecutor @Inject constructor(
         workingDirectory: File?,
         environment: Map<String, String>,
         timeoutMs: Long,
+        onOutput: ((String) -> Unit)?,
     ): CommandResult = withContext(Dispatchers.IO) {
         val startedAt = System.currentTimeMillis()
         val process = ProcessBuilder(command)
@@ -41,10 +43,10 @@ class ProcessShellExecutor @Inject constructor(
         runCatching { process.outputStream.close() }
 
         val stdoutDeferred = async(Dispatchers.IO) {
-            readFully(process.inputStream)
+            readFully(process.inputStream, onOutput)
         }
         val stderrDeferred = async(Dispatchers.IO) {
-            readFully(process.errorStream)
+            readFully(process.errorStream, onOutput)
         }
 
         try {
@@ -67,20 +69,41 @@ class ProcessShellExecutor @Inject constructor(
             runInterruptible(Dispatchers.IO) {
                 process.waitFor(PROCESS_TEARDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
             }
-            stdoutDeferred.cancel()
-            stderrDeferred.cancel()
+            // Preserve output produced before the timeout. Cancelling the
+            // readers here discarded the only useful diagnostic from long
+            // setup scripts (APT/Gradle/Flutter), leaving just the timeout
+            // sentence in the installation dialog.
+            val partialStdout = runCatching {
+                withTimeoutOrNull(PROCESS_TEARDOWN_TIMEOUT_MS) { stdoutDeferred.await() }.orEmpty()
+            }.getOrDefault("")
+            val partialStderr = runCatching {
+                withTimeoutOrNull(PROCESS_TEARDOWN_TIMEOUT_MS) { stderrDeferred.await() }.orEmpty()
+            }.getOrDefault("")
             CommandResult(
                 exitCode = TIMEOUT_EXIT_CODE,
-                stdout = "",
-                stderr = "Command timed out after ${timeoutMs}ms",
+                stdout = partialStdout,
+                stderr = buildString {
+                    if (partialStderr.isNotBlank()) {
+                        append(partialStderr.trimEnd())
+                        append('\n')
+                    }
+                    append("Command timed out after ${timeoutMs}ms")
+                },
                 durationMs = System.currentTimeMillis() - startedAt,
             )
+        } catch (cancellation: kotlinx.coroutines.CancellationException) {
+            // 用户主动取消编译：强杀 PRoot 进程树，避免 Gradle 后台继续跑
+            process.destroyForcibly()
+            throw cancellation
         } finally {
             process.destroy()
         }
     }
 
-    private suspend fun readFully(stream: java.io.InputStream): String = try {
+    private suspend fun readFully(
+        stream: java.io.InputStream,
+        onOutput: ((String) -> Unit)? = null,
+    ): String = try {
         stream.use { input ->
             val kept = ByteArrayOutputStream(MAX_CAPTURE_BYTES)
             val buffer = ByteArray(READ_BUFFER_BYTES)
@@ -91,6 +114,10 @@ class ProcessShellExecutor @Inject constructor(
                 totalBytes += read
                 val remaining = MAX_CAPTURE_BYTES - kept.size()
                 if (remaining > 0) kept.write(buffer, 0, minOf(read, remaining))
+                if (onOutput != null && read > 0) {
+                    val chunk = String(buffer, 0, read, Charsets.UTF_8)
+                    onOutput(chunk)
+                }
             }
             buildString {
                 append(kept.toByteArray().toString(Charsets.UTF_8))

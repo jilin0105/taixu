@@ -151,6 +151,27 @@ class LinuxRuntimeImpl @Inject constructor(
         }
     }
 
+    override suspend fun resetSandbox(distroId: String?): AppResult<Unit> = initializeMutex.withLock {
+        withContext(Dispatchers.IO) {
+            val safeId = (distroId ?: _activeDistroId.value).lowercase().trim()
+            try {
+                processRegistry.stopAll()
+                hostBridge.stop()
+                val result = rootfsInstaller.uninstallDistro(safeId)
+                if (result is AppResult.Success) {
+                    settingsDataStore.removeInstalledDistribution(safeId)
+                    _activeDistroId.value = "ubuntu"
+                    settingsDataStore.setSelectedDistribution("ubuntu")
+                    refreshInstalledDistros()
+                    _state.value = RuntimeState.NotInitialized
+                }
+                result
+            } catch (throwable: Throwable) {
+                AppResult.Failure(AppError(ErrorCode.IO, "重置 Linux 环境失败：${throwable.message}", throwable))
+            }
+        }
+    }
+
     override suspend fun initialize(request: RuntimeInstallRequest): AppResult<Unit> = initializeMutex.withLock {
         withContext(Dispatchers.IO) {
             if (_state.value is RuntimeState.Ready) {
@@ -350,6 +371,24 @@ class LinuxRuntimeImpl @Inject constructor(
         }
     }
 
+    override suspend fun checkRootfsUpdate(distroId: String?): AppResult<RootfsUpdateInfo> =
+        withContext(Dispatchers.IO) {
+            if (_state.value !is RuntimeState.Ready) {
+                return@withContext AppResult.Failure(
+                    AppError(ErrorCode.INSTALLATION_FAILED, "只有已就绪的 Linux Runtime 才能检查更新"),
+                )
+            }
+            val targetDistro = distroId?.lowercase()?.trim() ?: _activeDistroId.value
+            val distribution = DistributionCatalog.require(targetDistro)
+            runCatching { rootfsInstaller.checkForUpdate(distribution, RegistryRoute.AUTO) }.fold(
+                onSuccess = { AppResult.Success(it) },
+                onFailure = {
+                    logger.e("Linux runtime RootFS update check failed", it)
+                    AppResult.Failure(AppError(ErrorCode.NETWORK, "RootFS 更新检查失败：${it.message}", it))
+                },
+            )
+        }
+
     override suspend fun healthCheck(distroId: String?): RuntimeHealth = withContext(Dispatchers.IO) {
         healthChecker.check()
     }
@@ -370,6 +409,7 @@ class LinuxRuntimeImpl @Inject constructor(
                 mounts = mounts,
             ),
             timeoutMs = command.timeoutMs,
+            onOutput = command.onOutput,
         )
     }
 
@@ -800,9 +840,19 @@ class LinuxRuntimeImpl @Inject constructor(
     private fun configureDns(distroId: String = "ubuntu") {
         val etcDir = File(pathManager.rootfsDir(distroId), "etc")
         etcDir.mkdirs()
-        File(etcDir, "resolv.conf").writeText(
-            "nameserver 1.1.1.1\nnameserver 8.8.8.8\n",
-        )
+        val resolvConf = File(etcDir, "resolv.conf")
+        // Ubuntu/Debian OCI 镜像里 /etc/resolv.conf 通常是指向 /run/systemd/resolve/... 的符号链接，
+        // PRoot 沙箱无 systemd 运行导致链接悬空，直接写入会抛 FileNotFoundException: ENOENT，
+        // 必须先移除该链接（普通文件/悬空链接两种情况都要处理）再写入。
+        try {
+            val resolvPath = resolvConf.toPath()
+            if (java.nio.file.Files.isSymbolicLink(resolvPath) || resolvConf.exists()) {
+                resolvConf.delete()
+            }
+        } catch (_: Exception) {
+            // 删除失败不阻塞后续写入尝试（writeText 会给出最终错误）
+        }
+        resolvConf.writeText("nameserver 1.1.1.1\nnameserver 8.8.8.8\n")
     }
 
     private fun configureEnvironment(distroId: String = "ubuntu") {

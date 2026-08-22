@@ -1,6 +1,7 @@
 package top.wkbin.taixu.runtime.bridge
 
 import android.content.Context
+import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
@@ -249,6 +250,7 @@ class HostBridge @Inject constructor(
                 setDataAndType(uri, "application/vnd.android.package-archive")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                clipData = ClipData.newRawUri("APK", uri)
             }
             context.startActivity(intent)
             logger.i("HostBridge: APK install triggered for $apkPath")

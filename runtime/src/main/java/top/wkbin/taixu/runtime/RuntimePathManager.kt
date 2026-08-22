@@ -17,6 +17,8 @@ class RuntimePathManager @Inject constructor(
     private val nativeLibraryDir: File = File(context.applicationInfo.nativeLibraryDir)
     val bundledProotLoaderFile: File = File(nativeLibraryDir, "libproot-loader.so")
     val bundledProotLoader32File: File = File(nativeLibraryDir, "libproot-loader32.so")
+    /** Statically linked ARM64 QEMU user-mode emulator for x86_64 SDK tools. */
+    val bundledQemuX86_64File: File = File(nativeLibraryDir, "libqemu-x86_64-static.so")
 
     val baseDir: File = File(appFilesDir, "linux-runtime")
     val binDir: File = File(baseDir, "bin")
@@ -101,6 +103,15 @@ class RuntimePathManager @Inject constructor(
         }
         ?.takeIf { it.isNotBlank() }
 
+    fun rootfsDigest(distroId: String): String? = rootfsInstalledMarker(distroId)
+        .takeIf { it.isFile }
+        ?.useLines { lines ->
+            lines.firstOrNull { it.startsWith("rootfs-digest=") }
+                ?.substringAfter("rootfs-digest=", "")
+                ?.trim()
+        }
+        ?.takeIf { it.isNotBlank() }
+
     fun distroSizeBytes(distroId: String): Long {
         val dir = distroDir(distroId)
         if (!dir.exists()) return 0L
@@ -163,6 +174,13 @@ class RuntimePathManager @Inject constructor(
                 hostFile.setWritable(true, true)
             }
         }
+        val qemuHostFile = File(taixuBinDir(distroId), "qemu-x86_64-static")
+        if (bundledQemuX86_64File.isFile && bundledQemuX86_64File.length() > MIN_QEMU_BYTES) {
+            val needsCopy = !qemuHostFile.isFile || qemuHostFile.length() != bundledQemuX86_64File.length()
+            if (needsCopy) bundledQemuX86_64File.copyTo(qemuHostFile, overwrite = true)
+            qemuHostFile.setReadable(true, false)
+            qemuHostFile.setExecutable(true, false)
+        }
         return buildMap {
             put("PROOT_L2S_DIR", File(rfs, ".l2s").apply { mkdirs() }.absolutePath)
             if (isUsableNativeArtifact(bundledProotLoaderFile, MIN_PROOT_LOADER_BYTES)) {
@@ -170,6 +188,9 @@ class RuntimePathManager @Inject constructor(
             }
             if (isUsableNativeArtifact(bundledProotLoader32File, MIN_PROOT_LOADER_BYTES)) {
                 put("PROOT_LOADER_32", bundledProotLoader32File.absolutePath)
+            }
+            if (qemuHostFile.isFile && qemuHostFile.length() > MIN_QEMU_BYTES) {
+                put("TAIXU_QEMU_X86_64", "/opt/taixu/bin/qemu-x86_64-static")
             }
             put("TMPDIR", tmpDir.absolutePath)
             put("TMP", tmpDir.absolutePath)
@@ -211,5 +232,6 @@ class RuntimePathManager @Inject constructor(
         const val MIN_PROOT_BYTES = 4096L
         const val MIN_PROOT_LOADER_BYTES = 4096L
         const val MIN_TALLOC_BYTES = 4096L
+        const val MIN_QEMU_BYTES = 1024L * 1024L
     }
 }

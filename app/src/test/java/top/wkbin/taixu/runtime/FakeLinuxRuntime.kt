@@ -44,6 +44,18 @@ class FakeLinuxRuntime : LinuxRuntime {
     override suspend fun restoreInstalledState(): Boolean = false
     override suspend fun updateRootfs(distroId: String?): AppResult<Unit> = AppResult.Success(Unit)
 
+    override suspend fun checkRootfsUpdate(distroId: String?): AppResult<RootfsUpdateInfo> =
+        AppResult.Success(
+            RootfsUpdateInfo(
+                distroId = distroId ?: "ubuntu",
+                imageReference = "buildpack-deps:noble-scm",
+                currentVersion = "test",
+                currentDigest = "sha256:test",
+                latestDigest = "sha256:test",
+                hasUpdate = false,
+            ),
+        )
+
     override suspend fun healthCheck(distroId: String?): RuntimeHealth = RuntimeHealth(
         status = RuntimeHealthStatus.HEALTHY,
         osRelease = "Debian GNU/Linux",

@@ -11,6 +11,7 @@ import top.wkbin.taixu.runtime.DistributionSpec
 import top.wkbin.taixu.runtime.DownloadProgress
 import top.wkbin.taixu.runtime.RegistryRoute
 import top.wkbin.taixu.runtime.RuntimePathManager
+import top.wkbin.taixu.runtime.RootfsUpdateInfo
 import java.io.File
 import java.util.zip.GZIPInputStream
 import javax.inject.Inject
@@ -31,6 +32,23 @@ class RootfsInstaller @Inject constructor(
 ) {
     private var pendingUpdateBackup: File? = null
     private var pendingUpdateVersion: String? = null
+    private var pendingUpdateDigest: String? = null
+
+    suspend fun checkForUpdate(
+        distribution: DistributionSpec,
+        route: RegistryRoute,
+    ): RootfsUpdateInfo = withContext(Dispatchers.IO) {
+        val latest = ociRegistryClient.resolve(distribution, route)
+        val currentDigest = pathManager.rootfsDigest(distribution.id)
+        RootfsUpdateInfo(
+            distroId = distribution.id,
+            imageReference = distribution.imageReference,
+            currentVersion = pathManager.rootfsVersion(distribution.id),
+            currentDigest = currentDigest,
+            latestDigest = latest.digest,
+            hasUpdate = currentDigest.isNullOrBlank() || !currentDigest.equals(latest.digest, ignoreCase = true),
+        )
+    }
 
     suspend fun installOci(
         distribution: DistributionSpec,
@@ -42,11 +60,11 @@ class RootfsInstaller @Inject constructor(
         val staging = prepareStaging(distroId)
         recoverInterruptedUpdate(distroId)
         try {
-            val version = pullInto(distribution, route, staging, onProgress)
+            val image = pullInto(distribution, route, staging, onProgress)
             rootfsValidator.validate(staging)
             if (pathManager.isDistroInstalled(distroId)) preserveUserDirectories(distroTargetDir, staging)
             replaceRootfs(distroId, staging, retainBackup = false)
-            markInstalled(distroId, version)
+            markInstalled(distroId, image)
             pathManager.homeDir(distroId).mkdirs()
             logger.i("Installed ${distribution.imageReference} through OCI into $distroTargetDir")
             AppResult.Success(distroTargetDir)
@@ -69,12 +87,15 @@ class RootfsInstaller @Inject constructor(
         if (!pathManager.isDistroInstalled(distroId)) return@withContext installOci(distribution, route, onProgress)
         try {
             val staging = prepareStaging(distroId)
-            val version = pullInto(distribution, route, staging, onProgress)
+            val image = pullInto(distribution, route, staging, onProgress)
             rootfsValidator.validate(staging)
             preserveUserDirectories(distroTargetDir, staging)
             replaceRootfs(distroId, staging, retainBackup = true)
-            pendingUpdateVersion = version
-            pathManager.rootfsUpdatePendingMarker(distroId).writeText("rootfs-version=$version\n")
+            pendingUpdateVersion = image.version
+            pendingUpdateDigest = image.digest
+            pathManager.rootfsUpdatePendingMarker(distroId).writeText(
+                "rootfs-version=${image.version}\nrootfs-digest=${image.digest}\n",
+            )
             AppResult.Success(distroTargetDir)
         } catch (cancellation: CancellationException) {
             rollbackPendingUpdate(distroId)
@@ -125,15 +146,19 @@ class RootfsInstaller @Inject constructor(
         }
         pendingUpdateBackup = null
         pendingUpdateVersion = null
+        pendingUpdateDigest = null
         pathManager.rootfsUpdatePendingMarker(distroId).delete()
         true
     }
 
     suspend fun finalizePendingUpdate(distroId: String = "ubuntu") = withContext(NonCancellable + Dispatchers.IO) {
-        pendingUpdateVersion?.let { markInstalled(distroId, it) }
+        pendingUpdateVersion?.let {
+            markInstalled(distroId, OciRegistryClient.ImageInfo(it, pendingUpdateDigest.orEmpty()))
+        }
         pendingUpdateBackup?.takeIf { it.exists() }?.let(SafeFileTree::delete)
         pendingUpdateBackup = null
         pendingUpdateVersion = null
+        pendingUpdateDigest = null
         pathManager.rootfsUpdatePendingMarker(distroId).delete()
     }
 
@@ -150,7 +175,7 @@ class RootfsInstaller @Inject constructor(
         route: RegistryRoute,
         staging: File,
         onProgress: suspend (DownloadProgress) -> Unit,
-    ): String {
+    ): OciRegistryClient.ImageInfo {
         val applyLayer: suspend (File, String) -> Unit = { layer, mediaType ->
             layer.inputStream().use { raw ->
                 val stream = when {
@@ -187,12 +212,13 @@ class RootfsInstaller @Inject constructor(
             )
             SafeFileTree.delete(staging)
             staging.mkdirs()
-            lxcImagesClient.pull(
+            val version = lxcImagesClient.pull(
                 distribution,
                 File(pathManager.cacheDir, "lxc_images"),
                 onProgress,
                 applyLayer,
             )
+            OciRegistryClient.ImageInfo(version, "lxc-$version")
         }
     }
 
@@ -222,9 +248,11 @@ class RootfsInstaller @Inject constructor(
         }
     }
 
-    private fun markInstalled(distroId: String, version: String) {
+    private fun markInstalled(distroId: String, image: OciRegistryClient.ImageInfo) {
         pathManager.metadataDir(distroId).mkdirs()
-        pathManager.rootfsInstalledMarker(distroId).writeText("rootfs-version=$version\n")
+        pathManager.rootfsInstalledMarker(distroId).writeText(
+            "rootfs-version=${image.version}\nrootfs-digest=${image.digest}\n",
+        )
     }
 
     private fun recoverInterruptedUpdate(distroId: String) {

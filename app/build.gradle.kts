@@ -106,6 +106,9 @@ extensions.configure<ApplicationExtension> {
             // The PRoot tracee loader is an executable payload, not a JNI library.
             // Preserve the official package bytes instead of running AGP's strip tool.
             keepDebugSymbols += "**/libproot-loader.so"
+            // QEMU user-mode is also an executable payload with a .so suffix so
+            // Android packages it under the ABI directory.
+            keepDebugSymbols += "**/libqemu-x86_64-static.so"
         }
         resources {
             excludes += listOf(
@@ -185,12 +188,18 @@ dependencies {
 val bundledProotLoader = layout.projectDirectory.file(
     "src/main/jniLibs/arm64-v8a/libproot-loader.so",
 )
+val bundledQemuX86_64 = layout.projectDirectory.file(
+    "src/main/jniLibs/arm64-v8a/libqemu-x86_64-static.so",
+)
 
 tasks.configureEach {
     if (name == "preBuild") {
         doFirst {
             check(bundledProotLoader.asFile.isFile && bundledProotLoader.asFile.length() > 4096L) {
                 "Missing ARM64 PRoot loader. Run tools/prepare-proot-runtime.ps1 before building."
+            }
+            check(bundledQemuX86_64.asFile.isFile && bundledQemuX86_64.asFile.length() > 1024L * 1024L) {
+                "Missing bundled ARM64 qemu-x86_64-static payload."
             }
         }
     }

@@ -65,6 +65,7 @@ fun DeveloperScreen(
     val processes by viewModel.processes.collectAsStateWithLifecycle()
     val storage by viewModel.storage.collectAsStateWithLifecycle()
     val rootfsVersion by viewModel.rootfsVersion.collectAsStateWithLifecycle()
+    val rootfsUpdate by viewModel.rootfsUpdate.collectAsStateWithLifecycle()
     val savedManifestUrl by viewModel.registryManifestUrl.collectAsStateWithLifecycle()
     val savedSignatureUrl by viewModel.registrySignatureUrl.collectAsStateWithLifecycle()
     val savedPublicKey by viewModel.registryPublicKey.collectAsStateWithLifecycle()
@@ -77,6 +78,7 @@ fun DeveloperScreen(
     var cleanupTarget by remember { mutableStateOf<InstalledRuntime?>(null) }
     var showCacheConfirmation by remember { mutableStateOf(false) }
     var showRootfsUpdateConfirmation by remember { mutableStateOf(false) }
+    var showResetConfirmation by remember { mutableStateOf(false) }
     var showAgentLogDialog by remember { mutableStateOf(false) }
     var agentLogText by remember { mutableStateOf("") }
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -98,11 +100,14 @@ fun DeveloperScreen(
             RuntimeControlCard(
                 state = runtimeState,
                 rootfsVersion = rootfsVersion,
+                rootfsUpdate = rootfsUpdate,
                 busy = busy,
                 onInitialize = viewModel::initialize,
                 onCancel = viewModel::cancelInitialization,
                 onUpdate = { showRootfsUpdateConfirmation = true },
+                onCheckUpdate = viewModel::checkRootfsUpdate,
                 onHealthCheck = viewModel::runHealthCheck,
+                onReset = { showResetConfirmation = true },
             )
 
             message?.let { NoticeBanner(it, isError = it.contains("失败") || it.contains("错误")) }
@@ -342,6 +347,19 @@ fun DeveloperScreen(
             dismissButton = { TextButton(onClick = { showCacheConfirmation = false }) { Text("取消") } },
         )
     }
+    if (showResetConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirmation = false },
+            title = { Text("恢复 Linux 初始状态？") },
+            text = { Text("将删除当前 Linux RootFS、已安装工具和沙箱缓存，但保留 /workspace 工程和手机共享存储。此操作不可撤销。") },
+            confirmButton = {
+                TextButton(onClick = { showResetConfirmation = false; viewModel.resetLinuxEnvironment() }) {
+                    Text("确认重置", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { showResetConfirmation = false }) { Text("取消") } },
+        )
+    }
     if (showRootfsUpdateConfirmation) {
         AlertDialog(
             onDismissRequest = { showRootfsUpdateConfirmation = false },
@@ -382,11 +400,14 @@ fun DeveloperScreen(
 private fun RuntimeControlCard(
     state: RuntimeState,
     rootfsVersion: String?,
+    rootfsUpdate: top.wkbin.taixu.runtime.RootfsUpdateInfo?,
     busy: Boolean,
     onInitialize: () -> Unit,
     onCancel: () -> Unit,
     onUpdate: () -> Unit,
+    onCheckUpdate: () -> Unit,
     onHealthCheck: () -> Unit,
+    onReset: () -> Unit,
 ) {
     val color = when (state) {
         RuntimeState.Ready -> MaterialTheme.colorScheme.secondary
@@ -399,6 +420,13 @@ private fun RuntimeControlCard(
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("Linux Runtime", style = MaterialTheme.typography.titleLarge)
                 Text("RootFS ${rootfsVersion ?: "未安装"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                rootfsUpdate?.let { info ->
+                    Text(
+                        if (info.hasUpdate) "检测到可用更新" else "已是最新",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (info.hasUpdate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             StatusBadge(describeState(state), color)
         }
@@ -422,8 +450,15 @@ private fun RuntimeControlCard(
             Spacer(Modifier.height(9.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                 OutlinedButton(onClick = onHealthCheck, enabled = !busy, modifier = Modifier.weight(1f)) { Text("健康检查") }
+                OutlinedButton(onClick = onCheckUpdate, enabled = !busy && state is RuntimeState.Ready, modifier = Modifier.weight(1f)) { Text("检查更新") }
                 OutlinedButton(onClick = onUpdate, enabled = !busy && state is RuntimeState.Ready, modifier = Modifier.weight(1f)) { Text("更新 RootFS") }
             }
+            Spacer(Modifier.height(9.dp))
+            OutlinedButton(
+                onClick = onReset,
+                enabled = !busy && state !is RuntimeState.Initializing,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("恢复 Linux 初始状态", color = MaterialTheme.colorScheme.error) }
         }
         (state as? RuntimeState.Error)?.let {
             Spacer(Modifier.height(12.dp))

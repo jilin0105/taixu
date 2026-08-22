@@ -43,32 +43,39 @@ object BuiltinPluginBundles {
         PluginBundle(
             id = "android-suite",
             name = "Android & 移动全栈开发套件",
-            summary = "Android CLI、Gradle 8.7+、AAPT/ADB 与可选 Flutter、NDK、逆向审计",
-            description = "集成 Google 官方原生 Android CLI、OpenJDK 17、Gradle 8.7+、AAPT、ADB 与可选的 Flutter 跨端 SDK、C/C++ NDK 原生编译和 JADX/APKTool 逆向代码审计工具链。",
+            summary = "Gradle 8.9+、AAPT/ADB 与可选 Flutter、NDK、逆向审计",
+            description = "集成 OpenJDK 17、Gradle 8.9+、AAPT、ADB 与可选的 Flutter 跨端 SDK、C/C++ NDK 原生编译和 JADX/APKTool 逆向代码审计工具链。",
             iconName = "Android",
             category = "移动开发",
             components = listOf(
                 PluginComponent(
                     id = "android-core",
                     name = "Android 核心基础环境",
-                    description = "Google Android CLI (android)、OpenJDK 17、Gradle 8.7+、AAPT、ADB 与 zipalign",
+                    description = "OpenJDK 17、真实 Android 34 平台包 (android.jar)、Gradle 8.9、AAPT、ADB、apksigner 与阿里云 Maven 全局镜像加速，全部在装配期一次性就位",
                     isRequired = true,
-                    aptPackages = listOf("openjdk-17-jdk-headless", "ca-certificates-java", "adb", "aapt", "zipalign", "unzip", "curl", "ca-certificates"),
+                    // aapt/zipalign/apksigner come from the downloaded Google
+                    // Build-Tools archive. Installing Ubuntu's similarly named
+                    // packages pulls GUI/D-Bus/OpenJDK 21 dependencies that
+                    // are unnecessary and fragile inside PRoot.
+                    aptPackages = listOf("openjdk-17-jdk-headless", "ca-certificates-java", "adb", "curl", "ca-certificates"),
                     postInstallSteps = listOf(
                         "/bin/sh /opt/taixu/scripts/setup_android_core.sh",
                     ),
-                    checkCommand = "(command -v aapt || test -x /usr/bin/aapt) && (command -v java || test -x /usr/lib/jvm/java-17-openjdk-arm64/bin/java || test -d /usr/lib/jvm)",
+                    checkCommand = ". /etc/profile.d/taixu-android.sh 2>/dev/null || true; test -x \"${'$'}JAVA_HOME/bin/java\" && test -s \"${'$'}JAVA_HOME/conf/security/java.security\" && test -f \"${'$'}JAVA_HOME/conf/security/policy/unlimited/default_local.policy\" && test -s \"${'$'}JAVA_HOME/lib/security/cacerts\" && test -f /opt/android-sdk/platforms/android-34/android.jar && test -s /opt/android-sdk/licenses/android-sdk-license && test -f /opt/android-sdk/build-tools/34.0.0/source.properties && test -f /opt/android-sdk/build-tools/34.0.0/lib/d8.jar && (test -f /opt/gradle-8.9/lib/gradle-launcher-8.9.jar || command -v gradle) && test -x \"${'$'}{TAIXU_AAPT2_PATH:-/opt/taixu/android-sdk-tools/qemu/aapt2}\" && \"${'$'}{TAIXU_AAPT2_PATH:-/opt/taixu/android-sdk-tools/qemu/aapt2}\" version >/dev/null 2>&1",
                 ),
                 PluginComponent(
                     id = "flutter",
                     name = "Flutter 跨平台开发环境",
-                    description = "Flutter ARM64 跨平台 SDK、Dart 运行时与国内 pub 镜像加速",
+                    description = "Flutter ARM64 SDK、Dart 运行时与 Android APK 构建依赖（需要 Android 核心基础环境）",
                     isRequired = false,
-                    aptPackages = listOf("git", "curl", "unzip", "ca-certificates", "xz-utils"),
+                    // Archives are extracted by the setup script (Python/BusyBox);
+                    // Ubuntu's unzip package is unreliable in PRoot during dpkg
+                    // ownership updates (zipinfo.dpkg-new).
+                    aptPackages = listOf("git", "curl", "ca-certificates", "xz-utils"),
                     postInstallSteps = listOf(
                         "/bin/sh /opt/taixu/scripts/setup_flutter.sh",
                     ),
-                    checkCommand = "command -v flutter || test -f /opt/flutter/bin/flutter",
+                    checkCommand = "(command -v flutter || test -f /opt/flutter/bin/flutter) && test -f /opt/android-sdk/platforms/android-34/android.jar && test -f /opt/android-sdk/build-tools/34.0.0/aapt2",
                 ),
                 PluginComponent(
                     id = "android-ndk",
@@ -81,9 +88,9 @@ object BuiltinPluginBundles {
                 PluginComponent(
                     id = "android-re",
                     name = "Android 逆向分析与代码审计",
-                    description = "APKTool 资源回编译与 JADX-CLI Java 源码反编译器",
+                    description = "APKTool 资源回编译、JADX-CLI Java 源码反编译器与内置 APK 逆向 MCP 服务（python3 为其运行依赖）",
                     isRequired = false,
-                    aptPackages = listOf("openjdk-17-jdk-headless", "curl", "unzip", "apktool"),
+                    aptPackages = listOf("openjdk-17-jdk-headless", "curl", "apktool", "python3"),
                     postInstallSteps = listOf(
                         "/bin/sh /opt/taixu/scripts/setup_jadx.sh",
                     ),
@@ -145,27 +152,6 @@ object BuiltinPluginBundles {
                 ),
             ),
         ),
-        PluginBundle(
-            id = "flutter-suite",
-            name = "Flutter 跨平台开发套件",
-            summary = "Flutter SDK (ARM64)、Dart 运行时与国内镜像加速",
-            description = "集成 Flutter 跨平台 SDK、Dart 运行环境，预置国内加速镜像源与 Android 打包编译工具链。",
-            iconName = "Flutter",
-            category = "跨端开发",
-            components = listOf(
-                PluginComponent(
-                    id = "flutter-core",
-                    name = "Flutter SDK & Dart 核心",
-                    description = "Flutter ARM64 跨平台 SDK 与国内 pub 镜像加速",
-                    isRequired = true,
-                    aptPackages = listOf("git", "curl", "unzip", "ca-certificates", "xz-utils"),
-                    postInstallSteps = listOf(
-                        "/bin/sh /opt/taixu/scripts/setup_flutter.sh",
-                    ),
-                    checkCommand = "command -v flutter || test -f /opt/flutter/bin/flutter",
-                ),
-            ),
-        ),
     )
 
     /**
@@ -177,15 +163,24 @@ object BuiltinPluginBundles {
 
         val steps = mutableListOf<String>()
         // 1. dpkg 锁与环境自愈
-        steps.add("mkdir -p /etc/dpkg/dpkg.cfg.d 2>/dev/null || true")
+        steps.add("mkdir -p /etc/dpkg/dpkg.cfg.d /usr/bin /usr/sbin /usr/lib 2>/dev/null || true")
         steps.add("printf 'force-unsafe-io\\nforce-overwrite\\n' > /etc/dpkg/dpkg.cfg.d/taixu-proot 2>/dev/null || true")
-        steps.add("rm -rf /var/lib/dpkg/updates/* /var/lib/dpkg/lock* /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null || true")
+        steps.add("rm -rf /var/lib/dpkg/updates/* /var/lib/dpkg/lock* /var/lib/apt/lists/lock /var/cache/apt/archives/lock /usr/bin/*.dpkg-new /usr/sbin/*.dpkg-new /usr/lib/*.dpkg-new 2>/dev/null || true")
+        // A previously interrupted unzip transaction can never complete in
+        // PRoot because dpkg cannot chown zipinfo.dpkg-new. Remove that
+        // optional helper before configuring the remaining packages.
+        steps.add("DEBIAN_FRONTEND=noninteractive dpkg --remove --force-remove-reinstreq unzip 2>/dev/null || true")
         steps.add("DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>/dev/null || true")
 
-        // 2. 批量聚合 APT 安装（仅执行 1 次 update 和 1 次 install）
+        // 2. 批量聚合 APT 安装（仅执行 1 次 update 和 1 次 install；
+        //    整批失败时降级为 --ignore-missing，避免个别发行版缺包导致全部装不上）
         if (allAptPackages.isNotEmpty()) {
             val packageArg = allAptPackages.joinToString(" ")
-            steps.add("DEBIAN_FRONTEND=noninteractive apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $packageArg || true")
+            // Runtime configures TUNA ubuntu-ports/debian mirrors. Keep apt
+            // retries bounded so a slow mirror does not stall the whole suite.
+            val aptOpts = "-o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+            steps.add("DEBIAN_FRONTEND=noninteractive apt-get $aptOpts update -y || true")
+            steps.add("DEBIAN_FRONTEND=noninteractive apt-get $aptOpts install -y --no-install-recommends $packageArg || DEBIAN_FRONTEND=noninteractive apt-get $aptOpts -f install -y --no-install-recommends && DEBIAN_FRONTEND=noninteractive apt-get $aptOpts install -y --no-install-recommends $packageArg")
         }
 
         // 3. 各子组件后置处理

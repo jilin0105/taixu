@@ -20,11 +20,14 @@ interface LinuxRuntime {
     suspend fun initialize(request: RuntimeInstallRequest = RuntimeInstallRequest("ubuntu")): AppResult<Unit>
     suspend fun restoreInstalledState(): Boolean
     suspend fun updateRootfs(distroId: String? = null): AppResult<Unit>
+    suspend fun checkRootfsUpdate(distroId: String? = null): AppResult<RootfsUpdateInfo>
     suspend fun healthCheck(distroId: String? = null): RuntimeHealth
 
     suspend fun switchActiveDistro(distroId: String): AppResult<Unit>
     suspend fun installDistro(request: RuntimeInstallRequest, onProgress: suspend (DownloadProgress) -> Unit = {}): AppResult<Unit>
     suspend fun uninstallDistro(distroId: String): AppResult<Unit>
+    /** Remove the active distro and its installed tools while preserving /workspace. */
+    suspend fun resetSandbox(distroId: String? = null): AppResult<Unit>
     fun refreshInstalledDistros()
 
     suspend fun execute(command: ShellCommand, distroId: String? = null): CommandResult

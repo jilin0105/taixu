@@ -7,6 +7,7 @@ import top.wkbin.taixu.core.model.ToolManifest
 import top.wkbin.taixu.core.model.ToolState
 import top.wkbin.taixu.core.security.SecretRedactor
 import top.wkbin.taixu.runtime.LinuxRuntime
+import top.wkbin.taixu.runtime.BackgroundTaskRegistry
 import top.wkbin.taixu.runtime.service.LocalServiceSpec
 import top.wkbin.taixu.runtime.tools.InstallEvent
 import top.wkbin.taixu.runtime.shell.LinuxSession
@@ -26,6 +27,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -56,6 +58,7 @@ class ToolManager @Inject constructor(
     private val installTransactionManager: InstallTransactionManager,
     private val dependencyManager: DependencyManager,
     private val linuxRuntime: LinuxRuntime,
+    private val backgroundTaskRegistry: BackgroundTaskRegistry,
     private val providerManager: ProviderManager,
     private val toolCommandLinker: top.wkbin.taixu.runtime.tools.ToolCommandLinker,
     private val notificationNotifier: ToolNotificationNotifier,
@@ -73,11 +76,26 @@ class ToolManager @Inject constructor(
 
     private val _bundleInstallState = MutableStateFlow<String?>(null)
     val bundleInstallState: StateFlow<String?> = _bundleInstallState.asStateFlow()
+    private val _bundleInstallLog = MutableStateFlow<List<String>>(emptyList())
+    val bundleInstallLog: StateFlow<List<String>> = _bundleInstallLog.asStateFlow()
 
     private val _isBatchInstalling = MutableStateFlow(false)
     val isBatchInstalling: StateFlow<Boolean> = _isBatchInstalling.asStateFlow()
 
     private val staticInstallerById = installerAdapters.associateBy { it.toolId }
+
+    init {
+        // Keep the latest bundle log available after a tab/activity recreation.
+        managerScope.launch {
+            runCatching {
+                val persisted = installLogRepository
+                    .observeForTool(currentDistroId(), BUNDLE_LOG_TOOL_ID)
+                    .first()
+                    .map { it.message }
+                if (persisted.isNotEmpty()) _bundleInstallLog.value = persisted.takeLast(MAX_BUNDLE_LOG_LINES)
+            }
+        }
+    }
 
     /** 当前发行版（安装/卸载/验证等操作的作用目标系统）。 */
     private fun currentDistroId(): String = linuxRuntime.activeDistroId.value
@@ -284,6 +302,9 @@ class ToolManager @Inject constructor(
         val bundleTitle = "开发套件装配"
         installMutex.withLock {
             _isBatchInstalling.value = true
+            backgroundTaskRegistry.start(BUNDLE_TASK_ID)
+            _bundleInstallLog.value = emptyList()
+            runCatching { installLogRepository.deleteForTool(distroId, BUNDLE_LOG_TOOL_ID) }
             emit(InstallEvent.Started("components"))
             runCatching {
                 assetSynchronizer.syncAssetsToDistro(distroId)
@@ -294,48 +315,108 @@ class ToolManager @Inject constructor(
 
             val initialMsg = "正在准备 [$compNames] 批量装配流水线..."
             _bundleInstallState.value = initialMsg
+            appendBundleInstallLog(initialMsg)
             notificationNotifier.showProgress("dev_bundle_install", bundleTitle, initialMsg, 0.05f)
             emit(InstallEvent.Progress("components", initialMsg, 0.05f))
 
             try {
                 steps.forEachIndexed { index, step ->
                     val progress = 0.1f + 0.8f * (index.toFloat() / steps.size.toFloat())
-                    val shortDesc = when {
-                        "apt-get update" in step -> "正在同步软件源并聚合下载全部依赖包..."
-                        "dpkg" in step -> "正在自愈 Linux dpkg 锁与权限环境..."
-                        "gradle" in step -> "正在部署并链接 Gradle 8.7+ 自动化构建环境..."
-                        "jadx" in step -> "正在部署 JADX-CLI 源码反编译工具包..."
-                        "android" in step -> "正在配置 Google Android CLI 官方开发工具链..."
-                        "flutter" in step -> "正在拉取并配置 Flutter SDK 跨端开发环境..."
-                        else -> "正在执行环境准备步骤 [${index + 1}/${steps.size}]..."
+                    val shortDesc = when (index) {
+                        0 -> "正在创建 dpkg 配置目录..."
+                        1 -> "正在写入 PRoot dpkg 安全策略..."
+                        2 -> "正在清理 dpkg/apt 残留锁与临时文件..."
+                        3 -> "正在恢复未完成的 dpkg 事务..."
+                        else -> when {
+                            "apt-get update" in step -> "正在同步软件源并聚合下载全部依赖包..."
+                            "apt-get" in step -> "正在安装 Android/开发套件系统依赖..."
+                            "gradle" in step -> "正在部署并链接 Gradle 8.9 自动化构建环境..."
+                            "setup_android_core" in step -> "正在部署 Android SDK 平台包与 Gradle 构建环境 (国内镜像加速)..."
+                            "jadx" in step -> "正在部署 JADX-CLI 源码反编译工具包..."
+                            "android" in step -> "正在配置 Android SDK 官方开发工具链..."
+                            "flutter" in step -> "正在拉取并配置 Flutter SDK 跨端开发环境..."
+                            else -> "正在执行环境准备步骤..."
+                        }
                     }
-                    _bundleInstallState.value = shortDesc
-                    notificationNotifier.showProgress("dev_bundle_install", bundleTitle, shortDesc, progress)
-                    emit(InstallEvent.Progress("components", shortDesc, progress))
+                    // 重型下载型脚本 (SDK 平台包 ~60MB / Gradle ~120MB / Flutter SDK git clone) 放宽超时
+                    val stepTimeoutMs = when {
+                        "/opt/taixu/scripts/" in step ||
+                            "setup_android_core.sh" in step || "setup_flutter.sh" in step -> HEAVY_SETUP_STEP_TIMEOUT_MS
+                        else -> DEFAULT_STEP_TIMEOUT_MS
+                    }
+                    val stepLabel = "[步骤 ${index + 1}/${steps.size}] $shortDesc"
+                    _bundleInstallState.value = stepLabel
+                    appendBundleInstallLog(stepLabel)
+                    notificationNotifier.showProgress("dev_bundle_install", bundleTitle, stepLabel, progress)
+                    emit(InstallEvent.Progress("components", stepLabel, progress))
 
-                    linuxRuntime.execute(
+                    val result = linuxRuntime.execute(
                         top.wkbin.taixu.runtime.shell.ShellCommand(
                             commandLine = step,
                             workingDirectory = "/root",
-                            timeoutMs = 180_000L,
+                            timeoutMs = stepTimeoutMs,
                         ),
                         distroId = distroId,
                     )
+                    result.stdout.trim().takeIf { it.isNotBlank() }?.let { appendBundleInstallLog(it.takeLast(4000)) }
+                    result.stderr.trim().takeIf { it.isNotBlank() }?.let { appendBundleInstallLog(it.takeLast(4000)) }
+                    if (!result.isSuccess) {
+                        error("安装步骤执行失败: ${result.stderr.ifBlank { result.stdout }.takeLast(800)}")
+                    }
                 }
 
                 _bundleInstallState.value = "正在验证已安装组件状态..."
+                appendBundleInstallLog("正在验证已安装组件状态...")
                 notificationNotifier.showProgress("dev_bundle_install", bundleTitle, "正在验证状态...", 0.95f)
                 emit(InstallEvent.Progress("components", "正在验证已安装组件状态...", 0.95f))
+
+                val installed = probeInstalledComponents()
+                val missing = componentIds - installed
+                if (missing.isNotEmpty()) {
+                    error("开发套件安装未完成，缺少组件: ${missing.joinToString()}")
+                }
 
                 notificationNotifier.showSuccess("dev_bundle_install", bundleTitle, "已成功就绪")
                 emit(InstallEvent.Completed("components", "1.0.0"))
             } catch (e: Exception) {
+                appendBundleInstallLog("安装失败: ${e.message ?: "装配异常"}")
                 notificationNotifier.showFailed("dev_bundle_install", bundleTitle, e.message ?: "装配异常")
                 emit(InstallEvent.Failed("components", e.message ?: "装配异常"))
                 throw e
             } finally {
                 _isBatchInstalling.value = false
+                backgroundTaskRegistry.finish(BUNDLE_TASK_ID)
                 _bundleInstallState.value = null
+            }
+        }
+    }
+
+    private fun appendBundleInstallLog(message: String) {
+        val normalized = message.trim()
+        if (normalized.isBlank()) return
+        val incoming = normalized.lineSequence().filter { it.isNotBlank() }.toList()
+        if (incoming.isEmpty()) return
+        val retained = (_bundleInstallLog.value + incoming).toMutableList()
+        var totalChars = retained.sumOf { it.length + 1 }
+        while (totalChars > MAX_BUNDLE_LOG_CHARS && retained.size > 1) {
+            totalChars -= retained.removeAt(0).length + 1
+        }
+        // A single tool line can be unusually large; cap it independently.
+        _bundleInstallLog.value = retained.map { line ->
+            if (line.length <= MAX_BUNDLE_LINE_CHARS) line else line.takeLast(MAX_BUNDLE_LINE_CHARS)
+        }
+        managerScope.launch {
+            runCatching {
+                incoming.forEach { line ->
+                    installLogRepository.insert(
+                        InstallLogEntity(
+                            distroId = currentDistroId(),
+                            toolId = BUNDLE_LOG_TOOL_ID,
+                            event = "bundle",
+                            message = if (line.length <= MAX_BUNDLE_LINE_CHARS) line else line.takeLast(MAX_BUNDLE_LINE_CHARS),
+                        ),
+                    )
+                }
             }
         }
     }
@@ -595,6 +676,15 @@ class ToolManager @Inject constructor(
 
     suspend fun clearLogs(toolId: String) =
         installLogRepository.deleteForTool(currentDistroId(), toolId)
+
+    /** Drop persisted tool/install state after the corresponding distro is reset. */
+    suspend fun resetDistroState(distroId: String) {
+        toolRepository.deleteByDistro(distroId)
+        installTaskRepository.deleteByDistro(distroId)
+        installLogRepository.deleteByDistro(distroId)
+        _installProgress.value = emptyMap()
+        _verifications.value = emptyMap()
+    }
 
     suspend fun launch(toolId: String): top.wkbin.taixu.runtime.shell.CommandResult {
         requireInstalledTool(toolId)
@@ -875,6 +965,20 @@ class ToolManager @Inject constructor(
         const val TASK_CANCELLED = "CANCELLED"
         const val TASK_INTERRUPTED = "INTERRUPTED"
         const val PORT_PROBE_TIMEOUT_MS = 250
+
+        /** 普通安装步骤 (dpkg 自愈 / apt 聚合安装 / 软链配置) 的默认超时 */
+        // PRoot cold-starts (JDK/Gradle/Flutter) can spend several minutes
+        // unpacking or compiling on slower ARM devices. A three-minute default
+        // incorrectly aborts valid installs before the script can finish.
+        const val DEFAULT_STEP_TIMEOUT_MS = 10 * 60_000L
+
+        /** 重型下载型脚本 (Android SDK 平台包 / Gradle / Flutter SDK / JADX) 的超时，与 GenericRecipeInstaller 对齐 */
+        const val HEAVY_SETUP_STEP_TIMEOUT_MS = 20 * 60_000L
+        const val MAX_BUNDLE_LOG_CHARS = 120 * 1024
+        const val MAX_BUNDLE_LINE_CHARS = 8 * 1024
+        const val MAX_BUNDLE_LOG_LINES = 2048
+        const val BUNDLE_LOG_TOOL_ID = "components"
+        const val BUNDLE_TASK_ID = "dev-bundle-install"
     }
 
 }

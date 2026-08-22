@@ -2,127 +2,169 @@
 # ==============================================================================
 # TaiXu (LinuxAIRuntime) - Android Project One-Key Build Engine
 # Usage: build_android.sh <project_path> [task]
+# ------------------------------------------------------------------------------
+# 纯执行器：所有环境部署均由【Android & 移动全栈开发套件】插件装配完成。
+# 本脚本只负责：加载环境 → 调度 Gradle 构建。不做任何修复/下载/自愈。
 # ==============================================================================
 set -e
 
 PROJECT_PATH="${1:-.}"
 TASK="${2:-assembleDebug}"
+GRADLE_VER="8.9"
 
 echo "==> [TaiXu Build Engine] 启动 Android 项目编译..."
 echo "==> [TaiXu Build] 项目路径: $PROJECT_PATH"
 echo "==> [TaiXu Build] 构建任务: $TASK"
 
-# 1. 智能推导 JAVA_HOME 与 Java 可执行路径
-JAVA_BIN=$(which java 2>/dev/null || ls /usr/lib/jvm/*/bin/java 2>/dev/null | head -n 1 || true)
-if [ -n "$JAVA_BIN" ] && [ -x "$JAVA_BIN" ]; then
-    export JAVA_HOME=$(dirname $(dirname $(readlink -f "$JAVA_BIN" 2>/dev/null || echo "$JAVA_BIN")))
-    echo "==> [TaiXu Build] 识别 JAVA_HOME: $JAVA_HOME"
-    export PATH="$JAVA_HOME/bin:$PATH"
-    if [ ! -x /usr/bin/java ]; then
-        ln -sf "$JAVA_BIN" /usr/local/bin/java 2>/dev/null || true
-        ln -sf "$JAVA_BIN" /usr/bin/java 2>/dev/null || true
+# 1. 加载插件装配期固化的环境变量
+if [ -f /etc/profile.d/taixu-android.sh ]; then
+    . /etc/profile.d/taixu-android.sh
+fi
+# /etc/environment 由插件装配期写入，PRoot 非登录 shell 场景下兜底
+if [ -f /etc/environment ]; then
+    while IFS= read -r line; do
+        case "$line" in
+            *=*) key="${line%%=*}"
+                 val="${line#*=}"
+                 eval "current=\${$key}"
+                 [ -z "$current" ] && export "$key=$val"
+                 ;;
+        esac
+    done < /etc/environment
+fi
+export ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
+export ANDROID_SDK_ROOT="${ANDROID_HOME}"
+
+# AGP's default Maven artifact is a Linux x86_64 executable.  When the
+# android-core plugin installed the ARM64 tool bundle, pass the real aapt2
+# executable explicitly so AGP never tries to start the incompatible daemon.
+AAPT2_OVERRIDE="${TAIXU_AAPT2_PATH:-}"
+AAPT2_MODE="${TAIXU_AAPT2_MODE:-qemu}"
+if [ "$AAPT2_MODE" = "qemu" ]; then
+    AAPT2_OVERRIDE="${TAIXU_AAPT2_PATH:-/opt/taixu/android-sdk-tools/qemu/aapt2}"
+elif [ -z "$AAPT2_OVERRIDE" ] || [ ! -x "$AAPT2_OVERRIDE" ]; then
+    for candidate in \
+        "/opt/taixu/android-sdk-tools/35.0.2/build-tools/aapt2" \
+        "/usr/local/bin/aapt2" \
+        "/usr/bin/aapt2"; do
+        if [ -x "$candidate" ]; then
+            AAPT2_OVERRIDE="$candidate"
+            break
+        fi
+    done
+fi
+
+# 非登录 shell 可能没有继承插件写入的 profile；变量为空时从标准 JDK
+# 目录和 PATH 重新解析，避免环境变量漂移阻断构建。
+if [ -z "${JAVA_HOME:-}" ] || [ ! -x "$JAVA_HOME/bin/java" ]; then
+    JAVA_HOME=""
+    for candidate in /usr/lib/jvm/java-17-openjdk-arm64 /usr/lib/jvm/java-17-openjdk-aarch64 /usr/lib/jvm/default-java; do
+        if [ -x "$candidate/bin/java" ]; then
+            JAVA_HOME="$candidate"
+            break
+        fi
+    done
+fi
+if [ -z "${JAVA_HOME:-}" ]; then
+    JAVA_BIN_FALLBACK=$(command -v java 2>/dev/null || true)
+    if [ -n "$JAVA_BIN_FALLBACK" ]; then
+        JAVA_REAL_FALLBACK=$(readlink -f "$JAVA_BIN_FALLBACK" 2>/dev/null || echo "$JAVA_BIN_FALLBACK")
+        JAVA_HOME=$(dirname "$(dirname "$JAVA_REAL_FALLBACK")")
     fi
-    JAVA_EXEC="$JAVA_BIN"
-elif [ -n "$JAVA_HOME" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+fi
+if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+    export JAVA_HOME
     export PATH="$JAVA_HOME/bin:$PATH"
+fi
+
+# 固定本次构建使用的 Java，避免 PATH 中的旧软链接指向另一套 JDK。
+JAVA_EXEC=""
+if [ -n "$JAVA_HOME" ] && [ -x "$JAVA_HOME/bin/java" ]; then
     JAVA_EXEC="$JAVA_HOME/bin/java"
 else
-    JAVA_EXEC=$(which java 2>/dev/null || echo "java")
+    JAVA_EXEC=$(command -v java 2>/dev/null || true)
+    if [ -n "$JAVA_EXEC" ] && command -v readlink >/dev/null 2>&1; then
+        JAVA_REAL=$(readlink -f "$JAVA_EXEC" 2>/dev/null || true)
+        [ -n "$JAVA_REAL" ] && JAVA_EXEC="$JAVA_REAL"
+    fi
 fi
+if [ -z "$JAVA_EXEC" ] || [ ! -x "$JAVA_EXEC" ]; then
+    echo "==> [TaiXu Build] ❌ 未找到可执行 Java (JAVA_HOME=$JAVA_HOME)"
+    exit 127
+fi
+echo "==> [TaiXu Build] Java 执行文件: $JAVA_EXEC"
 
-# 2. 深度自愈 SSL 根证书与 cacerts 信任库
-mkdir -p "$JAVA_HOME/lib/security" "$JAVA_HOME/conf/security" /etc/ssl/certs/java /etc/java-17-openjdk/security 2>/dev/null || true
+echo "==> [TaiXu Build] JAVA_HOME: $JAVA_HOME"
+echo "==> [TaiXu Build] ANDROID_HOME: $ANDROID_HOME"
 
-# 检查系统 cacerts，若缺失则触发自愈
-CACERTS_PATH=""
-if [ -s /etc/ssl/certs/java/cacerts ]; then
-    CACERTS_PATH="/etc/ssl/certs/java/cacerts"
-elif [ -s "$JAVA_HOME/lib/security/cacerts" ]; then
+# 2. 绑定 SDK 到当前工程
+echo "sdk.dir=$ANDROID_HOME" > "$PROJECT_PATH/local.properties"
+echo "==> [TaiXu Build] 绑定 ANDROID_HOME: $ANDROID_HOME"
+
+# 3. SSL 信任库参数
+SSL_OPTS=""
+if [ -s "$JAVA_HOME/lib/security/cacerts" ]; then
     CACERTS_PATH="$JAVA_HOME/lib/security/cacerts"
+elif [ -s /etc/ssl/certs/java/cacerts ]; then
+    CACERTS_PATH="/etc/ssl/certs/java/cacerts"
 fi
-
-if [ -z "$CACERTS_PATH" ]; then
-    echo "==> [TaiXu Build] 正在自愈重建 Java SSL 根证书信任库..."
-    (dpkg-reconfigure -f noninteractive ca-certificates-java 2>/dev/null || \
-     update-ca-certificates -f 2>/dev/null || true)
-    if [ -s /etc/ssl/certs/java/cacerts ]; then
-        CACERTS_PATH="/etc/ssl/certs/java/cacerts"
-    fi
-fi
-
 if [ -n "$CACERTS_PATH" ]; then
-    ln -sf "$CACERTS_PATH" "$JAVA_HOME/lib/security/cacerts" 2>/dev/null || true
-    ln -sf "$CACERTS_PATH" /etc/ssl/certs/java/cacerts 2>/dev/null || true
-    SSL_OPTS="-Djavax.net.ssl.trustStore=$CACERTS_PATH -Djavax.net.ssl.trustStorePassword=changeit"
-else
-    SSL_OPTS=""
+    # 内置 cacerts 是 PKCS12；显式声明格式，避免精简 OpenJDK 默认按 JKS 解析。
+    SSL_OPTS="-Djavax.net.ssl.trustStore=$CACERTS_PATH -Djavax.net.ssl.trustStoreType=PKCS12 -Djavax.net.ssl.trustStorePassword=changeit"
 fi
 
-# 3. 自动配置 Gradle 全局镜像加速 (通过 beforeSettings 避免 project 冲突)
-mkdir -p /root/.gradle
-cat << 'EOF' > /root/.gradle/init.gradle
-gradle.beforeSettings { settings ->
-    settings.pluginManagement.repositories {
-        maven { url 'https://maven.aliyun.com/repository/google' }
-        maven { url 'https://maven.aliyun.com/repository/public' }
-        maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
-    }
-    settings.dependencyResolutionManagement.repositories {
-        maven { url 'https://maven.aliyun.com/repository/google' }
-        maven { url 'https://maven.aliyun.com/repository/public' }
-    }
-}
-EOF
-
-# 4. 自愈工程本地 settings.gradle.kts (如果缺少阿里云镜像则自动前置插入)
-if [ -f "$PROJECT_PATH/settings.gradle.kts" ]; then
-    if ! grep -q "maven.aliyun.com" "$PROJECT_PATH/settings.gradle.kts" 2>/dev/null; then
-        sed -i 's|repositories {|repositories {\n        maven("https://maven.aliyun.com/repository/google")\n        maven("https://maven.aliyun.com/repository/public")\n        maven("https://maven.aliyun.com/repository/gradle-plugin")|g' "$PROJECT_PATH/settings.gradle.kts" 2>/dev/null || true
-    fi
-fi
-
-# 5. 注入核心环境变量
-export APP_HOME="/opt/gradle-8.7"
-export GRADLE_HOME="/opt/gradle-8.7"
-export PATH="/opt/gradle-8.7/bin:${TAIXU_TOOL_DIR:-/opt/taixu/tools}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
-
-# 6. 检查并自愈 Gradle 8.7 官方独立包
-if [ ! -f /opt/gradle-8.7/lib/gradle-launcher-8.7.jar ]; then
-    echo "==> [TaiXu Build] 正在自动部署官方完整版 Gradle 8.7..."
-    mkdir -p /opt /tmp
-    rm -rf /tmp/gradle-8.7.zip /opt/gradle-8.7 2>/dev/null || true
-    (curl -fsSL -m 180 https://mirrors.cloud.tencent.com/gradle/gradle-8.7-bin.zip -o /tmp/gradle-8.7.zip 2>/dev/null || \
-     curl -fsSL -m 180 https://mirrors.huaweicloud.com/gradle/gradle-8.7-bin.zip -o /tmp/gradle-8.7.zip 2>/dev/null || true)
-    if [ -f /tmp/gradle-8.7.zip ]; then
-        (unzip -qo /tmp/gradle-8.7.zip -d /opt/ 2>/dev/null || \
-         python3 -c 'import zipfile; zipfile.ZipFile("/tmp/gradle-8.7.zip").extractall("/opt/")' 2>/dev/null || \
-         busybox unzip /tmp/gradle-8.7.zip -d /opt/ 2>/dev/null || true)
-        rm -f /tmp/gradle-8.7.zip
-    fi
-fi
-
-# 7. 自愈全局软链接
-if [ -d /opt/gradle-8.7/bin ]; then
-    chmod +x /opt/gradle-8.7/bin/gradle 2>/dev/null || true
-    ln -sf /opt/gradle-8.7/bin/gradle /usr/local/bin/gradle 2>/dev/null || true
-    ln -sf /opt/gradle-8.7/bin/gradle /usr/bin/gradle 2>/dev/null || true
-fi
+export PATH="/opt/gradle-$GRADLE_VER/bin:${TAIXU_TOOL_DIR:-/opt/taixu/tools}/bin:$PATH"
 
 cd "$PROJECT_PATH"
 
-# 8. 智能选择 Gradle 构建执行器
-EXTRA_ARGS="--stacktrace --no-daemon -Dorg.gradle.native=false -Djava.security.egd=file:/dev/urandom $SSL_OPTS"
+# 4. 调度 Gradle 构建
+EXTRA_ARGS="--console=plain --info --stacktrace --no-daemon -Dorg.gradle.native=false"
+if [ -n "$AAPT2_OVERRIDE" ] && [ -x "$AAPT2_OVERRIDE" ]; then
+    EXTRA_ARGS="$EXTRA_ARGS -Pandroid.aapt2FromMavenOverride=$AAPT2_OVERRIDE"
+    if [ "$AAPT2_MODE" = "qemu" ]; then
+        echo "==> [TaiXu Build] QEMU AAPT2: $AAPT2_OVERRIDE"
+        echo "==> [TaiXu Build] 校验 QEMU AAPT2 启动..."
+        AAPT2_CHECK_LOG="${TMPDIR:-/tmp}/taixu-aapt2-build-check.log"
+        if ! "$AAPT2_OVERRIDE" version >"$AAPT2_CHECK_LOG" 2>&1; then
+            sed -n '1,12p' "$AAPT2_CHECK_LOG" 2>/dev/null || true
+            rm -f "$AAPT2_CHECK_LOG"
+            echo "==> [TaiXu Build] ❌ QEMU AAPT2 无法启动。请检查 qemu-x86_64-static、x86_64 loader/运行库及 /opt/taixu bind mount"
+            exit 126
+        fi
+        rm -f "$AAPT2_CHECK_LOG"
+    else
+        echo "==> [TaiXu Build] ARM64 AAPT2: $AAPT2_OVERRIDE"
+    fi
+elif [ "$AAPT2_MODE" = "qemu" ]; then
+    echo "==> [TaiXu Build] ❌ 强制 QEMU 模式已启用，但 qemu-aapt2 包装器不存在"
+    echo "==> [TaiXu Build] 请重新装配 Android 核心环境，确认 APK 内置 QEMU 已同步到当前 RootFS"
+    exit 126
+else
+    echo "==> [TaiXu Build] 警告：未找到 ARM64 aapt2，将由 AGP 选择默认工具"
+fi
+JAVA_RUNTIME_OPTS="-Djava.security.egd=file:/dev/urandom"
+[ -n "$SSL_OPTS" ] && JAVA_RUNTIME_OPTS="$JAVA_RUNTIME_OPTS $SSL_OPTS"
+export GRADLE_OPTS="${GRADLE_OPTS:-} $JAVA_RUNTIME_OPTS"
 
-if [ -d /opt/gradle-8.7/lib ]; then
+if [ -d /opt/gradle-$GRADLE_VER/lib ]; then
+    echo "==> [TaiXu Build] 调度官方独立完整版 Gradle $GRADLE_VER 执行构建..."
+    exec "$JAVA_EXEC" -Xmx1024m \
+        -Dorg.gradle.appname=gradle \
+        -Dorg.gradle.installation.dir=/opt/gradle-$GRADLE_VER \
+        $JAVA_RUNTIME_OPTS \
+        -classpath "/opt/gradle-$GRADLE_VER/lib/*" \
+        org.gradle.launcher.GradleMain $TASK $EXTRA_ARGS
+elif [ -d /opt/gradle-8.7/lib ]; then
     echo "==> [TaiXu Build] 调度官方独立完整版 Gradle 8.7 执行构建..."
     exec "$JAVA_EXEC" -Xmx1024m \
         -Dorg.gradle.appname=gradle \
         -Dorg.gradle.installation.dir=/opt/gradle-8.7 \
+        $JAVA_RUNTIME_OPTS \
         -classpath "/opt/gradle-8.7/lib/*" \
         org.gradle.launcher.GradleMain $TASK $EXTRA_ARGS
-elif [ -x /opt/gradle-8.7/bin/gradle ]; then
-    echo "==> [TaiXu Build] 调度 /opt/gradle-8.7/bin/gradle 执行构建..."
-    exec /opt/gradle-8.7/bin/gradle $TASK $EXTRA_ARGS
+elif [ -x /opt/gradle-$GRADLE_VER/bin/gradle ]; then
+    echo "==> [TaiXu Build] 调度 /opt/gradle-$GRADLE_VER/bin/gradle 执行构建..."
+    exec /opt/gradle-$GRADLE_VER/bin/gradle $TASK $EXTRA_ARGS
 elif [ -f ./gradlew ] && [ -f ./gradle/wrapper/gradle-wrapper.jar ]; then
     echo "==> [TaiXu Build] 调度项目本地 Gradle Wrapper 执行构建..."
     chmod +x ./gradlew
@@ -131,6 +173,6 @@ elif command -v gradle >/dev/null 2>&1; then
     echo "==> [TaiXu Build] 调度系统 Gradle 执行构建..."
     exec gradle $TASK $EXTRA_ARGS
 else
-    echo "==> [TaiXu Build] ❌ 未找到有效的 Gradle 执行环境，请在插件中心装配【Android & 移动全栈套件】"
+    echo "==> [TaiXu Build] ❌ 未找到有效的 Gradle 执行环境，请在插件中心装配【Android & 移动全栈开发套件】"
     exit 127
 fi

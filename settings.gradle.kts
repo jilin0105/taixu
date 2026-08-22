@@ -1,5 +1,18 @@
 pluginManagement {
     repositories {
+        maven {
+            url = uri("https://maven.aliyun.com/repository/google")
+            isAllowInsecureProtocol = false
+        }
+        maven {
+            url = uri("https://maven.aliyun.com/repository/central")
+        }
+        maven {
+            url = uri("https://maven.aliyun.com/repository/gradle-plugin")
+        }
+        maven {
+            url = uri("https://maven.aliyun.com/repository/public")
+        }
         google()
         mavenCentral()
         gradlePluginPortal()
@@ -9,6 +22,16 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
+        maven {
+            url = uri("https://maven.aliyun.com/repository/google")
+            isAllowInsecureProtocol = false
+        }
+        maven {
+            url = uri("https://maven.aliyun.com/repository/central")
+        }
+        maven {
+            url = uri("https://maven.aliyun.com/repository/public")
+        }
         google()
         mavenCentral()
     }

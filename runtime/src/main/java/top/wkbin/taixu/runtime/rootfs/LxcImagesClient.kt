@@ -98,16 +98,28 @@ class LxcImagesClient @Inject constructor(
             return target
         }
         val partial = File(cacheDir, "sha256-$expectedSha.part")
-        partial.delete()
         val url = buildUrl(mirrorBase, lxcPath, buildDir, "rootfs.tar.xz")
-        val request = Request.Builder().url(url).header("User-Agent", USER_AGENT).build()
+        // 断点续传：中断残留的 .part 通过 Range 续传，避免大文件整包重下
+        val existing = if (partial.isFile) partial.length() else 0L
+        val request = Request.Builder().url(url).header("User-Agent", USER_AGENT)
+            .apply { if (existing > 0) header("Range", "bytes=$existing-") }
+            .build()
         http.newCall(request).execute().use { response ->
-            check(response.isSuccessful) { "下载 lxc-images rootfs 失败 HTTP ${response.code}" }
-            val total = response.header("Content-Length")?.toLongOrNull()?.takeIf { it > 0 }
+            val append = response.code == 206
+            if (response.code != 206 && response.code != 200) {
+                check(false) { "下载 lxc-images rootfs 失败 HTTP ${response.code}" }
+            }
             val md = MessageDigest.getInstance("SHA-256")
-            var count = 0L
+            if (append && existing > 0) {
+                partial.inputStream().use { input -> hashInto(md, input) }
+            } else if (existing > 0) {
+                partial.delete()
+            }
+            val total = response.header("Content-Length")?.toLongOrNull()?.takeIf { it > 0 }
+                ?.let { if (append) existing + it else it }
+            var count = if (append) existing else 0L
             response.body.byteStream().use { input ->
-                FileOutputStream(partial).use { output ->
+                FileOutputStream(partial, append).use { output ->
                     val buffer = ByteArray(64 * 1024)
                     while (true) {
                         val read = input.read(buffer)
@@ -124,6 +136,15 @@ class LxcImagesClient @Inject constructor(
         }
         check(partial.renameTo(target)) { "无法提交 lxc-images rootfs 缓存" }
         return target
+    }
+
+    private fun hashInto(md: MessageDigest, input: java.io.InputStream) {
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val n = input.read(buffer)
+            if (n < 0) break
+            md.update(buffer, 0, n)
+        }
     }
 
     /** 时间戳目录名中的冒号需要编码，避免部分 HTTP 栈拒绝路径。 */

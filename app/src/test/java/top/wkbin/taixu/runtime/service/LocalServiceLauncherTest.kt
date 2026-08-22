@@ -88,6 +88,8 @@ class LocalServiceLauncherTest {
         override suspend fun initialize(request: RuntimeInstallRequest): AppResult<Unit> = AppResult.Success(Unit)
         override suspend fun restoreInstalledState(): Boolean = false
         override suspend fun updateRootfs(distroId: String?): AppResult<Unit> = AppResult.Success(Unit)
+        override suspend fun checkRootfsUpdate(distroId: String?): AppResult<top.wkbin.taixu.runtime.RootfsUpdateInfo> =
+            error("unused")
         override suspend fun healthCheck(distroId: String?): RuntimeHealth = error("unused")
         override suspend fun execute(command: ShellCommand, distroId: String?): CommandResult = error("unused")
         override suspend fun startSession(config: SessionConfig, distroId: String?): LinuxSession = error("unused")

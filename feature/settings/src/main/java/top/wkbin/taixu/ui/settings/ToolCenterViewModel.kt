@@ -127,6 +127,7 @@ class ToolCenterViewModel @Inject constructor(
 
     val isInstallingComponents: StateFlow<Boolean> = toolManager.isBatchInstalling
     val componentInstallProgress: StateFlow<String?> = toolManager.bundleInstallState
+    val componentInstallLog: StateFlow<List<String>> = toolManager.bundleInstallLog
 
     fun refreshInstalledStatus() {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {

@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.runtime.shell
+package top.wkbin.taixu.runtime.shell
 
 import java.io.File
 
@@ -8,5 +8,7 @@ interface ShellExecutor {
         workingDirectory: File? = null,
         environment: Map<String, String> = emptyMap(),
         timeoutMs: Long = ShellCommand.DEFAULT_TIMEOUT_MS,
+        onOutput: ((String) -> Unit)? = null,
     ): CommandResult
 }
+

@@ -119,7 +119,7 @@
 | OpenClaw | Web Gateway | LAN Gateway、访问令牌、状态目录与后台进程管理 |
 | Hermes Agent | Web Dashboard | Python 依赖、Dashboard 服务与后台进程管理 |
 | Base DevTools | 一次性工具包 | ripgrep、fd、jq、tmux |
-| Android DevTools | PTY / 工具包 | OpenJDK 17、Gradle 8.7+、ADB、AAPT、Google Android CLI (android)、zipalign |
+| Android DevTools | PTY / 工具包 | OpenJDK 17、Gradle 8.9、Android 34 平台包 (android.jar)、ADB、AAPT、apksigner、Google Android CLI (android)、zipalign、阿里云 Maven 全局镜像 |
 | Android RE Tools | PTY / 工具包 | APKTool、JADX-CLI、Smali 逆向分析环境 |
 | Hello Tool | 测试工具 | 验证安装、启动、校验与回滚链路 |
 

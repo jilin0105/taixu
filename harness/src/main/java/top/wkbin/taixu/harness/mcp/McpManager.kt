@@ -130,7 +130,7 @@ class McpManager @Inject constructor(
             ShellCommand(
                 commandLine = "printf '%s' ${shellQuote(fullInput)} | $cmdStr",
                 workingDirectory = "/root",
-                timeoutMs = 15000,
+                timeoutMs = 25000,
                 environment = server.env,
             )
         )
@@ -179,7 +179,7 @@ class McpManager @Inject constructor(
             ShellCommand(
                 commandLine = "printf '%s\\n' ${shellQuote(rpcCall)} | $cmdStr",
                 workingDirectory = "/root",
-                timeoutMs = 30000,
+                timeoutMs = 120000,
                 environment = server.env,
             )
         )

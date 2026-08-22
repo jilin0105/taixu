@@ -47,6 +47,7 @@ import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.LockOpen
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Palette
@@ -92,6 +93,7 @@ enum class RuntimeIconName {
     Bot, Palette, FontSize, Battery, Bug, Update, Extension, Hub, Mount, OpenInNew, Key, Tune,
     Brain, Sparkles, Vibrate, FolderDownload, Document, SdCard, Server, Compress,
     Prompt, Wrench, Model, Network, Community, FolderOpen, Speed, Cable, Admin, Link,
+    Reverse,
 }
 
 /** Official Material & Customized Brand vector icons, shared by every screen for consistent optical weight. */
@@ -151,6 +153,7 @@ fun distroIconFor(distroId: String): RuntimeIconName = when (distroId.lowercase(
 fun projectTypeIconFor(type: String): RuntimeIconName = when (type.uppercase()) {
     "ANDROID" -> RuntimeIconName.Android
     "FLUTTER" -> RuntimeIconName.Flutter
+    "REVERSE" -> RuntimeIconName.Reverse
     else -> RuntimeIconName.Code
 }
 
@@ -222,6 +225,7 @@ private fun RuntimeIconName.materialVector(): ImageVector = when (this) {
     RuntimeIconName.Cable -> Icons.Outlined.Cable
     RuntimeIconName.Admin -> Icons.Outlined.AdminPanelSettings
     RuntimeIconName.Link -> Icons.Outlined.Link
+    RuntimeIconName.Reverse -> Icons.Outlined.LockOpen
     // 专有品牌矢量
     RuntimeIconName.Linux -> LinuxVector
     RuntimeIconName.Debian,

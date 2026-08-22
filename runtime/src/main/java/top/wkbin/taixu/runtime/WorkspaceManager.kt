@@ -1,5 +1,9 @@
 package top.wkbin.taixu.runtime
 
+import android.content.Context
+import android.content.ContextWrapper
+import android.os.Environment
+import dagger.hilt.android.qualifiers.ApplicationContext
 import top.wkbin.taixu.core.common.files.SafeFileTree
 import top.wkbin.taixu.core.common.result.AppError
 import top.wkbin.taixu.core.common.result.AppResult
@@ -18,12 +22,14 @@ import kotlinx.coroutines.withContext
 enum class ProjectType {
     ANDROID,
     FLUTTER,
+    REVERSE,
     GENERAL;
 
     val displayName: String
         get() = when (this) {
             ANDROID -> "Android"
             FLUTTER -> "Flutter"
+            REVERSE -> "逆向"
             GENERAL -> "通用"
         }
 }
@@ -31,13 +37,40 @@ enum class ProjectType {
 enum class ProjectTemplate {
     EMPTY,
     ANDROID_COMPOSE,
-    FLUTTER;
+    FLUTTER,
+    APK_REVERSE,
+    GIT_IMPORT;
 
     val displayName: String
         get() = when (this) {
             EMPTY -> "空工程 (Empty)"
             ANDROID_COMPOSE -> "Android (Jetpack Compose)"
             FLUTTER -> "Flutter 跨平台"
+            APK_REVERSE -> "APK 逆向"
+            GIT_IMPORT -> "从 Git 导入"
+        }
+}
+
+/**
+ * APK 逆向模板的安装包来源：
+ * - [FromInstalledApp]：从本机已安装应用提取安装包（applicationInfo.sourceDir）；
+ * - [FromFileUri]：通过系统文件管理器（SAF OpenDocument）选择 .apk 文件。
+ */
+sealed class ApkImportSource {
+    data class FromInstalledApp(
+        val packageName: String,
+        val appLabel: String,
+    ) : ApkImportSource()
+
+    data class FromFileUri(
+        val uri: String,
+        val fileName: String,
+    ) : ApkImportSource()
+
+    val displayName: String
+        get() = when (this) {
+            is FromInstalledApp -> "$appLabel ($packageName)"
+            is FromFileUri -> fileName
         }
 }
 
@@ -65,9 +98,13 @@ data class WorkspaceFileItem(
 /** 工作区：目录在 App 私有挂载点，元数据（路径/创建时间）存 Room。 */
 @Singleton
 class WorkspaceManager @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val pathManager: RuntimePathManager,
     private val workspaceDao: WorkspaceDao,
 ) {
+    constructor(pathManager: RuntimePathManager, workspaceDao: WorkspaceDao) : this(
+        ContextWrapper(null), pathManager, workspaceDao,
+    )
     fun observeProjects(): Flow<List<WorkspaceProject>> = workspaceDao.observeAll().map { entities ->
         entities.mapNotNull(::projectFromEntity)
     }.flowOn(Dispatchers.IO)
@@ -81,7 +118,7 @@ class WorkspaceManager @Inject constructor(
         val knownPaths = known.values.mapNotNull { runCatching { File(it.path).canonicalPath }.getOrNull() }.toSet()
         val directories = pathManager.workspaceDir.listFiles()
             .orEmpty()
-            .filter { it.isDirectory && isValidProjectName(it.name) }
+            .filter { it.isDirectory && isValidProjectName(it.name) && !File(it, UNLINKED_MARKER).exists() }
         directories.forEach { directory ->
             if (directory.name !in known && directory.canonicalPath !in knownPaths) {
                 workspaceDao.upsert(
@@ -102,6 +139,9 @@ class WorkspaceManager @Inject constructor(
         directoryPath: String = "",
         template: ProjectTemplate = ProjectTemplate.EMPTY,
         packageName: String = "",
+        apkSource: ApkImportSource? = null,
+        exportApkToDownload: Boolean = false,
+        gitUrl: String = "",
     ): AppResult<WorkspaceProject> = withContext(Dispatchers.IO) {
         try {
             val safeName = name.trim()
@@ -125,13 +165,35 @@ class WorkspaceManager @Inject constructor(
             }
             check(!duplicate) { "该目录已关联其他工程" }
             val existed = directory.exists()
-            check((existed && directory.isDirectory) || (!existed && directory.mkdirs())) { "无法创建或访问关联目录" }
+            if (template == ProjectTemplate.GIT_IMPORT) {
+                require(isValidGitUrl(gitUrl)) { "Git 仓库地址必须是 HTTPS、SSH 或 git@ 地址" }
+                require(!existed || directory.isDirectory) { "Git 导入目标不是目录" }
+                require(!existed || directory.listFiles().orEmpty().isEmpty()) { "Git 导入目标目录必须为空" }
+                if (!existed) require(directory.mkdirs()) { "无法创建 Git 导入目录" }
+            } else {
+                check((existed && directory.isDirectory) || (!existed && directory.mkdirs())) { "无法创建或访问关联目录" }
+            }
+            File(directory, UNLINKED_MARKER).delete()
 
             // 模板初始化处理
-            val cleanPkg = packageName.trim().ifBlank { "com.example.${safeName.lowercase().filter { it.isLetterOrDigit() }}" }
+            // APK 逆向模板：包名无需用户输入，由导入的安装包决定（无则留空）
+            var effectivePackage = ""
+            if (template == ProjectTemplate.ANDROID_COMPOSE || template == ProjectTemplate.FLUTTER) {
+                val cleanPkg = packageName.trim().ifBlank { "com.example.${safeName.lowercase().filter { it.isLetterOrDigit() }}" }
+                require(PACKAGE_NAME.matches(cleanPkg)) { "包名必须是合法的 Java/Kotlin 包名：$cleanPkg" }
+                effectivePackage = cleanPkg
+            }
             when (template) {
-                ProjectTemplate.ANDROID_COMPOSE -> generateAndroidTemplate(directory, safeName, cleanPkg)
-                ProjectTemplate.FLUTTER -> generateFlutterTemplate(directory, safeName, cleanPkg)
+                ProjectTemplate.ANDROID_COMPOSE -> copyAndroidTemplate(directory, safeName, effectivePackage)
+                ProjectTemplate.FLUTTER -> copyFlutterTemplate(directory, safeName, effectivePackage)
+                ProjectTemplate.APK_REVERSE -> {
+                    val imported = importApkForReverse(directory, safeName, apkSource)
+                    effectivePackage = imported.packageName
+                    if (exportApkToDownload) {
+                        exportApkToDownload(imported.apkFileName, directory, safeName)
+                    }
+                }
+                ProjectTemplate.GIT_IMPORT -> cloneGitRepository(directory, gitUrl, cleanupOnFailure = !existed)
                 ProjectTemplate.EMPTY -> { /* 保持空目录 */ }
             }
 
@@ -150,7 +212,11 @@ class WorkspaceManager @Inject constructor(
             require(isValidProjectName(name)) { "项目名称无效" }
             val entity = workspaceDao.findByName(name) ?: error("项目不存在：$name")
             val directory = File(entity.path)
-            if (entity.ownsDirectory && directory.exists()) SafeFileTree.delete(directory)
+            if (entity.ownsDirectory && directory.exists()) {
+                SafeFileTree.delete(directory)
+            } else if (directory.isDirectory) {
+                File(directory, UNLINKED_MARKER).writeText("unlinkedAt=${System.currentTimeMillis()}\n")
+            }
             workspaceDao.delete(name)
             AppResult.Success(Unit)
         } catch (throwable: Throwable) {
@@ -384,6 +450,11 @@ class WorkspaceManager @Inject constructor(
             File(directory, "settings.gradle.kts").exists() ||
                 File(directory, "app/build.gradle.kts").exists() ||
                 File(directory, "build.gradle").exists() -> ProjectType.ANDROID
+            // APK 逆向工程：优先使用导入元数据标记，再兼容 .apk/解包目录
+            File(directory, "apk-info.properties").isFile ||
+                directory.listFiles().orEmpty().any { it.isFile && it.extension.equals("apk", ignoreCase = true) } ||
+                (File(directory, "unpacked").isDirectory && File(directory, "unpacked").listFiles().orEmpty()
+                    .any { it.isFile && it.name.startsWith("classes") && it.extension == "dex" }) -> ProjectType.REVERSE
             else -> ProjectType.GENERAL
         }
     }
@@ -403,32 +474,43 @@ class WorkspaceManager @Inject constructor(
                     val nameMatch = Regex("""name:\s*([a-zA-Z0-9_]+)""").find(pubspec?.readText() ?: "")
                     nameMatch?.groupValues?.get(1) ?: ""
                 }
+                ProjectType.REVERSE -> {
+                    val info = File(directory, "apk-info.properties").takeIf { it.exists() }?.readText().orEmpty()
+                    Regex("""packageName\s*=\s*(.+)""").find(info)?.groupValues?.get(1)?.trim() ?: ""
+                }
                 ProjectType.GENERAL -> ""
             }
         }.getOrDefault("")
     }
 
     private fun generateAndroidTemplate(projectDir: File, name: String, packageName: String) {
+        val kotlinDisplayName = name.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ")
         projectDir.mkdirs()
         // 1. settings.gradle.kts
         File(projectDir, "settings.gradle.kts").writeText(
             """
-            pluginManagement {
-                repositories {
-                    google()
-                    mavenCentral()
-                    gradlePluginPortal()
-                }
-            }
-            dependencyResolutionManagement {
-                repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-                repositories {
-                    google()
-                    mavenCentral()
-                }
-            }
-            rootProject.name = "$name"
-            include(":app")
+                pluginManagement {
+                     repositories {
+                         maven("https://maven.aliyun.com/repository/google")
+                         maven("https://maven.aliyun.com/repository/gradle-plugin")
+                         maven("https://maven.aliyun.com/repository/central")
+                         maven("https://maven.aliyun.com/repository/public")
+                         google()
+                         mavenCentral()
+                         gradlePluginPortal()
+                     }
+                 }
+                 dependencyResolutionManagement {
+                     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+                     repositories {
+                         maven("https://maven.aliyun.com/repository/google")
+                         maven("https://maven.aliyun.com/repository/public")
+                         google()
+                         mavenCentral()
+                     }
+                 }
+                 rootProject.name = "AndroidDemo"
+                 include(":app")
             """.trimIndent()
         )
 
@@ -446,11 +528,15 @@ class WorkspaceManager @Inject constructor(
         // 3. gradle.properties
         File(projectDir, "gradle.properties").writeText(
             """
-            org.gradle.jvmargs=-Xmx1024m -Dfile.encoding=UTF-8
+            org.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+UseSerialGC -Dfile.encoding=UTF-8
+            org.gradle.daemon=false
+            org.gradle.parallel=false
+            org.gradle.workers.max=2
+            org.gradle.caching=true
+            kotlin.daemon.jvmargs=-Xmx512m -XX:MaxMetaspaceSize=256m
             android.useAndroidX=true
             android.nonTransitiveRClass=true
-            android.aapt2FromMaven=false
-            android.overrideAapt2Path=/usr/bin/aapt
+            android.aapt2FromMavenOverride=/opt/taixu/android-sdk-tools/qemu/aapt2
             """.trimIndent()
         )
 
@@ -508,7 +594,7 @@ class WorkspaceManager @Inject constructor(
                     android:label="$name"
                     android:theme="@android:style/Theme.Material.NoActionBar">
                     <activity
-                        android:name=".MainActivity"
+                        android:name="$packageName.MainActivity"
                         android:exported="true">
                         <intent-filter>
                             <action android:name="android.intent.action.MAIN" />
@@ -543,23 +629,23 @@ class WorkspaceManager @Inject constructor(
                     setContent {
                         MaterialTheme {
                             Surface(modifier = Modifier.fillMaxSize()) {
-                                var count by remember { mutableIntStateOf(0) }
+                                val countState = remember { mutableStateOf(0) }
                                 Column(
                                     modifier = Modifier.fillMaxSize().padding(24.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.Center
                                 ) {
                                     Text(
-                                        text = "$name",
+                                        text = "$kotlinDisplayName",
                                         style = MaterialTheme.typography.headlineMedium
                                     )
                                     Spacer(modifier = Modifier.height(16.dp))
                                     Text(
-                                        text = "点击次数: ${'$'}count",
+                                        text = "点击次数: ${'$'}{countState.value}",
                                         style = MaterialTheme.typography.titleLarge
                                     )
                                     Spacer(modifier = Modifier.height(24.dp))
-                                    Button(onClick = { count++ }) {
+                                    Button(onClick = { countState.value++ }) {
                                         Text("点我计数 +1")
                                     }
                                 }
@@ -570,14 +656,13 @@ class WorkspaceManager @Inject constructor(
             }
             """.trimIndent()
         )
-
         // 7. gradle/wrapper/gradle-wrapper.properties (配置国内腾讯云 Gradle 镜像)
         val wrapperDir = File(projectDir, "gradle/wrapper").apply { mkdirs() }
         File(wrapperDir, "gradle-wrapper.properties").writeText(
             """
             distributionBase=GRADLE_USER_HOME
             distributionPath=wrapper/dists
-            distributionUrl=https\://mirrors.cloud.tencent.com/gradle/gradle-8.7-bin.zip
+            distributionUrl=https\://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip
             zipStoreBase=GRADLE_USER_HOME
             zipStorePath=wrapper/dists
             """.trimIndent()
@@ -591,6 +676,8 @@ class WorkspaceManager @Inject constructor(
             DIR="$(cd "$(dirname "${'$'}0")" && pwd)"
             if [ -f "${'$'}DIR/gradle/wrapper/gradle-wrapper.jar" ]; then
                 exec java -jar "${'$'}DIR/gradle/wrapper/gradle-wrapper.jar" "${'$'}@"
+            elif [ -x /opt/gradle-8.9/bin/gradle ]; then
+                exec /opt/gradle-8.9/bin/gradle "${'$'}@"
             elif [ -x /opt/gradle-8.7/bin/gradle ]; then
                 exec /opt/gradle-8.7/bin/gradle "${'$'}@"
             elif [ -x /usr/local/bin/gradle ]; then
@@ -709,6 +796,376 @@ class WorkspaceManager @Inject constructor(
         )
     }
 
+    /** Materializes the checked-in template and expands package directories. */
+    private fun copyAndroidTemplate(projectDir: File, name: String, packageName: String) {
+        val packagePath = packageName.replace('.', '/')
+        val replacements = mapOf(
+            "{{projectName}}" to name,
+            "{{appName}}" to name,
+            "{{packageName}}" to packageName,
+            "{{packagePath}}" to packagePath,
+        )
+        fun visit(assetPath: String, relativePath: String) {
+            val children = context.assets.list(assetPath).orEmpty()
+            if (children.isNotEmpty()) {
+                children.forEach { child ->
+                    visit("$assetPath/$child", if (relativePath.isBlank()) child else "$relativePath/$child")
+                }
+                return
+            }
+            val outputPath = relativePath.replace("__PACKAGE_PATH__", packagePath)
+            val target = File(projectDir, outputPath).canonicalFile
+            check(isInside(projectDir.canonicalFile, target)) { "模板路径越界：$relativePath" }
+            target.parentFile?.mkdirs()
+            context.assets.open(assetPath).use { input ->
+                val bytes = input.readBytes()
+                if (isTemplateTextFile(target.name)) {
+                    var text = bytes.toString(Charsets.UTF_8)
+                    replacements.forEach { (token, value) -> text = text.replace(token, value) }
+                    target.writeText(text, Charsets.UTF_8)
+                } else {
+                    target.writeBytes(bytes)
+                }
+            }
+        }
+        runCatching { visit("templates/android-compose", "") }.getOrElse {
+            // Compatibility for unit-test contexts without an AssetManager.
+            generateAndroidTemplate(projectDir, name, packageName)
+        }
+        // Some Android AssetManager/resource-packaging versions do not enumerate
+        // placeholder-named directories reliably. Materialize the launcher source
+        // directly when recursive enumeration skipped it.
+        val expectedSource = File(projectDir, "app/src/main/java/$packagePath/MainActivity.kt")
+        if (!expectedSource.isFile) {
+            runCatching {
+                expectedSource.parentFile?.mkdirs()
+                context.assets.open("templates/android-compose/app/src/main/java/__PACKAGE_PATH__/MainActivity.kt").use { input ->
+                    var text = input.readBytes().toString(Charsets.UTF_8)
+                    replacements.forEach { (token, value) -> text = text.replace(token, value) }
+                    expectedSource.writeText(text, Charsets.UTF_8)
+                }
+            }.getOrElse {
+                generateAndroidTemplate(projectDir, name, packageName)
+            }
+        }
+        validateAndroidTemplate(projectDir, packageName)
+    }
+
+    /** Fail during project creation when template expansion produced an unusable launcher. */
+    private fun validateAndroidTemplate(projectDir: File, packageName: String) {
+        val packagePath = packageName.replace('.', File.separatorChar)
+        val source = File(projectDir, "app/src/main/java/$packagePath/MainActivity.kt")
+        check(source.isFile) { "Android 模板缺少 MainActivity.kt：${source.absolutePath}" }
+        val sourceText = source.readText(Charsets.UTF_8)
+        check(Regex("(?m)^\\s*package\\s+${Regex.escape(packageName)}\\s*$").containsMatchIn(sourceText)) {
+            "Android 模板包名替换失败：MainActivity.kt"
+        }
+        val manifest = File(projectDir, "app/src/main/AndroidManifest.xml")
+        check(manifest.isFile && manifest.readText(Charsets.UTF_8).contains("$packageName.MainActivity")) {
+            "Android 模板启动 Activity 配置无效"
+        }
+        val buildScript = File(projectDir, "app/build.gradle.kts")
+        check(buildScript.isFile && buildScript.readText(Charsets.UTF_8).contains("applicationId = \"$packageName\"")) {
+            "Android 模板 applicationId 替换失败"
+        }
+    }
+
+    private fun isTemplateTextFile(name: String): Boolean =
+        name.endsWith(".kt") || name.endsWith(".kts") || name.endsWith(".xml") ||
+            name.endsWith(".properties") || name.endsWith(".gradle") || name.endsWith(".md") ||
+        name.endsWith(".dart") || name == "pubspec.yaml" || name == "analysis_options.yaml"
+
+    private fun isValidGitUrl(url: String): Boolean =
+        url.trim().let { value ->
+            value.startsWith("https://") || value.startsWith("http://") ||
+                value.startsWith("ssh://") || Regex("^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+:.+").matches(value)
+        }
+
+    private fun cloneGitRepository(directory: File, url: String, cleanupOnFailure: Boolean) {
+        val process = ProcessBuilder("git", "clone", "--depth", "1", "--", url.trim(), directory.absolutePath)
+            .redirectErrorStream(true)
+            .start()
+        val completed = process.waitFor(GIT_CLONE_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        if (!completed) {
+            process.destroyForcibly()
+            if (cleanupOnFailure) SafeFileTree.delete(directory)
+            error("Git clone 超时（超过 ${GIT_CLONE_TIMEOUT_SECONDS / 60} 分钟）")
+        }
+        check(process.exitValue() == 0) {
+            if (cleanupOnFailure) SafeFileTree.delete(directory)
+            "Git clone 失败：${output.trim().takeLast(1200)}"
+        }
+        SafeFileTree.delete(File(directory, ".git/hooks"))
+    }
+
+    /** Materializes the Flutter template, including its Android Gradle host. */
+    private fun copyFlutterTemplate(projectDir: File, name: String, packageName: String) {
+        val flutterName = name.lowercase()
+            .replace(Regex("[^a-z0-9_]+"), "_")
+            .trim('_')
+            .ifBlank { "flutter_app" }
+        val packagePath = packageName.replace('.', '/')
+        val replacements = mapOf(
+            "{{projectName}}" to name,
+            "{{appName}}" to name,
+            "{{flutterProjectName}}" to flutterName,
+            "{{packageName}}" to packageName,
+            "{{packagePath}}" to packagePath,
+        )
+        fun visit(assetPath: String, relativePath: String) {
+            val children = context.assets.list(assetPath).orEmpty()
+            if (children.isNotEmpty()) {
+                children.forEach { child ->
+                    visit("$assetPath/$child", if (relativePath.isBlank()) child else "$relativePath/$child")
+                }
+                return
+            }
+            val outputPath = relativePath.replace("__PACKAGE_PATH__", packagePath)
+            val target = File(projectDir, outputPath).canonicalFile
+            check(isInside(projectDir.canonicalFile, target)) { "模板路径越界：$relativePath" }
+            target.parentFile?.mkdirs()
+            context.assets.open(assetPath).use { input ->
+                val bytes = input.readBytes()
+                if (isTemplateTextFile(target.name)) {
+                    var text = bytes.toString(Charsets.UTF_8)
+                    replacements.forEach { (token, value) -> text = text.replace(token, value) }
+                    target.writeText(text, Charsets.UTF_8)
+                } else {
+                    target.writeBytes(bytes)
+                }
+            }
+        }
+        runCatching { visit("templates/flutter", "") }.getOrElse {
+            generateFlutterTemplate(projectDir, name, packageName)
+        }
+    }
+
+    // ==================== APK 逆向模板 ====================
+
+    private data class ImportedApk(
+        val packageName: String,
+        val apkFileName: String,
+        val sourceLabel: String,
+        val sourceKind: String,
+    )
+
+    /**
+     * APK 逆向模板初始化：把安装包导入工程目录并做第一层"解包"。
+     *
+     * 产物结构（以工程名 [name] 为例）：
+     * ```
+     * <project>/
+     * ├── <name>.apk            # 原始安装包（可直接交给 jadx / apktool / MT 管理器）
+     * ├── unpacked/             # 标准 ZIP 解包产物（dex / res / assets / lib / 二进制 AXML）
+     * │   ├── AndroidManifest.xml
+     * │   ├── classes.dex
+     * │   ├── resources.arsc
+     * │   └── ...
+     * ├── apk-info.properties   # 来源与元数据（工程包名读取处）
+     * └── REVERSE.md            # 逆向工作流指引（jadx / apktool / MCP）
+     * ```
+     */
+    private fun importApkForReverse(
+        projectDir: File,
+        name: String,
+        apkSource: ApkImportSource?,
+    ): ImportedApk {
+        requireNotNull(apkSource) { "APK 逆向模板必须选择安装包来源（已安装应用或 APK 文件）" }
+        projectDir.mkdirs()
+
+        // 1. 解析来源并拷贝安装包到工程目录
+        val apkFileName: String
+        val sourceLabel: String
+        val sourceKind: String
+        val packageHint: String
+        val apkFile: File
+        when (apkSource) {
+            is ApkImportSource.FromInstalledApp -> {
+                val info = runCatching {
+                    context.packageManager.getApplicationInfo(apkSource.packageName, 0)
+                }.getOrElse { error("无法读取已安装应用信息：${apkSource.packageName}") }
+                val source = File(info.sourceDir)
+                require(source.isFile) { "应用安装包不可读：${source.absolutePath}" }
+                apkFileName = "${apkSource.packageName}.apk"
+                sourceLabel = apkSource.appLabel
+                sourceKind = "installed-app"
+                packageHint = apkSource.packageName
+                apkFile = File(projectDir, apkFileName).canonicalFile
+                check(isInside(projectDir.canonicalFile, apkFile)) { "APK 输出路径越界" }
+                source.copyTo(apkFile, overwrite = true)
+            }
+            is ApkImportSource.FromFileUri -> {
+                val uri = android.net.Uri.parse(apkSource.uri)
+                val safeBase = apkSource.fileName
+                    .substringAfterLast('/')
+                    .substringAfterLast('\\')
+                    .filter { it.isLetterOrDigit() || it == '.' || it == '_' || it == '-' }
+                    .trim('.')
+                    .ifBlank { "target" }
+                val displayName = if (safeBase.endsWith(".apk", ignoreCase = true)) safeBase else "$safeBase.apk"
+                apkFileName = displayName
+                sourceLabel = apkSource.displayName.ifBlank { displayName }
+                sourceKind = "file-uri"
+                packageHint = ""
+                apkFile = File(projectDir, apkFileName).canonicalFile
+                check(isInside(projectDir.canonicalFile, apkFile)) { "APK 输出路径越界" }
+                val input = context.contentResolver.openInputStream(uri)
+                    ?: error("无法读取所选 APK 文件（URI 授权可能已过期，请重新选择）")
+                input.use { source ->
+                    apkFile.outputStream().use { output -> source.copyTo(output) }
+                }
+            }
+        }
+        require(apkFile.isFile && apkFile.length() > 0) { "安装包导入失败：$apkFileName" }
+
+        // 2. 标准 ZIP 解包 -> unpacked/
+        val unpackedDir = File(projectDir, "unpacked").apply { mkdirs() }
+        unpackApk(apkFile, unpackedDir)
+
+        // 3. 写入元数据与逆向工作流指引
+        File(projectDir, "apk-info.properties").writeText(
+            buildString {
+                appendLine("apk=${apkFile.name}")
+                appendLine("apkSizeBytes=${apkFile.length()}")
+                appendLine("source=$sourceKind")
+                appendLine("sourceLabel=$sourceLabel")
+                appendLine("packageName=$packageHint")
+                appendLine("importedAt=${System.currentTimeMillis()}")
+            },
+            Charsets.UTF_8,
+        )
+        writeReverseReadme(projectDir, name, apkFile.name, unpackedDir, sourceLabel)
+
+        return ImportedApk(
+            packageName = packageHint,
+            apkFileName = apkFileName,
+            sourceLabel = sourceLabel,
+            sourceKind = sourceKind,
+        )
+    }
+
+    /** 用标准 ZIP 读取器把 APK 逐条目解包到 [unpackedDir]（防 zip-slip 路径穿越）。 */
+    private fun unpackApk(apkFile: File, unpackedDir: File) {
+        val unpackedCanonical = unpackedDir.canonicalFile
+        java.util.zip.ZipFile(apkFile).use { zip ->
+            zip.entries().asSequence().forEach { entry ->
+                if (entry.isDirectory) return@forEach
+                val rawName = entry.name.replace('\\', '/')
+                // 防 zip-slip：拒绝绝对路径与 .. 穿越
+                if (rawName.startsWith("/") || rawName.split('/').any { it == ".." }) return@forEach
+                val target = File(unpackedDir, rawName)
+                if (!isInside(unpackedCanonical, target.canonicalFile)) return@forEach
+                target.parentFile?.mkdirs()
+                zip.getInputStream(entry).use { input ->
+                    target.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+        }
+    }
+
+    /** 生成逆向工作流指引 README，衔接太墟内置的 jadx / apktool / 逆向 MCP 能力。 */
+    private fun writeReverseReadme(
+        projectDir: File,
+        name: String,
+        apkFileName: String,
+        unpackedDir: File,
+        sourceLabel: String,
+    ) {
+        val entryCount = unpackedDir.walkTopDown().count { it.isFile }
+        File(projectDir, "REVERSE.md").writeText(
+            """
+            # $name · APK 逆向工程
+
+            > 来源：$sourceLabel
+            > 导入时间：${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())}
+
+            ## 工程结构
+
+            | 路径 | 说明 |
+            | :--- | :--- |
+            | `$apkFileName` | 原始安装包（未改动） |
+            | `unpacked/` | 第一层 ZIP 解包产物（$entryCount 个文件）：`classes.dex`、`resources.arsc`、`AndroidManifest.xml`（二进制 AXML）、`res/`、`assets/`、`lib/` 等 |
+            | `apk-info.properties` | 来源与元数据 |
+
+            ## 下一步：在太墟终端 / Agent 中继续深挖
+
+            沙箱内已内置逆向工具链（Android & 移动全栈开发套件 或 apktool 套件装配后可用）：
+
+            ```bash
+            # 1) DEX -> Java 源码（推荐，可读性最好）
+            jadx -d java-src "$apkFileName"
+
+            # 2) 完整解包资源 + Smali（可回编译）
+            apktool d "$apkFileName" -o apktool-out
+            #   回编译：apktool b apktool-out -o rebuilt.apk
+
+            # 3) 二进制清单解码（配合 apktool 产物）
+            #    aapt dump badging "$apkFileName"   # 包名 / 版本 / 权限
+            #    aapt dump xmltree "$apkFileName" AndroidManifest.xml
+            ```
+
+            Agent 对话中还可启用内置 **Android 逆向 MCP 服务**（`mcp_apktool`，在 MCP 设置中开启）：
+            `decode_apk` / `analyze_manifest` / `extract_strings` / `search_smali` / `build_apk` / `sign_apk`。
+
+            ## 分析关注点
+
+            - **AndroidManifest.xml**：四大组件导出状态、权限声明、Application 类
+            - **classes.dex**：核心业务逻辑（jadx 反编译后检索 URL / 密钥 / 加解密特征）
+            - **lib/**：native .so（可用 IDA / 玄星逆核 SOMCP 深度分析）
+            - **assets/** 与 **res/**：内置资源、配置文件、可能存在的加固壳特征
+
+            > 提示：如果打开 `unpacked/AndroidManifest.xml` 是乱码，属正常现象（AXML 二进制格式），
+            > 用 `apktool d` 或 `aapt dump xmltree` 解码即可。
+
+            ## 识别加固壳（jadx 打开看不到真实代码时）
+
+            若 `unpacked/classes.dex` 反编译后只有壳的 stub 加载器，说明 APK 被加固。看 `lib/` 下的 so 名最快定位厂商：
+
+            | 特征 so | 加固厂商 |
+            | :--- | :--- |
+            | `libjiagu.so` / `libjiagu_art.so` | **360 加固**（入口 `com.stub.StubApp`） |
+            | `libDexHelper.so` / `libSecShell.so` / `libsecexe.so` | **梆梆（SecNeo/Bangcle）**（入口 `com.secneo.apkwrapper.ApplicationWrapper`） |
+            | `libshellx-super*.so` / `libtup.so` / `libexec.so` | **腾讯乐固 / 御安全**（`com.tencent.StubShell`） |
+            | `libnesec.so` | **网易易盾**（`com.netease.nis.wrapper`） |
+            | `ijiami.ajm` / `libexecmain.so` / `assets/ijm_lib/` | **爱加密**（入口 `s.h.e.l.l.S`） |
+            | `libbaiduprotect.so` / `assets/baiduprotect*` | **百度加固** |
+            | `libzuma.so` / `assets/qihoo/` | **阿里聚安全** |
+            | `libddog.so` / `libchaosvmp.so` | **娜迦（Nagain，VMP 壳）** |
+            | `libx3g.so` | **顶像** |
+            | `libkwscmm.so` / `libkwsgmain.so` | **几维** |
+            | `libnqshield.so` / `libmobisec.so` / `libkiroro.so` | 网秦 / 阿里旧版 / Kiro 等 |
+
+            辅助判据：`assets/` 下的特征文件（`ijiami.dat`、`bangcleplugin/`、`libjiagu*`、`appsealing*`），以及 AndroidManifest 入口 `android:name`。
+
+            ## 遇到加固壳：脱壳指引
+
+            | 壳级别 | 特征 | 脱壳方案 |
+            | :--- | :--- | :--- |
+            | **一代壳**（整体 dex 加密） | jadx 只能看到 stub | **通用脱壳**：FRIDA-DEXDump（`frida -U -f 包名 -l frida-dexdump.js`）、BlackDex / FullDump（免 root 一键）、MT 管理器脱壳插件 |
+            | **二代壳**（方法抽取 / 函数抽取） | 方法体运行时回填 | **主动调用脱壳**：FART / Youpk / 反射大师（定制 ROM 或 Xposed 级框架触发每个方法回填后再 dump） |
+            | **VMP 壳**（指令虚拟化，如娜迦 chaosvmp） | 代码被虚拟化保护 | 极难整体脱，通常只能**动态调试关键逻辑**（Frida hook / Unidbg 模拟执行） |
+
+            脱壳后处理：dump 出的 `classesN.dex` 可能头部/校验被破坏 → 修复 dex header 后再 `jadx` 反编译；若要改逻辑，多数壳允许在原 APK 对应 smali/so 上 patch 后重打包。
+            """.trimIndent() + "\n",
+            Charsets.UTF_8,
+        )
+    }
+
+    /**
+     * 把工程内导入的 APK 同步导出到宿主公共下载目录（best-effort，供宿主侧 MT 管理器等外部工具直接读取；
+     * Android 11+ 需已授予"所有文件访问"权限，未授权时静默跳过，不影响工程创建）。
+     */
+    private fun exportApkToDownload(apkFileName: String, projectDir: File, projectName: String) {
+        runCatching {
+            val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            if (!downloadDir.exists() && !downloadDir.mkdirs()) return
+            val source = File(projectDir, apkFileName)
+            if (!source.isFile) return
+            source.copyTo(File(downloadDir, "$projectName.apk"), overwrite = true)
+        }
+    }
+
     private fun linuxPathFor(directory: File): String {
         val canonical = directory.canonicalFile
         val internal = pathManager.workspaceDir.canonicalFile
@@ -732,6 +1189,9 @@ class WorkspaceManager @Inject constructor(
     }
 
     companion object {
+        private const val UNLINKED_MARKER = ".taixu-unlinked-project"
+        private const val GIT_CLONE_TIMEOUT_SECONDS = 15 * 60L
+        private val PACKAGE_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+")
         const val MAX_PROJECT_NAME_LENGTH = 64
         const val MAX_FILE_READ_BYTES = 4 * 1024 * 1024L // 4 MB
         const val MAX_FILE_WRITE_CHARS = 4 * 1024 * 1024 // 4 M 字符

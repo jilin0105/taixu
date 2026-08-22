@@ -102,7 +102,7 @@ object BuiltinSkills {
         AgentSkill(
             id = "android_cli",
             name = "Google Android 原生开发助手",
-            description = "精通 Google Android CLI (android)、Android Skills 智能体技能套件、Jetpack Compose 与现代 Gradle 流水线",
+            description = "精通 Android SDK 工具链、Jetpack Compose 与现代 Gradle 流水线",
             systemPrompt = """
                 【Google Android 原生开发助手指导】：
                 1. 立即行动与直接交付：当用户需要创建或初始化 Android 项目时，直接在当前工作区中使用 write 工具生成完整的标准工程骨架文件（settings.gradle.kts、build.gradle.kts、app/build.gradle.kts、AndroidManifest.xml、MainActivity.kt 与 Compose UI 页面代码），或调用 `android init <项目名>`！严禁在无必要时反复探测环境或询问多余问题！
@@ -110,18 +110,24 @@ object BuiltinSkills {
                    - 官方生态：遵循 Google Android Agents 规范 (https://developer.android.com/tools/agents)，支持 AGENTS.md 与官方 Android Skills；
                    - 语言与编译器：Kotlin 2.x (2.4.x) + Java 17 (compileSdk = 34/35, minSdk = 26)；
                    - UI 框架：Jetpack Compose + Material3 现代化声明式 UI，模块化目录结构；
-                   - 构建工具链：Gradle 8.7+ / 8.10+ (Kotlin DSL *.gradle.kts)；
+                   - 构建工具链：Gradle 8.9 (Kotlin DSL *.gradle.kts)；
                 3. 构建与运行指南：
-                   - 系统已预装 OpenJDK 17、android (官方 CLI)、adb、aapt、zipalign 与 Gradle 8.7（PATH 中已有 android/adb/aapt/java/javac/gradle）；
+                   - 系统已预装 OpenJDK 17、android (官方 CLI)、adb、aapt、zipalign 与 Gradle 8.9，且 Android 34 平台包 (android.jar) 已由【Android & 移动全栈开发套件】插件装配期就位于 /opt/android-sdk（PATH 中已有 android/adb/aapt/java/javac/gradle）；
+                   - 全局 Gradle 已注入阿里云 Maven 镜像 (/root/.gradle/init.gradle)，依赖下载自动走国内加速，无需手工配置；
                    - 构建排错时优先使用 `android build` 执行构建，或在项目根目录下通过 `./gradlew assembleDebug` 编译；
                    - 诊断环境使用 `android doctor`，执行技能库参考 `android skills`；
-                   - 【ARM64 沙箱构建核心铁律】：在 ARM64 Linux 沙箱中，若使用标准 Gradle 编译，必须在项目根目录 `gradle.properties` 中加入：
-                     ```properties
-                     android.aapt2FromMaven=false
-                     android.overrideAapt2Path=/usr/bin/aapt
-                     ```
-                     以调用沙箱原生 ARM64 二进制，彻底避免 AGP 默认拉取 x86_64 版 aapt2 导致 Daemon 启动失败或报 Illegal instruction！
-                   - 若需要更新 Gradle，使用腾讯云国内镜像 `https://mirrors.cloud.tencent.com/gradle/gradle-8.7-bin.zip` 秒级满速部署！
+                    - 【ARM64 沙箱构建核心铁律】：在 ARM64 Linux 沙箱中，必须通过内置的 QEMU 包装器运行 x86_64 AAPT2，并在项目根目录 `gradle.properties` 中加入：
+                      ```properties
+                      android.aapt2FromMavenOverride=/opt/taixu/android-sdk-tools/qemu/aapt2
+                      org.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+UseSerialGC -Dfile.encoding=UTF-8
+                      org.gradle.daemon=false
+                      org.gradle.parallel=false
+                      org.gradle.workers.max=2
+                      org.gradle.caching=true
+                      kotlin.daemon.jvmargs=-Xmx512m -XX:MaxMetaspaceSize=256m
+                      ```
+                      这样既避免 AGP 默认直接启动不兼容的 x86_64 AAPT2，也限制 PRoot 内 Gradle 的并发内存峰值。
+                   - 若需要更新 Gradle，使用腾讯云国内镜像 `https://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip` 秒级满速部署！
                 4. 安装到本手机（极速交付流程）：
                    - 当用户要求“安装到手机 / 运行到本机 / 装上看看”时：
                      a. 检查 APK 是否已构建；若未构建则先自动执行构建（或直接调用 `android run`）；

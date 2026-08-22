@@ -48,6 +48,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -93,6 +96,8 @@ fun ToolCenterScreen(
     val selectedComponents by viewModel.selectedComponents.collectAsStateWithLifecycle()
     val isInstallingComponents by viewModel.isInstallingComponents.collectAsStateWithLifecycle()
     val componentInstallProgress by viewModel.componentInstallProgress.collectAsStateWithLifecycle()
+    val componentInstallLog by viewModel.componentInstallLog.collectAsStateWithLifecycle()
+    var showBundleInstallLog by remember { mutableStateOf(false) }
 
     val categories = listOf(
         "ALL" to "全部生态",
@@ -162,7 +167,7 @@ fun ToolCenterScreen(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 // 🚀 后台装配进行中提示卡片 (Background Installing Banner)
-                if (isInstallingComponents) {
+                if (isInstallingComponents || componentInstallLog.isNotEmpty()) {
                     item {
                         Card(
                             modifier = Modifier.fillMaxWidth(),
@@ -182,22 +187,30 @@ fun ToolCenterScreen(
                                     )
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = "后台正在装配开发套件...",
+                                            text = if (isInstallingComponents) "后台正在装配开发套件..." else "最近一次开发套件装配",
                                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                                             color = MaterialTheme.colorScheme.primary,
                                         )
                                         Text(
-                                            text = componentInstallProgress ?: "正在执行后台批量装配流水线，你可自由切换到其他页面",
+                                            text = componentInstallProgress ?: if (isInstallingComponents) "正在执行后台批量装配流水线，你可自由切换到其他页面" else "装配任务已结束，可查看完整日志",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 2,
                                         )
                                     }
                                 }
-                                LinearProgressIndicator(
-                                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
+                                if (isInstallingComponents) {
+                                    LinearProgressIndicator(
+                                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                                TextButton(
+                                    onClick = { showBundleInstallLog = true },
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                                ) {
+                                    Text("查看安装日志", style = MaterialTheme.typography.labelMedium)
+                                }
                             }
                         }
                     }
@@ -487,6 +500,54 @@ fun ToolCenterScreen(
                         TextButton(onClick = { viewModel.viewLogs(null) }) {
                             Text("关闭")
                         }
+                    }
+                },
+            )
+        }
+
+        if (showBundleInstallLog) {
+            val context = androidx.compose.ui.platform.LocalContext.current
+            AlertDialog(
+                onDismissRequest = { showBundleInstallLog = false },
+                title = { Text("开发套件安装日志") },
+                text = {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp, max = 420.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxSize().padding(10.dp).verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            if (componentInstallLog.isEmpty()) {
+                                Text("安装日志正在接收...", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                            } else {
+                                componentInstallLog.forEach { line ->
+                                    val isError = line.contains("error", ignoreCase = true) ||
+                                        line.contains("failed", ignoreCase = true) ||
+                                        line.contains("失败") ||
+                                        line.contains("returned an error", ignoreCase = true) ||
+                                        line.startsWith("E:")
+                                    Text(
+                                        line,
+                                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace, fontSize = 11.sp),
+                                        color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(
+                            onClick = {
+                                val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                                clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("TaiXu Bundle Install Log", componentInstallLog.joinToString("\n")))
+                            },
+                            enabled = componentInstallLog.isNotEmpty(),
+                        ) { Text("复制") }
+                        TextButton(onClick = { showBundleInstallLog = false }) { Text("关闭") }
                     }
                 },
             )
