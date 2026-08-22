@@ -71,6 +71,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -84,8 +85,9 @@ enum class RuntimeIconName {
     Download, Play, Stop, More, Plus, Chat, List, Copy,
     Folder, File, Code, Edit, Save, ArrowUp, Cpu, Search, Info,
     Image, Attach,
-    // 语义增强与二级菜单精美图标
-    Linux, Debian, Ubuntu, Arch, Kali,
+    // 官方精准品牌与系统/框架 Logo
+    Linux, Debian, Ubuntu, Arch, Kali, Fedora, Alpine, Void,
+    Android, Flutter,
     Github, Qq,
     Bot, Palette, FontSize, Battery, Bug, Update, Extension, Hub, Mount, OpenInNew, Key, Tune,
     Brain, Sparkles, Vibrate, FolderDownload, Document, SdCard, Server, Compress,
@@ -99,23 +101,57 @@ fun RuntimeIcon(
     modifier: Modifier = Modifier,
     tint: Color = Color.Unspecified,
 ) {
-    Icon(
-        imageVector = name.materialVector(),
-        contentDescription = null,
-        modifier = modifier,
-        tint = if (tint == Color.Unspecified) LocalContentColor.current else tint,
-    )
+    val brandResId = when (name) {
+        RuntimeIconName.Android -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_android
+        RuntimeIconName.Flutter -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_flutter
+        RuntimeIconName.Debian -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_debian
+        RuntimeIconName.Ubuntu -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_ubuntu
+        RuntimeIconName.Arch -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_arch
+        RuntimeIconName.Kali -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_kali
+        RuntimeIconName.Fedora -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_fedora
+        RuntimeIconName.Alpine -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_alpine
+        RuntimeIconName.Void -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_void
+        else -> null
+    }
+
+    if (brandResId != null) {
+        Icon(
+            painter = androidx.compose.ui.res.painterResource(brandResId),
+            contentDescription = null,
+            modifier = modifier,
+            tint = if (tint == Color.Unspecified) Color.Unspecified else tint,
+        )
+    } else {
+        Icon(
+            imageVector = name.materialVector(),
+            contentDescription = null,
+            modifier = modifier,
+            tint = if (tint == Color.Unspecified) LocalContentColor.current else tint,
+        )
+    }
 }
 
 /**
- * 根据发行版标识返回专有 Linux 发行版 Logo
+ * 根据发行版标识返回专有官方 Linux 发行版 Logo
  */
 fun distroIconFor(distroId: String): RuntimeIconName = when (distroId.lowercase()) {
     "debian" -> RuntimeIconName.Debian
     "ubuntu" -> RuntimeIconName.Ubuntu
     "arch", "archlinux" -> RuntimeIconName.Arch
     "kali" -> RuntimeIconName.Kali
+    "fedora" -> RuntimeIconName.Fedora
+    "alpine" -> RuntimeIconName.Alpine
+    "void" -> RuntimeIconName.Void
     else -> RuntimeIconName.Linux
+}
+
+/**
+ * 根据工程类型或模板返回专有官方框架/语言 Logo
+ */
+fun projectTypeIconFor(type: String): RuntimeIconName = when (type.uppercase()) {
+    "ANDROID" -> RuntimeIconName.Android
+    "FLUTTER" -> RuntimeIconName.Flutter
+    else -> RuntimeIconName.Code
 }
 
 private fun RuntimeIconName.materialVector(): ImageVector = when (this) {
@@ -188,10 +224,15 @@ private fun RuntimeIconName.materialVector(): ImageVector = when (this) {
     RuntimeIconName.Link -> Icons.Outlined.Link
     // 专有品牌矢量
     RuntimeIconName.Linux -> LinuxVector
-    RuntimeIconName.Debian -> DebianVector
-    RuntimeIconName.Ubuntu -> UbuntuVector
-    RuntimeIconName.Arch -> ArchVector
-    RuntimeIconName.Kali -> KaliVector
+    RuntimeIconName.Debian,
+    RuntimeIconName.Ubuntu,
+    RuntimeIconName.Arch,
+    RuntimeIconName.Kali,
+    RuntimeIconName.Fedora,
+    RuntimeIconName.Alpine,
+    RuntimeIconName.Void,
+    RuntimeIconName.Android,
+    RuntimeIconName.Flutter -> Icons.Outlined.Info
     RuntimeIconName.Github -> GithubVector
     RuntimeIconName.Qq -> QqVector
 }

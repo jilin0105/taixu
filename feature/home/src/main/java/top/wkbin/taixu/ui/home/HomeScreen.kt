@@ -72,6 +72,7 @@ import top.wkbin.taixu.ui.components.RuntimeBottomBar
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
+import top.wkbin.taixu.ui.components.distroIconFor
 import top.wkbin.taixu.ui.components.StatusBadge
 
 /**
@@ -627,6 +628,7 @@ private fun RuntimeEngineStatusCard(
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f),
                 ) {
                     PulsingStatusDot(color = statusColor, isPulsing = ready || initializing != null)
                     Column {
@@ -646,6 +648,20 @@ private fun RuntimeEngineStatusCard(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                }
+
+                // 右侧展示当前发行版官方精确 Logo 徽章
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    RuntimeIcon(
+                        name = distroIconFor(activeDistroId),
+                        modifier = Modifier.size(24.dp),
+                    )
                 }
             }
 
@@ -686,12 +702,18 @@ private fun RuntimeEngineStatusCard(
                                 if (!isSelected) onSwitchDistro(d.id)
                             },
                         ) {
-                            Text(
-                                text = if (isSelected && switchingDistro) "切换中…" else d.displayName,
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal),
-                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            )
+                            ) {
+                                RuntimeIcon(distroIconFor(d.id), Modifier.size(13.dp))
+                                Text(
+                                    text = if (isSelected && switchingDistro) "切换中…" else d.displayName,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal),
+                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }

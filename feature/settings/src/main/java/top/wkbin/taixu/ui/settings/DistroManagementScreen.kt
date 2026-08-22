@@ -64,6 +64,7 @@ import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
 import top.wkbin.taixu.ui.components.StatusBadge
+import top.wkbin.taixu.ui.components.distroIconFor
 
 /**
  * 太墟 · Linux 发行版与沙箱多实例管理 (Distro Management Hub)
@@ -265,8 +266,8 @@ private fun DistroItemCard(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(8.dp))
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
                             .background(
                                 if (isActive) MaterialTheme.colorScheme.primaryContainer
                                 else MaterialTheme.colorScheme.surfaceVariant,
@@ -274,9 +275,8 @@ private fun DistroItemCard(
                         contentAlignment = Alignment.Center,
                     ) {
                         RuntimeIcon(
-                            name = RuntimeIconName.Storage,
-                            modifier = Modifier.size(20.dp),
-                            tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            name = distroIconFor(distro.id),
+                            modifier = Modifier.size(24.dp),
                         )
                     }
 
@@ -416,6 +416,11 @@ private fun InstallDistroDialog(
                                 RadioButton(
                                     selected = selectedSpec.id == spec.id,
                                     onClick = { selectedSpec = spec },
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                RuntimeIcon(
+                                    name = distroIconFor(spec.id),
+                                    modifier = Modifier.size(22.dp),
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Column {

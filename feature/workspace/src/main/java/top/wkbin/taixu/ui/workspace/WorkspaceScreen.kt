@@ -365,21 +365,22 @@ fun WorkspaceScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        top.wkbin.taixu.runtime.ProjectTemplate.entries.forEach { t ->
-                            val isSelected = selectedTemplate == t
+                        listOf(
+                            top.wkbin.taixu.runtime.ProjectTemplate.ANDROID_COMPOSE to ("Android" to RuntimeIconName.Android),
+                            top.wkbin.taixu.runtime.ProjectTemplate.FLUTTER to ("Flutter" to RuntimeIconName.Flutter),
+                            top.wkbin.taixu.runtime.ProjectTemplate.EMPTY to ("空工程" to RuntimeIconName.Code),
+                        ).forEach { (tmpl, pair) ->
+                            val (label, icon) = pair
                             FilterChip(
-                                selected = isSelected,
+                                selected = selectedTemplate == tmpl,
                                 onClick = {
-                                    selectedTemplate = t
+                                    selectedTemplate = tmpl
                                     if (projectName.isNotBlank() && packageName.isBlank()) {
                                         packageName = "com.example.${projectName.lowercase().filter { it.isLetterOrDigit() }}"
                                     }
                                 },
-                                label = { Text(when(t) {
-                                    top.wkbin.taixu.runtime.ProjectTemplate.ANDROID_COMPOSE -> "Android"
-                                    top.wkbin.taixu.runtime.ProjectTemplate.FLUTTER -> "Flutter"
-                                    top.wkbin.taixu.runtime.ProjectTemplate.EMPTY -> "空工程"
-                                }, style = MaterialTheme.typography.labelSmall) },
+                                leadingIcon = { RuntimeIcon(icon, Modifier.size(16.dp)) },
+                                label = { Text(label, style = MaterialTheme.typography.labelSmall) },
                                 modifier = Modifier.weight(1f),
                             )
                         }
@@ -579,9 +580,9 @@ private fun ProjectCard(
     }
 
     val typeIcon = when (project.projectType) {
-        top.wkbin.taixu.runtime.ProjectType.ANDROID -> RuntimeIconName.Play
-        top.wkbin.taixu.runtime.ProjectType.FLUTTER -> RuntimeIconName.Sparkles
-        top.wkbin.taixu.runtime.ProjectType.GENERAL -> RuntimeIconName.Workspace
+        top.wkbin.taixu.runtime.ProjectType.ANDROID -> RuntimeIconName.Android
+        top.wkbin.taixu.runtime.ProjectType.FLUTTER -> RuntimeIconName.Flutter
+        top.wkbin.taixu.runtime.ProjectType.GENERAL -> RuntimeIconName.Code
     }
 
     RuntimeCard(
