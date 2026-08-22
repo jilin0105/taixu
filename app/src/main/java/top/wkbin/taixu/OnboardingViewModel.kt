@@ -58,43 +58,12 @@ class OnboardingViewModel @Inject constructor(
     }.stateIn(viewModelScope, SharingStarted.Eagerly, OnboardingStatus())
     val runtimeState: StateFlow<RuntimeState> = linuxRuntime.state
 
-    val starterPlugins = listOf(
-        StarterPlugin(
-            id = "base-devtools",
-            name = "基础开发加速包 (DevTools)",
-            description = "预装 ripgrep、fd、jq、tmux 等高性能代码检索与终端开发利器",
-            category = "系统加速",
-            isRecommended = true,
-        ),
-        StarterPlugin(
-            id = "android-devtools",
-            name = "Google Android 原生开发套件",
-            description = "集成 Google Android CLI (android)、OpenJDK 17、Gradle 8.7+、AAPT 与 Android Skills 智能体技能套件",
-            category = "移动开发",
-            isRecommended = true,
-        ),
-        StarterPlugin(
-            id = "claude-code",
-            name = "Claude Code Agent",
-            description = "Anthropic 官方终端 Agent 编程助手，支持沙箱自主探索与全栈工程演进",
-            category = "AI 智能体",
-        ),
-        StarterPlugin(
-            id = "android-re-tools",
-            name = "Android 逆向分析套件",
-            description = "集成 APKTool、JADX-CLI 全自动 Java 源码反编译器与 Smali 代码审计环境",
-            category = "安全逆向",
-        ),
-        StarterPlugin(
-            id = "flutter-devtools",
-            name = "Flutter 跨平台开发套件",
-            description = "集成 Flutter SDK (ARM64)、Dart、Gradle 8.x 与国内镜像加速，跨平台 App 秒级打包",
-            category = "跨端开发",
-        ),
-    )
+    val devSuites: List<top.wkbin.taixu.core.model.DevEnvironmentSuite> = top.wkbin.taixu.core.model.BuiltinDevSuites.presets
 
-    private val _selectedPlugins = MutableStateFlow<Set<String>>(setOf("base-devtools"))
-    val selectedPlugins = _selectedPlugins.asStateFlow()
+    private val _selectedSuites = MutableStateFlow<Set<String>>(
+        top.wkbin.taixu.core.model.BuiltinDevSuites.presets.filter { it.isDefaultSelected }.map { it.id }.toSet(),
+    )
+    val selectedSuites = _selectedSuites.asStateFlow()
 
     private val _isInstallingPlugins = MutableStateFlow(false)
     val isInstallingPlugins = _isInstallingPlugins.asStateFlow()
@@ -130,24 +99,43 @@ class OnboardingViewModel @Inject constructor(
         }
     }
 
-    fun selectDistribution(value: String) { _distribution.value = value }
-    fun selectMirror(value: String) { _mirror.value = value }
-    fun setModelProvider(value: String) { _modelProvider.value = value }
-    fun setModelId(value: String) { _modelId.value = value }
-    fun setBaseUrl(value: String) {
-        _baseUrl.value = value
-        val clean = ProviderEndpointPolicy.normalizeUrl(value)
-        if (ProviderEndpointPolicy.isSafeBaseUrl(clean)) {
-            discoverModels()
-        }
+    fun selectDistribution(distribution: String) {
+        _distribution.value = distribution
+        viewModelScope.launch { settings.setSelectedDistribution(distribution) }
     }
-    fun setApiKey(value: String) { _apiKey.value = value }
+
+    fun selectMirror(mirror: String) {
+        _mirror.value = mirror
+        viewModelScope.launch { settings.setMirrorPolicy(mirror) }
+    }
+
+    fun setPage(page: Int) {
+        _page.value = page
+    }
+
+    fun setModelProvider(provider: String) {
+        _modelProvider.value = provider
+    }
+
+    fun setModelId(id: String) {
+        _modelId.value = id
+    }
+
+    fun setBaseUrl(url: String) {
+        _baseUrl.value = url
+    }
+
+    fun setApiKey(key: String) {
+        _apiKey.value = key
+    }
+
     fun selectProvider(id: String) {
         val preset = providerCatalogRepository.find(id)
         _modelProvider.value = preset.name
         _baseUrl.value = preset.baseUrl
         _modelId.value = preset.recommendedModels.firstOrNull().orEmpty()
         _discoveredModels.value = emptyList()
+        _modelDiscoveryError.value = null
         if (preset.baseUrl.isNotBlank() && ProviderEndpointPolicy.isSafeBaseUrl(preset.baseUrl)) {
             discoverModels()
         }
@@ -199,44 +187,36 @@ class OnboardingViewModel @Inject constructor(
         }
     }
 
-    /**
-     * 已安装环境恢复失败后的轻量重试：只重跑健康检查与状态恢复，
-     * 不触发重新下载。适合健康检查偶发失败（冷启动慢、子进程被系统限制等）的场景。
-     */
     fun retryReady() {
         if (runtimeState.value is RuntimeState.Initializing) return
         restoreComplete.value = false
         restoreInstalledState()
     }
 
-    fun togglePlugin(id: String) {
-        val current = _selectedPlugins.value
-        _selectedPlugins.value = if (id in current) current - id else current + id
+    fun toggleSuite(id: String) {
+        val current = _selectedSuites.value
+        _selectedSuites.value = if (id in current) current - id else current + id
     }
 
-    fun skipPlugins() {
+    fun skipSuites() {
         _page.value = 2
     }
 
-    fun installSelectedPluginsAndProceed() {
-        val selected = _selectedPlugins.value.toList()
+    fun installSelectedSuitesAndProceed() {
+        val selected = _selectedSuites.value.toSet()
         _page.value = 2
         if (selected.isEmpty()) return
 
         viewModelScope.launch(Dispatchers.IO) {
             _isInstallingPlugins.value = true
             try {
-                selected.forEachIndexed { index, toolId ->
-                    val pluginName = starterPlugins.find { it.id == toolId }?.name ?: toolId
-                    _pluginInstallProgress.value = "正在后台装配 [${index + 1}/${selected.size}] $pluginName..."
-                    runCatching {
-                        toolManager.install(toolId).collect { event ->
-                            if (event is top.wkbin.taixu.runtime.tools.InstallEvent.Progress) {
-                                _pluginInstallProgress.value = "[$pluginName] ${event.message}"
-                            }
-                        }
+                toolManager.batchInstallSuites(selected).collect { event ->
+                    if (event is top.wkbin.taixu.runtime.tools.InstallEvent.Progress) {
+                        _pluginInstallProgress.value = event.message
                     }
                 }
+            } catch (e: Exception) {
+                // 忽略异常保证流程顺畅
             } finally {
                 _isInstallingPlugins.value = false
                 _pluginInstallProgress.value = null
