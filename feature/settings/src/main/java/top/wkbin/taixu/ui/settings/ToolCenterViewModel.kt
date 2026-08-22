@@ -125,11 +125,8 @@ class ToolCenterViewModel @Inject constructor(
     private val _selectedComponents = MutableStateFlow<Set<String>>(emptySet())
     val selectedComponents: StateFlow<Set<String>> = _selectedComponents.asStateFlow()
 
-    private val _isInstallingComponents = MutableStateFlow(false)
-    val isInstallingComponents: StateFlow<Boolean> = _isInstallingComponents.asStateFlow()
-
-    private val _componentInstallProgress = MutableStateFlow<String?>(null)
-    val componentInstallProgress: StateFlow<String?> = _componentInstallProgress.asStateFlow()
+    val isInstallingComponents: StateFlow<Boolean> = toolManager.isBatchInstalling
+    val componentInstallProgress: StateFlow<String?> = toolManager.bundleInstallState
 
     fun refreshInstalledStatus() {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -151,9 +148,7 @@ class ToolCenterViewModel @Inject constructor(
     }
 
     fun closeBundleSetup() {
-        if (!_isInstallingComponents.value) {
-            _activeBundle.value = null
-        }
+        _activeBundle.value = null
     }
 
     fun toggleComponent(component: top.wkbin.taixu.core.model.PluginComponent) {
@@ -166,23 +161,12 @@ class ToolCenterViewModel @Inject constructor(
         val selected = _selectedComponents.value
         if (selected.isEmpty()) return
 
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            _isInstallingComponents.value = true
-            try {
-                toolManager.batchInstallComponents(selected).collect { event ->
-                    if (event is top.wkbin.taixu.runtime.tools.InstallEvent.Progress) {
-                        _componentInstallProgress.value = event.message
-                    }
-                }
-                refreshInstalledStatus()
-                syncRegistry()
-                _activeBundle.value = null
-            } catch (e: Exception) {
-                logger.w("Batch install components failed: ${e.message}", e)
-            } finally {
-                _isInstallingComponents.value = false
-                _componentInstallProgress.value = null
-            }
+        // 立即关闭装配弹窗，后台静默装配并发送系统通知栏进度
+        _activeBundle.value = null
+
+        toolManager.startBackgroundBatchInstall(selected) {
+            refreshInstalledStatus()
+            syncRegistry()
         }
     }
 
@@ -190,8 +174,8 @@ class ToolCenterViewModel @Inject constructor(
     val devSuites: List<top.wkbin.taixu.core.model.PluginBundle> get() = pluginBundles
     val showSuiteDialog: StateFlow<Boolean> = MutableStateFlow(false).asStateFlow()
     val selectedSuites: StateFlow<Set<String>> = MutableStateFlow(emptySet<String>()).asStateFlow()
-    val isInstallingSuites: StateFlow<Boolean> = _isInstallingComponents
-    val suiteInstallProgress: StateFlow<String?> = _componentInstallProgress
+    val isInstallingSuites: StateFlow<Boolean> get() = isInstallingComponents
+    val suiteInstallProgress: StateFlow<String?> get() = componentInstallProgress
     fun openSuiteDialog() {
         pluginBundles.firstOrNull()?.let { openBundleSetup(it) }
     }

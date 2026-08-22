@@ -69,6 +69,13 @@ class ToolManager @Inject constructor(
     val installProgress: StateFlow<Map<String, ToolInstallProgress>> = _installProgress.asStateFlow()
     private val _verifications = MutableStateFlow<Map<String, ToolVerification>>(emptyMap())
     val verifications: StateFlow<Map<String, ToolVerification>> = _verifications.asStateFlow()
+
+    private val _bundleInstallState = MutableStateFlow<String?>(null)
+    val bundleInstallState: StateFlow<String?> = _bundleInstallState.asStateFlow()
+
+    private val _isBatchInstalling = MutableStateFlow(false)
+    val isBatchInstalling: StateFlow<Boolean> = _isBatchInstalling.asStateFlow()
+
     private val staticInstallerById = installerAdapters.associateBy { it.toolId }
 
     /** 当前发行版（安装/卸载/验证等操作的作用目标系统）。 */
@@ -273,38 +280,74 @@ class ToolManager @Inject constructor(
             return@flow
         }
         val distroId = currentDistroId()
+        val bundleTitle = "开发套件装配"
         installMutex.withLock {
+            _isBatchInstalling.value = true
             emit(InstallEvent.Started("components"))
             val steps = top.wkbin.taixu.core.model.BuiltinPluginBundles.buildBatchInstallScript(componentIds)
             val selectedComps = top.wkbin.taixu.core.model.BuiltinPluginBundles.bundles.flatMap { it.components }.filter { it.id in componentIds }
             val compNames = selectedComps.joinToString("、") { it.name }
 
-            emit(InstallEvent.Progress("components", "正在准备 [$compNames] 批量装配流水线...", 0.05f))
+            val initialMsg = "正在准备 [$compNames] 批量装配流水线..."
+            _bundleInstallState.value = initialMsg
+            notificationNotifier.showProgress("dev_bundle_install", bundleTitle, initialMsg, 0.05f)
+            emit(InstallEvent.Progress("components", initialMsg, 0.05f))
 
-            steps.forEachIndexed { index, step ->
-                val progress = 0.1f + 0.8f * (index.toFloat() / steps.size.toFloat())
-                val shortDesc = when {
-                    "apt-get update" in step -> "正在同步软件源并聚合下载全部依赖包..."
-                    "dpkg" in step -> "正在自愈 Linux dpkg 锁与权限环境..."
-                    "gradle" in step -> "正在部署并链接 Gradle 8.7+ 自动化构建环境..."
-                    "jadx" in step -> "正在部署 JADX-CLI 源码反编译工具包..."
-                    "android" in step -> "正在配置 Google Android CLI 官方开发工具链..."
-                    "flutter" in step -> "正在拉取并配置 Flutter SDK 跨端开发环境..."
-                    else -> "正在执行环境准备步骤 [${index + 1}/${steps.size}]..."
+            try {
+                steps.forEachIndexed { index, step ->
+                    val progress = 0.1f + 0.8f * (index.toFloat() / steps.size.toFloat())
+                    val shortDesc = when {
+                        "apt-get update" in step -> "正在同步软件源并聚合下载全部依赖包..."
+                        "dpkg" in step -> "正在自愈 Linux dpkg 锁与权限环境..."
+                        "gradle" in step -> "正在部署并链接 Gradle 8.7+ 自动化构建环境..."
+                        "jadx" in step -> "正在部署 JADX-CLI 源码反编译工具包..."
+                        "android" in step -> "正在配置 Google Android CLI 官方开发工具链..."
+                        "flutter" in step -> "正在拉取并配置 Flutter SDK 跨端开发环境..."
+                        else -> "正在执行环境准备步骤 [${index + 1}/${steps.size}]..."
+                    }
+                    _bundleInstallState.value = shortDesc
+                    notificationNotifier.showProgress("dev_bundle_install", bundleTitle, shortDesc, progress)
+                    emit(InstallEvent.Progress("components", shortDesc, progress))
+
+                    linuxRuntime.execute(
+                        top.wkbin.taixu.runtime.shell.ShellCommand(
+                            commandLine = step,
+                            workingDirectory = "/root",
+                            timeoutMs = 180_000L,
+                        ),
+                        distroId = distroId,
+                    )
                 }
-                emit(InstallEvent.Progress("components", shortDesc, progress))
-                linuxRuntime.execute(
-                    top.wkbin.taixu.runtime.shell.ShellCommand(
-                        commandLine = step,
-                        workingDirectory = "/root",
-                        timeoutMs = 180_000L,
-                    ),
-                    distroId = distroId,
-                )
-            }
 
-            emit(InstallEvent.Progress("components", "正在验证已安装组件状态...", 0.95f))
-            emit(InstallEvent.Completed("components", "1.0.0"))
+                _bundleInstallState.value = "正在验证已安装组件状态..."
+                notificationNotifier.showProgress("dev_bundle_install", bundleTitle, "正在验证状态...", 0.95f)
+                emit(InstallEvent.Progress("components", "正在验证已安装组件状态...", 0.95f))
+
+                notificationNotifier.showSuccess("dev_bundle_install", bundleTitle, "已成功就绪")
+                emit(InstallEvent.Completed("components", "1.0.0"))
+            } catch (e: Exception) {
+                notificationNotifier.showFailed("dev_bundle_install", bundleTitle, e.message ?: "装配异常")
+                emit(InstallEvent.Failed("components", e.message ?: "装配异常"))
+                throw e
+            } finally {
+                _isBatchInstalling.value = false
+                _bundleInstallState.value = null
+            }
+        }
+    }
+
+    /**
+     * 🚀 在应用级生命周期协程 (managerScope) 中脱机静默运行批量装配
+     * 用户可自由切换至任何页面（工坊、聊天、终端等），完全不影响后台装配进程，通知栏实时同步。
+     */
+    fun startBackgroundBatchInstall(componentIds: Set<String>, onCompleted: (() -> Unit)? = null): Job {
+        return managerScope.launch {
+            try {
+                batchInstallComponents(componentIds).collect {}
+                onCompleted?.invoke()
+            } catch (e: Exception) {
+                android.util.Log.w("ToolManager", "Background batch install components failed: ${e.message}", e)
+            }
         }
     }
 

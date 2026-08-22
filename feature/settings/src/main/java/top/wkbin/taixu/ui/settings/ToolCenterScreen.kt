@@ -161,6 +161,48 @@ fun ToolCenterScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
+                // 🚀 后台装配进行中提示卡片 (Background Installing Banner)
+                if (isInstallingComponents) {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    androidx.compose.material3.CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "后台正在装配开发套件...",
+                                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                        Text(
+                                            text = componentInstallProgress ?: "正在执行后台批量装配流水线，你可自由切换到其他页面",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2,
+                                        )
+                                    }
+                                }
+                                LinearProgressIndicator(
+                                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // 1. 聚合大套件专区 (Plugin Bundles)
                 if (showBundles) {
                     item {
@@ -580,14 +622,12 @@ fun ToolCenterScreen(
                         onClick = viewModel::installActiveBundleComponents,
                         enabled = !isInstallingComponents && selectedComponents.isNotEmpty(),
                     ) {
-                        Text(if (isInstallingComponents) "正在装配..." else "开始装配 (${selectedComponents.size})")
+                        Text("开始装配 (${selectedComponents.size})")
                     }
                 },
                 dismissButton = {
-                    if (!isInstallingComponents) {
-                        TextButton(onClick = viewModel::closeBundleSetup) {
-                            Text("取消")
-                        }
+                    TextButton(onClick = viewModel::closeBundleSetup) {
+                        Text("取消")
                     }
                 },
             )
