@@ -325,8 +325,19 @@ fun WorkspaceScreen(
             },
             confirmButton = {
                 if (!progress.isRunning) {
-                    TextButton(onClick = { viewModel.dismissBuildProgress() }) {
-                        Text("完成")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val path = progress.apkPath
+                        if (progress.isSuccess == true && path != null) {
+                            Button(onClick = { viewModel.launchInstaller(path) }) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    RuntimeIcon(RuntimeIconName.Download, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onPrimary)
+                                    Text("调起安装")
+                                }
+                            }
+                        }
+                        TextButton(onClick = { viewModel.dismissBuildProgress() }) {
+                            Text("完成")
+                        }
                     }
                 }
             },

@@ -112,6 +112,13 @@ class WorkspaceViewModel @Inject constructor(
         }
     }
 
+    fun launchInstaller(apkPath: String) {
+        val file = java.io.File(apkPath)
+        if (file.exists()) {
+            workspaceBuildRunner.launchPackageInstaller(file)
+        }
+    }
+
     fun delete(name: String) {
         if (_busy.value) return
         viewModelScope.launch {
