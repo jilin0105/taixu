@@ -107,4 +107,58 @@ class ToolCenterViewModel @Inject constructor(
             }
         }
     }
+
+    // ==================== 开发环境套件聚合管理 ====================
+    val devSuites: List<top.wkbin.taixu.core.model.DevEnvironmentSuite> = top.wkbin.taixu.core.model.BuiltinDevSuites.presets
+    private val _showSuiteDialog = MutableStateFlow(false)
+    val showSuiteDialog: StateFlow<Boolean> = _showSuiteDialog.asStateFlow()
+
+    private val _selectedSuites = MutableStateFlow<Set<String>>(
+        top.wkbin.taixu.core.model.BuiltinDevSuites.presets.filter { it.isDefaultSelected }.map { it.id }.toSet(),
+    )
+    val selectedSuites: StateFlow<Set<String>> = _selectedSuites.asStateFlow()
+
+    private val _isInstallingSuites = MutableStateFlow(false)
+    val isInstallingSuites: StateFlow<Boolean> = _isInstallingSuites.asStateFlow()
+
+    private val _suiteInstallProgress = MutableStateFlow<String?>(null)
+    val suiteInstallProgress: StateFlow<String?> = _suiteInstallProgress.asStateFlow()
+
+    fun openSuiteDialog() {
+        _showSuiteDialog.value = true
+    }
+
+    fun closeSuiteDialog() {
+        if (!_isInstallingSuites.value) {
+            _showSuiteDialog.value = false
+        }
+    }
+
+    fun toggleSuite(id: String) {
+        val current = _selectedSuites.value
+        _selectedSuites.value = if (id in current) current - id else current + id
+    }
+
+    fun installSelectedSuites() {
+        val selected = _selectedSuites.value.toSet()
+        if (selected.isEmpty()) return
+
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            _isInstallingSuites.value = true
+            try {
+                toolManager.batchInstallSuites(selected).collect { event ->
+                    if (event is top.wkbin.taixu.runtime.tools.InstallEvent.Progress) {
+                        _suiteInstallProgress.value = event.message
+                    }
+                }
+                syncRegistry()
+                _showSuiteDialog.value = false
+            } catch (e: Exception) {
+                logger.w("Batch install suites failed: ${e.message}", e)
+            } finally {
+                _isInstallingSuites.value = false
+                _suiteInstallProgress.value = null
+            }
+        }
+    }
 }

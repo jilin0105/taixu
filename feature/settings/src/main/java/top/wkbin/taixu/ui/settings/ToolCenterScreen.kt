@@ -120,11 +120,76 @@ fun ToolCenterScreen(
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
+            // 🛠️ 开发者环境套件 (Dev Suites) 聚合卡片
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                ),
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            RuntimeIcon(
+                                name = RuntimeIconName.Package,
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "开发者运行环境套件 (Dev Suites)",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                text = "Python 3 · Node.js · JDK 17 · Android SDK · C/C++ · Flutter",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        FilledTonalButton(
+                            onClick = viewModel::openSuiteDialog,
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                RuntimeIcon(RuntimeIconName.Sparkles, Modifier.size(14.dp))
+                                Text("准备开发环境", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
+                            }
+                        }
+                    }
+                }
+            }
+
             // Category Filter Bar
             LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(categories) { (catId, label) ->
@@ -281,6 +346,97 @@ fun ToolCenterScreen(
                         }
                         TextButton(onClick = { viewModel.viewLogs(null) }) {
                             Text("关闭")
+                        }
+                    }
+                },
+            )
+        }
+
+        // 🛠️ 准备开发环境聚合弹窗 (Dev Suites Dialog)
+        val showSuiteDialog by viewModel.showSuiteDialog.collectAsStateWithLifecycle()
+        val selectedSuites by viewModel.selectedSuites.collectAsStateWithLifecycle()
+        val isInstallingSuites by viewModel.isInstallingSuites.collectAsStateWithLifecycle()
+        val suiteProgressMsg by viewModel.suiteInstallProgress.collectAsStateWithLifecycle()
+
+        if (showSuiteDialog) {
+            AlertDialog(
+                onDismissRequest = viewModel::closeSuiteDialog,
+                title = { Text("准备开发环境", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(
+                            "请选择需要准备的开发环境。系统将自动去重并执行批量原子安全装配：",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+
+                        if (isInstallingSuites) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        androidx.compose.material3.CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                        Text(suiteProgressMsg ?: "正在执行批量装配流水线...", style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                                    }
+                                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)))
+                                }
+                            }
+                        }
+
+                        viewModel.devSuites.forEach { suite ->
+                            val isChecked = suite.id in selectedSuites
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable(enabled = !isInstallingSuites) { viewModel.toggleSuite(suite.id) },
+                                shape = RoundedCornerShape(10.dp),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (isChecked) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                ),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isChecked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                                    else MaterialTheme.colorScheme.surfaceContainerLow,
+                                ),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    androidx.compose.material3.Checkbox(
+                                        checked = isChecked,
+                                        onCheckedChange = { viewModel.toggleSuite(suite.id) },
+                                        enabled = !isInstallingSuites,
+                                    )
+                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text(suite.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                                        Text(suite.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = viewModel::installSelectedSuites,
+                        enabled = !isInstallingSuites && selectedSuites.isNotEmpty(),
+                    ) {
+                        Text(if (isInstallingSuites) "正在装配..." else "开始安装 (${selectedSuites.size})")
+                    }
+                },
+                dismissButton = {
+                    if (!isInstallingSuites) {
+                        TextButton(onClick = viewModel::closeSuiteDialog) {
+                            Text("取消")
                         }
                     }
                 },

@@ -19,7 +19,70 @@ import kotlinx.coroutines.launch
 class WorkspaceViewModel @Inject constructor(
     private val workspaceManager: WorkspaceManager,
     private val workspaceBuildRunner: top.wkbin.taixu.runtime.build.WorkspaceBuildRunner,
+    private val toolManager: top.wkbin.taixu.core.tools.ToolManager,
 ) : ViewModel() {
+
+    // ==================== 开发环境套件弹窗状态 ====================
+    val devSuites: List<top.wkbin.taixu.core.model.DevEnvironmentSuite> = top.wkbin.taixu.core.model.BuiltinDevSuites.presets
+    private val _showDevSuiteDialog = MutableStateFlow(false)
+    val showDevSuiteDialog: StateFlow<Boolean> = _showDevSuiteDialog.asStateFlow()
+
+    private val _selectedDevSuites = MutableStateFlow<Set<String>>(emptySet())
+    val selectedDevSuites: StateFlow<Set<String>> = _selectedDevSuites.asStateFlow()
+
+    private val _isInstallingSuites = MutableStateFlow(false)
+    val isInstallingSuites: StateFlow<Boolean> = _isInstallingSuites.asStateFlow()
+
+    private val _suiteInstallProgress = MutableStateFlow<String?>(null)
+    val suiteInstallProgress: StateFlow<String?> = _suiteInstallProgress.asStateFlow()
+
+    fun openDevEnvironmentDialog(suggestedSuiteId: String? = null) {
+        val initial = if (suggestedSuiteId != null) {
+            when (suggestedSuiteId) {
+                "android_sdk" -> setOf("jdk17", "android_sdk")
+                "flutter" -> setOf("jdk17", "android_sdk", "flutter")
+                else -> setOf(suggestedSuiteId)
+            }
+        } else {
+            devSuites.filter { it.isDefaultSelected }.map { it.id }.toSet()
+        }
+        _selectedDevSuites.value = initial
+        _showDevSuiteDialog.value = true
+    }
+
+    fun closeDevEnvironmentDialog() {
+        if (!_isInstallingSuites.value) {
+            _showDevSuiteDialog.value = false
+        }
+    }
+
+    fun toggleDevSuite(suiteId: String) {
+        val current = _selectedDevSuites.value
+        _selectedDevSuites.value = if (suiteId in current) current - suiteId else current + suiteId
+    }
+
+    fun installSelectedSuites() {
+        val selected = _selectedDevSuites.value.toSet()
+        if (selected.isEmpty()) return
+
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            _isInstallingSuites.value = true
+            try {
+                toolManager.batchInstallSuites(selected).collect { event ->
+                    if (event is top.wkbin.taixu.runtime.tools.InstallEvent.Progress) {
+                        _suiteInstallProgress.value = event.message
+                    }
+                }
+                _message.value = "开发环境已成功部署！"
+                _showDevSuiteDialog.value = false
+            } catch (e: Exception) {
+                _message.value = "部署失败：${e.message}"
+            } finally {
+                _isInstallingSuites.value = false
+                _suiteInstallProgress.value = null
+            }
+        }
+    }
 
     // ==================== 项目列表状态 ====================
     val projects: StateFlow<List<WorkspaceProject>> = workspaceManager.observeProjects()

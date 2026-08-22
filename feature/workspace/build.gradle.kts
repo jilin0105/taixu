@@ -41,5 +41,6 @@ dependencies {
     implementation(project(":feature:theme"))
     implementation(project(":core:database"))
     implementation(project(":runtime"))
+    implementation(project(":tools"))
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
