@@ -902,9 +902,25 @@ class HarnessLoop @Inject constructor(
             "void" -> "xbps-install -S -y <package>"
             else -> "apt-get install -y <package>"
         }
-        val template = runCatching {
-            context.assets.open("prompts/agent_system.md").bufferedReader().use { it.readText() }
-        }.getOrDefault(FALLBACK_SYSTEM_PROMPT)
+        val customPromptEnabled = runCatching { settingsDataStore.customSystemPromptEnabled.first() }.getOrDefault(false)
+        val customPrompt = runCatching { settingsDataStore.customSystemPrompt.first() }.getOrDefault("")
+        val baseRawTemplate = if (customPromptEnabled && customPrompt.isNotBlank()) {
+            customPrompt
+        } else {
+            runCatching {
+                context.assets.open("prompts/agent_system.md").bufferedReader().use { it.readText() }
+            }.getOrDefault(FALLBACK_SYSTEM_PROMPT)
+        }
+
+        val providerModelId = runCatching { settingsDataStore.providerModel.first() }.getOrDefault("")
+        val resolvedTemplate = top.wkbin.taixu.harness.prompt.PromptVariableResolver.resolve(
+            template = baseRawTemplate,
+            context = context,
+            modelId = providerModelId,
+            modelName = providerModelId,
+            charName = "太墟智枢",
+            userName = "用户",
+        )
 
         val allSkills = runCatching { settingsDataStore.allSkills.first() }.getOrDefault(emptyList())
         val selectedSkills = if (mentionedNames.isNotEmpty()) {
@@ -970,11 +986,18 @@ class HarnessLoop @Inject constructor(
             ToolCallMode.NATIVE -> ""
         }
 
-        return template
+        val thinkingLang = runCatching { settingsDataStore.thinkingLanguage.first() }.getOrDefault("zh")
+        val thinkingLanguageSection = when (thinkingLang) {
+            "zh" -> "\n\n## 思考与推理语言强约束 (Thinking Language Policy)\n重要：你的内部思考推导过程（Thinking / Reasoning Process / CoT）必须全程严格使用【中文】进行分析与推导，禁止在思考过程中输出非必要的英文！"
+            "en" -> "\n\n## Thinking Language Policy\nImportant: Your internal reasoning and thinking process must be conducted strictly in English."
+            else -> ""
+        }
+
+        return resolvedTemplate
             .replace("{{DISTRO_NAME}}", distroName)
             .replace("{{PKG_MANAGER}}", pkgManager)
             .replace("{{ACTIVE_SKILLS}}", skillSection)
-            .trim() + installedToolsSection + memorySection + planSection + toolCallSection + workspaceSection + projectContext
+            .trim() + installedToolsSection + memorySection + planSection + toolCallSection + workspaceSection + projectContext + thinkingLanguageSection
     }
 
     private fun extractMentionedNames(text: String): Set<String> {

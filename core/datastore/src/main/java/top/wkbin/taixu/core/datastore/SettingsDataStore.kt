@@ -39,6 +39,39 @@ class SettingsDataStore @Inject constructor(
     private val defaultReasoningDepthKey = stringPreferencesKey("agent_default_reasoning_depth")
     private val agentLoggingEnabledKey = booleanPreferencesKey("agent_local_logging_enabled")
     private val executionModeKey = stringPreferencesKey("execution_mode")
+    private val thinkingLanguageKey = stringPreferencesKey("thinking_language")
+    private val customSystemPromptEnabledKey = booleanPreferencesKey("custom_system_prompt_enabled")
+    private val customSystemPromptKey = stringPreferencesKey("custom_system_prompt")
+
+    val thinkingLanguage: Flow<String> = context.settingsDataStore.data.map { preferences ->
+        preferences[thinkingLanguageKey] ?: "zh"
+    }
+
+    suspend fun setThinkingLanguage(lang: String) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[thinkingLanguageKey] = lang
+        }
+    }
+
+    val customSystemPromptEnabled: Flow<Boolean> = context.settingsDataStore.data.map { preferences ->
+        preferences[customSystemPromptEnabledKey] ?: false
+    }
+
+    suspend fun setCustomSystemPromptEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[customSystemPromptEnabledKey] = enabled
+        }
+    }
+
+    val customSystemPrompt: Flow<String> = context.settingsDataStore.data.map { preferences ->
+        preferences[customSystemPromptKey].orEmpty()
+    }
+
+    suspend fun setCustomSystemPrompt(prompt: String) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[customSystemPromptKey] = prompt
+        }
+    }
 
     val executionMode: Flow<top.wkbin.taixu.core.model.ExecutionMode> = context.settingsDataStore.data.map { preferences ->
         top.wkbin.taixu.core.model.ExecutionMode.fromId(preferences[executionModeKey] ?: top.wkbin.taixu.core.model.ExecutionMode.PROOT.id)

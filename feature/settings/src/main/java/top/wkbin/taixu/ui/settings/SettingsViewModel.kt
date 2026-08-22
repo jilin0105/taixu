@@ -223,6 +223,27 @@ class SettingsViewModel @Inject constructor(
     val thinkingExpanded: StateFlow<Boolean> = settingsDataStore.thinkingExpanded
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    val thinkingLanguage: StateFlow<String> = settingsDataStore.thinkingLanguage
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "zh")
+
+    fun setThinkingLanguage(lang: String) {
+        viewModelScope.launch { settingsDataStore.setThinkingLanguage(lang) }
+    }
+
+    val customSystemPromptEnabled: StateFlow<Boolean> = settingsDataStore.customSystemPromptEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun setCustomSystemPromptEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsDataStore.setCustomSystemPromptEnabled(enabled) }
+    }
+
+    val customSystemPrompt: StateFlow<String> = settingsDataStore.customSystemPrompt
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    fun setCustomSystemPrompt(prompt: String) {
+        viewModelScope.launch { settingsDataStore.setCustomSystemPrompt(prompt) }
+    }
+
     val defaultReasoningDepth: StateFlow<String> = settingsDataStore.defaultReasoningDepth
         .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
 

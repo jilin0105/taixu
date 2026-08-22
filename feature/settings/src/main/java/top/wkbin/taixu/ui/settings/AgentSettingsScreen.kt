@@ -23,6 +23,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -64,6 +69,9 @@ fun AgentSettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val thinkingExpanded by viewModel.thinkingExpanded.collectAsStateWithLifecycle()
+    val thinkingLanguage by viewModel.thinkingLanguage.collectAsStateWithLifecycle()
+    val customSystemPromptEnabled by viewModel.customSystemPromptEnabled.collectAsStateWithLifecycle()
+    val customSystemPrompt by viewModel.customSystemPrompt.collectAsStateWithLifecycle()
     val compactionEnabled by viewModel.contextCompactionEnabled.collectAsStateWithLifecycle()
     val compactionThreshold by viewModel.contextCompactionThreshold.collectAsStateWithLifecycle()
     val maxToolRounds by viewModel.maxToolRounds.collectAsStateWithLifecycle()
@@ -112,6 +120,11 @@ fun AgentSettingsScreen(
                         onCheckedChange = viewModel::setThinkingExpanded,
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    ThinkingLanguageSelectorRow(
+                        currentLang = thinkingLanguage,
+                        onLangChange = viewModel::setThinkingLanguage,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     AgentToggleRow(
                         icon = RuntimeIconName.FolderOpen,
                         title = "自动注入关联工作区路径",
@@ -143,6 +156,22 @@ fun AgentSettingsScreen(
                         onValueChange = viewModel::setMaxConsecutiveFailures,
                     )
                 }
+            }
+
+            // ---- 模块 2：系统提示词与人设自定义 ----
+            item {
+                SectionHeader(
+                    title = "系统提示词与人设自定义",
+                    subtitle = "定制 Agent 初始人设、环境说明与动态宏变量注入",
+                )
+            }
+            item {
+                SystemPromptCustomCard(
+                    enabled = customSystemPromptEnabled,
+                    onEnabledChange = viewModel::setCustomSystemPromptEnabled,
+                    prompt = customSystemPrompt,
+                    onPromptChange = viewModel::setCustomSystemPrompt,
+                )
             }
 
             // ---- 模块 2：上下文记忆与智能压缩 ----
@@ -732,4 +761,189 @@ private fun AddSkillDialog(
             }
         },
     )
+}
+
+@Composable
+private fun ThinkingLanguageSelectorRow(
+    currentLang: String,
+    onLangChange: (String) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            RuntimeIcon(RuntimeIconName.Globe, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+            Column(Modifier.weight(1f)) {
+                Text("思考与推理语言偏好 (Thinking Language)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = when (currentLang) {
+                        "zh" -> "强约束模型思考过程全程使用中文（解决 DeepSeek/Claude 思考总跑英文的问题）"
+                        "en" -> "强制模型思考过程全程使用英文 (English)"
+                        else -> "由模型根据上下文或底层默认策略自主决定思考语言"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            listOf(
+                "zh" to "强制中文 (推荐)",
+                "en" to "英文 (English)",
+                "auto" to "自动 (Auto)",
+            ).forEach { (lang, label) ->
+                FilterChip(
+                    selected = currentLang == lang,
+                    onClick = { onLangChange(lang) },
+                    label = { Text(label, style = MaterialTheme.typography.labelMedium) },
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SystemPromptCustomCard(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    prompt: String,
+    onPromptChange: (String) -> Unit,
+) {
+    var textBuffer by remember(prompt) { mutableStateOf(prompt) }
+
+    val defaultPromptTemplate = """
+You are a helpful and expert AI assistant called {{char}}, based on model {{model_name}}.
+
+## System & Device Context
+- Time: {{cur_datetime}}
+- Locale: {{locale}}
+- Timezone: {{timezone}}
+- Device: {{device_info}}
+- System: {{system_version}}
+- Battery: {{battery_level}}
+
+## Instructions
+- Always think carefully before answering.
+- Follow user instructions precisely and write clean code.
+    """.trimIndent()
+
+    val availableVariables = listOf(
+        "{{cur_date}}" to "日期",
+        "{{cur_time}}" to "时间",
+        "{{cur_datetime}}" to "日期时间",
+        "{{model_name}}" to "模型名称",
+        "{{model_id}}" to "模型ID",
+        "{{locale}}" to "语言环境",
+        "{{timezone}}" to "时区",
+        "{{device_info}}" to "设备信息",
+        "{{system_version}}" to "系统版本",
+        "{{battery_level}}" to "电池电量",
+        "{{char}}" to "助手名称",
+        "{{user}}" to "用户名称",
+    )
+
+    RuntimeCard(
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    RuntimeIcon(RuntimeIconName.Prompt, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                    Column {
+                        Text("自定义系统提示词 (System Prompt)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text("覆盖全局默认 System Prompt，支持动态宏变量注入", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                Switch(
+                    checked = enabled,
+                    onCheckedChange = onEnabledChange,
+                )
+            }
+
+            if (enabled) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("提示词模板内容：", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    TextButton(
+                        onClick = {
+                            textBuffer = defaultPromptTemplate
+                            onPromptChange(defaultPromptTemplate)
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(12.dp))
+                            Text("重置模板", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = textBuffer,
+                    onValueChange = {
+                        textBuffer = it
+                        onPromptChange(it)
+                    },
+                    placeholder = { Text("在此输入自定义系统提示词，支持 {{cur_datetime}} 等宏变量...") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 5,
+                    maxLines = 10,
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                )
+
+                Text("点击快捷插入动态宏变量：", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    availableVariables.forEach { (variable, label) ->
+                        SuggestionChip(
+                            onClick = {
+                                val updated = if (textBuffer.isBlank()) variable else "$textBuffer $variable"
+                                textBuffer = updated
+                                onPromptChange(updated)
+                            },
+                            label = {
+                                Text("$label: $variable", style = MaterialTheme.typography.labelSmall)
+                            },
+                            colors = SuggestionChipDefaults.suggestionChipColors(
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
