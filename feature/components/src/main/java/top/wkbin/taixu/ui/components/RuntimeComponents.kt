@@ -369,16 +369,20 @@ private fun LiquidGlassBottomBar(
                                 isInteracting = true
                                 dragStartIndex = currentSelected.value.ordinal
                                 dragDistancePx = 0f
-                                indicatorAnimation.snapTo(dragStartIndex.toFloat())
-                                offsetAnimation.snapTo(0f)
-                                press()
+                                animationScope.launch {
+                                    indicatorAnimation.snapTo(dragStartIndex.toFloat())
+                                    offsetAnimation.snapTo(0f)
+                                    press()
+                                }
                             },
                             onDrag = { _, amount ->
                                 dragDistancePx += amount.x
                                 val next = (dragStartIndex + dragDistancePx / tabWidth)
                                     .coerceIn(0f, destinations.lastIndex.toFloat())
-                                indicatorAnimation.snapTo(next)
-                                offsetAnimation.snapTo(dragDistancePx)
+                                animationScope.launch {
+                                    indicatorAnimation.snapTo(next)
+                                    offsetAnimation.snapTo(dragDistancePx)
+                                }
                             },
                             onDragEnd = {
                                 val target = (dragStartIndex + dragDistancePx / tabWidth).roundToInt()
@@ -424,10 +428,10 @@ private fun LiquidGlassBottomBar(
  * the Tab click targets underneath the moving glass lens; only actual motion drives the lens.
  */
 private suspend fun PointerInputScope.inspectDragGestures(
-    onDragStart: suspend (PointerInputChange) -> Unit = {},
-    onDragEnd: suspend (PointerInputChange) -> Unit = {},
-    onDragCancel: suspend () -> Unit = {},
-    onDrag: suspend (PointerInputChange, Offset) -> Unit,
+    onDragStart: (PointerInputChange) -> Unit = {},
+    onDragEnd: (PointerInputChange) -> Unit = {},
+    onDragCancel: () -> Unit = {},
+    onDrag: (PointerInputChange, Offset) -> Unit,
 ) {
     awaitEachGesture {
         val initialDown = awaitFirstDown(
@@ -447,7 +451,7 @@ private suspend fun PointerInputScope.inspectDragGestures(
 
 private suspend inline fun AwaitPointerEventScope.inspectDragOrUp(
     pointerId: PointerId,
-    onDrag: suspend (PointerInputChange) -> Unit,
+    onDrag: (PointerInputChange) -> Unit,
 ): PointerInputChange? {
     if (currentEvent.changes.fastFirstOrNull { it.id == pointerId }?.pressed != true) return null
     var pointer = pointerId
