@@ -81,7 +81,6 @@ import top.wkbin.taixu.ui.components.EmptyPanel
 import top.wkbin.taixu.ui.components.IconTile
 import top.wkbin.taixu.ui.components.MainDestination
 import top.wkbin.taixu.ui.components.NoticeBanner
-import top.wkbin.taixu.ui.components.RuntimeBottomBar
 import top.wkbin.taixu.ui.components.liquidGlassContent
 import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeIcon
@@ -287,7 +286,6 @@ fun WorkspaceScreen(
                 }
             }
         },
-        bottomBar = { RuntimeBottomBar(MainDestination.Workspace, onNavigate) },
     ) { padding ->
         Column(
             modifier = Modifier

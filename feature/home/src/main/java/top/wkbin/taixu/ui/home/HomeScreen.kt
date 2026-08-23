@@ -67,7 +67,6 @@ import top.wkbin.taixu.core.model.RepairProgress
 import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.ui.components.MainDestination
 import top.wkbin.taixu.ui.components.NoticeBanner
-import top.wkbin.taixu.ui.components.RuntimeBottomBar
 import top.wkbin.taixu.ui.components.liquidGlassContent
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
@@ -116,7 +115,6 @@ fun HomeScreen(
                 },
             )
         },
-        bottomBar = { RuntimeBottomBar(MainDestination.Home, onNavigate) },
     ) { innerPadding ->
         Column(
             modifier = Modifier

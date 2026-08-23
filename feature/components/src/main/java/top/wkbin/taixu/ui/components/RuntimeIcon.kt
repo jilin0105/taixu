@@ -122,11 +122,22 @@ fun RuntimeIcon(
     }
 
     if (brandResId != null) {
+        val shouldTint = tint != Color.Unspecified || when (name) {
+            RuntimeIconName.NavDashboard,
+            RuntimeIconName.NavMessage,
+            RuntimeIconName.NavRepository,
+            RuntimeIconName.NavSettings -> true
+            else -> false
+        }
         Icon(
             painter = androidx.compose.ui.res.painterResource(brandResId),
             contentDescription = null,
             modifier = modifier,
-            tint = if (tint == Color.Unspecified) Color.Unspecified else tint,
+            tint = if (shouldTint) {
+                if (tint == Color.Unspecified) LocalContentColor.current else tint
+            } else {
+                Color.Unspecified
+            },
         )
     } else {
         Icon(

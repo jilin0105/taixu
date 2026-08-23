@@ -16,7 +16,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -74,6 +73,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -246,7 +247,7 @@ private fun LiquidGlassBottomBar(
     val haptic = LocalHapticFeedback.current
     val destinations = MainDestination.entries
     val capsuleShape = RoundedCornerShape(percent = 50)
-    val isLightTheme = !isSystemInDarkTheme()
+    val isLightTheme = MaterialTheme.colorScheme.onSurface.luminance() < 0.5f
     val accentColor = if (isLightTheme) Color(0xFF0088FF) else Color(0xFF0091FF)
     val containerColor = if (isLightTheme) Color(0xFFFAFAFA).copy(alpha = 0.4f)
     else Color(0xFF121212).copy(alpha = 0.4f)
@@ -259,9 +260,11 @@ private fun LiquidGlassBottomBar(
     var isInteracting by remember { mutableStateOf(false) }
     var isDragging by remember { mutableStateOf(false) }
     var animationJob by remember { mutableStateOf<Job?>(null) }
+    var dragStartIndex by remember { mutableIntStateOf(selected.ordinal) }
+    var dragDistancePx by remember { mutableFloatStateOf(0f) }
     val density = LocalDensity.current
     val tabsBackdrop = rememberLayerBackdrop()
-    val baseContentColor = MaterialTheme.colorScheme.onSurface
+    val baseContentColor = if (isLightTheme) Color.Black else Color.White
     val currentSelected = rememberUpdatedState(selected)
     val tabScale = lerp(1f, 1.2f, pressAnimation.value)
     fun press() {
@@ -312,7 +315,10 @@ private fun LiquidGlassBottomBar(
             indicatorAnimation.animateTo(selected.ordinal.toFloat(), spring(1f, 1000f, 0.001f))
         }
     }
-    androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        modifier = modifier,
+        contentAlignment = Alignment.CenterStart,
+    ) {
         val tabWidth = with(density) { (constraints.maxWidth.toFloat() - 8.dp.toPx()) / destinations.size }
         val panelOffset by remember(offsetAnimation.value, constraints.maxWidth) {
             derivedStateOf {
@@ -324,16 +330,15 @@ private fun LiquidGlassBottomBar(
             .graphicsLayer { translationX = panelOffset; val scale = lerp(1f, 1f + 16.dp.toPx() / size.width, pressAnimation.value); scaleX = scale; scaleY = scale }
             .drawBackdrop(backdrop = backdrop, shape = { capsuleShape }, effects = { vibrancy(); blur(8.dp.toPx()); lens(24.dp.toPx(), 24.dp.toPx()) }, onDrawSurface = { drawRect(containerColor) })
             .height(64.dp).fillMaxWidth().padding(4.dp)
-        Box(Modifier.fillMaxWidth().height(64.dp)) {
-            Row(trackModifier, verticalAlignment = Alignment.CenterVertically) {
+        Row(trackModifier, verticalAlignment = Alignment.CenterVertically) {
                 destinations.forEach { destination ->
                     Column(Modifier.clip(capsuleShape).fillMaxHeight().weight(1f).clickable(interactionSource = null, indication = null) { animateTo(destination.ordinal, true) }, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically), horizontalAlignment = Alignment.CenterHorizontally) {
                         RuntimeIcon(destination.icon, Modifier.size(22.dp), tint = baseContentColor)
                         Text(destination.label, color = baseContentColor, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1)
                     }
                 }
-            }
-            Row(
+        }
+        Row(
                 Modifier.align(Alignment.CenterStart).alpha(0f).layerBackdrop(tabsBackdrop).graphicsLayer { translationX = panelOffset }.drawBackdrop(backdrop = backdrop, shape = { capsuleShape }, effects = { vibrancy(); blur(8.dp.toPx()); lens(24.dp.toPx() * pressAnimation.value, 24.dp.toPx() * pressAnimation.value) }, highlight = { Highlight.Default.copy(alpha = pressAnimation.value) }, onDrawSurface = { drawRect(containerColor) }).height(56.dp).fillMaxWidth().padding(horizontal = 4.dp).graphicsLayer(colorFilter = ColorFilter.tint(accentColor)),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -343,8 +348,8 @@ private fun LiquidGlassBottomBar(
                         Text(destination.label, color = baseContentColor, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1)
                     }
                 }
-            }
-            Box(
+        }
+        Box(
                 Modifier
                     .align(Alignment.CenterStart)
                     .padding(horizontal = 4.dp)
@@ -362,22 +367,21 @@ private fun LiquidGlassBottomBar(
                                 animationJob?.cancel()
                                 isDragging = true
                                 isInteracting = true
-                                animationScope.launch {
-                                    indicatorAnimation.snapTo(currentSelected.value.ordinal.toFloat())
-                                    offsetAnimation.snapTo(0f)
-                                    press()
-                                }
+                                dragStartIndex = currentSelected.value.ordinal
+                                dragDistancePx = 0f
+                                indicatorAnimation.snapTo(dragStartIndex.toFloat())
+                                offsetAnimation.snapTo(0f)
+                                press()
                             },
                             onDrag = { _, amount ->
-                                val next = (indicatorAnimation.value + amount.x / tabWidth)
+                                dragDistancePx += amount.x
+                                val next = (dragStartIndex + dragDistancePx / tabWidth)
                                     .coerceIn(0f, destinations.lastIndex.toFloat())
-                                animationScope.launch {
-                                    indicatorAnimation.snapTo(next)
-                                    offsetAnimation.snapTo(offsetAnimation.value + amount.x)
-                                }
+                                indicatorAnimation.snapTo(next)
+                                offsetAnimation.snapTo(dragDistancePx)
                             },
                             onDragEnd = {
-                                val target = indicatorAnimation.value.roundToInt()
+                                val target = (dragStartIndex + dragDistancePx / tabWidth).roundToInt()
                                     .coerceIn(0, destinations.lastIndex)
                             if (destinations[target] != currentSelected.value) {
                                 onNavigate(destinations[target])
@@ -411,8 +415,7 @@ private fun LiquidGlassBottomBar(
                             },
                         )
                     },
-            )
-        }
+        )
     }
 }
 
@@ -421,10 +424,10 @@ private fun LiquidGlassBottomBar(
  * the Tab click targets underneath the moving glass lens; only actual motion drives the lens.
  */
 private suspend fun PointerInputScope.inspectDragGestures(
-    onDragStart: (PointerInputChange) -> Unit = {},
-    onDragEnd: (PointerInputChange) -> Unit = {},
-    onDragCancel: () -> Unit = {},
-    onDrag: (PointerInputChange, Offset) -> Unit,
+    onDragStart: suspend (PointerInputChange) -> Unit = {},
+    onDragEnd: suspend (PointerInputChange) -> Unit = {},
+    onDragCancel: suspend () -> Unit = {},
+    onDrag: suspend (PointerInputChange, Offset) -> Unit,
 ) {
     awaitEachGesture {
         val initialDown = awaitFirstDown(
@@ -444,7 +447,7 @@ private suspend fun PointerInputScope.inspectDragGestures(
 
 private suspend inline fun AwaitPointerEventScope.inspectDragOrUp(
     pointerId: PointerId,
-    onDrag: (PointerInputChange) -> Unit,
+    onDrag: suspend (PointerInputChange) -> Unit,
 ): PointerInputChange? {
     if (currentEvent.changes.fastFirstOrNull { it.id == pointerId }?.pressed != true) return null
     var pointer = pointerId

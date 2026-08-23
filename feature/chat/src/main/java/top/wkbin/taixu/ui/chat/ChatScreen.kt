@@ -124,7 +124,6 @@ import top.wkbin.taixu.harness.UserMessage
 import top.wkbin.taixu.runtime.WorkspaceProject
 import top.wkbin.taixu.ui.components.MainDestination
 import top.wkbin.taixu.ui.components.NoticeBanner
-import top.wkbin.taixu.ui.components.RuntimeBottomBar
 import top.wkbin.taixu.ui.components.liquidGlassContent
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
@@ -224,7 +223,6 @@ fun ChatScreen(
     val density = LocalDensity.current
     val imeBottom = WindowInsets.ime.getBottom(density)
     val navigationBottom = WindowInsets.navigationBars.getBottom(density)
-    val imeVisible = imeBottom > navigationBottom
     val composerBottomPadding = with(density) {
         maxOf(imeBottom, navigationBottom + AgentBottomBarHeight.roundToPx()).toDp()
     }
@@ -489,11 +487,6 @@ fun ChatScreen(
                 )
             }
 
-            if (!imeVisible) {
-                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
-                    RuntimeBottomBar(MainDestination.Agent, onNavigate)
-                }
-            }
         }
     }
 

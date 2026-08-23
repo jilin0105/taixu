@@ -1,15 +1,17 @@
 package top.wkbin.taixu.ui.navigation
 
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.navigation3.runtime.NavBackStack
 import androidx.navigation3.runtime.NavKey
@@ -18,7 +20,9 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
 import top.wkbin.taixu.ui.chat.ChatScreen
+import top.wkbin.taixu.ui.chat.ChatViewModel
 import top.wkbin.taixu.ui.components.MainDestination
+import top.wkbin.taixu.ui.components.RuntimeBottomBar
 import top.wkbin.taixu.ui.developer.DeveloperScreen
 import top.wkbin.taixu.ui.home.HomeScreen
 import top.wkbin.taixu.ui.settings.AgentSettingsScreen
@@ -68,7 +72,7 @@ fun TaiXuNavHost() {
     val agentStack = rememberNavBackStack(AgentDestination)
     val workspaceStack = rememberNavBackStack(WorkspaceDestination)
     val settingsStack = rememberNavBackStack(SettingsDestination)
-    val chatViewModel: top.wkbin.taixu.ui.chat.ChatViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
+    var pendingHealingTask by remember { mutableStateOf<HealingTask?>(null) }
     var selectedMain by rememberSaveable { mutableStateOf(MainDestination.Home) } // 默认进入太墟开辟主界
 
     val activeStack = when (selectedMain) {
@@ -90,21 +94,17 @@ fun TaiXuNavHost() {
         if (activeStack.size > 1) activeStack.removeLastOrNull()
     }
 
-    NavDisplay(
-        backStack = activeStack,
-        modifier = Modifier.fillMaxSize(),
-        onBack = ::popBack,
-        entryDecorators = listOf(
-            rememberSaveableStateHolderNavEntryDecorator(),
-            rememberViewModelStoreNavEntryDecorator(),
-        ),
-        // Navigation 3's default transition is a 700 ms crossfade. In the glass
-        // theme that keeps two full pages and their blur/lens layers composited
-        // during every tab switch, causing visible frame drops.
-        transitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
-        popTransitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
-        predictivePopTransitionSpec = { _, _ -> EnterTransition.None togetherWith ExitTransition.None },
-        entryProvider = entryProvider {
+    val density = LocalDensity.current
+    Box(Modifier.fillMaxSize()) {
+        NavDisplay(
+            backStack = activeStack,
+            modifier = Modifier.fillMaxSize(),
+            onBack = ::popBack,
+            entryDecorators = listOf(
+                rememberSaveableStateHolderNavEntryDecorator(),
+                rememberViewModelStoreNavEntryDecorator(),
+            ),
+            entryProvider = entryProvider {
             entry<HomeDestination> {
                 HomeScreen(
                     onNavigate = ::navigateMain,
@@ -112,7 +112,15 @@ fun TaiXuNavHost() {
                 )
             }
             entry<AgentDestination> {
+                val chatViewModel: ChatViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
+                LaunchedEffect(pendingHealingTask) {
+                    pendingHealingTask?.let { task ->
+                        chatViewModel.startHealingTask(task.title, task.prompt)
+                        pendingHealingTask = null
+                    }
+                }
                 ChatScreen(
+                    viewModel = chatViewModel,
                     onNavigate = ::navigateMain,
                     onOpenFile = { projectName, relativePath ->
                         selectedMain = MainDestination.Workspace
@@ -203,7 +211,7 @@ fun TaiXuNavHost() {
                     onOpenToolDetail = { toolId -> settingsStack.push(ToolDetailDestination(toolId = toolId)) },
                     onStartAiHealing = { toolId, toolName, logs ->
                         val prompt = top.wkbin.taixu.ui.settings.ToolSelfHealingHelper.buildHealingPrompt(toolId, toolName, logs)
-                        chatViewModel.startHealingTask("🔧 自愈: $toolName", prompt)
+                        pendingHealingTask = HealingTask("🔧 自愈: $toolName", prompt)
                         selectedMain = MainDestination.Agent
                     },
                 )
@@ -215,7 +223,7 @@ fun TaiXuNavHost() {
                     onLaunchTerminal = { toolId -> homeStack.push(TerminalDestination(toolId = toolId)) },
                     onStartAiHealing = { toolId, toolName, logs ->
                         val prompt = top.wkbin.taixu.ui.settings.ToolSelfHealingHelper.buildHealingPrompt(toolId, toolName, logs)
-                        chatViewModel.startHealingTask("🔧 自愈: $toolName", prompt)
+                        pendingHealingTask = HealingTask("🔧 自愈: $toolName", prompt)
                         selectedMain = MainDestination.Agent
                     },
                 )
@@ -246,6 +254,15 @@ fun TaiXuNavHost() {
             entry<TerminalDestination> { destination ->
                 TerminalScreen(onBack = ::popBack, project = destination.project)
             }
-        },
-    )
+            },
+        )
+        if (activeStack.size == 1 && WindowInsets.ime.getBottom(density) == 0) {
+            RuntimeBottomBar(selectedMain, ::navigateMain)
+        }
+    }
 }
+
+private data class HealingTask(
+    val title: String,
+    val prompt: String,
+)
