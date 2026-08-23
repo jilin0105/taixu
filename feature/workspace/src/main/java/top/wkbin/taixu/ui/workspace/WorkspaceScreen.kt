@@ -81,12 +81,14 @@ import top.wkbin.taixu.ui.components.EmptyPanel
 import top.wkbin.taixu.ui.components.IconTile
 import top.wkbin.taixu.ui.components.MainDestination
 import top.wkbin.taixu.ui.components.NoticeBanner
+import top.wkbin.taixu.ui.components.RuntimeBottomBar
 import top.wkbin.taixu.ui.components.liquidGlassContent
 import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
 import top.wkbin.taixu.ui.components.SectionHeader
+import top.wkbin.taixu.ui.theme.LocalLiquidGlassBackdrop
 import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -269,6 +271,7 @@ fun WorkspaceScreen(
             android.content.pm.PackageManager.PERMISSION_GRANTED
     }
 
+    val glassBackdrop = LocalLiquidGlassBackdrop.current
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -286,31 +289,35 @@ fun WorkspaceScreen(
                 }
             }
         },
+        bottomBar = {
+            if (glassBackdrop == null) {
+                RuntimeBottomBar(MainDestination.Workspace, onNavigate)
+            }
+        },
     ) { padding ->
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .liquidGlassContent()
-                .padding(top = padding.calculateTopPadding())
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 6.dp)
-                .padding(bottom = 104.dp),
+                .padding(top = padding.calculateTopPadding()),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 104.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            message?.let { notice ->
-                NoticeBanner(
-                    text = notice,
-                    isError = notice.contains("失败") || notice.contains("无效") || notice.contains("存在"),
-                )
-            }
+            item {
+                message?.let { notice ->
+                    NoticeBanner(
+                        text = notice,
+                        isError = notice.contains("失败") || notice.contains("无效") || notice.contains("存在"),
+                    )
+                }
 
-            // 🔨 后台构建常驻状态栏 (Banner)
-            if (activeBuildingProjectName != null && !isBuildDialogVisible) {
-                Surface(
+                // 后台构建常驻状态栏 (Banner)
+                if (activeBuildingProjectName != null && !isBuildDialogVisible) {
+                    Surface(
                     color = MaterialTheme.colorScheme.primaryContainer,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth().clickable { viewModel.showBuildDialog() },
-                ) {
+                    ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -339,14 +346,14 @@ fun WorkspaceScreen(
                             Text("查看日志", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                         }
                     }
-                }
-            } else if (activeBuildingProjectName == null && buildProgress != null && !isBuildDialogVisible) {
-                val progress = buildProgress!!
-                Surface(
+                    }
+                } else if (activeBuildingProjectName == null && buildProgress != null && !isBuildDialogVisible) {
+                    val progress = buildProgress!!
+                    Surface(
                     color = if (progress.isSuccess == true) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.errorContainer,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
-                ) {
+                    ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -387,16 +394,18 @@ fun WorkspaceScreen(
                             }
                         }
                     }
+                    }
                 }
             }
 
-            // 宿主外部存储快速访问入口
-            RuntimeCard(
+            item {
+                // 宿主外部存储快速访问入口
+                RuntimeCard(
                 modifier = Modifier.fillMaxWidth(),
                 borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
                 onClick = { onOpenExplorer("sdcard") },
                 contentPadding = PaddingValues(14.dp),
-            ) {
+                ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -435,28 +444,35 @@ fun WorkspaceScreen(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                }
             }
 
-            SectionHeader(
-                title = "工坊隔离工程",
-                subtitle = "位于 Linux 沙箱 /workspace 目录下，与 Agent 实时互通",
-            )
+            item {
+                SectionHeader(
+                    title = "工坊隔离工程",
+                    subtitle = "位于 Linux 沙箱 /workspace 目录下，与 Agent 实时互通",
+                )
+            }
 
             if (loadingProjects) {
-                repeat(3) { index ->
-                    ProjectCardSkeleton(
-                        modifier = Modifier.padding(top = if (index == 0) 16.dp else 0.dp),
-                    )
+                item {
+                    repeat(3) { index ->
+                        ProjectCardSkeleton(
+                            modifier = Modifier.padding(top = if (index == 0) 16.dp else 0.dp),
+                        )
+                    }
                 }
             } else if (projects.isEmpty()) {
-                EmptyPanel(
-                    icon = RuntimeIconName.Workspace,
-                    title = "还没有工坊工程",
-                    description = "点击右上角 ➕ 选择 Android / Flutter / APK 逆向模板或自定义创建工程",
-                    modifier = Modifier.padding(top = 24.dp),
-                )
+                item {
+                    EmptyPanel(
+                        icon = RuntimeIconName.Workspace,
+                        title = "还没有工坊工程",
+                        description = "点击右上角 ➕ 选择 Android / Flutter / APK 逆向模板或自定义创建工程",
+                        modifier = Modifier.padding(top = 24.dp),
+                    )
+                }
             } else {
-                projects.forEach { project ->
+                items(projects, key = { it.name }) { project ->
                     ProjectCard(
                         project = project,
                         busy = busy,
@@ -472,7 +488,7 @@ fun WorkspaceScreen(
             }
 
 
-            Spacer(Modifier.height(16.dp))
+            item { Spacer(Modifier.height(16.dp)) }
         }
     }
 

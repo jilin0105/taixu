@@ -67,6 +67,7 @@ import top.wkbin.taixu.core.model.RepairProgress
 import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.ui.components.MainDestination
 import top.wkbin.taixu.ui.components.NoticeBanner
+import top.wkbin.taixu.ui.components.RuntimeBottomBar
 import top.wkbin.taixu.ui.components.liquidGlassContent
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
@@ -74,6 +75,7 @@ import top.wkbin.taixu.ui.components.RuntimeTopBar
 import top.wkbin.taixu.ui.components.RuntimeButton
 import top.wkbin.taixu.ui.components.distroIconFor
 import top.wkbin.taixu.ui.components.StatusBadge
+import top.wkbin.taixu.ui.theme.LocalLiquidGlassBackdrop
 
 /**
  * 太墟 · 运行仪表盘 (TaiXu Linux Runtime Dashboard)
@@ -95,6 +97,7 @@ fun HomeScreen(
     val activeDistroId by viewModel.activeDistroId.collectAsStateWithLifecycle()
     val switchingDistro by viewModel.switchingDistro.collectAsStateWithLifecycle()
 
+    val glassBackdrop = LocalLiquidGlassBackdrop.current
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -114,6 +117,11 @@ fun HomeScreen(
                     }
                 },
             )
+        },
+        bottomBar = {
+            if (glassBackdrop == null) {
+                RuntimeBottomBar(MainDestination.Home, onNavigate)
+            }
         },
     ) { innerPadding ->
         Column(

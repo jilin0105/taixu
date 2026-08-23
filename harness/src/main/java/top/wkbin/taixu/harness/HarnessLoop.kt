@@ -121,15 +121,26 @@ class HarnessLoop @Inject constructor(
 
     private fun getOrCreateLiveMessages(sessId: String): MutableStateFlow<List<HarnessMessage>> {
         return _sessionLiveMessages.getOrPut(sessId) {
-            val history = kotlinx.coroutines.runBlocking {
-                messageDao.listForSession(sessId).mapNotNull { entity ->
-                    runCatching {
-                        json.decodeFromString(HarnessMessage.serializer(), entity.payloadJson)
-                    }.getOrNull()
-                }
+            val flow = MutableStateFlow<List<HarnessMessage>>(emptyList())
+            loopScope.launch(Dispatchers.IO) {
+                val history = readHistory(sessId)
+                // Do not overwrite messages appended while the asynchronous read was running.
+                if (flow.value.isEmpty()) flow.value = history
             }
-            MutableStateFlow(history)
+            flow
         }
+    }
+
+    private suspend fun readHistory(sessId: String): List<HarnessMessage> = withContext(Dispatchers.IO) {
+        runCatching {
+            messageDao.listForSession(sessId).mapNotNull { entity ->
+                runCatching {
+                    json.decodeFromString(HarnessMessage.serializer(), entity.payloadJson)
+                }.getOrNull()
+            }
+        }.onFailure { throwable ->
+            logger.e("Failed to load history for session $sessId: ${throwable.message}", throwable)
+        }.getOrDefault(emptyList())
     }
 
     private fun getOrCreatePendingFlow(sessId: String): MutableStateFlow<List<String>> {
@@ -211,23 +222,15 @@ class HarnessLoop @Inject constructor(
     /** 恢复已有会话的历史消息与工作区关联，不中断正在后台运行的任何会话。 */
     suspend fun loadSession(id: String) {
         _currentSessionId.value = id
-        val sessionEntity = sessionDao.findById(id)
+        val sessionEntity = withContext(Dispatchers.IO) { sessionDao.findById(id) }
         _workspace.value = sessionEntity?.workspace.orEmpty()
         _projectType.value = sessionEntity?.projectType.orEmpty()
 
-        val liveFlow = _sessionLiveMessages.getOrPut(id) {
-            val history = try {
-                messageDao.listForSession(id)
-                    .mapNotNull { entity ->
-                        runCatching {
-                            json.decodeFromString(HarnessMessage.serializer(), entity.payloadJson)
-                        }.getOrNull()
-                    }
-            } catch (throwable: Throwable) {
-                logger.e("Failed to load history for session $id: ${throwable.message}", throwable)
-                emptyList()
+        val liveFlow = _sessionLiveMessages[id] ?: run {
+            val history = readHistory(id)
+            MutableStateFlow(history).also { created ->
+                _sessionLiveMessages.putIfAbsent(id, created)
             }
-            MutableStateFlow(history)
         }
 
         _messages.value = liveFlow.value
@@ -237,7 +240,7 @@ class HarnessLoop @Inject constructor(
         _thinkingLive.value = _sessionThinkingLives[id]?.value ?: false
         _pendingMessages.value = _sessionPendingMessages[id]?.value ?: emptyList()
 
-        if (approvalRepository.pendingNow(id).isNotEmpty()) {
+        if (withContext(Dispatchers.IO) { approvalRepository.pendingNow(id).isNotEmpty() }) {
             setSessionState(id, SessionRunState.WAITING_APPROVAL)
             setStatus(id, "等待用户批准")
         }

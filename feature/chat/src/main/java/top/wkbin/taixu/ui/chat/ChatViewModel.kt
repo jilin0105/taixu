@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 import top.wkbin.taixu.ui.terminal.TerminalSessionManager
@@ -52,7 +53,7 @@ class ChatViewModel @Inject constructor(
     val installedDistros: StateFlow<List<top.wkbin.taixu.core.model.InstalledDistro>> = linuxRuntime.installedDistros
 
     fun switchDistro(distroId: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             // 先关闭所有旧系统 PTY 会话，再切换发行版
             terminalSessionManager.closeAllSessions()
             linuxRuntime.switchActiveDistro(distroId)
@@ -277,7 +278,7 @@ class ChatViewModel @Inject constructor(
     val initializing: StateFlow<Boolean> = _initializing.asStateFlow()
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             // 恢复最近会话；没有则新建
             val latest = sessionDao.observeAll().first().firstOrNull()
             if (latest != null) {

@@ -39,6 +39,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core.jvm)
     implementation(libs.kotlinx.serialization.json.jvm)
     implementation(project(":feature:components"))
+    implementation(project(":feature:theme"))
     implementation(project(":runtime"))
     implementation(project(":feature:terminal"))
     debugImplementation(libs.androidx.compose.ui.tooling)

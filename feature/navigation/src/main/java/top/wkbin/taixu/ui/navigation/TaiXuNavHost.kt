@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
@@ -24,6 +25,7 @@ import top.wkbin.taixu.ui.chat.ChatScreen
 import top.wkbin.taixu.ui.chat.ChatViewModel
 import top.wkbin.taixu.ui.components.MainDestination
 import top.wkbin.taixu.ui.components.RuntimeBottomBar
+import top.wkbin.taixu.ui.theme.LocalLiquidGlassBackdrop
 import top.wkbin.taixu.ui.developer.DeveloperScreen
 import top.wkbin.taixu.ui.home.HomeScreen
 import top.wkbin.taixu.ui.settings.AgentSettingsScreen
@@ -257,8 +259,12 @@ fun TaiXuNavHost() {
             }
             },
         )
-        if (activeStack.size == 1 && WindowInsets.ime.getBottom(density) == 0) {
-            RuntimeBottomBar(selectedMain, ::navigateMain)
+        if (LocalLiquidGlassBackdrop.current != null && activeStack.size == 1 && WindowInsets.ime.getBottom(density) == 0) {
+            RuntimeBottomBar(
+                selected = selectedMain,
+                onNavigate = ::navigateMain,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
     }
 }

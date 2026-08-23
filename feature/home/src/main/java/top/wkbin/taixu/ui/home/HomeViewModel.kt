@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.core.model.DoctorReport
@@ -87,6 +89,7 @@ class HomeViewModel @Inject constructor(
 
     private var initializationJob: Job? = null
     private var doctorJob: Job? = null
+    private var metricsRefreshJob: Job? = null
 
     init {
         startMetricsMonitoring()
@@ -147,7 +150,9 @@ class HomeViewModel @Inject constructor(
     }
 
     fun refreshMetrics() {
-        try {
+        if (metricsRefreshJob?.isActive == true) return
+        metricsRefreshJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
             // 1. 内存指标 (RAM)
             val actManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
             val memInfo = ActivityManager.MemoryInfo()
@@ -185,7 +190,7 @@ class HomeViewModel @Inject constructor(
             val arch = Build.SUPPORTED_ABIS.firstOrNull() ?: "aarch64"
             val androidVer = "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
 
-            viewModelScope.launch {
+            withContext(Dispatchers.Main.immediate) {
                 val currentDistro = linuxRuntime.activeDistroId.value
                 val distroDisplayName = DistributionCatalog.require(currentDistro).displayName
 
@@ -206,8 +211,9 @@ class HomeViewModel @Inject constructor(
                     uptimeFormatted = uptime,
                 )
             }
-        } catch (e: Exception) {
-            logger.w("HomeViewModel: Failed to refresh metrics: ${e.message}", e)
+            } catch (e: Exception) {
+                logger.w("HomeViewModel: Failed to refresh metrics: ${e.message}", e)
+            }
         }
     }
 

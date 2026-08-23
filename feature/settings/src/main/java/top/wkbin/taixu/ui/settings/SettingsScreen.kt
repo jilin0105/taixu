@@ -77,6 +77,7 @@ import top.wkbin.taixu.core.tools.AgentProviderDefinition
 import top.wkbin.taixu.core.tools.ProviderEndpointPolicy
 import top.wkbin.taixu.ui.components.IconTile
 import top.wkbin.taixu.ui.components.MainDestination
+import top.wkbin.taixu.ui.components.RuntimeBottomBar
 import top.wkbin.taixu.ui.components.liquidGlassContent
 import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeSwitch
@@ -84,6 +85,7 @@ import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
 import top.wkbin.taixu.ui.components.SectionHeader
+import top.wkbin.taixu.ui.theme.LocalLiquidGlassBackdrop
 
 /**
  * 太墟 · 乾坤配置 (TaiXu Settings & Models)
@@ -113,6 +115,7 @@ fun SettingsScreen(
         else -> "跟随系统"
     }
 
+    val glassBackdrop = LocalLiquidGlassBackdrop.current
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -120,6 +123,11 @@ fun SettingsScreen(
                 title = "太墟 · 乾坤",
                 statusText = "系统设置与控制中枢",
             )
+        },
+        bottomBar = {
+            if (glassBackdrop == null) {
+                RuntimeBottomBar(MainDestination.Settings, onNavigate)
+            }
         },
     ) { padding ->
         LazyColumn(

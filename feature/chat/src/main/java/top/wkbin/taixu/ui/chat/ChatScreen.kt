@@ -124,10 +124,12 @@ import top.wkbin.taixu.harness.UserMessage
 import top.wkbin.taixu.runtime.WorkspaceProject
 import top.wkbin.taixu.ui.components.MainDestination
 import top.wkbin.taixu.ui.components.NoticeBanner
+import top.wkbin.taixu.ui.components.RuntimeBottomBar
 import top.wkbin.taixu.ui.components.liquidGlassContent
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
+import top.wkbin.taixu.ui.theme.LocalLiquidGlassBackdrop
 
 private val DotRunning = Color(0xFFB25E00)
 private val DotSuccess = Color(0xFF2E7D32)
@@ -223,6 +225,7 @@ fun ChatScreen(
     val density = LocalDensity.current
     val imeBottom = WindowInsets.ime.getBottom(density)
     val navigationBottom = WindowInsets.navigationBars.getBottom(density)
+    val imeVisible = imeBottom > navigationBottom
     val composerBottomPadding = with(density) {
         maxOf(imeBottom, navigationBottom + AgentBottomBarHeight.roundToPx()).toDp()
     }
@@ -487,6 +490,11 @@ fun ChatScreen(
                 )
             }
 
+            if (LocalLiquidGlassBackdrop.current == null && !imeVisible) {
+                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+                    RuntimeBottomBar(MainDestination.Agent, onNavigate)
+                }
+            }
         }
     }
 
