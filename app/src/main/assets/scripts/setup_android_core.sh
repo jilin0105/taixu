@@ -35,6 +35,40 @@ echo "==> [TaiXu] 正在初始化 Android 核心基础环境 (插件装配期一
 
 mkdir -p /opt /usr/local/bin /usr/bin ${TAIXU_TOOL_DIR:-/opt/taixu/tools}/bin /tmp 2>/dev/null || true
 
+# AGP strips Flutter/Android native libraries during packaging. The Android SDK
+# NDK archive only ships a linux-x86_64 llvm-strip, which cannot execute inside
+# our ARM64 PRoot. Prefer the distro's native LLVM package and expose one stable
+# ARM64 binary for the build scripts to wire into each installed NDK.
+find_native_llvm_strip() {
+    for candidate in /usr/bin/llvm-strip /usr/bin/llvm-strip-* /usr/lib/llvm-*/bin/llvm-strip; do
+        [ -x "$candidate" ] || continue
+        resolved="$(readlink -f "$candidate" 2>/dev/null || true)"
+        [ -n "$resolved" ] && [ -x "$resolved" ] || continue
+        case "$resolved" in /opt/taixu/android-sdk-tools/llvm/*) continue ;; esac
+        "$resolved" --version >/dev/null 2>&1 || continue
+        echo "$resolved"
+        return 0
+    done
+    return 1
+}
+
+LLVM_STRIP_PATH="$(find_native_llvm_strip || true)"
+if [ -z "$LLVM_STRIP_PATH" ]; then
+    echo "==> [TaiXu] 正在部署 ARM64 LLVM strip 工具..."
+    (DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null 2>&1 && \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends llvm >/dev/null 2>&1) || true
+    LLVM_STRIP_PATH="$(find_native_llvm_strip || true)"
+fi
+if [ -n "$LLVM_STRIP_PATH" ] && [ -x "$LLVM_STRIP_PATH" ]; then
+    mkdir -p /opt/taixu/android-sdk-tools/llvm
+    ln -sf "$LLVM_STRIP_PATH" /opt/taixu/android-sdk-tools/llvm/llvm-strip
+    export TAIXU_LLVM_STRIP_PATH=/opt/taixu/android-sdk-tools/llvm/llvm-strip
+    echo "==> [TaiXu] ARM64 llvm-strip: $LLVM_STRIP_PATH"
+else
+    echo "!! [TaiXu] 未找到 ARM64 llvm-strip"
+    exit 1
+fi
+
 # ------------------------------------------------------------------------------
 # 步骤 1：定位 JDK 目录
 # ------------------------------------------------------------------------------
@@ -450,6 +484,7 @@ export ANDROID_SDK_ROOT="$SDK_HOME"
 export GRADLE_HOME="/opt/gradle-$GRADLE_VER"
 export TAIXU_AAPT2_PATH="${TAIXU_AAPT2_PATH:-}"
 export TAIXU_AAPT2_MODE="$AAPT2_MODE"
+export TAIXU_LLVM_STRIP_PATH="$TAIXU_LLVM_STRIP_PATH"
 export PATH="\$JAVA_HOME/bin:\$GRADLE_HOME/bin:\$PATH"
 # PRoot sandbox: use non-blocking entropy
 export _JAVA_OPTIONS="-Djava.security.egd=file:/dev/urandom"
@@ -462,6 +497,7 @@ ANDROID_SDK_ROOT=$SDK_HOME
 GRADLE_HOME=/opt/gradle-$GRADLE_VER
 TAIXU_AAPT2_PATH=$TAIXU_AAPT2_PATH
 TAIXU_AAPT2_MODE=$AAPT2_MODE
+TAIXU_LLVM_STRIP_PATH=$TAIXU_LLVM_STRIP_PATH
 PATH=$JAVA_HOME_RESOLVED/bin:/opt/gradle-$GRADLE_VER/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 _JAVA_OPTIONS=-Djava.security.egd=file:/dev/urandom
 EOF
@@ -484,6 +520,7 @@ echo "==> [TaiXu] 装配自检:"
 [ -f "$SDK_HOME/platforms/android-34/android.jar" ] && echo "    [OK] Android Platform 34" || { echo "    [MISS] Android 平台包"; exit 1; }
 [ -s "$SDK_HOME/licenses/android-sdk-license" ] && echo "    [OK] Android SDK licenses" || { echo "    [MISS] Android SDK licenses"; exit 1; }
 [ -f "$BUILD_TOOLS_DIR/source.properties" ] && [ -f "$BUILD_TOOLS_DIR/lib/d8.jar" ] && echo "    [OK] Build-Tools 34 (d8/r8 + metadata)" || { echo "    [MISS] Build-Tools 34"; exit 1; }
+[ -x "$TAIXU_LLVM_STRIP_PATH" ] && "$TAIXU_LLVM_STRIP_PATH" --version >/dev/null 2>&1 && echo "    [OK] ARM64 llvm-strip" || { echo "    [MISS] ARM64 llvm-strip"; exit 1; }
 if [ "$AAPT2_MODE" = "qemu" ]; then
     [ -x "$TAIXU_AAPT2_PATH" ] && echo "    [OK] QEMU AAPT2: $TAIXU_AAPT2_PATH" || { echo "    [MISS] QEMU AAPT2"; exit 1; }
     [ -x "$AAPT2_X86_64_PATH" ] && is_x86_64_elf "$AAPT2_X86_64_PATH" || { echo "    [MISS] x86_64 AAPT2 payload: $AAPT2_X86_64_PATH"; exit 1; }

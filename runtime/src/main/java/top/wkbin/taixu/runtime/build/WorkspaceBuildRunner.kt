@@ -279,7 +279,17 @@ class WorkspaceBuildRunner @Inject constructor(
                 // 导出到手机公共存储 Download 目录
                 send(BuildRunProgress(step = "正在导出 APK 到手机下载目录...", progress = 0.93f, logOutput = logs.toString()))
                 val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                val targetApk = copyApkAtomically(apkFile, File(downloadDir, "${project.name}.apk"))
+                val totalApkBytes = apkFile.length()
+                val targetApk = copyApkAtomically(apkFile, File(downloadDir, "${project.name}.apk")) { copied, _ ->
+                    val fraction = if (totalApkBytes > 0) copied.toFloat() / totalApkBytes else 0f
+                    progressChannel.trySend(
+                        BuildRunProgress(
+                            step = "正在导出 APK 到手机下载目录... ${copied / 1024 / 1024} MB / ${totalApkBytes / 1024 / 1024} MB",
+                            progress = 0.93f + 0.04f * fraction.coerceIn(0f, 1f),
+                            logOutput = logs.toString(),
+                        ),
+                    )
+                }
                 log("[TaiXu Build] APK 已成功导出至: ${targetApk.absolutePath}")
 
                 // 多通道安装调度：1. 无线 ADB 直装；2. 调起系统原生 PackageInstaller
@@ -342,7 +352,7 @@ class WorkspaceBuildRunner @Inject constructor(
                 log("[TaiXu Build] 执行 Flutter APK 构建...")
                 send(BuildRunProgress(step = "正在执行 Flutter 构建 (flutter build apk)...", progress = 0.3f, logOutput = logs.toString()))
 
-                val buildCmd = "/bin/sh /opt/taixu/scripts/build_flutter.sh \"${project.linuxPath}\" \"apk --debug\""
+                val buildCmd = "/bin/sh /opt/taixu/scripts/build_flutter.sh \"${project.linuxPath}\" \"apk --debug --target-platform android-arm64\""
                 var lastEmitTime = System.currentTimeMillis()
 
                 val outcome = linuxRuntime.execute(
@@ -417,7 +427,17 @@ class WorkspaceBuildRunner @Inject constructor(
 
                 log("[TaiXu Build] 找到 Flutter APK: ${apkFile.absolutePath}")
                 val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                val targetApk = copyApkAtomically(apkFile, File(downloadDir, "${project.name}.apk"))
+                val totalApkBytes = apkFile.length()
+                val targetApk = copyApkAtomically(apkFile, File(downloadDir, "${project.name}.apk")) { copied, _ ->
+                    val fraction = if (totalApkBytes > 0) copied.toFloat() / totalApkBytes else 0f
+                    progressChannel.trySend(
+                        BuildRunProgress(
+                            step = "正在导出 APK 到手机下载目录... ${copied / 1024 / 1024} MB / ${totalApkBytes / 1024 / 1024} MB",
+                            progress = 0.93f + 0.04f * fraction.coerceIn(0f, 1f),
+                            logOutput = logs.toString(),
+                        ),
+                    )
+                }
                 log("[TaiXu Build] Flutter APK 已导出至: ${targetApk.absolutePath}")
 
                 send(BuildRunProgress(step = "正在安装到手机...", progress = 0.95f, logOutput = logs.toString()))
@@ -476,13 +496,30 @@ class WorkspaceBuildRunner @Inject constructor(
     }.flowOn(Dispatchers.IO)
 
     /** Write a complete APK into the public Download directory; returns the file actually written. */
-    private fun copyApkAtomically(source: File, target: File): File {
+    private fun copyApkAtomically(
+        source: File,
+        target: File,
+        onProgress: (copiedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> },
+    ): File {
         check(source.isFile && source.length() > 0L) { "APK 源文件不存在或为空：${source.absolutePath}" }
         target.parentFile?.mkdirs()
         val temporary = File(target.parentFile, ".${target.name}.${System.nanoTime()}.part")
         try {
+            val totalBytes = source.length()
+            var copiedBytes = 0L
             source.inputStream().use { input ->
-                temporary.outputStream().use { output -> input.copyTo(output) }
+                temporary.outputStream().use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        if (read == 0) continue
+                        output.write(buffer, 0, read)
+                        copiedBytes += read
+                        onProgress(copiedBytes, totalBytes)
+                    }
+                    output.flush()
+                }
             }
             check(temporary.length() == source.length()) {
                 "APK 导出不完整：${temporary.length()} / ${source.length()} 字节"
