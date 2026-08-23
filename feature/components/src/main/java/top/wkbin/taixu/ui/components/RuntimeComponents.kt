@@ -488,6 +488,10 @@ fun Modifier.liquidGlassContent(): Modifier {
     return if (backdrop != null) layerBackdrop(backdrop) else this
 }
 
+/** Returns whether the current composition is hosted by the Chengming glass theme. */
+@Composable
+fun isLiquidGlassThemeActive(): Boolean = LocalLiquidGlassBackdrop.current != null
+
 /**
  * 太墟品牌 TopBar
  */

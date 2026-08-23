@@ -75,7 +75,7 @@ import top.wkbin.taixu.ui.components.RuntimeTopBar
 import top.wkbin.taixu.ui.components.RuntimeButton
 import top.wkbin.taixu.ui.components.distroIconFor
 import top.wkbin.taixu.ui.components.StatusBadge
-import top.wkbin.taixu.ui.theme.LocalLiquidGlassBackdrop
+import top.wkbin.taixu.ui.components.isLiquidGlassThemeActive
 
 /**
  * 太墟 · 运行仪表盘 (TaiXu Linux Runtime Dashboard)
@@ -97,7 +97,7 @@ fun HomeScreen(
     val activeDistroId by viewModel.activeDistroId.collectAsStateWithLifecycle()
     val switchingDistro by viewModel.switchingDistro.collectAsStateWithLifecycle()
 
-    val glassBackdrop = LocalLiquidGlassBackdrop.current
+    val isLiquidGlassTheme = isLiquidGlassThemeActive()
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -119,7 +119,7 @@ fun HomeScreen(
             )
         },
         bottomBar = {
-            if (glassBackdrop == null) {
+            if (!isLiquidGlassTheme) {
                 RuntimeBottomBar(MainDestination.Home, onNavigate)
             }
         },
