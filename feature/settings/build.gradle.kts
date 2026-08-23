@@ -39,6 +39,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json.jvm)
     implementation(project(":feature:components"))
     implementation(project(":feature:theme"))
+    implementation(libs.backdrop)
     implementation(project(":core:datastore"))
     implementation(project(":core:database"))
     implementation(project(":core:network"))

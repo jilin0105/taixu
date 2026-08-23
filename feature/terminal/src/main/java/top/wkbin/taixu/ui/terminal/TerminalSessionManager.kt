@@ -153,7 +153,8 @@ class TerminalSessionManager @Inject constructor(
                 synchronized(pending) { pending.append(output.text) }
                 if (flushJob?.isActive != true) {
                     flushJob = launch {
-                        delay(16L)
+                        // Bound UI publication to roughly 30 FPS under bursty PTY output.
+                        delay(32L)
                         flushPending()
                     }
                 }

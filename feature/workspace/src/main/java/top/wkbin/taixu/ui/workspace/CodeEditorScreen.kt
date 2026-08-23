@@ -57,6 +57,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -69,6 +70,9 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.withContext
 import top.wkbin.taixu.ui.components.NoticeBanner
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
@@ -106,6 +110,9 @@ fun CodeEditorScreen(
 
     val fileName = relativePath.substringAfterLast('/')
     val extension = relativePath.substringAfterLast('.', "")
+    var highlightedRanges by remember(extension) {
+        mutableStateOf<List<AnnotatedString.Range<androidx.compose.ui.text.SpanStyle>>>(emptyList())
+    }
 
     LaunchedEffect(projectName, relativePath) {
         viewModel.openFile(projectName, relativePath)
@@ -120,6 +127,14 @@ fun CodeEditorScreen(
     LaunchedEffect(editorState) {
         snapshotFlow { editorState.text.toString() }.collect { editedText ->
             if (editedText != fileContent) viewModel.onContentChanged(editedText)
+        }
+    }
+
+    LaunchedEffect(editorState, extension) {
+        snapshotFlow { editorState.text.toString() }.collectLatest { text ->
+            highlightedRanges = withContext(Dispatchers.Default) {
+                SyntaxHighlighter.highlight(text, extension).spanStyles
+            }
         }
     }
 
@@ -189,11 +204,13 @@ fun CodeEditorScreen(
                 val horizontalScrollState = rememberScrollState()
 
                 // 高亮语法生成
-                val syntaxTransformation = remember(extension) {
+                val syntaxTransformation = remember(extension, highlightedRanges) {
                     OutputTransformation {
-                        val highlighted = SyntaxHighlighter.highlight(toString(), extension)
-                        highlighted.spanStyles.forEach { range ->
-                            addStyle(range.item, range.start, range.end)
+                        val currentLength = toString().length
+                        highlightedRanges.forEach { range ->
+                            if (range.start < currentLength && range.end <= currentLength) {
+                                addStyle(range.item, range.start, range.end)
+                            }
                         }
                     }
                 }

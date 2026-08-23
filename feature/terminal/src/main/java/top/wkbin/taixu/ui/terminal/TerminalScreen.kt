@@ -946,8 +946,8 @@ private fun TerminalLineRow(
     termBg: Color = TermBg,
     termTextDefault: Color = TermTextDefault,
 ) {
-    Text(
-        text = buildAnnotatedString {
+    val annotatedLine = remember(line, showCursor, cursorColumn, fontSizeSp, termBg, termTextDefault) {
+        buildAnnotatedString {
             line.cells.forEachIndexed { cellIndex, cell ->
                 val isCursor = showCursor && cellIndex == cursorColumn
                 withStyle(
@@ -969,7 +969,10 @@ private fun TerminalLineRow(
                 repeat(cursorColumn - line.cells.size) { append(" ") }
                 withStyle(SpanStyle(color = termBg, background = Color(0xFF00F0FF))) { append(" ") }
             }
-        },
+        }
+    }
+    Text(
+        text = annotatedLine,
         fontFamily = FontFamily.Monospace,
         color = termTextDefault,
         style = MaterialTheme.typography.bodySmall.copy(

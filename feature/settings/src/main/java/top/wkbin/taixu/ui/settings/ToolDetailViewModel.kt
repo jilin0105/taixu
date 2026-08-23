@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -14,6 +15,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.database.AiModelDao
 import top.wkbin.taixu.core.database.AiModelEntity
@@ -89,13 +91,21 @@ class ToolDetailViewModel @Inject constructor(
     private val _error = MutableStateFlow<String?>(null)
     private val _appliedModelId = MutableStateFlow<String?>(null)
     private val _applyingModel = MutableStateFlow(false)
-    private val _deviceLanIp = MutableStateFlow<String?>(detectLanIp())
+    private val _deviceLanIp = MutableStateFlow<String?>(null)
 
     fun setToolId(id: String) {
         if (id.isNotBlank() && _toolId.value != id) {
             _toolId.value = id
-            _deviceLanIp.value = detectLanIp()
-            _gatewayRunning.value = toolManager.isGatewayRunning(id)
+            viewModelScope.launch(Dispatchers.IO) {
+                val lanIp = detectLanIp()
+                val running = toolManager.isGatewayRunning(id)
+                withContext(Dispatchers.Main.immediate) {
+                    if (_toolId.value == id) {
+                        _deviceLanIp.value = lanIp
+                        _gatewayRunning.value = running
+                    }
+                }
+            }
         }
     }
 
@@ -155,12 +165,18 @@ class ToolDetailViewModel @Inject constructor(
     }
 
     private fun pollGatewayStatus() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             while (true) {
                 val currentId = _toolId.value
                 if (currentId.isNotBlank()) {
-                    _gatewayRunning.value = toolManager.isGatewayRunning(currentId)
-                    _deviceLanIp.value = detectLanIp()
+                    val running = toolManager.isGatewayRunning(currentId)
+                    val lanIp = detectLanIp()
+                    withContext(Dispatchers.Main.immediate) {
+                        if (_toolId.value == currentId) {
+                            _gatewayRunning.value = running
+                            _deviceLanIp.value = lanIp
+                        }
+                    }
                 }
                 delay(3000)
             }
@@ -172,7 +188,7 @@ class ToolDetailViewModel @Inject constructor(
         if (currentId.isBlank()) return
         _gatewayOperating.value = true
         _error.value = null
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 // startGateway 内部会等待服务端口就绪后才返回，避免"假运行中"
                 toolManager.startGateway(currentId)
@@ -191,7 +207,7 @@ class ToolDetailViewModel @Inject constructor(
         if (currentId.isBlank()) return
         _gatewayOperating.value = true
         _error.value = null
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 toolManager.stopGateway(currentId)
                 delay(500)
@@ -208,7 +224,7 @@ class ToolDetailViewModel @Inject constructor(
     fun toggleAutoStart(enabled: Boolean) {
         val currentId = _toolId.value
         if (currentId.isBlank()) return
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 toolSettingsRepository.setAutoStart(linuxRuntime.activeDistroId.value, currentId, enabled)
             } catch (e: Exception) {
@@ -220,7 +236,7 @@ class ToolDetailViewModel @Inject constructor(
     fun generateToken() {
         val currentId = _toolId.value
         if (currentId.isBlank()) return
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 val token = UUID.randomUUID().toString().replace("-", "").take(32)
                 settingsDataStore.setToolAccessToken(linuxRuntime.activeDistroId.value, currentId, token)
