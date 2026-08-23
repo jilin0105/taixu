@@ -53,7 +53,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -373,7 +372,6 @@ private fun EnvironmentDoctorCard(
                                         .height(6.dp)
                                         .clip(RoundedCornerShape(3.dp)),
                                     color = MaterialTheme.colorScheme.primary,
-                                    strokeCap = StrokeCap.Round,
                                 )
 
                                 Row(
@@ -730,7 +728,6 @@ private fun RuntimeEngineStatusCard(
                             .height(6.dp)
                             .clip(RoundedCornerShape(3.dp)),
                         color = MaterialTheme.colorScheme.primary,
-                        strokeCap = StrokeCap.Round,
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -862,7 +859,6 @@ private fun ResourceMetricCard(
                     .clip(RoundedCornerShape(3.dp)),
                 color = effectiveAccent,
                 trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                strokeCap = StrokeCap.Round,
             )
 
             Text(

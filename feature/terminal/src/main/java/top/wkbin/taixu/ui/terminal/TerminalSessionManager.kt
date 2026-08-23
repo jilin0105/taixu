@@ -229,6 +229,14 @@ class TerminalSessionManager @Inject constructor(
         scope.launch { runCatching { handle.session.write(data) } }
     }
 
+    fun paste(id: String, text: String) {
+        val handle = _handles.value.find { it.id == id } ?: return
+        val payload = if (handle.buffer.isBracketedPasteEnabled()) {
+            "\u001B[200~$text\u001B[201~"
+        } else text
+        scope.launch { runCatching { handle.session.write(payload.toByteArray(Charsets.UTF_8)) } }
+    }
+
     fun interrupt(id: String) {
         write(id, byteArrayOf(3))
     }

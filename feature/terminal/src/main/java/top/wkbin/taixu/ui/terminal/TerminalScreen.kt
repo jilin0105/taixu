@@ -82,9 +82,11 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -173,7 +175,7 @@ fun TerminalScreen(
     val pasteToTerminal = {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val text = clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
-        if (text.isNotBlank()) viewModel.sendText(text)
+        if (text.isNotBlank()) viewModel.pasteText(text)
     }
 
     val terminalFocusRequester = remember { FocusRequester() }
@@ -951,9 +953,16 @@ private fun TerminalLineRow(
                 withStyle(
                     SpanStyle(
                         color = if (isCursor) termBg else (cell.foreground?.let(::Color) ?: termTextDefault),
-                        background = if (isCursor) Color(0xFF00F0FF) else Color.Unspecified,
+                        background = if (isCursor) Color(0xFF00F0FF) else (cell.background?.let(::Color) ?: Color.Unspecified),
                         fontWeight = if (cell.bold) FontWeight.Bold else FontWeight.Normal,
-                    ),
+                        fontStyle = if (cell.italic) FontStyle.Italic else FontStyle.Normal,
+                        textDecoration = when {
+                            cell.underline && cell.strikeThrough -> TextDecoration.combine(listOf(TextDecoration.Underline, TextDecoration.LineThrough))
+                            cell.underline -> TextDecoration.Underline
+                            cell.strikeThrough -> TextDecoration.LineThrough
+                            else -> TextDecoration.None
+                        },
+                    ).let { style -> if (cell.inverse) style.copy(color = cell.background?.let(::Color) ?: termBg, background = cell.foreground?.let(::Color) ?: termTextDefault) else style },
                 ) { append(cell.character) }
             }
             if (showCursor && cursorColumn >= line.cells.size) {

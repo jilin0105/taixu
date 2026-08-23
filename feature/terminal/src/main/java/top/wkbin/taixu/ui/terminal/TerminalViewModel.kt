@@ -126,6 +126,11 @@ class TerminalViewModel @Inject constructor(
         activeIdOrNull()?.let { terminalManager.write(it, text.toByteArray(Charsets.UTF_8)) }
     }
 
+    fun pasteText(text: String) {
+        if (text.isEmpty()) return
+        activeIdOrNull()?.let { terminalManager.paste(it, text) }
+    }
+
     fun setTerminalFontSize(sizeSp: Int) {
         viewModelScope.launch { settingsDataStore.setTerminalFontSize(sizeSp) }
     }

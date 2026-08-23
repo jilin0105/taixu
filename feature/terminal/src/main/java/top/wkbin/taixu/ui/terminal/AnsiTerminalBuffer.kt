@@ -7,7 +7,15 @@ data class TerminalCell(
     /** A complete Unicode code point (including supplementary-plane emoji). */
     val character: String,
     val foreground: Long? = null,
+    val background: Long? = null,
     val bold: Boolean = false,
+    val dim: Boolean = false,
+    val italic: Boolean = false,
+    val underline: Boolean = false,
+    val inverse: Boolean = false,
+    val strikeThrough: Boolean = false,
+    /** Number of terminal columns occupied by this grapheme. */
+    val width: Int = 1,
 )
 
 @Immutable
@@ -38,7 +46,14 @@ class AnsiTerminalBuffer(
     private var savedRow = 0
     private var savedColumn = 0
     private var foreground: Long? = null
+    private var background: Long? = null
     private var bold = false
+    private var dim = false
+    private var italic = false
+    private var underline = false
+    private var inverse = false
+    private var strikeThrough = false
+    private var bracketedPaste = false
     private var state = ParserState.NORMAL
     private val control = StringBuilder()
 
@@ -89,6 +104,8 @@ class AnsiTerminalBuffer(
             visible = cursorVisible,
         )
     }
+
+    fun isBracketedPasteEnabled(): Boolean = synchronized(this) { bracketedPaste }
 
     fun snapshot(): List<TerminalLine> = synchronized(this) {
         snapshotLocked()
@@ -208,7 +225,8 @@ class AnsiTerminalBuffer(
         when (mode) {
             1049, 1047, 47 -> if (final == 'h') enterAltScreen() else exitAltScreen()
             25 -> cursorVisible = final == 'h'
-            else -> Unit // 2004（bracketed paste）等暂不处理
+            2004 -> bracketedPaste = final == 'h'
+            else -> Unit
         }
     }
 
@@ -235,27 +253,47 @@ class AnsiTerminalBuffer(
             when (val code = values[index]) {
                 0 -> {
                     foreground = null
+                    background = null
                     bold = false
+                    dim = false
+                    italic = false
+                    underline = false
+                    inverse = false
+                    strikeThrough = false
                 }
                 1 -> bold = true
-                22 -> bold = false
+                2 -> dim = true
+                3 -> italic = true
+                4 -> underline = true
+                7 -> inverse = true
+                9 -> strikeThrough = true
+                21, 24 -> underline = false
+                22 -> { bold = false; dim = false }
+                23 -> italic = false
+                27 -> inverse = false
+                29 -> strikeThrough = false
                 in 30..37 -> foreground = ANSI_COLORS[code - 30]
                 39 -> foreground = null
                 in 90..97 -> foreground = ANSI_BRIGHT_COLORS[code - 90]
+                in 40..47 -> background = ANSI_COLORS[code - 40]
+                49 -> background = null
+                in 100..107 -> background = ANSI_BRIGHT_COLORS[code - 100]
                 38, 48 -> {
-                    // xterm 256 色 / RGB：仅映射前景色（紧凑渲染忽略背景）
+                    // xterm 256 色 / RGB。
                     if (index + 1 < values.size && values[index + 1] == 5) {
                         val paletteIndex = values.getOrNull(index + 2)
-                        if (paletteIndex != null && code == 38) {
-                            foreground = xtermColor(paletteIndex)
+                        if (paletteIndex != null) {
+                            if (code == 38) foreground = xtermColor(paletteIndex)
+                            else background = xtermColor(paletteIndex)
                         }
                         index += 2
                     } else if (index + 4 < values.size && values[index + 1] == 2) {
                         val red = values.getOrNull(index + 2)
                         val green = values.getOrNull(index + 3)
                         val blue = values.getOrNull(index + 4)
-                        if (red != null && green != null && blue != null && code == 38) {
-                            foreground = (0xFF000000L or (red.toLong() shl 16) or (green.toLong() shl 8) or blue.toLong())
+                        if (red != null && green != null && blue != null) {
+                            val color = 0xFF000000L or (red.toLong() shl 16) or (green.toLong() shl 8) or blue.toLong()
+                            if (code == 38) foreground = color else background = color
                         }
                         index += 4
                     }
@@ -272,8 +310,28 @@ class AnsiTerminalBuffer(
         }
         val row = activeRows[cursorRow]
         while (row.size <= cursorColumn) row += TerminalCell(" ")
-        row[cursorColumn] = TerminalCell(character, foreground, bold)
-        cursorColumn += 1
+        val cellWidth = unicodeWidth(character)
+        if (cellWidth == 0 && cursorColumn > 0 && cursorColumn - 1 < row.size) {
+            val previous = row[cursorColumn - 1]
+            row[cursorColumn - 1] = previous.copy(character = previous.character + character)
+            return
+        }
+        row[cursorColumn] = TerminalCell(
+            character = character,
+            foreground = foreground,
+            background = background,
+            bold = bold,
+            dim = dim,
+            italic = italic,
+            underline = underline,
+            inverse = inverse,
+            strikeThrough = strikeThrough,
+            width = cellWidth,
+        )
+        if (cellWidth == 2) {
+            while (row.size <= cursorColumn + 1) row += TerminalCell("", width = 0)
+        }
+        cursorColumn += cellWidth
     }
 
     private fun lineFeed() {
@@ -332,7 +390,14 @@ class AnsiTerminalBuffer(
         cursorVisible = true
         pendingHighSurrogate = null
         foreground = null
+        background = null
         bold = false
+        dim = false
+        italic = false
+        underline = false
+        inverse = false
+        strikeThrough = false
+        bracketedPaste = false
         state = ParserState.NORMAL
     }
 
@@ -352,6 +417,20 @@ class AnsiTerminalBuffer(
                 val gray = 8 + (clamped - 232) * 10
                 0xFF000000L or (gray.toLong() shl 16) or (gray.toLong() shl 8) or gray.toLong()
             }
+        }
+    }
+
+    private fun unicodeWidth(value: String): Int {
+        val codePoint = value.codePointAt(0)
+        return when {
+            codePoint == 0 -> 0
+            codePoint in 0x0300..0x036F || codePoint in 0xFE00..0xFE0F -> 0
+            codePoint in 0x1100..0x115F || codePoint in 0x2329..0x232A ||
+                codePoint in 0x2E80..0xA4CF || codePoint in 0xAC00..0xD7A3 ||
+                codePoint in 0xF900..0xFAFF || codePoint in 0xFE10..0xFE6F ||
+                codePoint in 0xFF01..0xFF60 || codePoint in 0xFFE0..0xFFE6 ||
+                codePoint >= 0x1F300 -> 2
+            else -> 1
         }
     }
 
