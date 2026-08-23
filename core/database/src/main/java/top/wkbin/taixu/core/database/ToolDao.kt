@@ -15,6 +15,9 @@ interface ToolDao {
     @Query("SELECT * FROM tools WHERE distroId = :distroId AND state = 'INSTALLED' ORDER BY name")
     suspend fun getInstalledForDistro(distroId: String): List<ToolEntity>
 
+    @Query("SELECT * FROM tools WHERE distroId = :distroId ORDER BY name")
+    suspend fun getForDistro(distroId: String): List<ToolEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(tool: ToolEntity)
 

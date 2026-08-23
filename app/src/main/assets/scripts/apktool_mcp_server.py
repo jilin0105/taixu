@@ -286,7 +286,7 @@ def handle_line(line):
     req_id = req.get("id")
     if method == "initialize":
         return rpc_response(req_id, {
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": "2025-06-18",
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "taixu-apktool-mcp", "version": "1.0.0"},
         })

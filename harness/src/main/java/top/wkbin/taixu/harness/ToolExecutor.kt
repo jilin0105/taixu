@@ -1,7 +1,13 @@
 package top.wkbin.taixu.harness
 
 import top.wkbin.taixu.core.common.result.AppResult
+import top.wkbin.taixu.core.database.HarnessSessionDao
 import top.wkbin.taixu.core.security.SecretRedactor
+import top.wkbin.taixu.core.datastore.SettingsDataStore
+import top.wkbin.taixu.core.model.ApprovalMode
+import top.wkbin.taixu.core.network.DownloadEvent
+import top.wkbin.taixu.core.network.DownloadRequest
+import top.wkbin.taixu.core.network.FileDownloader
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import java.util.UUID
@@ -9,6 +15,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collect
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -26,15 +33,46 @@ class ToolExecutor @Inject constructor(
     private val fileAccess: WorkspaceFileAccess,
     private val linuxRuntime: LinuxRuntime,
     private val secretRedactor: SecretRedactor,
-    private val settingsDataStore: top.wkbin.taixu.core.datastore.SettingsDataStore,
+    private val fileDownloader: FileDownloader,
+    private val approvalRepository: top.wkbin.taixu.core.database.AgentApprovalRepository? = null,
+    private val sessionDao: HarnessSessionDao? = null,
     private val subagentOrchestrator: SubagentOrchestrator? = null,
     private val mcpManager: top.wkbin.taixu.harness.mcp.McpManager? = null,
     private val contextExecutor: AgentContextExecutor? = null,
 ) {
-    suspend fun execute(toolCall: ToolCall, sessionId: String = "", workspace: String = ""): ToolResult {
+    @Inject
+    lateinit var settingsDataStore: SettingsDataStore
+
+    suspend fun execute(
+        toolCall: ToolCall,
+        sessionId: String = "",
+        workspace: String = "",
+        bypassApproval: Boolean = false,
+        progressReporter: (suspend (String) -> Unit)? = null,
+    ): ToolResult {
         val now = System.currentTimeMillis()
         val outcome = try {
-            executeTool(toolCall.tool, toolCall.args, toolCall.rawToolName, sessionId, workspace)
+            if (!bypassApproval && sessionId.isNotBlank()) {
+                val repository = approvalRepository
+                val sessionMode = sessionDao?.findById(sessionId)?.approvalMode?.let(ApprovalMode::fromId)
+                val mode = sessionMode ?: repository?.currentMode() ?: ApprovalMode.FULL_ACCESS
+                val decision = ApprovalPolicyEngine().decide(mode, toolCall.tool, toolCall.args, workspace)
+                if (decision.required) {
+                    checkNotNull(repository) { "审批仓库未初始化" }
+                    val request = ApprovalPolicyEngine().createRequest(sessionId, toolCall, workspace, decision)
+                    repository.create(request)
+                    return ToolResult(
+                        id = UUID.randomUUID().toString(),
+                        createdAt = now,
+                        toolCallId = toolCall.id,
+                        success = false,
+                        output = "等待用户批准：${decision.summary}\n${decision.reason}",
+                        awaitingApproval = true,
+                        approvalRequestId = request.id,
+                    )
+                }
+            }
+            executeTool(toolCall.tool, toolCall.args, toolCall.rawToolName, sessionId, workspace, progressReporter)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (throwable: Throwable) {
@@ -46,7 +84,11 @@ class ToolExecutor @Inject constructor(
             createdAt = now,
             toolCallId = toolCall.id,
             success = success,
-            output = secretRedactor.redact(truncateOutput(rawOutput)),
+            output = secretRedactor.redact(
+                value = truncateOutput(rawOutput),
+                secretValues = if (::settingsDataStore.isInitialized) settingsDataStore.environmentValues.value.values else emptyList(),
+                privacyMode = if (::settingsDataStore.isInitialized) runCatching { settingsDataStore.environmentPrivacyMode.first() }.getOrDefault(true) else true,
+            ),
         )
     }
 
@@ -78,6 +120,7 @@ class ToolExecutor @Inject constructor(
         rawToolName: String?,
         sessionId: String,
         workspace: String,
+        progressReporter: (suspend (String) -> Unit)?,
     ): Pair<Boolean, String> {
         val activeFileAccess = if (workspace.isNotBlank()) fileAccess.withBase(workspace) else fileAccess
         return when (tool) {
@@ -99,6 +142,7 @@ class ToolExecutor @Inject constructor(
                 activeFileAccess.edit(path, oldText, newText).toToolOutput("已修改 $path")
             }
             HarnessTool.BASE -> executeBase(args, workspace)
+            HarnessTool.DOWNLOAD -> executeDownload(args, activeFileAccess, progressReporter)
             HarnessTool.MEMORY -> contextExecutor?.executeMemory(args, sessionId, "") ?: (false to "未初始化记忆执行器")
             HarnessTool.PLAN -> contextExecutor?.executePlan(args, sessionId) ?: (false to "未初始化计划执行器")
             HarnessTool.SCRATCHPAD -> contextExecutor?.executeScratchpad(args, sessionId) ?: (false to "未初始化草稿执行器")
@@ -110,11 +154,6 @@ class ToolExecutor @Inject constructor(
     private suspend fun executeBase(args: JsonObject, workspace: String): Pair<Boolean, String> {
         val command = requireString(args, "command")
         require(command.length <= MAX_COMMAND_LENGTH) { "命令过长（${command.length} 字符，上限 $MAX_COMMAND_LENGTH）" }
-        // 危险命令闸门：命中破坏性模式时直接拒绝，避免模型在沙箱内误执行不可逆操作。
-        if (isDestructiveGuardEnabled() && isDestructiveCommand(command)) {
-            return false to "已拦截危险命令（破坏性操作保护已开启）：该命令匹配到高危模式。" +
-                "如确需执行，请在 Agent 设置中关闭「危险命令闸门」，或在命令前加注释确认其安全性。"
-        }
         val cwd = args["cwd"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
             ?: (if (workspace.isNotBlank()) (if (workspace.startsWith("/")) workspace else "/workspace/$workspace") else DEFAULT_CWD)
         val timeoutMs = args["timeout_seconds"]?.jsonPrimitive?.content?.toLongOrNull()?.let { it * 1000L }
@@ -136,17 +175,90 @@ class ToolExecutor @Inject constructor(
         return result.isSuccess to body
     }
 
-    private suspend fun isDestructiveGuardEnabled(): Boolean =
-        runCatching { settingsDataStore.destructiveGuardEnabled.first() }.getOrDefault(true)
-
-    /**
-     * 破坏性命令高危模式匹配。仅覆盖明确不可逆或高风险的模式，
-     * 避免误伤正常开发命令（如带参数的 rm 删除单一构建产物）。
-     */
-    private fun isDestructiveCommand(command: String): Boolean {
-        val normalized = command.trim()
-        return DESTRUCTIVE_PATTERNS.any { pattern -> pattern.containsMatchIn(normalized) }
+    private suspend fun executeDownload(
+        args: JsonObject,
+        activeFileAccess: WorkspaceFileAccess,
+        progressReporter: (suspend (String) -> Unit)?,
+    ): Pair<Boolean, String> {
+        val url = requireString(args, "url")
+        require(url.startsWith("https://", ignoreCase = true)) { "下载地址必须使用 HTTPS" }
+        val destinationPath = requireString(args, "destination")
+        val destination = activeFileAccess.resolveDownloadDestination(destinationPath)
+        val sha256 = args["sha256"]?.jsonPrimitive?.content?.trim()?.takeIf { it.isNotEmpty() }
+        val maxAttempts = optionalLong(args, "max_attempts", DEFAULT_DOWNLOAD_ATTEMPTS, 1L, MAX_DOWNLOAD_ATTEMPTS).toInt()
+        val maxBytes = optionalLong(args, "max_bytes", DEFAULT_DOWNLOAD_MAX_BYTES, 1L, MAX_DOWNLOAD_MAX_BYTES)
+        var latestProgress: DownloadEvent.Progress? = null
+        var verified = false
+        var completedFile: java.io.File? = null
+        val startedAt = System.currentTimeMillis()
+        var lastReportedAt = 0L
+        fileDownloader.download(
+            DownloadRequest(
+                url = url,
+                destination = destination,
+                sha256 = sha256,
+                maxAttempts = maxAttempts,
+                maxBytes = maxBytes,
+            ),
+        ).collect { event ->
+            when (event) {
+                is DownloadEvent.Progress -> {
+                    latestProgress = event
+                    val now = System.currentTimeMillis()
+                    if (progressReporter != null && (now - lastReportedAt >= PROGRESS_REPORT_INTERVAL_MS || event.totalBytes != null && event.downloadedBytes == event.totalBytes)) {
+                        lastReportedAt = now
+                        progressReporter(formatDownloadProgress(event, startedAt))
+                    }
+                }
+                DownloadEvent.Verifying -> {
+                    verified = true
+                    progressReporter?.invoke("正在校验下载文件 SHA-256…")
+                }
+                is DownloadEvent.Completed -> completedFile = event.file
+                DownloadEvent.Started -> Unit
+            }
+        }
+        val file = completedFile ?: destination
+        val size = file.length()
+        val body = buildString {
+            append("下载完成：").append(destinationPath)
+            append("\n大小：").append(size).append(" bytes")
+            latestProgress?.totalBytes?.let { append(" / ").append(it).append(" bytes") }
+            append("\n特性：HTTPS、HTTP Range 断点续传、自动重试（最多 ").append(maxAttempts).append(" 次）")
+            if (verified) append("\nSHA-256：已校验")
+            append("\n说明：当前下载器是单连接续传，不是多线程分片下载。")
+        }
+        return true to body
     }
+
+    private fun formatDownloadProgress(event: DownloadEvent.Progress, startedAt: Long): String {
+        val elapsedMs = (System.currentTimeMillis() - startedAt).coerceAtLeast(1L)
+        val speed = event.downloadedBytes * 1000L / elapsedMs
+        val downloaded = formatBytes(event.downloadedBytes)
+        val total = event.totalBytes?.let(::formatBytes)
+        val percent = event.totalBytes?.takeIf { it > 0L }?.let { event.downloadedBytes * 100 / it }
+        return buildString {
+            append("下载中：").append(downloaded)
+            if (total != null) {
+                append(" / ").append(total)
+                percent?.let { append(" (").append(it.coerceIn(0L, 100L)).append("%)") }
+            }
+            append(" · ").append(formatBytes(speed)).append("/s")
+        }
+    }
+
+    private fun formatBytes(bytes: Long): String {
+        if (bytes < 1024L) return "$bytes B"
+        val units = arrayOf("KiB", "MiB", "GiB", "TiB")
+        var value = bytes.toDouble()
+        var index = -1
+        while (value >= 1024.0 && index < units.lastIndex) {
+            value /= 1024.0
+            index += 1
+        }
+        return if (value >= 100 || value % 1.0 == 0.0) "${value.toInt()} ${units[index]}" else "${"%.1f".format(java.util.Locale.US, value)} ${units[index]}"
+    }
+
 
     private fun AppResult<Any>.toToolOutput(successMessage: String = ""): Pair<Boolean, String> = when (this) {
         is AppResult.Success -> true to successMessage.ifBlank { data.toString() }
@@ -160,6 +272,13 @@ class ToolExecutor @Inject constructor(
         return value
     }
 
+    private fun optionalLong(args: JsonObject, key: String, default: Long, min: Long, max: Long): Long {
+        val raw = args[key]?.jsonPrimitive?.content?.trim() ?: return default
+        val value = raw.toLongOrNull() ?: throw IllegalArgumentException("参数 $key 必须是整数")
+        require(value in min..max) { "参数 $key 必须在 $min-$max 之间" }
+        return value
+    }
+
     companion object {
         const val BASE_TIMEOUT_MS = 60 * 1000L
         const val MAX_OUTPUT_LENGTH = 64 * 1024
@@ -167,18 +286,11 @@ class ToolExecutor @Inject constructor(
         const val MAX_COMMAND_LENGTH = 32 * 1024
         const val MAX_ARG_LENGTH = 1024 * 1024
         const val DEFAULT_CWD = "/root"
+        const val DEFAULT_DOWNLOAD_ATTEMPTS = 3L
+        const val MAX_DOWNLOAD_ATTEMPTS = 10L
+        const val DEFAULT_DOWNLOAD_MAX_BYTES = 1024L * 1024L * 1024L
+        const val MAX_DOWNLOAD_MAX_BYTES = 4L * 1024L * 1024L * 1024L
+        const val PROGRESS_REPORT_INTERVAL_MS = 250L
 
-        // 高危破坏性模式：全盘删除、格式化、写设备、关机、fork 炸弹、危险重定向、chmod 全盘提权等。
-        private val DESTRUCTIVE_PATTERNS = listOf(
-            Regex("""\brm\s+-rf?\s+/(?!workspace\b)"""),       // rm -rf / 绝对根（排除 /workspace）
-            Regex("""\brm\s+-rf?\s+--no-preserve-root"""),
-            Regex("""\bmkfs\.""", RegexOption.IGNORE_CASE),
-            Regex("""\bdd\s+if=.*\bof=/dev/""", RegexOption.IGNORE_CASE),
-            Regex("""\b(shutdown|reboot|halt|poweroff)\b"""),
-            Regex("""\b:\(\)\s*\{\s*:\|:&\s*\}"""),             // fork 炸弹
-            Regex(""">\s*/dev/sd[a-z]"""),
-            Regex("""\bchmod\s+-R\s+777\s+/"""),
-            Regex("""\btruncate\s+-s\s+0\s+/(?!workspace\b)""", RegexOption.IGNORE_CASE),
-        )
     }
 }

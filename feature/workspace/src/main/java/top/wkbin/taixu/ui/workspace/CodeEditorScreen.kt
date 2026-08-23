@@ -6,7 +6,11 @@ import android.content.Context
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,43 +28,52 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.input.OutputTransformation
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
+import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator as CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.IconButton
+import top.wkbin.taixu.ui.components.RuntimeIconButton as IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
+import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.ui.components.NoticeBanner
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
+import top.wkbin.taixu.ui.components.RuntimeTopBar
+import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 
 private val EditorBackground = Color(0xFF0F1117)
 private val EditorGutterBackground = Color(0xFF181A22)
@@ -68,8 +81,10 @@ private val EditorText = Color(0xFFE2E2E9)
 private val EditorGutterText = Color(0xFF8E9099)
 private val EditorAccent = Color(0xFFBAC3FF)
 private val EditorWarning = Color(0xFFFFB5A0)
+private const val MIN_EDITOR_FONT_SIZE_SP = 10f
+private const val MAX_EDITOR_FONT_SIZE_SP = 28f
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun CodeEditorScreen(
     projectName: String,
@@ -86,12 +101,26 @@ fun CodeEditorScreen(
 
     var showUnsavedDialog by remember { mutableStateOf(false) }
     var wordWrap by remember { mutableStateOf(false) }
+    var editorFontSizeSp by remember { mutableStateOf(13f) }
+    val editorState = remember { TextFieldState() }
 
     val fileName = relativePath.substringAfterLast('/')
     val extension = relativePath.substringAfterLast('.', "")
 
     LaunchedEffect(projectName, relativePath) {
         viewModel.openFile(projectName, relativePath)
+    }
+
+    LaunchedEffect(fileContent) {
+        if (editorState.text.toString() != fileContent) {
+            editorState.setTextAndPlaceCursorAtEnd(fileContent)
+        }
+    }
+
+    LaunchedEffect(editorState) {
+        snapshotFlow { editorState.text.toString() }.collect { editedText ->
+            if (editedText != fileContent) viewModel.onContentChanged(editedText)
+        }
     }
 
     val attemptBack = {
@@ -112,71 +141,26 @@ fun CodeEditorScreen(
     }
 
     Scaffold(
-        containerColor = EditorBackground,
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(
-                                text = fileName,
-                                style = MaterialTheme.typography.titleMedium,
-                                color = EditorText,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            if (isDirty) {
-                                Text(
-                                    text = "●",
-                                    color = Color(0xFFFFA657),
-                                    fontSize = 12.sp,
-                                )
-                            }
-                        }
-                        Text(
-                            text = "/workspace/$projectName/$relativePath",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = EditorGutterText,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = attemptBack) {
-                        RuntimeIcon(RuntimeIconName.Back, Modifier.size(22.dp), tint = EditorText)
-                    }
-                },
+            RuntimeTopBar(
+                title = fileName,
+                onBack = attemptBack,
+                statusText = "/workspace/$projectName/$relativePath",
                 actions = {
-                    // 复制
                     IconButton(onClick = copyAll) {
-                        RuntimeIcon(RuntimeIconName.Copy, Modifier.size(19.dp), tint = EditorGutterText)
+                        RuntimeIcon(RuntimeIconName.Copy, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-
-                    // 重置
                     if (isDirty) {
                         IconButton(onClick = { viewModel.resetContent() }) {
-                            RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(19.dp), tint = Color(0xFFFFA657))
+                            RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.error)
                         }
                     }
-
-                    // 保存
-                    IconButton(
-                        onClick = { viewModel.saveFile() },
-                        enabled = isDirty && !isSaving,
-                    ) {
-                        if (isSaving) {
-                            CircularProgressIndicator(Modifier.size(18.dp), color = EditorAccent, strokeWidth = 2.dp)
-                        } else {
-                            RuntimeIcon(
-                                RuntimeIconName.Save,
-                                Modifier.size(20.dp),
-                                tint = if (isDirty) EditorAccent else EditorGutterText.copy(alpha = 0.5f),
-                            )
-                        }
+                    IconButton(onClick = { viewModel.saveFile() }, enabled = isDirty && !isSaving) {
+                        if (isSaving) CircularProgressIndicator(Modifier.size(18.dp), color = MaterialTheme.colorScheme.primary, strokeWidth = 2.dp)
+                        else RuntimeIcon(RuntimeIconName.Save, Modifier.size(20.dp), tint = if (isDirty) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = EditorGutterBackground),
             )
         },
     ) { padding ->
@@ -206,11 +190,11 @@ fun CodeEditorScreen(
 
                 // 高亮语法生成
                 val syntaxTransformation = remember(extension) {
-                    VisualTransformation { text ->
-                        androidx.compose.ui.text.input.TransformedText(
-                            text = SyntaxHighlighter.highlight(text.text, extension),
-                            offsetMapping = androidx.compose.ui.text.input.OffsetMapping.Identity,
-                        )
+                    OutputTransformation {
+                        val highlighted = SyntaxHighlighter.highlight(toString(), extension)
+                        highlighted.spanStyles.forEach { range ->
+                            addStyle(range.item, range.start, range.end)
+                        }
                     }
                 }
 
@@ -218,31 +202,59 @@ fun CodeEditorScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .background(EditorBackground),
+                        .background(EditorBackground)
+                        // One vertical scroll owner keeps the gutter and editor on
+                        // exactly the same content coordinate while dragging.
+                        .verticalScroll(scrollState)
+                        .pointerInput(Unit) {
+                            awaitEachGesture {
+                                awaitFirstDown(requireUnconsumed = false)
+                                var zoomChanged = false
+                                do {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    if (event.changes.count { it.pressed } >= 2) {
+                                        val zoom = event.calculateZoom()
+                                        if (zoom != 1f) {
+                                            editorFontSizeSp = (editorFontSizeSp * zoom).coerceIn(
+                                                MIN_EDITOR_FONT_SIZE_SP,
+                                                MAX_EDITOR_FONT_SIZE_SP,
+                                            )
+                                            zoomChanged = true
+                                        }
+                                        event.changes.forEach { it.consume() }
+                                    }
+                                } while (event.changes.any { it.pressed })
+                                if (zoomChanged) {
+                                    editorFontSizeSp = editorFontSizeSp.coerceIn(
+                                        MIN_EDITOR_FONT_SIZE_SP,
+                                        MAX_EDITOR_FONT_SIZE_SP,
+                                    )
+                                }
+                            }
+                        },
                 ) {
                     // 行号列
                     val gutterWidth = (lineCount.toString().length * 10 + 24).dp.coerceAtLeast(42.dp)
+                    val editorLineHeight = (editorFontSizeSp * 1.54f).sp
+                    val editorPlatformStyle = PlatformTextStyle(includeFontPadding = false)
                     Column(
                         modifier = Modifier
                             .width(gutterWidth)
-                            .fillMaxHeight()
                             .background(EditorGutterBackground)
-                            .verticalScroll(scrollState)
                             .padding(vertical = 12.dp, horizontal = 6.dp),
                         horizontalAlignment = Alignment.End,
                     ) {
-                        for (i in 1..lineCount) {
-                            Text(
-                                text = "$i",
-                                style = TextStyle(
-                                    color = EditorGutterText,
-                                    fontSize = 13.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    lineHeight = 20.sp,
-                                ),
-                                textAlign = TextAlign.End,
-                            )
-                        }
+                        Text(
+                            text = (1..lineCount).joinToString("\n"),
+                            style = TextStyle(
+                                color = EditorGutterText,
+                                fontSize = editorFontSizeSp.sp,
+                                fontFamily = FontFamily.Monospace,
+                                lineHeight = editorLineHeight,
+                                platformStyle = editorPlatformStyle,
+                            ),
+                            textAlign = TextAlign.End,
+                        )
                     }
 
                     // 垂直分割线
@@ -257,8 +269,6 @@ fun CodeEditorScreen(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .fillMaxHeight()
-                            .verticalScroll(scrollState)
                             .then(
                                 if (!wordWrap) Modifier.horizontalScroll(horizontalScrollState)
                                 else Modifier,
@@ -266,17 +276,31 @@ fun CodeEditorScreen(
                             .padding(horizontal = 12.dp, vertical = 12.dp),
                     ) {
                         BasicTextField(
-                            value = fileContent,
-                            onValueChange = viewModel::onContentChanged,
-                            modifier = Modifier.fillMaxWidth(),
+                            state = editorState,
+                            modifier = if (wordWrap) {
+                                Modifier.fillMaxWidth()
+                            } else {
+                                // Keep logical source lines on one visual line so the
+                                // gutter remains one-to-one with the code rows.
+                                Modifier.layout { measurable, constraints ->
+                                    val placeable = measurable.measure(
+                                        constraints.copy(maxWidth = Constraints.Infinity),
+                                    )
+                                    layout(placeable.width, placeable.height) {
+                                        placeable.place(0, 0)
+                                    }
+                                }
+                            },
                             textStyle = TextStyle(
                                 color = EditorText,
-                                fontSize = 13.sp,
+                                fontSize = editorFontSizeSp.sp,
                                 fontFamily = FontFamily.Monospace,
-                                lineHeight = 20.sp,
+                                lineHeight = editorLineHeight,
+                                platformStyle = editorPlatformStyle,
                             ),
                             cursorBrush = SolidColor(EditorAccent),
-                            visualTransformation = syntaxTransformation,
+                            lineLimits = TextFieldLineLimits.MultiLine(),
+                            outputTransformation = syntaxTransformation,
                         )
                     }
                 }
@@ -296,7 +320,7 @@ fun CodeEditorScreen(
 
     // 未保存退出提示
     if (showUnsavedDialog) {
-        AlertDialog(
+        RuntimeAlertDialog(
             onDismissRequest = { showUnsavedDialog = false },
             title = { Text("未保存修改") },
             text = { Text("当前文件有未保存的更改，是否在退出前保存？") },

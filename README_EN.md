@@ -32,7 +32,7 @@ Upon the first launch, nothing has unfolded. There is no RootFS, no processes, n
 
 ## Current Status
 
-TaiXu is currently in version **0.1.0**, targeting **Android 10+ and ARM64** devices. It is in a stage of rapid evolution. It has formed a complete main chain from Linux runtime, model integration, and Agent tool loops to terminal and workspace management, though it still requires more validation on real devices with complex TUI and third-party tool combinations.
+TaiXu is currently in version **0.3.0**, targeting **Android 10+ and ARM64** devices. It is in a stage of rapid evolution. It has formed a complete main chain from Linux runtime, model integration, and Agent tool loops to terminal and workspace management, though it still requires more validation on real devices with complex TUI and third-party tool combinations.
 
 ```text
 Human Intent

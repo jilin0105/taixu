@@ -12,6 +12,12 @@ import top.wkbin.taixu.core.database.HarnessSessionDao
 import top.wkbin.taixu.core.database.AiModelDao
 import top.wkbin.taixu.core.database.WorkspaceDao
 import top.wkbin.taixu.core.database.TerminalSessionDao
+import top.wkbin.taixu.core.database.AgentSubagentDao
+import top.wkbin.taixu.core.database.AgentSkillDao
+import top.wkbin.taixu.core.database.McpServerDao
+import top.wkbin.taixu.core.database.StorageMountBindingDao
+import top.wkbin.taixu.core.database.ToolSettingsDao
+import top.wkbin.taixu.core.database.AgentApprovalDao
 import top.wkbin.taixu.harness.WorkspaceFileAccess
 import top.wkbin.taixu.core.tools.RuntimeManager
 import top.wkbin.taixu.core.tools.RuntimeManagerImpl
@@ -102,6 +108,30 @@ object AppModule {
     @Provides
     @Singleton
     fun provideAgentContextDao(database: AppDatabase): top.wkbin.taixu.core.database.AgentContextDao = database.agentContextDao()
+
+    @Provides
+    @Singleton
+    fun provideAgentSubagentDao(database: AppDatabase): AgentSubagentDao = database.agentSubagentDao()
+
+    @Provides
+    @Singleton
+    fun provideMcpServerDao(database: AppDatabase): McpServerDao = database.mcpServerDao()
+
+    @Provides
+    @Singleton
+    fun provideAgentSkillDao(database: AppDatabase): AgentSkillDao = database.agentSkillDao()
+
+    @Provides
+    @Singleton
+    fun provideStorageMountBindingDao(database: AppDatabase): StorageMountBindingDao = database.storageMountBindingDao()
+
+    @Provides
+    @Singleton
+    fun provideToolSettingsDao(database: AppDatabase): ToolSettingsDao = database.toolSettingsDao()
+
+    @Provides
+    @Singleton
+    fun provideAgentApprovalDao(database: AppDatabase): AgentApprovalDao = database.agentApprovalDao()
 
     @Provides
     @Singleton

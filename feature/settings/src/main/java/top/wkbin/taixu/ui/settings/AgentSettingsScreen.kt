@@ -1,5 +1,7 @@
 package top.wkbin.taixu.ui.settings
 
+import top.wkbin.taixu.ui.components.RuntimeAlertDialog
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,8 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import top.wkbin.taixu.ui.components.RuntimeButton as Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -29,17 +30,17 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.IconButton
+import top.wkbin.taixu.ui.components.RuntimeIconButton as IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import top.wkbin.taixu.ui.components.RuntimeOutlinedButton as OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
+import top.wkbin.taixu.ui.components.RuntimeSlider as Slider
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
+import top.wkbin.taixu.ui.components.RuntimeSwitch as Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -57,6 +58,8 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.model.AgentPlugin
 import top.wkbin.taixu.core.model.AgentSkill
+import top.wkbin.taixu.core.model.AgentSubagent
+import top.wkbin.taixu.core.model.ApprovalMode
 import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
@@ -76,22 +79,27 @@ fun AgentSettingsScreen(
     val compactionThreshold by viewModel.contextCompactionThreshold.collectAsStateWithLifecycle()
     val maxToolRounds by viewModel.maxToolRounds.collectAsStateWithLifecycle()
     val autoWorkspaceCwd by viewModel.autoWorkspaceCwd.collectAsStateWithLifecycle()
-    val destructiveGuardEnabled by viewModel.destructiveGuardEnabled.collectAsStateWithLifecycle()
+    val approvalMode by viewModel.approvalMode.collectAsStateWithLifecycle()
     val maxToolsPerRound by viewModel.maxToolsPerRound.collectAsStateWithLifecycle()
     val maxConsecutiveFailures by viewModel.maxConsecutiveFailures.collectAsStateWithLifecycle()
     val contextBudgetTokens by viewModel.contextBudgetTokens.collectAsStateWithLifecycle()
     val skills by viewModel.allSkills.collectAsStateWithLifecycle()
+    val subagents by viewModel.allSubagents.collectAsStateWithLifecycle()
+    val autoSubagentDelegation by viewModel.autoSubagentDelegationEnabled.collectAsStateWithLifecycle()
     val plugins by viewModel.allPlugins.collectAsStateWithLifecycle()
 
     var showAddSkillDialog by remember { mutableStateOf(false) }
     var viewingSkillPrompt by remember { mutableStateOf<AgentSkill?>(null) }
+    var editingSubagent by remember { mutableStateOf<AgentSubagent?>(null) }
+    var showSubagentDialog by remember { mutableStateOf(false) }
+    var deletingSubagent by remember { mutableStateOf<AgentSubagent?>(null) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             RuntimeTopBar(
                 title = "Agent 智能体管理与配置",
-                statusText = "思考流、上下文压缩、Skill 与插件",
+                statusText = "思考流、子智能体、Skill 与插件",
                 onBack = onBack,
             )
         },
@@ -111,6 +119,9 @@ fun AgentSettingsScreen(
                 )
             }
             item {
+                AgentBlockTitle("思考呈现")
+            }
+            item {
                 AgentSettingsGroup {
                     AgentToggleRow(
                         icon = RuntimeIconName.Brain,
@@ -124,7 +135,13 @@ fun AgentSettingsScreen(
                         currentLang = thinkingLanguage,
                         onLangChange = viewModel::setThinkingLanguage,
                     )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                }
+            }
+            item {
+                AgentBlockTitle("执行上下文")
+            }
+            item {
+                AgentSettingsGroup {
                     AgentToggleRow(
                         icon = RuntimeIconName.FolderOpen,
                         title = "自动注入关联工作区路径",
@@ -133,17 +150,20 @@ fun AgentSettingsScreen(
                         onCheckedChange = viewModel::setAutoWorkspaceCwd,
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    ApprovalModeSelectorRow(
+                        mode = approvalMode,
+                        onModeChange = viewModel::setApprovalMode,
+                    )
+                }
+            }
+            item {
+                AgentBlockTitle("工具调用限制")
+            }
+            item {
+                AgentSettingsGroup {
                     RoundsSliderRow(
                         currentValue = maxToolRounds,
                         onValueChange = viewModel::setMaxToolRounds,
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    AgentToggleRow(
-                        icon = RuntimeIconName.Shield,
-                        title = "危险命令闸门",
-                        subtitle = if (destructiveGuardEnabled) "拦截 rm -rf /、mkfs、dd 写设备等不可逆高危命令" else "已关闭，base 工具将直接执行模型发出的任何 shell 命令",
-                        checked = destructiveGuardEnabled,
-                        onCheckedChange = viewModel::setDestructiveGuardEnabled,
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     ToolsPerRoundSliderRow(
@@ -166,6 +186,9 @@ fun AgentSettingsScreen(
                 )
             }
             item {
+                AgentBlockTitle("提示词编辑")
+            }
+            item {
                 SystemPromptCustomCard(
                     enabled = customSystemPromptEnabled,
                     onEnabledChange = viewModel::setCustomSystemPromptEnabled,
@@ -180,6 +203,9 @@ fun AgentSettingsScreen(
                     title = "上下文记忆与智能压缩",
                     subtitle = "优化长任务 Token 消耗，防止触及模型上下文窗口上限",
                 )
+            }
+            item {
+                AgentBlockTitle("压缩策略")
             }
             item {
                 AgentSettingsGroup {
@@ -205,7 +231,63 @@ fun AgentSettingsScreen(
                 }
             }
 
-            // ---- 模块 3：Skill 专精技能库 ----
+            // ---- 模块 3：内置子智能体 ----
+            item {
+                SectionHeader(
+                    title = "子智能体角色 (${subagents.count { it.isEnabled }}/${subagents.size} 已启用)",
+                    subtitle = "主智能体按任务需要自主选择角色并并行委派",
+                )
+            }
+            item {
+                AgentBlockTitle("自动委派策略")
+            }
+            item {
+                AgentSettingsGroup {
+                    AgentToggleRow(
+                        icon = RuntimeIconName.Bot,
+                        title = "自动判断并拆分任务",
+                        subtitle = if (autoSubagentDelegation) {
+                            "复杂且可并行的任务将由主智能体自行决定是否派发"
+                        } else {
+                            "仅在用户明确要求并行或子智能体协同时派发"
+                        },
+                        checked = autoSubagentDelegation,
+                        onCheckedChange = viewModel::setAutoSubagentDelegationEnabled,
+                    )
+                }
+            }
+            item {
+                AgentBlockTitle("角色列表")
+            }
+            item {
+                Button(
+                    onClick = {
+                        editingSubagent = null
+                        showSubagentDialog = true
+                    },
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        RuntimeIcon(RuntimeIconName.Plus, Modifier.size(16.dp), MaterialTheme.colorScheme.onPrimaryContainer)
+                        Text("新增子智能体角色", color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+            items(subagents, key = { "subagent:${it.id}" }) { profile ->
+                SubagentProfileCard(
+                    profile = profile,
+                    onToggle = { enabled -> viewModel.toggleSubagent(profile.id, enabled) },
+                    onEdit = {
+                        editingSubagent = profile
+                        showSubagentDialog = true
+                    },
+                    onDelete = { deletingSubagent = profile },
+                )
+            }
+
+            // ---- 模块 4：Skill 专精技能库 ----
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -217,6 +299,9 @@ fun AgentSettingsScreen(
                         subtitle = "向 Agent 系统提示词注入领域专业规范与操作指导",
                     )
                 }
+            }
+            item {
+                AgentBlockTitle("技能管理")
             }
             item {
                 Button(
@@ -241,7 +326,7 @@ fun AgentSettingsScreen(
                 )
             }
 
-            // ---- 模块 4：Plugin 插件生态管理 ----
+            // ---- 模块 5：Plugin 插件生态管理 ----
             item {
                 SectionHeader(
                     title = "Plugin 插件生态管理 (${plugins.count { it.isEnabled }}/${plugins.size} 运行中)",
@@ -249,6 +334,9 @@ fun AgentSettingsScreen(
                 )
             }
 
+            item {
+                AgentBlockTitle("已安装插件")
+            }
             items(plugins, key = { it.id }) { plugin ->
                 PluginCard(
                     plugin = plugin,
@@ -262,7 +350,7 @@ fun AgentSettingsScreen(
 
     // 查看 Skill 完整提示词弹窗
     viewingSkillPrompt?.let { skill ->
-        AlertDialog(
+        RuntimeAlertDialog(
             onDismissRequest = { viewingSkillPrompt = null },
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -305,6 +393,43 @@ fun AgentSettingsScreen(
             },
         )
     }
+
+    if (showSubagentDialog) {
+        SubagentEditorDialog(
+            profile = editingSubagent,
+            existingIds = subagents.mapTo(mutableSetOf()) { it.id },
+            onDismiss = {
+                showSubagentDialog = false
+                editingSubagent = null
+            },
+            onConfirm = { roleId, name, description, prompt ->
+                viewModel.saveSubagent(editingSubagent, roleId, name, description, prompt)
+                showSubagentDialog = false
+                editingSubagent = null
+            },
+        )
+    }
+
+    deletingSubagent?.let { profile ->
+        RuntimeAlertDialog(
+            onDismissRequest = { deletingSubagent = null },
+            title = { Text("删除子智能体", fontWeight = FontWeight.Bold) },
+            text = { Text("确定删除“${profile.name}”吗？删除后该角色不会再参与任务委派。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteSubagent(profile.id)
+                        deletingSubagent = null
+                    },
+                ) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletingSubagent = null }) { Text("取消") }
+            },
+        )
+    }
 }
 
 @Composable
@@ -317,6 +442,16 @@ private fun AgentSettingsGroup(content: @Composable () -> Unit) {
     ) {
         Column { content() }
     }
+}
+
+@Composable
+private fun AgentBlockTitle(title: String) {
+    Text(
+        text = title,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+        color = MaterialTheme.colorScheme.primary,
+    )
 }
 
 @Composable
@@ -356,6 +491,122 @@ private fun AgentToggleRow(
                 checkedTrackColor = MaterialTheme.colorScheme.primary,
             ),
         )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ApprovalModeSelectorRow(
+    mode: ApprovalMode,
+    onModeChange: (ApprovalMode) -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(
+                modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                RuntimeIcon(RuntimeIconName.Shield, Modifier.size(18.dp), MaterialTheme.colorScheme.primary)
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("新会话默认工具权限", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+                Text(
+                    "仅作为新建会话初始值，已存在会话可在聊天顶部单独切换。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf(
+                ApprovalMode.REQUEST to "请求批准",
+                ApprovalMode.ASSISTED to "帮我批准",
+                ApprovalMode.FULL_ACCESS to "完全访问",
+            ).forEach { (value, label) ->
+                FilterChip(
+                    selected = mode == value,
+                    onClick = { onModeChange(value) },
+                    label = { Text(label) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubagentProfileCard(
+    profile: AgentSubagent,
+    onToggle: (Boolean) -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    RuntimeCard(
+        modifier = Modifier.fillMaxWidth(),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        borderColor = if (profile.isEnabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outlineVariant,
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    RuntimeIcon(RuntimeIconName.Bot, Modifier.size(18.dp), MaterialTheme.colorScheme.primary)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(profile.name, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                    Text(profile.id, style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace), color = MaterialTheme.colorScheme.primary)
+                }
+                if (profile.isBuiltin) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        shape = RoundedCornerShape(4.dp),
+                    ) {
+                        Text(
+                            "预置",
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+
+            Text(profile.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.End,
+            ) {
+                IconButton(onClick = onEdit, modifier = Modifier.size(36.dp)) {
+                    RuntimeIcon(RuntimeIconName.Edit, Modifier.size(17.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
+                    RuntimeIcon(RuntimeIconName.Trash, Modifier.size(17.dp), MaterialTheme.colorScheme.error)
+                }
+                Spacer(Modifier.width(6.dp))
+                Switch(
+                    checked = profile.isEnabled,
+                    onCheckedChange = onToggle,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                        checkedTrackColor = MaterialTheme.colorScheme.primary,
+                    ),
+                )
+            }
+        }
     }
 }
 
@@ -711,7 +962,7 @@ private fun AddSkillDialog(
     var prompt by remember { mutableStateOf("") }
     var cmd by remember { mutableStateOf("") }
 
-    AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("新增自定义 Skill 技能", fontWeight = FontWeight.Bold) },
         text = {
@@ -764,6 +1015,81 @@ private fun AddSkillDialog(
 }
 
 @Composable
+private fun SubagentEditorDialog(
+    profile: AgentSubagent?,
+    existingIds: Set<String>,
+    onDismiss: () -> Unit,
+    onConfirm: (roleId: String, name: String, description: String, systemPrompt: String) -> Unit,
+) {
+    var roleId by remember(profile?.id) { mutableStateOf(profile?.id.orEmpty()) }
+    var name by remember(profile?.id) { mutableStateOf(profile?.name.orEmpty()) }
+    var description by remember(profile?.id) { mutableStateOf(profile?.description.orEmpty()) }
+    var prompt by remember(profile?.id) { mutableStateOf(profile?.systemPrompt.orEmpty()) }
+    val normalizedId = roleId.trim().lowercase()
+        .replace(Regex("[^a-z0-9_-]+"), "_")
+        .trim('_')
+    val duplicateId = normalizedId.isNotBlank() && normalizedId != profile?.id && normalizedId in existingIds
+    val canSave = normalizedId.isNotBlank() && name.isNotBlank() && prompt.isNotBlank() && !duplicateId
+
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(if (profile == null) "新增子智能体角色" else "编辑子智能体角色", fontWeight = FontWeight.Bold)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = roleId,
+                    onValueChange = { roleId = it },
+                    label = { Text("角色标识") },
+                    supportingText = {
+                        Text(if (duplicateId) "该角色标识已存在" else "仅支持英文、数字、下划线和连字符")
+                    },
+                    isError = duplicateId,
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("显示名称") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("职责简介") },
+                    minLines = 2,
+                    maxLines = 3,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = prompt,
+                    onValueChange = { prompt = it },
+                    label = { Text("角色指导词") },
+                    minLines = 5,
+                    maxLines = 9,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(normalizedId, name, description, prompt) },
+                enabled = canSave,
+            ) {
+                Text(if (profile == null) "添加并启用" else "保存")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
 private fun ThinkingLanguageSelectorRow(
     currentLang: String,
     onLangChange: (String) -> Unit,
@@ -793,9 +1119,10 @@ private fun ThinkingLanguageSelectorRow(
             }
         }
 
-        Row(
+        FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             listOf(
                 "zh" to "强制中文 (推荐)",

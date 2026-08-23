@@ -29,21 +29,21 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
+import top.wkbin.taixu.ui.components.RuntimeButton as Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilledTonalButton
+import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator
+import top.wkbin.taixu.ui.components.RuntimeFilledTonalButton as FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
+import top.wkbin.taixu.ui.components.RuntimeIconButton as IconButton
+import top.wkbin.taixu.ui.components.RuntimeLinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import top.wkbin.taixu.ui.components.RuntimeOutlinedButton as OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -69,9 +69,11 @@ import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.ui.components.MainDestination
 import top.wkbin.taixu.ui.components.NoticeBanner
 import top.wkbin.taixu.ui.components.RuntimeBottomBar
+import top.wkbin.taixu.ui.components.liquidGlassContent
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
+import top.wkbin.taixu.ui.components.RuntimeButton
 import top.wkbin.taixu.ui.components.distroIconFor
 import top.wkbin.taixu.ui.components.StatusBadge
 
@@ -120,9 +122,11 @@ fun HomeScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .liquidGlassContent()
+                .padding(top = innerPadding.calculateTopPadding())
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .padding(bottom = 104.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             // 1. 运行时引擎主状态卡片 (Status Banner)
@@ -292,7 +296,7 @@ private fun EnvironmentDoctorCard(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     if (isChecking) {
-                        CircularProgressIndicator(
+                        RuntimeCircularProgressIndicator(
                             modifier = Modifier.size(18.dp),
                             strokeWidth = 2.dp,
                             color = MaterialTheme.colorScheme.primary,
@@ -362,7 +366,7 @@ private fun EnvironmentDoctorCard(
                                     )
                                 }
 
-                                LinearProgressIndicator(
+                                RuntimeLinearProgressIndicator(
                                     progress = { repairProgress.progress },
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -449,11 +453,9 @@ private fun EnvironmentDoctorCard(
 
                         // 一键修复按钮或就绪横幅
                         if (report.needsFix) {
-                            Button(
+                            RuntimeButton(
                                 onClick = onStartAutoRepair,
                                 modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                                 contentPadding = PaddingValues(vertical = 12.dp),
                             ) {
                                 RuntimeIcon(
@@ -681,7 +683,7 @@ private fun RuntimeEngineStatusCard(
                             .align(androidx.compose.ui.Alignment.CenterVertically),
                     )
                     if (switchingDistro) {
-                        CircularProgressIndicator(
+                        RuntimeCircularProgressIndicator(
                             modifier = Modifier
                                 .size(12.dp)
                                 .align(androidx.compose.ui.Alignment.CenterVertically),
@@ -721,7 +723,7 @@ private fun RuntimeEngineStatusCard(
 
             if (initializing != null) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    LinearProgressIndicator(
+                    RuntimeLinearProgressIndicator(
                         progress = { initializing.progress },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -766,10 +768,9 @@ private fun RuntimeEngineStatusCard(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 if (ready) {
-                    Button(
+                    RuntimeButton(
                         onClick = onOpenTerminal,
                         modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(vertical = 10.dp),
                     ) {
                         RuntimeIcon(
@@ -780,10 +781,9 @@ private fun RuntimeEngineStatusCard(
                         Text("进入控制台", fontWeight = FontWeight.SemiBold)
                     }
                 } else if (initializing == null) {
-                    Button(
+                    RuntimeButton(
                         onClick = onInitialize,
                         modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(vertical = 10.dp),
                     ) {
                         RuntimeIcon(
@@ -854,7 +854,7 @@ private fun ResourceMetricCard(
                 color = MaterialTheme.colorScheme.onSurface,
             )
 
-            LinearProgressIndicator(
+            RuntimeLinearProgressIndicator(
                 progress = { progress },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -938,9 +938,9 @@ private fun ActiveTasksStatusCard(
 
             Spacer(Modifier.width(8.dp))
 
-            FilledTonalButton(
+            RuntimeButton(
                 onClick = onOpenTerminal,
-                shape = RoundedCornerShape(10.dp),
+                tonal = true,
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
             ) {
                 Text("查看", style = MaterialTheme.typography.labelSmall)

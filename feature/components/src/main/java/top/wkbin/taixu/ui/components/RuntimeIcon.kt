@@ -82,6 +82,7 @@ import androidx.compose.ui.unit.dp
 
 enum class RuntimeIconName {
     Home, Workspace, Terminal, Settings, Back, ChevronRight, ChevronDown, Package,
+    NavDashboard, NavMessage, NavRepository, NavSettings,
     Refresh, Shield, Storage, Globe, Trash, Close, Check, Alert, Logs,
     Download, Play, Stop, More, Plus, Chat, List, Copy,
     Folder, File, Code, Edit, Save, ArrowUp, Cpu, Search, Info,
@@ -113,6 +114,10 @@ fun RuntimeIcon(
         RuntimeIconName.Fedora -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_fedora
         RuntimeIconName.Alpine -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_alpine
         RuntimeIconName.Void -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_void
+        RuntimeIconName.NavDashboard -> top.wkbin.taixu.feature.components.R.drawable.ic_nav_dashboard
+        RuntimeIconName.NavMessage -> top.wkbin.taixu.feature.components.R.drawable.ic_nav_message
+        RuntimeIconName.NavRepository -> top.wkbin.taixu.feature.components.R.drawable.ic_nav_repository
+        RuntimeIconName.NavSettings -> top.wkbin.taixu.feature.components.R.drawable.ic_nav_settings
         else -> null
     }
 
@@ -162,6 +167,10 @@ private fun RuntimeIconName.materialVector(): ImageVector = when (this) {
     RuntimeIconName.Workspace -> Icons.Outlined.Dashboard
     RuntimeIconName.Terminal -> Icons.Outlined.Terminal
     RuntimeIconName.Settings -> Icons.Outlined.Settings
+    RuntimeIconName.NavDashboard -> Icons.Outlined.Dashboard
+    RuntimeIconName.NavMessage -> Icons.Outlined.ChatBubbleOutline
+    RuntimeIconName.NavRepository -> Icons.Outlined.Folder
+    RuntimeIconName.NavSettings -> Icons.Outlined.Settings
     RuntimeIconName.Back -> Icons.AutoMirrored.Outlined.ArrowBack
     RuntimeIconName.ChevronRight -> Icons.Outlined.ChevronRight
     RuntimeIconName.ChevronDown -> Icons.Outlined.ExpandMore

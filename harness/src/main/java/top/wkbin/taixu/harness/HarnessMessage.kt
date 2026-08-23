@@ -11,6 +11,7 @@ enum class HarnessTool {
     @SerialName("write") WRITE,
     @SerialName("edit") EDIT,
     @SerialName("base") BASE,
+    @SerialName("download") DOWNLOAD,
     @SerialName("memory") MEMORY,
     @SerialName("plan") PLAN,
     @SerialName("scratchpad") SCRATCHPAD,
@@ -26,6 +27,20 @@ enum class HarnessTool {
 sealed interface HarnessMessage {
     val id: String
     val createdAt: Long
+}
+
+/** UI-only capability activation event. It is persisted for the transcript but never sent to the model. */
+@Serializable
+@SerialName("capability_event")
+data class CapabilityEvent(
+    override val id: String,
+    override val createdAt: Long,
+    val kind: Kind,
+    val name: String,
+    val details: String = "",
+) : HarnessMessage {
+    @Serializable
+    enum class Kind { SKILL, MCP }
 }
 
 @Serializable
@@ -75,4 +90,7 @@ data class ToolResult(
     val output: String,
     /** 该工具调用实际执行耗时（毫秒，不含排队与 LLM 时间）。旧数据无此字段，默认 null。 */
     val durationMs: Long? = null,
+    /** Host approval gate paused this tool call; the model loop must wait for the user. */
+    val awaitingApproval: Boolean = false,
+    val approvalRequestId: String? = null,
 ) : HarnessMessage

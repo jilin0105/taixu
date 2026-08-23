@@ -111,11 +111,11 @@ class HermesToolInstaller @Inject constructor(
     }
 
     private suspend fun resolveAccessToken(): String =
-        runCatching { settingsDataStore.toolAccessToken(toolId).first() }
+        runCatching { settingsDataStore.toolAccessToken(linuxRuntime.activeDistroId.value, toolId).first() }
             .getOrNull()
             ?.takeIf { it.isNotBlank() }
             ?: UUID.randomUUID().toString().replace("-", "").also {
-                settingsDataStore.setToolAccessToken(toolId, it)
+                settingsDataStore.setToolAccessToken(linuxRuntime.activeDistroId.value, toolId, it)
             }
     override suspend fun uninstall(deleteData: Boolean): ToolActionResult {
         val dataCleanup = if (deleteData) " && rm -rf ${ToolLayout.toolDataDirectory(toolId)}" else ""

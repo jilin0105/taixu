@@ -23,12 +23,12 @@ fi
 
 if [ -f "$DIR/gradle/wrapper/gradle-wrapper.jar" ]; then
     exec "$JAVA_EXEC" -jar "$DIR/gradle/wrapper/gradle-wrapper.jar" "$@"
-elif [ -d /opt/gradle-8.9/lib ]; then
+elif [ -d /opt/gradle-8.14.2/lib ]; then
     exec "$JAVA_EXEC" -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+UseSerialGC \
         -Dorg.gradle.appname=gradle \
-        -Dorg.gradle.installation.dir=/opt/gradle-8.9 \
+        -Dorg.gradle.installation.dir=/opt/gradle-8.14.2 \
         -Dorg.gradle.native=false \
-        -classpath "/opt/gradle-8.9/lib/*" \
+        -classpath "/opt/gradle-8.14.2/lib/*" \
         org.gradle.launcher.GradleMain "$@"
 elif [ -d /opt/gradle-8.7/lib ]; then
     exec "$JAVA_EXEC" -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+UseSerialGC \
@@ -37,8 +37,8 @@ elif [ -d /opt/gradle-8.7/lib ]; then
         -Dorg.gradle.native=false \
         -classpath "/opt/gradle-8.7/lib/*" \
         org.gradle.launcher.GradleMain "$@"
-elif [ -x /opt/gradle-8.9/bin/gradle ]; then
-    exec /opt/gradle-8.9/bin/gradle "$@"
+elif [ -x /opt/gradle-8.14.2/bin/gradle ]; then
+    exec /opt/gradle-8.14.2/bin/gradle "$@"
 elif [ -x /usr/local/bin/gradle ]; then
     exec /usr/local/bin/gradle "$@"
 elif command -v gradle >/dev/null 2>&1; then

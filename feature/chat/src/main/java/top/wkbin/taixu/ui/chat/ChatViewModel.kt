@@ -2,13 +2,20 @@ package top.wkbin.taixu.ui.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import top.wkbin.taixu.core.model.McpConnectionState
+import top.wkbin.taixu.core.model.ApprovalMode
 import top.wkbin.taixu.core.database.AiModelDao
 import top.wkbin.taixu.core.database.AiModelEntity
 import top.wkbin.taixu.core.database.HarnessSessionDao
 import top.wkbin.taixu.core.database.HarnessSessionEntity
+import top.wkbin.taixu.core.database.AgentSkillRepository
+import top.wkbin.taixu.core.database.McpServerRepository
+import top.wkbin.taixu.core.database.AgentApprovalRepository
+import top.wkbin.taixu.core.database.AgentApprovalRequestEntity
 import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.harness.HarnessLoop
 import top.wkbin.taixu.harness.HarnessMessage
+import top.wkbin.taixu.harness.mcp.McpManager
 import top.wkbin.taixu.runtime.WorkspaceManager
 import top.wkbin.taixu.runtime.WorkspaceProject
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -18,6 +25,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -33,6 +42,10 @@ class ChatViewModel @Inject constructor(
     private val settingsDataStore: SettingsDataStore,
     private val linuxRuntime: top.wkbin.taixu.runtime.LinuxRuntime,
     private val terminalSessionManager: TerminalSessionManager,
+    private val mcpManager: McpManager,
+    private val agentSkillRepository: AgentSkillRepository,
+    private val mcpServerRepository: McpServerRepository,
+    private val approvalRepository: AgentApprovalRepository,
 ) : ViewModel() {
 
     val activeDistroId: StateFlow<String> = linuxRuntime.activeDistroId
@@ -52,6 +65,7 @@ class ChatViewModel @Inject constructor(
     val status: StateFlow<String?> = harnessLoop.status
     val thinkingLive: StateFlow<Boolean> = harnessLoop.thinkingLive
     val workspace: StateFlow<String> = harnessLoop.workspace
+    val projectType: StateFlow<String> = harnessLoop.projectType
     /** 运行中排队的待发送消息（当前任务结束后自动接续）。 */
     val pendingMessages: StateFlow<List<String>> = harnessLoop.pendingMessages
 
@@ -59,9 +73,25 @@ class ChatViewModel @Inject constructor(
     val currentSessionId: StateFlow<String> = harnessLoop.currentSessionId
     /** 所有会话的多 Agent 并发运行状态映射 (IDLE / RUNNING / COMPLETED / FAILED) */
     val sessionRunStates: StateFlow<Map<String, top.wkbin.taixu.core.model.SessionRunState>> = harnessLoop.sessionRunStates
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val pendingApprovals: StateFlow<List<AgentApprovalRequestEntity>> = harnessLoop.currentSessionId.flatMapLatest { sessionId ->
+        if (sessionId.isBlank()) kotlinx.coroutines.flow.flowOf(emptyList()) else approvalRepository.pendingForSession(sessionId)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun resolveApproval(requestId: String, approved: Boolean) {
+        harnessLoop.resolveApproval(requestId, approved)
+    }
 
     val sessions: StateFlow<List<HarnessSessionEntity>> = sessionDao.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun setCurrentSessionApprovalMode(mode: ApprovalMode) {
+        val sessionId = currentSessionId.value
+        if (sessionId.isBlank()) return
+        viewModelScope.launch {
+            sessionDao.setApprovalMode(sessionId, mode.id, System.currentTimeMillis())
+        }
+    }
 
     val models: StateFlow<List<AiModelEntity>> = aiModelDao.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -80,29 +110,84 @@ class ChatViewModel @Inject constructor(
     private val _input = MutableStateFlow("")
     val input: StateFlow<String> = _input.asStateFlow()
 
-    val activeSkills: StateFlow<List<top.wkbin.taixu.core.model.AgentSkill>> = settingsDataStore.activeSkills
+    val activeSkills: StateFlow<List<top.wkbin.taixu.core.model.AgentSkill>> = agentSkillRepository.activeSkills
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val allSkills: StateFlow<List<top.wkbin.taixu.core.model.AgentSkill>> = settingsDataStore.allSkills
+    val allSkills: StateFlow<List<top.wkbin.taixu.core.model.AgentSkill>> = agentSkillRepository.allSkills
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val mcpServers: StateFlow<List<top.wkbin.taixu.core.model.McpServerConfig>> = settingsDataStore.mcpServers
+    val mcpServers: StateFlow<List<top.wkbin.taixu.core.model.McpServerConfig>> = mcpServerRepository.servers
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * 当前会话上下文用量的 UI 估算。Harness 发请求时会用同一字符/token 近似值再做最终压缩，
+     * 因此这里明确是预估值，而不是 provider 返回的精确 tokenizer 计数。
+     */
+    val contextUsage: StateFlow<ContextUsage> = combine(
+        messages,
+        models,
+        allSkills,
+        mcpServers,
+        settingsDataStore.contextBudgetTokens,
+    ) { currentMessages, currentModels, skills, mcps, defaultBudget ->
+        val activeModel = currentModels.firstOrNull { it.isActive }
+        val systemTokens = if (activeModel?.pureChatMode == true) {
+            0
+        } else {
+            val skillTokens = skills.filter { it.isEnabled }.sumOf { estimateContextTokens(it.systemPrompt) }
+            val mcpTokens = mcps.filter { it.isEnabled }.sumOf {
+                estimateContextTokens("${it.name}\n${it.description}\n${it.command}\n${it.args.joinToString(" ")}")
+            }
+            1_600 + skillTokens + mcpTokens
+        }
+        val conversationTokens = currentMessages.sumOf { message ->
+            when (message) {
+                is top.wkbin.taixu.harness.UserMessage -> estimateContextTokens(message.text) +
+                    message.imageUrls.size * 1_000
+                is top.wkbin.taixu.harness.AssistantText -> estimateContextTokens(message.text) +
+                    estimateContextTokens(message.reasoning.orEmpty())
+                else -> 0
+            }
+        }
+        val toolTokens = currentMessages.sumOf { message ->
+            when (message) {
+                is top.wkbin.taixu.harness.ToolCall -> estimateContextTokens(message.args.toString()) +
+                    estimateContextTokens(message.reasoning.orEmpty())
+                is top.wkbin.taixu.harness.ToolResult -> estimateContextTokens(message.output)
+                else -> 0
+            }
+        }
+        ContextUsage(
+            usedTokens = systemTokens + conversationTokens + toolTokens,
+            limitTokens = (activeModel?.contextTokens ?: defaultBudget).coerceAtLeast(1),
+            systemTokens = systemTokens,
+            toolTokens = toolTokens,
+            conversationTokens = conversationTokens,
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ContextUsage())
+
+    /** 各 MCP 服务的实时连通性状态（与 McpManager 共享，聊天挂载面板 / 设置页联动）。 */
+    val mcpConnectionStates: StateFlow<Map<String, McpConnectionState>> = mcpManager.connectionStates
+
+    fun refreshMcpConnections() {
+        viewModelScope.launch { mcpManager.refreshConnections() }
+    }
 
     fun setSkillEnabled(skillId: String, enabled: Boolean) {
         viewModelScope.launch {
-            settingsDataStore.setSkillEnabled(skillId, enabled)
+            agentSkillRepository.setEnabled(skillId, enabled)
         }
     }
 
     fun setMcpServerEnabled(serverId: String, enabled: Boolean) {
         viewModelScope.launch {
-            settingsDataStore.toggleMcpServer(serverId, enabled)
+            mcpServerRepository.setEnabled(serverId, enabled)
+            mcpManager.refreshConnections()
         }
     }
 
     /** 斜杠指令建议列表（当输入以 / 开头时实时过滤展示，自动合并已激活的专精技能）。 */
-    val matchingCommands: StateFlow<List<SlashCommandItem>> = kotlinx.coroutines.flow.combine(_input, settingsDataStore.activeSkills) { text, skills ->
+    val matchingCommands: StateFlow<List<SlashCommandItem>> = kotlinx.coroutines.flow.combine(_input, agentSkillRepository.activeSkills) { text, skills ->
         if (text.startsWith("/")) SlashCommands.filterCommands(text, skills)
         else emptyList()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -110,14 +195,16 @@ class ChatViewModel @Inject constructor(
     /** @ 艾特唤醒建议列表（当输入包含 @ 时实时过滤技能与 MCP 插件）。 */
     val matchingMentions: StateFlow<List<MentionItem>> = kotlinx.coroutines.flow.combine(
         _input,
-        settingsDataStore.allSkills,
-        settingsDataStore.mcpServers,
+        agentSkillRepository.allSkills,
+        mcpServerRepository.servers,
     ) { text, skills, mcps ->
         val atIndex = text.lastIndexOf('@')
         if (atIndex < 0) return@combine emptyList()
-        val query = text.substring(atIndex + 1).trim().lowercase()
+        val mentionToken = text.substring(atIndex + 1)
+        if (mentionToken.any { it.isWhitespace() }) return@combine emptyList()
+        val query = mentionToken.lowercase()
 
-        val skillMentions = skills.filter { !it.isImmutable }.map { skill ->
+        val skillMentions = skills.filter { it.isEnabled }.map { skill ->
             MentionItem(
                 id = skill.id,
                 name = skill.name,
@@ -127,11 +214,11 @@ class ChatViewModel @Inject constructor(
                 icon = top.wkbin.taixu.ui.components.RuntimeIconName.Brain,
             )
         }
-        val mcpMentions = mcps.map { mcp ->
+        val mcpMentions = mcps.filter { it.isEnabled }.map { mcp ->
             MentionItem(
                 id = mcp.id,
                 name = mcp.name,
-                description = if (mcp.isEnabled) "MCP 工具服务 (${mcp.transportType})" else "MCP 工具服务（点击将自动启用）",
+                description = "MCP 工具服务 (${mcp.transportType})",
                 category = "MCP 插件",
                 type = MentionType.MCP_SERVER,
                 icon = top.wkbin.taixu.ui.components.RuntimeIconName.Cpu,
@@ -145,15 +232,19 @@ class ChatViewModel @Inject constructor(
     /** 当前输入框中已挂载的技能与 MCP 标签列表（用于输入框顶部展示高亮双排 Chips）。 */
     val attachedMentions: StateFlow<List<MentionItem>> = kotlinx.coroutines.flow.combine(
         _input,
-        settingsDataStore.allSkills,
-        settingsDataStore.mcpServers,
+        agentSkillRepository.allSkills,
+        mcpServerRepository.servers,
     ) { text, skills, mcps ->
         if (!text.contains("@")) return@combine emptyList()
         val regex = Regex("""@([^\s@,，:：\n]+)""")
         val matchedNames = regex.findAll(text).map { it.groupValues[1].trim().lowercase() }.toSet()
         if (matchedNames.isEmpty()) return@combine emptyList()
 
-        val matchedSkills = skills.filter { !it.isImmutable && (it.name.lowercase() in matchedNames || it.id.lowercase() in matchedNames) }.map { skill ->
+        val matchedSkills = skills.filter { skill ->
+            skill.isEnabled && (
+                skill.name.lowercase() in matchedNames || skill.id.lowercase() in matchedNames
+            )
+        }.map { skill ->
             MentionItem(
                 id = skill.id,
                 name = skill.name,
@@ -165,7 +256,9 @@ class ChatViewModel @Inject constructor(
         }
 
         val matchedMcps = mcps.filter { mcp ->
-            mcp.name.lowercase() in matchedNames || mcp.id.lowercase() in matchedNames
+            mcp.isEnabled && (
+                mcp.name.lowercase() in matchedNames || mcp.id.lowercase() in matchedNames
+            )
         }.map { mcp ->
             MentionItem(
                 id = mcp.id,
@@ -180,6 +273,9 @@ class ChatViewModel @Inject constructor(
         matchedSkills + matchedMcps
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    private val _initializing = MutableStateFlow(true)
+    val initializing: StateFlow<Boolean> = _initializing.asStateFlow()
+
     init {
         viewModelScope.launch {
             // 恢复最近会话；没有则新建
@@ -189,6 +285,7 @@ class ChatViewModel @Inject constructor(
             } else {
                 harnessLoop.newSession("新会话")
             }
+            _initializing.value = false
         }
     }
 
@@ -209,10 +306,9 @@ class ChatViewModel @Inject constructor(
         val text = _input.value
         val atIndex = text.lastIndexOf('@')
         val prefix = if (atIndex >= 0) text.substring(0, atIndex) else text
-        _input.value = "${prefix}@${item.name} "
-        if (item.type == MentionType.MCP_SERVER) {
-            setMcpServerEnabled(item.id, true)
-        }
+        // Persist the stable id so names containing spaces or punctuation cannot be
+        // truncated by the mention parser; the attached chip still shows the friendly name.
+        _input.value = "${prefix}@${item.id} "
     }
 
     /** 从输入框中整块移除某个已挂载的 @能力 标签 */
@@ -236,7 +332,8 @@ class ChatViewModel @Inject constructor(
         val text = (customText ?: _input.value).trim()
         if (text.isBlank() && imageUrls.isEmpty()) return
         _input.value = ""
-        // 运行中不拦截：HarnessLoop 会把消息放入排队，当前任务结束后自动接续执行
+        // 运行中不拦截：HarnessLoop 会把消息放入排队，当前任务结束后自动接续执行。
+        // @ 仅引用已经显式启用的能力，不在发送阶段修改全局开关。
         harnessLoop.send(text, imageUrls = imageUrls)
     }
 
@@ -277,8 +374,10 @@ class ChatViewModel @Inject constructor(
     fun clearError() = harnessLoop.clearError()
 
     /** 新建会话（支持自定义标题并关联工作区）。 */
-    fun createSession(title: String = "新会话", workspace: String = "") {
-        viewModelScope.launch { harnessLoop.newSession(title.trim().ifBlank { "新会话" }, workspace) }
+    fun createSession(title: String = "新会话", workspace: String = "", projectType: String = "") {
+        viewModelScope.launch {
+            harnessLoop.newSession(title.trim().ifBlank { "新会话" }, workspace, projectType)
+        }
     }
 
     fun switchSession(id: String) {
@@ -335,9 +434,22 @@ class ChatViewModel @Inject constructor(
     }
 
     fun deleteModel(id: String) {
-        viewModelScope.launch { aiModelDao.delete(id) }
+        viewModelScope.launch {
+            aiModelDao.findById(id)?.secretRef?.takeIf { it.isNotBlank() }?.let { settingsDataStore.removeModelApiKey(it) }
+            aiModelDao.delete(id)
+        }
     }
 }
+
+data class ContextUsage(
+    val usedTokens: Int = 0,
+    val limitTokens: Int = 128_000,
+    val systemTokens: Int = 0,
+    val toolTokens: Int = 0,
+    val conversationTokens: Int = 0,
+)
+
+private fun estimateContextTokens(text: String): Int = (text.length / 2.5).toInt()
 
 data class MentionItem(
     val id: String,

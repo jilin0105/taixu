@@ -1,0 +1,142 @@
+package top.wkbin.taixu.core.database
+
+import androidx.room.Dao
+import androidx.room.Entity
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import top.wkbin.taixu.core.model.BuiltinMcpPresets
+import top.wkbin.taixu.core.model.McpServerConfig
+import top.wkbin.taixu.core.model.McpTransportType
+import top.wkbin.taixu.core.security.SecretManager
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Entity(tableName = "mcp_servers")
+data class McpServerEntity(
+    @androidx.room.PrimaryKey val id: String,
+    val name: String,
+    val description: String,
+    val transportType: String,
+    val command: String,
+    val argsCiphertext: String,
+    val envCiphertext: String,
+    val serverUrl: String,
+    val isEnabled: Boolean,
+    val isBuiltin: Boolean,
+)
+
+@Dao
+interface McpServerDao {
+    @Query("SELECT * FROM mcp_servers ORDER BY name ASC")
+    fun observeAll(): Flow<List<McpServerEntity>>
+
+    @Query("SELECT * FROM mcp_servers WHERE id = :id LIMIT 1")
+    suspend fun findById(id: String): McpServerEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(server: McpServerEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAll(servers: List<McpServerEntity>)
+
+    @Query("UPDATE mcp_servers SET name = :name, description = :description, transportType = :transportType, command = :command, argsCiphertext = :argsCiphertext, envCiphertext = :envCiphertext, serverUrl = :serverUrl, isBuiltin = 1 WHERE id = :id AND isBuiltin = 1")
+    suspend fun updateBuiltinDefinition(
+        id: String,
+        name: String,
+        description: String,
+        transportType: String,
+        command: String,
+        argsCiphertext: String,
+        envCiphertext: String,
+        serverUrl: String,
+    )
+
+    @Query("UPDATE mcp_servers SET isEnabled = :enabled WHERE id = :id")
+    suspend fun setEnabled(id: String, enabled: Boolean)
+
+    @Query("DELETE FROM mcp_servers WHERE id = :id AND isBuiltin = 0")
+    suspend fun deleteCustom(id: String)
+}
+
+@Singleton
+class McpServerRepository @Inject constructor(
+    private val dao: McpServerDao,
+    private val secretManager: SecretManager,
+) {
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    val servers: Flow<List<McpServerConfig>> = dao.observeAll().map { rows -> rows.map { it.toModel(json, secretManager) } }
+
+    suspend fun ensureInitialized() {
+        BuiltinMcpPresets.presets.forEach { preset ->
+            val entity = preset.toEntity(json, secretManager)
+            if (dao.findById(preset.id) == null) {
+                dao.upsert(entity)
+            } else {
+                // 更新内置服务的启动定义（例如从失效 npx 包迁移到 APK 自带脚本），
+                // 但保留用户当前的启用/停用状态。
+                dao.updateBuiltinDefinition(
+                    id = entity.id,
+                    name = entity.name,
+                    description = entity.description,
+                    transportType = entity.transportType,
+                    command = entity.command,
+                    argsCiphertext = entity.argsCiphertext,
+                    envCiphertext = entity.envCiphertext,
+                    serverUrl = entity.serverUrl,
+                )
+            }
+        }
+    }
+
+    suspend fun setEnabled(id: String, enabled: Boolean) {
+        ensureInitialized()
+        dao.setEnabled(id, enabled)
+    }
+
+    suspend fun save(server: McpServerConfig) {
+        ensureInitialized()
+        dao.upsert(server.toEntity(json, secretManager))
+    }
+
+    suspend fun delete(id: String) {
+        ensureInitialized()
+        dao.deleteCustom(id)
+    }
+}
+
+private fun McpServerEntity.toModel(json: Json, secretManager: SecretManager): McpServerConfig = McpServerConfig(
+    id = id,
+    name = name,
+    description = description,
+    transportType = runCatching { McpTransportType.valueOf(transportType) }.getOrDefault(McpTransportType.STDIO),
+    command = command,
+    args = secretManager.decrypt(argsCiphertext)
+        ?.let { plaintext -> runCatching { json.decodeFromString<List<String>>(plaintext) }.getOrDefault(emptyList()) }
+        .orEmpty(),
+    env = secretManager.decrypt(envCiphertext)
+        ?.let { plaintext -> runCatching { json.decodeFromString<Map<String, String>>(plaintext) }.getOrDefault(emptyMap()) }
+        .orEmpty(),
+    serverUrl = serverUrl,
+    isEnabled = isEnabled,
+    isBuiltin = isBuiltin,
+)
+
+private fun McpServerConfig.toEntity(json: Json, secretManager: SecretManager): McpServerEntity = McpServerEntity(
+    id = id,
+    name = name,
+    description = description,
+    transportType = transportType.name,
+    command = command,
+    argsCiphertext = secretManager.encrypt(json.encodeToString(args)),
+    envCiphertext = secretManager.encrypt(json.encodeToString(env)),
+    serverUrl = serverUrl,
+    isEnabled = isEnabled,
+    isBuiltin = isBuiltin,
+)

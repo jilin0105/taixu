@@ -5,12 +5,16 @@ import androidx.lifecycle.viewModelScope
 import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.core.database.AiModelDao
 import top.wkbin.taixu.core.database.AiModelEntity
+import top.wkbin.taixu.core.database.AgentSkillRepository
+import top.wkbin.taixu.core.database.McpServerRepository
+import top.wkbin.taixu.core.database.StorageMountBindingRepository
 import top.wkbin.taixu.core.tools.ProviderRepository
 import top.wkbin.taixu.core.tools.AgentModelDiscovery
 import top.wkbin.taixu.core.tools.AgentProviderCatalog
 import top.wkbin.taixu.core.tools.AgentModelConnectionTester
 import top.wkbin.taixu.core.tools.ProviderEndpointPolicy
 import top.wkbin.taixu.core.model.ExecutionMode
+import top.wkbin.taixu.core.model.McpConnectionState
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -34,11 +38,46 @@ class SettingsViewModel @Inject constructor(
     private val mcpManager: top.wkbin.taixu.harness.mcp.McpManager,
     private val linuxRuntime: top.wkbin.taixu.runtime.LinuxRuntime,
     private val appUpdateManager: top.wkbin.taixu.core.network.AppUpdateManager,
+    private val subagentRepository: top.wkbin.taixu.core.database.AgentSubagentRepository,
+    private val agentSkillRepository: AgentSkillRepository,
+    private val mcpServerRepository: McpServerRepository,
+    private val storageMountBindingRepository: StorageMountBindingRepository,
+    private val approvalRepository: top.wkbin.taixu.core.database.AgentApprovalRepository,
 ) : ViewModel() {
+
+    init {
+        viewModelScope.launch {
+            subagentRepository.ensureInitialized()
+            agentSkillRepository.ensureInitialized()
+            mcpServerRepository.ensureInitialized()
+        }
+    }
 
     val installedDistros = linuxRuntime.installedDistros
     val activeDistroId = linuxRuntime.activeDistroId
     val runtimeState = linuxRuntime.state
+
+    val environmentVariables: StateFlow<List<top.wkbin.taixu.core.model.EnvironmentVariable>> = settingsDataStore.environmentVariables
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val environmentPrivacyMode: StateFlow<Boolean> = settingsDataStore.environmentPrivacyMode
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setEnvironmentPrivacyMode(enabled: Boolean) {
+        viewModelScope.launch { settingsDataStore.setEnvironmentPrivacyMode(enabled) }
+    }
+
+    fun addEnvironmentVariable(key: String, value: String, note: String, onResult: (Boolean) -> Unit = {}) {
+        viewModelScope.launch { onResult(settingsDataStore.addEnvironmentVariable(key, value, note)) }
+    }
+
+    fun updateEnvironmentVariable(id: String, key: String, value: String?, note: String, onResult: (Boolean) -> Unit = {}) {
+        viewModelScope.launch { onResult(settingsDataStore.updateEnvironmentVariable(id, key, value, note)) }
+    }
+
+    fun deleteEnvironmentVariable(id: String) {
+        viewModelScope.launch { settingsDataStore.deleteEnvironmentVariable(id) }
+    }
 
     // ---- 终端外观与显示定制 ----
     val terminalFontSize: StateFlow<Int> = settingsDataStore.terminalFontSize
@@ -52,6 +91,9 @@ class SettingsViewModel @Inject constructor(
 
     val appFontScale: StateFlow<Float> = settingsDataStore.appFontScale
         .stateIn(viewModelScope, SharingStarted.Eagerly, 1.0f)
+
+    val chengmingBackgroundUri: StateFlow<String?> = settingsDataStore.chengmingBackgroundUri
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     fun setTerminalFontSize(sizeSp: Int) {
         viewModelScope.launch { settingsDataStore.setTerminalFontSize(sizeSp) }
@@ -67,6 +109,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setAppFontScale(scale: Float) {
         viewModelScope.launch { settingsDataStore.setAppFontScale(scale) }
+    }
+
+    fun setChengmingBackgroundUri(uri: String?) {
+        viewModelScope.launch { settingsDataStore.setChengmingBackgroundUri(uri) }
     }
 
     // ---- 应用版本更新机制 ----
@@ -86,7 +132,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settingsDataStore.setAutoCheckUpdates(enabled) }
     }
 
-    fun checkForUpdates(currentVersion: String = "0.1.0") {
+    fun checkForUpdates(currentVersion: String = "0.3.0") {
         viewModelScope.launch {
             _updateCheckState.value = top.wkbin.taixu.core.model.UpdateCheckState.Checking
             val res = appUpdateManager.checkUpdate(currentVersion)
@@ -153,24 +199,35 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    val mcpServers: StateFlow<List<top.wkbin.taixu.core.model.McpServerConfig>> = settingsDataStore.mcpServers
+    val mcpServers: StateFlow<List<top.wkbin.taixu.core.model.McpServerConfig>> = mcpServerRepository.servers
         .stateIn(viewModelScope, SharingStarted.Eagerly, top.wkbin.taixu.core.model.BuiltinMcpPresets.presets)
+
+    /** 各 MCP 服务的实时连通性状态（与 McpManager 共享，设置页与聊天页联动）。 */
+    val mcpConnectionStates: StateFlow<Map<String, McpConnectionState>> = mcpManager.connectionStates
+
+    /** 手动/自动触发一次全量 MCP 连通性探测。 */
+    fun refreshMcpConnections() {
+        viewModelScope.launch { mcpManager.refreshConnections() }
+    }
 
     fun toggleMcpServer(serverId: String, enabled: Boolean) {
         viewModelScope.launch {
-            settingsDataStore.toggleMcpServer(serverId, enabled)
+            mcpServerRepository.setEnabled(serverId, enabled)
+            mcpManager.refreshConnections()
         }
     }
 
     fun saveMcpServer(server: top.wkbin.taixu.core.model.McpServerConfig) {
         viewModelScope.launch {
-            settingsDataStore.saveMcpServer(server)
+            mcpServerRepository.save(server)
+            mcpManager.refreshConnections()
         }
     }
 
     fun deleteMcpServer(serverId: String) {
         viewModelScope.launch {
-            settingsDataStore.deleteMcpServer(serverId)
+            mcpServerRepository.delete(serverId)
+            mcpManager.refreshConnections()
         }
     }
 
@@ -209,6 +266,15 @@ class SettingsViewModel @Inject constructor(
 
     val themeMode: StateFlow<String> = settingsDataStore.themeMode
         .stateIn(viewModelScope, SharingStarted.Eagerly, "system")
+
+    val themeStyle: StateFlow<String> = settingsDataStore.themeStyle
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "xuantong")
+
+    fun setThemeStyle(style: String) {
+        viewModelScope.launch {
+            settingsDataStore.setThemeStyle(style)
+        }
+    }
 
     val provider: StateFlow<String> = providerRepository.provider
         .stateIn(viewModelScope, SharingStarted.Eagerly, "OpenAI")
@@ -259,8 +325,8 @@ class SettingsViewModel @Inject constructor(
     val autoWorkspaceCwd: StateFlow<Boolean> = settingsDataStore.autoWorkspaceCwd
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
-    val destructiveGuardEnabled: StateFlow<Boolean> = settingsDataStore.destructiveGuardEnabled
-        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+    val approvalMode: StateFlow<top.wkbin.taixu.core.model.ApprovalMode> = approvalRepository.mode
+        .stateIn(viewModelScope, SharingStarted.Eagerly, top.wkbin.taixu.core.model.ApprovalMode.ASSISTED)
 
     val contextBudgetTokens: StateFlow<Int> = settingsDataStore.contextBudgetTokens
         .stateIn(viewModelScope, SharingStarted.Eagerly, 128_000)
@@ -271,7 +337,13 @@ class SettingsViewModel @Inject constructor(
     val maxConsecutiveFailures: StateFlow<Int> = settingsDataStore.maxConsecutiveFailures
         .stateIn(viewModelScope, SharingStarted.Eagerly, 8)
 
-    val allSkills: StateFlow<List<top.wkbin.taixu.core.model.AgentSkill>> = settingsDataStore.allSkills
+    val allSkills: StateFlow<List<top.wkbin.taixu.core.model.AgentSkill>> = agentSkillRepository.allSkills
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val autoSubagentDelegationEnabled: StateFlow<Boolean> = subagentRepository.autoDelegationEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    val allSubagents: StateFlow<List<top.wkbin.taixu.core.model.AgentSubagent>> = subagentRepository.profiles
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val allPlugins: StateFlow<List<top.wkbin.taixu.core.model.AgentPlugin>> = settingsDataStore.allPlugins
@@ -301,8 +373,8 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settingsDataStore.setAutoWorkspaceCwd(value) }
     }
 
-    fun setDestructiveGuardEnabled(value: Boolean) {
-        viewModelScope.launch { settingsDataStore.setDestructiveGuardEnabled(value) }
+    fun setApprovalMode(mode: top.wkbin.taixu.core.model.ApprovalMode) {
+        viewModelScope.launch { approvalRepository.setMode(mode) }
     }
 
     fun setContextBudgetTokens(value: Int) {
@@ -318,7 +390,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun toggleSkill(skillId: String, enabled: Boolean) {
-        viewModelScope.launch { settingsDataStore.setSkillEnabled(skillId, enabled) }
+        viewModelScope.launch { agentSkillRepository.setEnabled(skillId, enabled) }
     }
 
     fun addCustomSkill(name: String, description: String, systemPrompt: String, command: String?) {
@@ -337,11 +409,50 @@ class SettingsViewModel @Inject constructor(
             isBuiltin = false,
             category = "自定义",
         )
-        viewModelScope.launch { settingsDataStore.addCustomSkill(skill) }
+        viewModelScope.launch { agentSkillRepository.addCustom(skill) }
     }
 
     fun deleteCustomSkill(skillId: String) {
-        viewModelScope.launch { settingsDataStore.deleteCustomSkill(skillId) }
+        viewModelScope.launch { agentSkillRepository.deleteCustom(skillId) }
+    }
+
+    fun setAutoSubagentDelegationEnabled(enabled: Boolean) {
+        viewModelScope.launch { subagentRepository.setAutoDelegationEnabled(enabled) }
+    }
+
+    fun toggleSubagent(profileId: String, enabled: Boolean) {
+        viewModelScope.launch { subagentRepository.setEnabled(profileId, enabled) }
+    }
+
+    fun saveSubagent(
+        previous: top.wkbin.taixu.core.model.AgentSubagent?,
+        roleId: String,
+        name: String,
+        description: String,
+        systemPrompt: String,
+    ) {
+        val normalizedId = roleId.trim().lowercase()
+            .replace(Regex("[^a-z0-9_-]+"), "_")
+            .trim('_')
+        val trimmedName = name.trim()
+        val trimmedPrompt = systemPrompt.trim()
+        if (normalizedId.isBlank() || trimmedName.isBlank() || trimmedPrompt.isBlank()) return
+        viewModelScope.launch {
+            val profile = top.wkbin.taixu.core.model.AgentSubagent(
+                id = normalizedId,
+                name = trimmedName,
+                description = description.trim().ifBlank { "自定义子智能体角色" },
+                systemPrompt = trimmedPrompt,
+                isEnabled = previous?.isEnabled ?: true,
+                isBuiltin = previous?.isBuiltin ?: false,
+                sortOrder = previous?.sortOrder ?: subagentRepository.nextSortOrder(),
+            )
+            subagentRepository.replace(previous?.id, profile)
+        }
+    }
+
+    fun deleteSubagent(profileId: String) {
+        viewModelScope.launch { subagentRepository.delete(profileId) }
     }
 
     fun togglePlugin(pluginId: String, enabled: Boolean) {
@@ -467,7 +578,6 @@ class SettingsViewModel @Inject constructor(
                     provider = provider.trim(),
                     model = model.trim(),
                     baseUrl = baseUrl.trim(),
-                    apiKey = if (apiKey.isNotBlank()) apiKey.trim() else old?.apiKey.orEmpty(),
                     secretRef = secretRef,
                     isActive = old?.isActive ?: existing.none { it.isActive },
                     createdAt = old?.createdAt ?: System.currentTimeMillis(),
@@ -483,6 +593,7 @@ class SettingsViewModel @Inject constructor(
                     visionEnabled = visionEnabled,
                 ),
             )
+            if (apiKey.isNotBlank()) providerRepository.setModelApiKey(secretRef, apiKey)
         }
     }
 
@@ -495,6 +606,7 @@ class SettingsViewModel @Inject constructor(
 
     fun deleteModel(id: String) {
         viewModelScope.launch {
+            aiModelDao.findById(id)?.secretRef?.takeIf { it.isNotBlank() }?.let { providerRepository.removeModelApiKey(it) }
             aiModelDao.delete(id)
         }
     }
@@ -509,7 +621,7 @@ class SettingsViewModel @Inject constructor(
     val mountSharedStorageEnabled: StateFlow<Boolean> = settingsDataStore.mountSharedStorageEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
-    val customMountBindings: StateFlow<List<top.wkbin.taixu.core.model.StorageMountBinding>> = settingsDataStore.customMountBindings
+    val customMountBindings: StateFlow<List<top.wkbin.taixu.core.model.StorageMountBinding>> = storageMountBindingRepository.bindings
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     fun setMountDownloadEnabled(enabled: Boolean) {
@@ -533,14 +645,14 @@ class SettingsViewModel @Inject constructor(
             enabled = true,
             isSystemDefault = false,
         )
-        viewModelScope.launch { settingsDataStore.addCustomMountBinding(binding) }
+        viewModelScope.launch { storageMountBindingRepository.add(binding) }
     }
 
     fun removeCustomMountBinding(bindingId: String) {
-        viewModelScope.launch { settingsDataStore.removeCustomMountBinding(bindingId) }
+        viewModelScope.launch { storageMountBindingRepository.remove(bindingId) }
     }
 
     fun toggleCustomMountBinding(bindingId: String, enabled: Boolean) {
-        viewModelScope.launch { settingsDataStore.setCustomMountEnabled(bindingId, enabled) }
+        viewModelScope.launch { storageMountBindingRepository.setEnabled(bindingId, enabled) }
     }
 }

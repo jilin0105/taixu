@@ -10,7 +10,7 @@ set -e
 
 PROJECT_PATH="${1:-.}"
 TASK="${2:-assembleDebug}"
-GRADLE_VER="8.9"
+GRADLE_VER="8.14.2"
 
 echo "==> [TaiXu Build Engine] 启动 Android 项目编译..."
 echo "==> [TaiXu Build] 项目路径: $PROJECT_PATH"
@@ -39,7 +39,20 @@ export ANDROID_SDK_ROOT="${ANDROID_HOME}"
 # android-core plugin installed the ARM64 tool bundle, pass the real aapt2
 # executable explicitly so AGP never tries to start the incompatible daemon.
 AAPT2_OVERRIDE="${TAIXU_AAPT2_PATH:-}"
-AAPT2_MODE="${TAIXU_AAPT2_MODE:-qemu}"
+AAPT2_MODE="${TAIXU_AAPT2_MODE:-native}"
+for native_aapt2 in \
+    "/opt/taixu/android-sdk-tools/35.0.2/build-tools/aapt2" \
+    "/usr/local/bin/aapt2" \
+    "/usr/bin/aapt2"; do
+    if [ -x "$native_aapt2" ]; then
+        AAPT2_NATIVE_CANDIDATE="$native_aapt2"
+        break
+    fi
+done
+if [ "${TAIXU_FORCE_QEMU_AAPT2:-0}" != "1" ] && [ -n "${AAPT2_NATIVE_CANDIDATE:-}" ]; then
+    AAPT2_MODE="native"
+    AAPT2_OVERRIDE="$AAPT2_NATIVE_CANDIDATE"
+fi
 if [ "$AAPT2_MODE" = "qemu" ]; then
     AAPT2_OVERRIDE="${TAIXU_AAPT2_PATH:-/opt/taixu/android-sdk-tools/qemu/aapt2}"
 elif [ -z "$AAPT2_OVERRIDE" ] || [ ! -x "$AAPT2_OVERRIDE" ]; then
@@ -96,6 +109,25 @@ echo "==> [TaiXu Build] Java 执行文件: $JAVA_EXEC"
 
 echo "==> [TaiXu Build] JAVA_HOME: $JAVA_HOME"
 echo "==> [TaiXu Build] ANDROID_HOME: $ANDROID_HOME"
+
+# AGP may invoke llvm-strip for native libraries. The official Android NDK
+# Linux package currently provides only a linux-x86_64 toolchain; on this
+# ARM64 PRoot host it fails before the project code is compiled. Report this
+# early so the error is not confused with Gradle file-system watching noise.
+HOST_ARCH="$(uname -m 2>/dev/null || echo unknown)"
+if [ "$HOST_ARCH" = "aarch64" ] || [ "$HOST_ARCH" = "arm64" ]; then
+    NDK_STRIP=""
+    for candidate in "$ANDROID_HOME"/ndk/*/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip; do
+        if [ -x "$candidate" ]; then
+            NDK_STRIP="$candidate"
+            break
+        fi
+    done
+    if [ -n "$NDK_STRIP" ]; then
+        echo "==> [TaiXu Build] 检测到 ARM64 主机与 x86_64 NDK llvm-strip: $NDK_STRIP"
+        echo "==> [TaiXu Build] 内置模板已配置 keepDebugSymbols；若是外部工程，请在 android.packagingOptions.jniLibs 中保留 *.so 符号"
+    fi
+fi
 
 # 2. 绑定 SDK 到当前工程
 echo "sdk.dir=$ANDROID_HOME" > "$PROJECT_PATH/local.properties"

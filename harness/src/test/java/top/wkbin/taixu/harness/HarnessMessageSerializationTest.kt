@@ -51,6 +51,14 @@ class HarnessMessageSerializationTest {
     }
 
     @Test
+    fun `capability event round trip`() {
+        val message = CapabilityEvent("mcp:user:sqlite", 4000L, CapabilityEvent.Kind.MCP, "sqlite", "MCP 工具已挂载")
+        val encoded = json.encodeToString(HarnessMessage.serializer(), message)
+        assertTrue(encoded.contains("\"type\":\"capability_event\""))
+        assertEquals(message, json.decodeFromString(HarnessMessage.serializer(), encoded))
+    }
+
+    @Test
     fun `polymorphic decode dispatches on serial name`() {
         val userJson = """{"type":"user","id":"u","createdAt":1,"text":"hi"}"""
         val callJson = """{"type":"tool_call","id":"c","createdAt":1,"tool":"base","args":{"command":"ls"}}"""

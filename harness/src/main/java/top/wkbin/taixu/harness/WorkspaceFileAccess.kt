@@ -123,6 +123,9 @@ class WorkspaceFileAccess(
         return resolved
     }
 
+    /** Resolve a download destination while preserving the workspace boundary checks. */
+    fun resolveDownloadDestination(path: String): File = resolveWritable(path)
+
     fun withBase(workspaceBase: String): WorkspaceFileAccess {
         val clean = workspaceBase.trim().removePrefix("/workspace/").removePrefix("/workspace").removePrefix("/")
         if (clean.isBlank()) return this

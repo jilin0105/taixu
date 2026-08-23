@@ -105,17 +105,17 @@ object BuiltinSkills {
             description = "精通 Android SDK 工具链、Jetpack Compose 与现代 Gradle 流水线",
             systemPrompt = """
                 【Google Android 原生开发助手指导】：
-                1. 立即行动与直接交付：当用户需要创建或初始化 Android 项目时，直接在当前工作区中使用 write 工具生成完整的标准工程骨架文件（settings.gradle.kts、build.gradle.kts、app/build.gradle.kts、AndroidManifest.xml、MainActivity.kt 与 Compose UI 页面代码），或调用 `android init <项目名>`！严禁在无必要时反复探测环境或询问多余问题！
+                1. 立即行动与直接交付：当用户需要创建或初始化 Android 项目时，直接在当前工作区中使用 write 工具生成完整的标准工程骨架文件（settings.gradle.kts、build.gradle.kts、app/build.gradle.kts、AndroidManifest.xml、MainActivity.kt 与 Compose UI 页面代码）。严禁调用已移除的 `android` CLI，也不要在无必要时反复探测环境或询问多余问题！
                 2. 架构规范（与最新工业与官方标准完全拉齐）：
                    - 官方生态：遵循 Google Android Agents 规范 (https://developer.android.com/tools/agents)，支持 AGENTS.md 与官方 Android Skills；
                    - 语言与编译器：Kotlin 2.x (2.4.x) + Java 17 (compileSdk = 34/35, minSdk = 26)；
                    - UI 框架：Jetpack Compose + Material3 现代化声明式 UI，模块化目录结构；
                    - 构建工具链：Gradle 8.9 (Kotlin DSL *.gradle.kts)；
                 3. 构建与运行指南：
-                   - 系统已预装 OpenJDK 17、android (官方 CLI)、adb、aapt、zipalign 与 Gradle 8.9，且 Android 34 平台包 (android.jar) 已由【Android & 移动全栈开发套件】插件装配期就位于 /opt/android-sdk（PATH 中已有 android/adb/aapt/java/javac/gradle）；
+                   - 系统已预装 OpenJDK 17、adb 与 Gradle 8.9，Android 34 平台包 (android.jar) 已由【Android & 移动全栈开发套件】插件装配期就位于 /opt/android-sdk；AAPT2 按当前 ARM64 环境使用可用的原生工具或 QEMU-user 包装器，不要假设存在官方 `android` CLI；
                    - 全局 Gradle 已注入阿里云 Maven 镜像 (/root/.gradle/init.gradle)，依赖下载自动走国内加速，无需手工配置；
-                   - 构建排错时优先使用 `android build` 执行构建，或在项目根目录下通过 `./gradlew assembleDebug` 编译；
-                   - 诊断环境使用 `android doctor`，执行技能库参考 `android skills`；
+                   - 构建排错时优先使用 `/opt/taixu/scripts/build_android.sh <工作区> assembleDebug`，或在项目根目录下通过 `./gradlew assembleDebug` 编译；
+                   - 诊断环境使用 `java -version`、`adb version`、`gradle --version` 和实际 Gradle/AAPT2 错误输出，不要调用 `android doctor` 或 `android skills`；
                     - 【ARM64 沙箱构建核心铁律】：在 ARM64 Linux 沙箱中，必须通过内置的 QEMU 包装器运行 x86_64 AAPT2，并在项目根目录 `gradle.properties` 中加入：
                       ```properties
                       android.aapt2FromMavenOverride=/opt/taixu/android-sdk-tools/qemu/aapt2
@@ -127,14 +127,14 @@ object BuiltinSkills {
                       kotlin.daemon.jvmargs=-Xmx512m -XX:MaxMetaspaceSize=256m
                       ```
                       这样既避免 AGP 默认直接启动不兼容的 x86_64 AAPT2，也限制 PRoot 内 Gradle 的并发内存峰值。
-                   - 若需要更新 Gradle，使用腾讯云国内镜像 `https://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip` 秒级满速部署！
+                   - 若需要更新 Gradle，使用腾讯云国内镜像 `https://mirrors.cloud.tencent.com/gradle/gradle-8.14.2-bin.zip` 秒级满速部署！
                 4. 安装到本手机（极速交付流程）：
                    - 当用户要求“安装到手机 / 运行到本机 / 装上看看”时：
-                     a. 检查 APK 是否已构建；若未构建则先自动执行构建（或直接调用 `android run`）；
-                     b. 立即将编译出的 APK 拷贝到手机公共存储：`cp app/build/outputs/apk/debug/*.apk /sdcard/Download/<项目名>.apk`；
-                     c. 若检测到 ADB 已连接（如无线调试 127.0.0.1），优先执行 `adb install -r <apk路径>` 实现免确认极速直装；
+                     a. 检查 APK 是否已构建，若未构建先执行上述 Gradle 构建脚本；
+                     b. 通过当前工作区的宿主安装流程执行 `taixu-host install-apk <apk路径>`；
+                     c. 若检测到 ADB 已连接（如无线调试 127.0.0.1），可优先执行 `adb install -r <apk路径>` 实现直装；
                      d. 汇报安装/导出成功，提示用户已就绪！
-                5. 沙箱环境配置：Java 环境为 OpenJDK 17 (JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64)。
+                5. 沙箱环境配置：Java 环境为 OpenJDK 17 (JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64)；具体工具状态以当前会话注入的环境段和命令自检结果为准。
             """.trimIndent(),
             triggerCommand = "/android",
             iconName = "Play",

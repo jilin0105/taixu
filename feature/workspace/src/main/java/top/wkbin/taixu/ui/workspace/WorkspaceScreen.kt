@@ -1,5 +1,7 @@
 package top.wkbin.taixu.ui.workspace
 
+import top.wkbin.taixu.ui.components.RuntimeAlertDialog
+
 import android.Manifest
 import android.content.Context
 import android.content.Intent
@@ -24,6 +26,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -32,11 +35,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import top.wkbin.taixu.ui.components.RuntimeButton as Button
+import top.wkbin.taixu.ui.components.RuntimeFilledTonalButton as FilledTonalButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
+import top.wkbin.taixu.ui.components.RuntimeCheckbox as Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -44,15 +47,16 @@ import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
+import top.wkbin.taixu.ui.components.RuntimeIconButton as IconButton
+import top.wkbin.taixu.ui.components.RuntimeLinearProgressIndicator as LinearProgressIndicator
+import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import top.wkbin.taixu.ui.components.RuntimeOutlinedButton as OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -78,6 +82,7 @@ import top.wkbin.taixu.ui.components.IconTile
 import top.wkbin.taixu.ui.components.MainDestination
 import top.wkbin.taixu.ui.components.NoticeBanner
 import top.wkbin.taixu.ui.components.RuntimeBottomBar
+import top.wkbin.taixu.ui.components.liquidGlassContent
 import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
@@ -91,12 +96,109 @@ import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
 import kotlinx.coroutines.flow.Flow
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import top.wkbin.taixu.runtime.build.StepDuration
 
 /**
  * 太墟 · 工坊空间 (Workspace Space)
  * 管理 Linux 隔离工作区、代码工程与文件项目
  */
+/** 骨架屏：shimmer 流动高光 + 卡片占位 */
+@Composable
+private fun shimmerBrush(): androidx.compose.ui.graphics.Brush {
+    val transition = rememberInfiniteTransition(label = "shimmer")
+    val translateAnim by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "shimmerTranslate",
+    )
+    val shimmerColors = listOf(
+        MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.6f),
+        MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.3f),
+        MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.6f),
+    )
+    return androidx.compose.ui.graphics.Brush.linearGradient(
+        colors = shimmerColors,
+        start = androidx.compose.ui.geometry.Offset(translateAnim - 200f, 0f),
+        end = androidx.compose.ui.geometry.Offset(translateAnim, 0f),
+    )
+}
+@Composable
+private fun ProjectCardSkeleton(modifier: Modifier = Modifier) {
+    val brush = shimmerBrush()
+    RuntimeCard(modifier = modifier.fillMaxWidth()) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(brush),
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.55f)
+                            .height(16.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(brush),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.8f)
+                            .height(12.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(brush),
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(brush),
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(72.dp)
+                        .height(28.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(brush),
+                )
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .width(72.dp)
+                        .height(28.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(brush),
+                )
+            }
+        }
+    }
+}
+
 @Composable
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 fun WorkspaceScreen(
@@ -113,6 +215,7 @@ fun WorkspaceScreen(
     val activeBuildingProjectName by viewModel.activeBuildingProjectName.collectAsStateWithLifecycle()
     val isBuildDialogVisible by viewModel.isBuildDialogVisible.collectAsStateWithLifecycle()
     val installedComponentIds by viewModel.installedComponentIds.collectAsStateWithLifecycle()
+    val loadingProjects by viewModel.loadingProjects.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showCreate by remember { mutableStateOf(false) }
     var selectedTemplate by remember { mutableStateOf(top.wkbin.taixu.runtime.ProjectTemplate.ANDROID_COMPOSE) }
@@ -189,9 +292,11 @@ fun WorkspaceScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
+                .liquidGlassContent()
+                .padding(top = padding.calculateTopPadding())
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 6.dp),
+                .padding(horizontal = 16.dp, vertical = 6.dp)
+                .padding(bottom = 104.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             message?.let { notice ->
@@ -213,7 +318,7 @@ fun WorkspaceScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        androidx.compose.material3.CircularProgressIndicator(
+                        RuntimeCircularProgressIndicator(
                             modifier = Modifier.size(20.dp),
                             strokeWidth = 2.5.dp,
                             color = MaterialTheme.colorScheme.primary,
@@ -339,7 +444,13 @@ fun WorkspaceScreen(
                 subtitle = "位于 Linux 沙箱 /workspace 目录下，与 Agent 实时互通",
             )
 
-            if (projects.isEmpty()) {
+            if (loadingProjects) {
+                repeat(3) { index ->
+                    ProjectCardSkeleton(
+                        modifier = Modifier.padding(top = if (index == 0) 16.dp else 0.dp),
+                    )
+                }
+            } else if (projects.isEmpty()) {
                 EmptyPanel(
                     icon = RuntimeIconName.Workspace,
                     title = "还没有工坊工程",
@@ -362,6 +473,7 @@ fun WorkspaceScreen(
                 }
             }
 
+
             Spacer(Modifier.height(16.dp))
         }
     }
@@ -377,7 +489,7 @@ fun WorkspaceScreen(
         var collapsedPackage by remember { mutableStateOf(false) }
         var collapsedOther by remember { mutableStateOf(true) }
 
-        AlertDialog(
+        RuntimeAlertDialog(
             onDismissRequest = { viewModel.hideBuildDialog() },
             title = {
                 Row(
@@ -385,7 +497,7 @@ fun WorkspaceScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     if (progress.isRunning) {
-                        androidx.compose.material3.CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        RuntimeCircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     }
                     Text(if (progress.isRunning) "正在构建到手机..." else (if (progress.isSuccess == true) "运行就绪" else "运行失败"), fontWeight = FontWeight.Bold)
                 }
@@ -397,7 +509,7 @@ fun WorkspaceScreen(
                 ) {
                     Text(progress.step, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium))
                     if (progress.isRunning) {
-                        androidx.compose.material3.LinearProgressIndicator(
+                        LinearProgressIndicator(
                             progress = { progress.progress },
                             modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
                         )
@@ -692,7 +804,7 @@ fun WorkspaceScreen(
     }
 
     if (showCreate) {
-        AlertDialog(
+        RuntimeAlertDialog(
             onDismissRequest = {
                 showCreate = false
                 projectName = ""
@@ -1097,7 +1209,7 @@ fun WorkspaceScreen(
     }
 
     deleteTarget?.let { project ->
-        AlertDialog(
+        RuntimeAlertDialog(
             onDismissRequest = { deleteTarget = null },
             title = { Text("删除工程 ${project.name}？", fontWeight = FontWeight.Bold) },
             text = {
@@ -1232,7 +1344,7 @@ private fun ProjectCard(
             }
 
             if (isBuilding) {
-                androidx.compose.material3.LinearProgressIndicator(
+                LinearProgressIndicator(
                     modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(1.5.dp)),
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -1248,7 +1360,7 @@ private fun ProjectCard(
                 if (project.projectType == top.wkbin.taixu.runtime.ProjectType.ANDROID ||
                     project.projectType == top.wkbin.taixu.runtime.ProjectType.FLUTTER
                 ) {
-                    androidx.compose.material3.FilledTonalButton(
+                    FilledTonalButton(
                         onClick = if (isBuilding) onShowBuildLog else onRunProject,
                         enabled = !busy || isBuilding,
                         shape = RoundedCornerShape(10.dp),
@@ -1260,7 +1372,7 @@ private fun ProjectCard(
                             horizontalArrangement = Arrangement.spacedBy(5.dp),
                         ) {
                             if (isBuilding) {
-                                androidx.compose.material3.CircularProgressIndicator(
+                                RuntimeCircularProgressIndicator(
                                     modifier = Modifier.size(13.dp),
                                     strokeWidth = 2.dp,
                                     color = MaterialTheme.colorScheme.primary,
@@ -1326,7 +1438,7 @@ private fun AppPickerDialog(
                 .sortedBy { it.appLabel(context).lowercase() }
         }.getOrDefault(emptyList())
     }
-    AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("选择已安装应用", fontWeight = FontWeight.Bold) },
         text = {

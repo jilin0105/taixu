@@ -18,6 +18,7 @@ import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.database.AiModelDao
 import top.wkbin.taixu.core.database.AiModelEntity
 import top.wkbin.taixu.core.database.ToolEntity
+import top.wkbin.taixu.core.database.ToolSettingsRepository
 import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.core.model.ToolManifest
 import top.wkbin.taixu.core.tools.ProviderRepository
@@ -75,6 +76,8 @@ class ToolDetailViewModel @Inject constructor(
     private val settingsDataStore: SettingsDataStore,
     private val providerRepository: ProviderRepository,
     private val aiModelDao: AiModelDao,
+    private val toolSettingsRepository: ToolSettingsRepository,
+    private val linuxRuntime: top.wkbin.taixu.runtime.LinuxRuntime,
     private val logger: AppLogger,
 ) : ViewModel() {
 
@@ -97,14 +100,14 @@ class ToolDetailViewModel @Inject constructor(
     }
 
     @Suppress("UNCHECKED_CAST")
-    val uiState: StateFlow<ToolDetailUiState> = _toolId.flatMapLatest { id ->
+    val uiState: StateFlow<ToolDetailUiState> = combine(_toolId, linuxRuntime.activeDistroId) { id, distroId -> id to distroId }.flatMapLatest { (id, distroId) ->
         if (id.isBlank()) {
             flowOf(ToolDetailUiState())
         } else {
             combine(
                 toolManager.observeTools(),
-                settingsDataStore.toolAutoStart(id),
-                settingsDataStore.toolAccessToken(id),
+                toolSettingsRepository.autoStart(distroId, id),
+                settingsDataStore.toolAccessToken(distroId, id),
                 _gatewayRunning,
                 _gatewayOperating,
                 _error,
@@ -207,7 +210,7 @@ class ToolDetailViewModel @Inject constructor(
         if (currentId.isBlank()) return
         viewModelScope.launch {
             try {
-                settingsDataStore.setToolAutoStart(currentId, enabled)
+                toolSettingsRepository.setAutoStart(linuxRuntime.activeDistroId.value, currentId, enabled)
             } catch (e: Exception) {
                 logger.w("Failed to set auto-start for $currentId: ${e.message}", e)
             }
@@ -220,7 +223,7 @@ class ToolDetailViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val token = UUID.randomUUID().toString().replace("-", "").take(32)
-                settingsDataStore.setToolAccessToken(currentId, token)
+                settingsDataStore.setToolAccessToken(linuxRuntime.activeDistroId.value, currentId, token)
                 // 网关进程启动时通过环境变量注入 Token，运行中的实例必须重启才能应用新 Token
                 if (toolManager.isGatewayRunning(currentId)) {
                     _gatewayOperating.value = true
@@ -244,7 +247,7 @@ class ToolDetailViewModel @Inject constructor(
         if (currentId.isBlank()) return
         viewModelScope.launch {
             try {
-                settingsDataStore.setToolAccessToken(currentId, null)
+                settingsDataStore.setToolAccessToken(linuxRuntime.activeDistroId.value, currentId, null)
             } catch (e: Exception) {
                 logger.w("Failed to clear token for $currentId: ${e.message}", e)
             }
@@ -270,8 +273,6 @@ class ToolDetailViewModel @Inject constructor(
                 } else null
                 if (!actualKey.isNullOrBlank()) {
                     providerRepository.setApiKey(actualKey)
-                } else if (model.apiKey.isNotBlank()) {
-                    providerRepository.setApiKey(model.apiKey)
                 }
                 _appliedModelId.value = model.id
                 // 模型配置通过网关启动时的环境变量注入，运行中的实例必须重启才能生效

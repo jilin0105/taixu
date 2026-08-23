@@ -10,7 +10,9 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -34,9 +36,13 @@ class TerminalSessionHandle internal constructor(
     private val _cursor = MutableStateFlow(buffer.cursor())
     val cursor: StateFlow<TerminalCursor> = _cursor.asStateFlow()
 
-    internal fun publish() {
-        _screen.value = buffer.snapshot()
+    private val _revision = MutableStateFlow(0L)
+    val revision: StateFlow<Long> = _revision.asStateFlow()
+
+    internal fun publish(snapshot: List<TerminalLine>? = null) {
+        _screen.value = snapshot ?: buffer.snapshot()
         _cursor.value = buffer.cursor()
+        _revision.value += 1
     }
 }
 
@@ -72,6 +78,12 @@ class TerminalSessionManager @Inject constructor(
      * 由终端页面在 Runtime 已就绪后调用。
      */
     suspend fun ensureActive(initialWorkingDirectory: String = DEFAULT_CWD) {
+        val aliveHandles = _handles.value.filter { it.session.isAlive }
+        if (aliveHandles.size != _handles.value.size) {
+            _handles.value = aliveHandles
+            _activeId.value = _activeId.value?.takeIf { id -> aliveHandles.any { it.id == id } }
+            if (aliveHandles.isEmpty()) restoredOnce = false
+        }
         if (!restoredOnce) {
             restoredOnce = true
             val rows = terminalSessionDao.listAll()
@@ -124,10 +136,30 @@ class TerminalSessionManager @Inject constructor(
             ),
         )
         scope.launch {
-            session.output.collect { output ->
-                handle.buffer.append(output.text)
-                handle.publish()
+            val pending = StringBuilder()
+            var flushJob: Job? = null
+
+            suspend fun flushPending() {
+                val text = synchronized(pending) {
+                    if (pending.isEmpty()) "" else pending.toString().also { pending.setLength(0) }
+                }
+                if (text.isNotEmpty()) {
+                    // append already creates the immutable screen snapshot; do not snapshot twice.
+                    handle.publish(handle.buffer.append(text))
+                }
             }
+
+            session.output.collect { output ->
+                synchronized(pending) { pending.append(output.text) }
+                if (flushJob?.isActive != true) {
+                    flushJob = launch {
+                        delay(16L)
+                        flushPending()
+                    }
+                }
+            }
+            flushJob?.join()
+            flushPending()
         }
         _handles.value = _handles.value + handle
         _activeId.value = handle.id

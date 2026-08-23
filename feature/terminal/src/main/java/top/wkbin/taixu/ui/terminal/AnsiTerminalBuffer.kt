@@ -1,13 +1,19 @@
 package top.wkbin.taixu.ui.terminal
 
+import androidx.compose.runtime.Immutable
+
+@Immutable
 data class TerminalCell(
-    val character: Char,
+    /** A complete Unicode code point (including supplementary-plane emoji). */
+    val character: String,
     val foreground: Long? = null,
     val bold: Boolean = false,
 )
 
+@Immutable
 data class TerminalLine(val cells: List<TerminalCell>)
 
+@Immutable
 data class TerminalCursor(
     val row: Int,
     val column: Int,
@@ -44,6 +50,7 @@ class AnsiTerminalBuffer(
     private var mainCursorRow = 0
     private var mainCursorColumn = 0
     private var cursorVisible = true
+    private var pendingHighSurrogate: Char? = null
 
     init {
         mainRows.add(mutableListOf())
@@ -56,7 +63,22 @@ class AnsiTerminalBuffer(
     }
 
     fun append(text: String): List<TerminalLine> = synchronized(this) {
-        text.forEach(::consume)
+        text.forEach { character ->
+            val high = pendingHighSurrogate
+            if (high != null) {
+                pendingHighSurrogate = null
+                if (character.isLowSurrogate()) {
+                    consumeText(String(charArrayOf(high, character)))
+                    return@forEach
+                }
+                consume(high)
+            }
+            if (character.isHighSurrogate()) {
+                pendingHighSurrogate = character
+            } else {
+                consume(character)
+            }
+        }
         snapshotLocked()
     }
 
@@ -73,11 +95,20 @@ class AnsiTerminalBuffer(
     }
 
     /** 内部快照，调用方必须已持有 this 锁。 */
-    private fun snapshotLocked(): List<TerminalLine> = activeRows.map { row ->
+    private fun snapshotLocked(): List<TerminalLine> = activeRows.mapIndexed { rowIndex, row ->
         val copy = ArrayList(row)          // 先拷贝一份，防止 row 在 map 过程中被写入
+        val minimumEnd = if (rowIndex == cursorRow) cursorColumn.coerceAtMost(copy.size) else 0
         var end = copy.size
-        while (end > 0 && copy[end - 1].character == ' ') end -= 1
+        while (end > minimumEnd && copy[end - 1].character == " ") end -= 1
         TerminalLine(copy.subList(0, end).toList())
+    }
+
+    private fun consumeText(text: String) {
+        if (state == ParserState.NORMAL) {
+            write(text)
+        } else {
+            text.forEach(::consume)
+        }
     }
 
     private fun consume(character: Char) {
@@ -103,7 +134,7 @@ class AnsiTerminalBuffer(
             '\b' -> cursorColumn = (cursorColumn - 1).coerceAtLeast(0)
             '\t' -> cursorColumn = ((cursorColumn / TAB_SIZE) + 1) * TAB_SIZE
             '\u0007' -> Unit
-            else -> if (!character.isISOControl()) write(character)
+            else -> if (!character.isISOControl()) write(character.toString())
         }
     }
 
@@ -234,13 +265,13 @@ class AnsiTerminalBuffer(
         }
     }
 
-    private fun write(character: Char) {
+    private fun write(character: String) {
         if (cursorColumn >= columns) {
             lineFeed()
             cursorColumn = 0
         }
         val row = activeRows[cursorRow]
-        while (row.size <= cursorColumn) row += TerminalCell(' ')
+        while (row.size <= cursorColumn) row += TerminalCell(" ")
         row[cursorColumn] = TerminalCell(character, foreground, bold)
         cursorColumn += 1
     }
@@ -258,9 +289,9 @@ class AnsiTerminalBuffer(
     private fun eraseLine(mode: Int) {
         val row = activeRows[cursorRow]
         when (mode) {
-            2 -> for (index in row.indices) row[index] = TerminalCell(' ')
-            1 -> for (index in 0..cursorColumn.coerceAtMost(row.lastIndex)) row[index] = TerminalCell(' ')
-            else -> for (index in cursorColumn until row.size) row[index] = TerminalCell(' ')
+            2 -> for (index in row.indices) row[index] = TerminalCell(" ")
+            1 -> for (index in 0..cursorColumn.coerceAtMost(row.lastIndex)) row[index] = TerminalCell(" ")
+            else -> for (index in cursorColumn until row.size) row[index] = TerminalCell(" ")
         }
     }
 
@@ -276,7 +307,7 @@ class AnsiTerminalBuffer(
                 for (rowIndex in 0..cursorRow.coerceAtMost(activeRows.lastIndex)) {
                     val row = activeRows[rowIndex]
                     val end = if (rowIndex == cursorRow) cursorColumn else row.size
-                    for (index in 0 until end.coerceAtMost(row.size)) row[index] = TerminalCell(' ')
+                    for (index in 0 until end.coerceAtMost(row.size)) row[index] = TerminalCell(" ")
                 }
             }
             else -> {
@@ -299,6 +330,7 @@ class AnsiTerminalBuffer(
         mainCursorRow = 0
         mainCursorColumn = 0
         cursorVisible = true
+        pendingHighSurrogate = null
         foreground = null
         bold = false
         state = ParserState.NORMAL

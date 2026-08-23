@@ -123,6 +123,62 @@ class WorkspaceManagerTest {
         assertTrue(existing.resolve("keep.txt").isFile)
     }
 
+    @Test
+    fun templateDoesNotOverlayNonEmptyDirectory() = runTest {
+        val directory = File(workspaceDir, "existing-android").apply {
+            mkdirs()
+            resolve("old.txt").writeText("old")
+        }
+
+        val result = manager.createProject(
+            name = "existing-android-project",
+            directoryPath = "existing-android",
+            template = ProjectTemplate.ANDROID_COMPOSE,
+            packageName = "com.example.existingandroid",
+        )
+
+        assertFalse(result.isSuccess)
+        assertTrue(directory.resolve("old.txt").isFile)
+    }
+
+    @Test
+    fun androidTemplateGeneratesLauncherInPackageDirectory() = runTest {
+        val result = manager.createProject(
+            name = "android-template",
+            template = ProjectTemplate.ANDROID_COMPOSE,
+            packageName = "com.example.generated",
+        )
+
+        assertTrue(result.isSuccess)
+        val project = File(workspaceDir, "android-template")
+        val launcher = project.resolve("app/src/main/java/com/example/generated/MainActivity.kt")
+        assertTrue(launcher.isFile)
+        assertTrue(launcher.readText().startsWith("package com.example.generated"))
+        assertFalse(project.walkTopDown().any { it.name.endsWith(".template") })
+        assertTrue(
+            project.resolve("settings.gradle.kts").readText()
+                .contains("import org.gradle.api.initialization.resolve.RepositoriesMode"),
+        )
+    }
+
+    @Test
+    fun flutterTemplateGeneratesAndroidHostInPackageDirectory() = runTest {
+        val result = manager.createProject(
+            name = "flutter-template",
+            template = ProjectTemplate.FLUTTER,
+            packageName = "com.example.fluttergenerated",
+        )
+
+        assertTrue(result.isSuccess)
+        val project = File(workspaceDir, "flutter-template")
+        val launcher = project.resolve(
+            "android/app/src/main/kotlin/com/example/fluttergenerated/MainActivity.kt",
+        )
+        assertTrue(launcher.isFile)
+        assertTrue(launcher.readText().startsWith("package com.example.fluttergenerated"))
+        assertFalse(project.walkTopDown().any { it.name.endsWith(".template") })
+    }
+
     private class TestContext(private val baseDir: File) : ContextWrapper(null) {
         override fun getFilesDir(): File = baseDir
         override fun getApplicationInfo(): ApplicationInfo = ApplicationInfo().apply {

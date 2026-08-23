@@ -1,5 +1,7 @@
 package top.wkbin.taixu.ui.settings
 
+import top.wkbin.taixu.ui.components.RuntimeAlertDialog
+
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -25,25 +27,25 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilledTonalButton
+import top.wkbin.taixu.ui.components.RuntimeButton as Button
+import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator as CircularProgressIndicator
+import top.wkbin.taixu.ui.components.RuntimeFilledTonalButton as FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.IconButton
+import top.wkbin.taixu.ui.components.RuntimeIconButton as IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import top.wkbin.taixu.ui.components.RuntimeOutlinedButton as OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
+import top.wkbin.taixu.ui.components.RuntimeRadioButton as RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
+import top.wkbin.taixu.ui.components.RuntimeSwitch as Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -55,6 +57,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -68,6 +72,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import top.wkbin.taixu.core.model.McpConnectionState
 import top.wkbin.taixu.core.model.McpServerConfig
 import top.wkbin.taixu.core.model.McpToolInfo
 import top.wkbin.taixu.core.model.McpTransportType
@@ -82,8 +87,12 @@ fun McpSettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val servers by viewModel.mcpServers.collectAsStateWithLifecycle()
+    val connectionStates by viewModel.mcpConnectionStates.collectAsStateWithLifecycle()
     var showAddDialog by remember { mutableStateOf(false) }
     var viewingDetailServer by remember { mutableStateOf<McpServerConfig?>(null) }
+
+    // 进入设置页时自动探测一次所有已启用 MCP 服务的连通性
+    LaunchedEffect(Unit) { viewModel.refreshMcpConnections() }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -147,10 +156,18 @@ fun McpSettingsScreen(
                         style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.primary,
                     )
-                    TextButton(onClick = { showAddDialog = true }) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            RuntimeIcon(RuntimeIconName.Plus, Modifier.size(14.dp), MaterialTheme.colorScheme.primary)
-                            Text("添加服务", style = MaterialTheme.typography.labelMedium)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        IconButton(
+                            onClick = { viewModel.refreshMcpConnections() },
+                            modifier = Modifier.size(30.dp),
+                        ) {
+                            RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(16.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        TextButton(onClick = { showAddDialog = true }) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                RuntimeIcon(RuntimeIconName.Plus, Modifier.size(14.dp), MaterialTheme.colorScheme.primary)
+                                Text("添加服务", style = MaterialTheme.typography.labelMedium)
+                            }
                         }
                     }
                 }
@@ -159,6 +176,7 @@ fun McpSettingsScreen(
             items(servers, key = { it.id }) { server ->
                 McpServerItemCard(
                     server = server,
+                    connectionState = connectionStates[server.id] ?: McpConnectionState.UNKNOWN,
                     onToggle = { enabled -> viewModel.toggleMcpServer(server.id, enabled) },
                     onClickDetail = { viewingDetailServer = server },
                 )
@@ -192,7 +210,11 @@ fun McpSettingsScreen(
                 viewModel.deleteMcpServer(server.id)
                 viewingDetailServer = null
             },
-            onTest = { viewModel.testMcpServer(server) },
+            onTest = {
+                val res = viewModel.testMcpServer(server)
+                viewModel.refreshMcpConnections()
+                res
+            },
         )
     }
 }
@@ -203,6 +225,7 @@ fun McpSettingsScreen(
 @Composable
 private fun McpServerItemCard(
     server: McpServerConfig,
+    connectionState: McpConnectionState,
     onToggle: (Boolean) -> Unit,
     onClickDetail: () -> Unit,
 ) {
@@ -230,6 +253,7 @@ private fun McpServerItemCard(
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
+                    McpConnectionDot(state = connectionState, enabled = server.isEnabled)
                     Surface(
                         shape = RoundedCornerShape(4.dp),
                         color = MaterialTheme.colorScheme.primaryContainer,
@@ -259,6 +283,27 @@ private fun McpServerItemCard(
             )
         }
     }
+}
+
+/**
+ * MCP 服务连通性状态小圆点：绿=在线 / 红=离线 / 转圈=检测中 / 灰=未知或未启用。
+ */
+@Composable
+private fun McpConnectionDot(state: McpConnectionState, enabled: Boolean) {
+    val (color, label) = when {
+        !enabled -> MaterialTheme.colorScheme.outlineVariant to "未启用"
+        state == McpConnectionState.CHECKING -> MaterialTheme.colorScheme.tertiary to "检测中"
+        state == McpConnectionState.ONLINE -> Color(0xFF2E7D32) to "已连通"
+        state == McpConnectionState.OFFLINE -> MaterialTheme.colorScheme.error to "离线"
+        else -> MaterialTheme.colorScheme.outline to "未检测"
+    }
+    Box(
+        modifier = Modifier
+            .size(10.dp)
+            .semantics { contentDescription = label }
+            .clip(CircleShape)
+            .background(color),
+    )
 }
 
 /**
@@ -300,7 +345,7 @@ private fun McpServerDetailDialog(
         }
     }
 
-    AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -558,7 +603,7 @@ private fun AddMcpServerDialog(
 
     val parsedServers = remember(jsonText) { parseMcpJson(jsonText) }
 
-    AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -4,6 +4,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
+/** Latest MCP protocol version implemented by this client. It is a spec identifier, not today's date. */
+internal const val MCP_PROTOCOL_VERSION = "2025-06-18"
+
 @Serializable
 data class JsonRpcRequest(
     val jsonrpc: String = "2.0",
@@ -36,9 +39,14 @@ data class JsonRpcError(
 
 @Serializable
 data class McpInitializeParams(
-    val protocolVersion: String = "2024-11-05",
+    val protocolVersion: String = MCP_PROTOCOL_VERSION,
     val capabilities: JsonObject = JsonObject(emptyMap()),
     val clientInfo: McpClientInfo = McpClientInfo("TaiXu-Agent", "1.0.0"),
+)
+
+@Serializable
+data class McpInitializeResult(
+    val protocolVersion: String,
 )
 
 @Serializable

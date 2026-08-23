@@ -39,6 +39,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 import top.wkbin.taixu.core.datastore.SettingsDataStore
+import top.wkbin.taixu.core.database.AgentSkillRepository
 import top.wkbin.taixu.core.model.AgentSkill
 
 /**
@@ -59,6 +60,10 @@ class HarnessLoop @Inject constructor(
     private val fileAccess: WorkspaceFileAccess,
     private val json: Json,
     private val logger: AppLogger,
+    private val subagentRepository: top.wkbin.taixu.core.database.AgentSubagentRepository,
+    private val skillRepository: AgentSkillRepository,
+    private val mcpServerRepository: top.wkbin.taixu.core.database.McpServerRepository,
+    private val approvalRepository: top.wkbin.taixu.core.database.AgentApprovalRepository,
 ) {
     private val loopScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -91,6 +96,10 @@ class HarnessLoop @Inject constructor(
     private val _workspace = MutableStateFlow("")
     /** 当前会话关联的工作区 Linux 路径（"" = 未关联）。 */
     val workspace: StateFlow<String> = _workspace.asStateFlow()
+
+    private val _projectType = MutableStateFlow("")
+    /** 当前会话显式选择的工程类型；空值表示由工作区内容自动识别。 */
+    val projectType: StateFlow<String> = _projectType.asStateFlow()
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
@@ -161,11 +170,16 @@ class HarnessLoop @Inject constructor(
         }
     }
 
+    private fun isSessionBusy(sessId: String): Boolean =
+        sessionJobs[sessId]?.isActive == true ||
+            _sessionRunStates.value[sessId] == SessionRunState.WAITING_APPROVAL
+
     /** 新建会话。workspace 为关联的工作区 Linux 路径（如 /workspace/proj），空串表示不关联。 */
-    suspend fun newSession(title: String, workspace: String = ""): String {
+    suspend fun newSession(title: String, workspace: String = "", projectType: String = ""): String {
         val id = UUID.randomUUID().toString()
         _currentSessionId.value = id
         _workspace.value = workspace
+        _projectType.value = projectType
         sessionDao.upsert(
             HarnessSessionEntity(
                 id = id,
@@ -174,6 +188,8 @@ class HarnessLoop @Inject constructor(
                 updatedAt = System.currentTimeMillis(),
                 modelId = null,
                 workspace = workspace,
+                projectType = projectType,
+                approvalMode = approvalRepository.currentMode().id,
             ),
         )
         _sessionLiveMessages[id] = MutableStateFlow(emptyList())
@@ -197,6 +213,7 @@ class HarnessLoop @Inject constructor(
         _currentSessionId.value = id
         val sessionEntity = sessionDao.findById(id)
         _workspace.value = sessionEntity?.workspace.orEmpty()
+        _projectType.value = sessionEntity?.projectType.orEmpty()
 
         val liveFlow = _sessionLiveMessages.getOrPut(id) {
             val history = try {
@@ -220,6 +237,11 @@ class HarnessLoop @Inject constructor(
         _thinkingLive.value = _sessionThinkingLives[id]?.value ?: false
         _pendingMessages.value = _sessionPendingMessages[id]?.value ?: emptyList()
 
+        if (approvalRepository.pendingNow(id).isNotEmpty()) {
+            setSessionState(id, SessionRunState.WAITING_APPROVAL)
+            setStatus(id, "等待用户批准")
+        }
+
         sessionThinkingModes[id] = liveFlow.value.any { message ->
             (message as? AssistantText)?.reasoning != null || (message as? ToolCall)?.reasoning != null
         }
@@ -240,6 +262,7 @@ class HarnessLoop @Inject constructor(
         _sessionStatuses.value = _sessionStatuses.value - id
 
         sessionDao.deleteMessages(id)
+        approvalRepository.deleteForSession(id)
         sessionDao.deleteSession(id)
         if (_currentSessionId.value == id) {
             val remaining = sessionDao.observeAll().first()
@@ -259,8 +282,7 @@ class HarnessLoop @Inject constructor(
         if (sessId.isBlank()) return
 
         val pendingFlow = getOrCreatePendingFlow(sessId)
-        val isRunning = sessionJobs[sessId]?.isActive == true
-        if (isRunning) {
+        if (isSessionBusy(sessId)) {
             pendingFlow.value = pendingFlow.value + trimmed
             if (sessId == _currentSessionId.value) {
                 _pendingMessages.value = pendingFlow.value
@@ -280,6 +302,8 @@ class HarnessLoop @Inject constructor(
                 }
                 logger.i("Harness loop cancelled for session $sessId")
                 setSessionState(sessId, SessionRunState.IDLE)
+            } catch (_: ApprovalPauseException) {
+                setSessionState(sessId, SessionRunState.WAITING_APPROVAL)
             } catch (throwable: Throwable) {
                 logger.e("Harness loop failed for session $sessId", throwable)
                 setError(sessId, throwable.message ?: "执行失败")
@@ -300,7 +324,7 @@ class HarnessLoop @Inject constructor(
      */
     fun regenerateLast(targetSessionId: String? = null) {
         val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
-        if (sessionJobs[sessId]?.isActive == true || sessId.isBlank()) return
+        if (isSessionBusy(sessId) || sessId.isBlank()) return
         val current = getOrCreateLiveMessages(sessId).value
         val lastUserIndex = current.indexOfLast { it is UserMessage }
         if (lastUserIndex < 0) return
@@ -325,6 +349,8 @@ class HarnessLoop @Inject constructor(
                 }
                 logger.i("Harness loop cancelled for session $sessId")
                 setSessionState(sessId, SessionRunState.IDLE)
+            } catch (_: ApprovalPauseException) {
+                setSessionState(sessId, SessionRunState.WAITING_APPROVAL)
             } catch (throwable: Throwable) {
                 logger.e("Harness loop failed for session $sessId", throwable)
                 setError(sessId, throwable.message ?: "执行失败")
@@ -346,7 +372,7 @@ class HarnessLoop @Inject constructor(
     fun truncateAndResend(userMessageId: String, newText: String, targetSessionId: String? = null) {
         val trimmed = newText.trim()
         val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
-        if (trimmed.isEmpty() || sessionJobs[sessId]?.isActive == true || sessId.isBlank()) return
+        if (trimmed.isEmpty() || isSessionBusy(sessId) || sessId.isBlank()) return
         val current = getOrCreateLiveMessages(sessId).value
         val targetIndex = current.indexOfFirst { it.id == userMessageId }
         if (targetIndex < 0) {
@@ -374,6 +400,8 @@ class HarnessLoop @Inject constructor(
                 }
                 logger.i("Harness loop cancelled for session $sessId")
                 setSessionState(sessId, SessionRunState.IDLE)
+            } catch (_: ApprovalPauseException) {
+                setSessionState(sessId, SessionRunState.WAITING_APPROVAL)
             } catch (throwable: Throwable) {
                 logger.e("Harness loop failed for session $sessId", throwable)
                 setError(sessId, throwable.message ?: "执行失败")
@@ -394,7 +422,7 @@ class HarnessLoop @Inject constructor(
      */
     suspend fun deleteMessage(messageId: String, targetSessionId: String? = null) {
         val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
-        if (sessionJobs[sessId]?.isActive == true || sessId.isBlank()) return
+        if (isSessionBusy(sessId) || sessId.isBlank()) return
         val liveFlow = getOrCreateLiveMessages(sessId)
         val current = liveFlow.value
         val target = current.firstOrNull { it.id == messageId } ?: return
@@ -477,12 +505,14 @@ class HarnessLoop @Inject constructor(
     private fun finishRun(sessId: String) {
         sessionJobs.remove(sessId)
         _sessionThinkingLives[sessId]?.value = false
-        setStatus(sessId, null)
+        val waitingApproval = _sessionRunStates.value[sessId] == SessionRunState.WAITING_APPROVAL
+        if (!waitingApproval) setStatus(sessId, null)
         if (sessId == _currentSessionId.value) {
             _running.value = false
-            _status.value = null
+            if (!waitingApproval) _status.value = null
             _thinkingLive.value = false
         }
+        if (waitingApproval) return
         val pendingFlow = _sessionPendingMessages[sessId]
         val next = pendingFlow?.value?.firstOrNull()
         if (next != null) {
@@ -531,7 +561,8 @@ class HarnessLoop @Inject constructor(
             }
             logAgentEvent(sessId, "ModelRequest", "Round=$round, Model=${model.name}, Provider=${model.provider}")
             val msgs = getOrCreateLiveMessages(sessId).value
-            val latestUserText = msgs.filterIsInstance<UserMessage>().lastOrNull()?.text.orEmpty()
+            val latestUserMessage = msgs.filterIsInstance<UserMessage>().lastOrNull()
+            val latestUserText = latestUserMessage?.text.orEmpty()
             val mentionedNames = extractMentionedNames(latestUserText)
             val effectiveModel = if (mentionedNames.isNotEmpty()) {
                 val matchedTools = model.dynamicMcpTools.filter { tool ->
@@ -544,6 +575,7 @@ class HarnessLoop @Inject constructor(
             } else {
                 model
             }
+            appendCapabilityEvents(sessId, latestUserMessage?.id.orEmpty(), mentionedNames, effectiveModel)
             val assistantId = newId()
             val assistantAt = now()
             val streamText = StringBuilder()
@@ -589,6 +621,34 @@ class HarnessLoop @Inject constructor(
                 } catch (cancellation: CancellationException) {
                     logAgentEvent(sessId, "Cancelled", "用户主动取消执行")
                     throw cancellation
+                } catch (rateLimit: LlmRateLimitException) {
+                    currentCoroutineContext().ensureActive()
+                    if (rateLimit.quotaExhausted) {
+                        getOrCreateThinkingLiveFlow(sessId).value = false
+                        if (sessId == _currentSessionId.value) _thinkingLive.value = false
+                        logAgentEvent(sessId, "QuotaExhausted", rateLimit.message.orEmpty(), rateLimit)
+                        appendFatal(
+                            sessId,
+                            "模型服务商额度已耗尽，无法继续执行。请充值、切换可用模型或更新 API Key。\n\n${rateLimit.message}",
+                            now() - startedAt,
+                        )
+                        return
+                    }
+                    netRetry++
+                    if (netRetry > MAX_STREAM_RETRIES) throw rateLimit
+                    getOrCreateThinkingLiveFlow(sessId).value = false
+                    if (sessId == _currentSessionId.value) _thinkingLive.value = false
+                    val waitSeconds = rateLimit.retryAfterSeconds ?: (netRetry * RETRY_BACKOFF_SEC).coerceAtMost(60L)
+                    setStatus(sessId, "请求受限，${waitSeconds} 秒后自动重试（$netRetry/$MAX_STREAM_RETRIES）")
+                    logAgentEvent(sessId, "RateLimitRetry", "限流退避 ${waitSeconds}s，重试 $netRetry/$MAX_STREAM_RETRIES", rateLimit)
+                    streamText.clear()
+                    streamReasoning.clear()
+                    streamAssistant(sessId, assistantId, assistantAt, "")
+                    for (remaining in waitSeconds downTo 1L) {
+                        currentCoroutineContext().ensureActive()
+                        setStatus(sessId, "请求受限，${remaining} 秒后自动重试（$netRetry/$MAX_STREAM_RETRIES）")
+                        delay(1000L)
+                    }
                 } catch (io: IOException) {
                     currentCoroutineContext().ensureActive()
                     netRetry++
@@ -758,7 +818,12 @@ class HarnessLoop @Inject constructor(
                 setStatus(sessId, describeToolCall(tool, args, toolNameTrimmed))
                 val toolStart = now()
                 val outcome = try {
-                    toolExecutor.execute(toolCall, sessId, sessionWorkspace)
+                    toolExecutor.execute(
+                        toolCall,
+                        sessId,
+                        sessionWorkspace,
+                        progressReporter = { progress -> setStatus(sessId, progress) },
+                    )
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (throwable: Throwable) {
@@ -772,6 +837,10 @@ class HarnessLoop @Inject constructor(
                 }
                 val duration = now() - toolStart
                 logAgentEvent(sessId, "ToolResult", "Tool=${tool.name}, Success=${outcome.success}, Duration=${duration}ms, Output=${outcome.output.take(300)}")
+                if (outcome.awaitingApproval) {
+                    setStatus(sessId, "等待用户批准")
+                    throw ApprovalPauseException()
+                }
                 append(sessId, outcome.copy(durationMs = duration))
                 if (outcome.success) roundHadSuccess = true
                 touchSession(sessId)
@@ -840,6 +909,7 @@ class HarnessLoop @Inject constructor(
                 val command = arg("command")?.lineSequence()?.first()?.trim().orEmpty()
                 if (command.isEmpty()) "执行命令" else "执行命令：${command.take(MAX_STATUS_ARG_LENGTH)}"
             }
+            HarnessTool.DOWNLOAD -> arg("destination")?.let { "下载文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "下载文件"
             HarnessTool.READ -> arg("path")?.let { "读取文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "读取文件"
             HarnessTool.WRITE -> arg("path")?.let { "写入文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "写入文件"
             HarnessTool.EDIT -> arg("path")?.let { "编辑文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "编辑文件"
@@ -922,7 +992,7 @@ class HarnessLoop @Inject constructor(
             userName = "用户",
         )
 
-        val allSkills = runCatching { settingsDataStore.allSkills.first() }.getOrDefault(emptyList())
+        val allSkills = runCatching { skillRepository.allSkills.first() }.getOrDefault(emptyList())
         val selectedSkills = if (mentionedNames.isNotEmpty()) {
             val matched = allSkills.filter { skill ->
                 val nameLower = skill.name.lowercase()
@@ -961,10 +1031,19 @@ class HarnessLoop @Inject constructor(
             "\n\n## 当前任务多步骤执行规划与进度看板 (Active Plan)\n目标：${activePlan.goal}\n步骤与状态：\n${activePlan.stepsJson}"
         } else ""
 
+        val subagentSection = buildSubagentGuidance(toolCallMode)
+
         val projectContext = loadProjectContext(workspacePath)
         val workspaceSection = if (workspacePath.isNotBlank()) {
             "\n\n当前工作区：" + workspacePath + "（base 命令默认在此目录执行；read/write/edit 的相对路径以此为根）"
         } else ""
+        val workspaceGuidance = buildWorkspaceGuidance(
+            workspacePath = workspacePath,
+            projectTypeOverride = sessionId.let { id -> sessionDao.findById(id)?.projectType.orEmpty() },
+            distroName = distroName,
+            toolCallMode = toolCallMode,
+            installedTools = installedTools,
+        )
 
         val toolCallSection = when (toolCallMode) {
             ToolCallMode.JSON_TEXT -> """
@@ -997,7 +1076,38 @@ class HarnessLoop @Inject constructor(
             .replace("{{DISTRO_NAME}}", distroName)
             .replace("{{PKG_MANAGER}}", pkgManager)
             .replace("{{ACTIVE_SKILLS}}", skillSection)
-            .trim() + installedToolsSection + memorySection + planSection + toolCallSection + workspaceSection + projectContext + thinkingLanguageSection
+            .trim() + installedToolsSection + memorySection + planSection + subagentSection + toolCallSection + workspaceSection + workspaceGuidance + projectContext + thinkingLanguageSection
+    }
+
+    private suspend fun buildSubagentGuidance(toolCallMode: ToolCallMode): String {
+        if (toolCallMode == ToolCallMode.DISABLED) return ""
+        val profiles = runCatching { subagentRepository.enabledProfiles() }.getOrDefault(emptyList())
+        if (profiles.isEmpty()) {
+            return "\n\n## 子智能体委派\n当前没有启用的子智能体角色，不要调用 invoke_subagent。"
+        }
+        val autoEnabled = runCatching { subagentRepository.autoDelegationEnabled.first() }.getOrDefault(true)
+        val roleList = profiles.joinToString("\n") { profile ->
+            "- role=\"${profile.id}\"：${profile.name}。${profile.description}"
+        }
+        val triggerPolicy = if (autoEnabled) {
+            """
+                你必须自行判断当前任务是否值得拆分，用户不需要知道工具名称或编写特殊提示词。
+                当任务至少包含两个彼此独立、可以真正并行推进的子任务时，主动调用 invoke_subagent；例如跨模块调研、实现与独立验证、多方案并行评估。
+                简单问答、单点小改动、存在严格前后依赖的步骤不要拆分。不要为了展示能力而委派，也不要把主智能体自己必须完成的整体验收责任完全转交出去。
+            """.trimIndent()
+        } else {
+            "仅当用户明确要求并行处理、分头检查或使用子智能体时调用 invoke_subagent；否则由主智能体直接完成。"
+        }
+        return """
+
+            ## 子智能体自主委派策略
+            $triggerPolicy
+            - 每次最多派发 6 个目标清晰、输出边界明确的子任务。
+            - role 参数必须严格使用下列已启用角色标识，不得自行编造：
+            $roleList
+            - 收到以“【子智能体任务指派】”开头的任务时，你已经是子智能体，严禁再次调用 invoke_subagent，必须直接执行被分配的任务。
+            - 子任务返回后由主智能体整合、解决冲突并继续完成最终交付。
+        """.trimIndent()
     }
 
     private fun extractMentionedNames(text: String): Set<String> {
@@ -1011,7 +1121,8 @@ class HarnessLoop @Inject constructor(
         val sections = buildList {
             for (name in listOf("AGENTS.md", "CLAUDE.md", "README.md")) {
                 val content = runCatching {
-                    fileAccess.read("$workspacePath/$name".removePrefix("/")).getOrNull()
+                    // WorkspaceFileAccess understands the canonical /workspace/... form.
+                    fileAccess.read("$workspacePath/$name").getOrNull()
                 }.getOrNull() ?: continue
                 val trimmed = content.take(PROJECT_CONTEXT_MAX_BYTES)
                 add(
@@ -1024,6 +1135,85 @@ class HarnessLoop @Inject constructor(
         if (sections.isEmpty()) return ""
         return "\n\n<project_context>\n当前工作区的项目说明与约定（自动加载，编码时务必遵守）：\n\n" +
             sections.joinToString("\n\n") + "\n</project_context>"
+    }
+
+    /**
+     * Workspace context is deliberately injected independently of user skills.
+     * A linked project must remain actionable even when the user has disabled
+     * optional skills or never mentions them in the first message.
+     */
+    private suspend fun buildWorkspaceGuidance(
+        workspacePath: String,
+        projectTypeOverride: String = "",
+        distroName: String,
+        toolCallMode: ToolCallMode,
+        installedTools: List<top.wkbin.taixu.core.database.ToolEntity>,
+    ): String {
+        if (workspacePath.isBlank()) return ""
+        val entries = fileAccess.list(workspacePath).getOrNull().orEmpty().map { it.name }.toSet()
+        val appEntries = if ("app" in entries) {
+            fileAccess.list("$workspacePath/app").getOrNull().orEmpty().map { it.name }.toSet()
+        } else {
+            emptySet()
+        }
+        val detectedProjectType = when {
+            "pubspec.yaml" in entries -> "Flutter"
+            "settings.gradle.kts" in entries || "settings.gradle" in entries ||
+                "build.gradle.kts" in entries || "build.gradle" in entries ||
+                ("app" in entries && appEntries.any { it == "build.gradle" || it == "build.gradle.kts" }) -> "Android"
+            "apk-info.properties" in entries || entries.any { it.endsWith(".apk", ignoreCase = true) } -> "Android APK 逆向"
+            else -> "通用工程"
+        }
+        val projectType = when (projectTypeOverride.trim().uppercase()) {
+            "ANDROID" -> "Android"
+            "FLUTTER" -> "Flutter"
+            "REVERSE" -> "Android APK 逆向"
+            "GENERAL" -> "通用工程"
+            else -> detectedProjectType
+        }
+        val markerText = entries.sorted().joinToString(", ").ifBlank { "（目录为空或暂时不可读）" }
+        val toolNames = if (toolCallMode == ToolCallMode.DISABLED) {
+            "工具调用已禁用"
+        } else {
+            "read, write, edit, base, memory, plan, scratchpad, invoke_subagent" +
+                if (toolCallMode == ToolCallMode.JSON_TEXT) "（JSON 文本调用模式）" else ""
+        }
+        val installedToolNames = installedTools.joinToString(", ") { it.name }.ifBlank { "暂无已安装套件记录" }
+        val typeGuidance = when (projectType) {
+            "Android" -> """
+                ### Android 工程操作规约
+                - 当前工程类型：Android；根目录标记：$markerText。
+                - 修改代码或构建配置时，先用 read 查看 `settings.gradle(.kts)`、`app/build.gradle(.kts)`、`app/src/main/AndroidManifest.xml` 和入口源码；局部修改优先用 edit，需要新文件才用 write。
+                - 首选构建入口：`/opt/taixu/scripts/build_android.sh "$workspacePath" assembleDebug`；也可在工程根目录执行 `./gradlew assembleDebug`。不要调用已移除的 android CLI。
+                - 需要安装到手机时，先确认 APK 真实存在并完成构建，再复制到 `/sdcard/Download/`，然后执行 `taixu-host install-apk /sdcard/Download/<项目名>.apk` 调起宿主安装器；若 `adb devices` 有设备，优先 `adb install -r <apk>`。
+                - 构建失败必须读取完整 Gradle/AAPT2 错误并编辑对应脚本或工程文件修复，不能只汇报“编译失败”。
+            """.trimIndent()
+            "Flutter" -> """
+                ### Flutter 工程操作规约
+                - 当前工程类型：Flutter；根目录标记：$markerText。
+                - 修改前先 read `pubspec.yaml`、`lib/` 和 `android/` 的 Gradle 配置；Dart 代码用 edit/write 修改。
+                - 依赖优先执行 `flutter pub get`；构建入口：`/opt/taixu/scripts/build_flutter.sh "$workspacePath" "apk --debug"`，或 `flutter build apk --debug`。
+                - 安装到手机时，确认 `build/app/outputs/flutter-apk/*.apk` 完整后复制到 `/sdcard/Download/`，再执行 `taixu-host install-apk <apk路径>`；检测到 ADB 后可执行 `adb install -r <apk>`。
+                - 遇到 Android Gradle/AAPT2 错误，检查 `android/gradle.properties`、Android 核心环境和 QEMU AAPT2，不要反复全量下载 Flutter SDK。
+            """.trimIndent()
+            "Android APK 逆向" -> """
+                ### Android 逆向工程操作规约
+                - 当前工程类型：APK 逆向；根目录标记：$markerText。
+                - 原始 APK 和 `unpacked/` 是分析输入，先 read `apk-info.properties` 与 `REVERSE.md`，不要覆盖原始 APK。
+                - 优先使用 `jadx` 反编译 Java 源码，使用 `apktool` 处理资源/Smali；修改后再用既有脚本回编译、签名并验证。
+            """.trimIndent()
+            else -> """
+                ### 通用工作区操作规约
+                - 当前工程类型：通用工程；根目录标记：$markerText。
+                - 先识别入口文件和项目说明，再选择对应构建命令；修改已有文件优先 edit，新文件使用 write，并在完成后执行最小验证。
+            """.trimIndent()
+        }
+        return "\n\n## 关联工作区会话环境与项目指导（自动注入，不依赖 Skill 开关）\n" +
+            "- 工作区路径：$workspacePath\n" +
+            "- 当前 Linux 环境：$distroName，aarch64，Android 私有用户态 PRoot；没有真正的 root/systemd。\n" +
+            "- 当前可用 Harness 工具：$toolNames。\n" +
+            "- 已登记的开发套件：$installedToolNames。已就绪的工具直接调用，避免重复安装。\n" +
+            typeGuidance
     }
 
     private suspend fun apiMessages(sessId: String, model: ModelConfig): List<ApiMessage> {
@@ -1078,6 +1268,10 @@ class HarnessLoop @Inject constructor(
             val isCollapsed = { index: Int -> shouldCompact && index < recentTurnCutoffIndex }
             while (i < msgs.size) {
                 val message = msgs[i]
+                if (message is CapabilityEvent) {
+                    i++
+                    continue
+                }
                 if (toolCallMode == ToolCallMode.JSON_TEXT) {
                     when (message) {
                         is ToolCall -> {
@@ -1195,6 +1389,7 @@ class HarnessLoop @Inject constructor(
         for (idx in msgs.indices.reversed()) {
             val msg = msgs[idx]
             val tokens = when (msg) {
+                is CapabilityEvent -> 0
                 is UserMessage -> estimateTokens(msg.text) + msg.imageUrls.size * 1000
                 is AssistantText -> estimateTokens(msg.text) + estimateTokens(msg.reasoning.orEmpty())
                 is ToolResult -> estimateTokens(msg.output)
@@ -1214,6 +1409,7 @@ class HarnessLoop @Inject constructor(
         "[早期历史已折叠·$role] ${text.take(80).replace('\n', ' ')}…（内容过长，已省略，请依据最近轮次继续）"
 
     private fun sanitizeForStorage(message: HarnessMessage): HarnessMessage = when (message) {
+        is CapabilityEvent -> message
         is ToolResult -> {
             if (message.output.length > MAX_STORAGE_STRING_LENGTH) {
                 val head = message.output.take(STORAGE_KEEP_LENGTH)
@@ -1358,6 +1554,7 @@ class HarnessLoop @Inject constructor(
         HarnessTool.WRITE -> "write"
         HarnessTool.EDIT -> "edit"
         HarnessTool.BASE -> "base"
+        HarnessTool.DOWNLOAD -> "download"
         HarnessTool.MEMORY -> "memory"
         HarnessTool.PLAN -> "plan"
         HarnessTool.SCRATCHPAD -> "scratchpad"
@@ -1368,13 +1565,151 @@ class HarnessLoop @Inject constructor(
     private fun newId(): String = UUID.randomUUID().toString()
     private fun now(): Long = System.currentTimeMillis()
 
+    /** Approve or reject a frozen tool call, then resume the same Agent session. */
+    fun resolveApproval(requestId: String, approved: Boolean) {
+        loopScope.launch {
+            val request = approvalRepository.find(requestId) ?: return@launch
+            val sessId = request.sessionId
+            if (request.status != top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_PENDING) return@launch
+            // The original loop may still be unwinding after it persisted the request.
+            // Wait for it before claiming the session slot, otherwise its finally block can
+            // remove this resume job from sessionJobs.
+            sessionJobs[sessId]?.takeIf { it.isActive }?.join()
+            val claimedStatus = if (approved) {
+                top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_APPROVED
+            } else {
+                top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_REJECTED
+            }
+            if (!approvalRepository.claimPending(request.id, claimedStatus)) return@launch
+            sessionJobs[sessId] = currentCoroutineContext()[Job] ?: return@launch
+            setSessionState(sessId, SessionRunState.RUNNING)
+            setError(sessId, null)
+            var approvalResultPersisted = false
+            try {
+                val result = if (approved) {
+                    val args = json.parseToJsonElement(request.argumentsJson) as? JsonObject
+                        ?: error("审批参数不是 JSON 对象")
+                    val tool = HarnessApiMapper.toolByName(request.toolName)
+                    toolExecutor.execute(
+                        ToolCall(request.toolCallId, request.createdAt, tool, args, rawToolName = request.toolName),
+                        sessId,
+                        request.workspace,
+                        bypassApproval = true,
+                    )
+                } else {
+                    ToolResult(
+                        id = newId(),
+                        createdAt = now(),
+                        toolCallId = request.toolCallId,
+                        success = false,
+                        output = "用户拒绝了该工具操作。请尊重用户决定，并选择不需要该权限的替代方案。",
+                    )
+                }
+                append(sessId, result)
+                approvalRepository.mark(
+                    request.id,
+                    if (approved && result.success) top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_EXECUTED
+                    else if (approved) top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_FAILED
+                    else top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_REJECTED,
+                )
+                approvalResultPersisted = true
+                runLoopInternal(sessId, startedAt = now())
+                setSessionState(sessId, SessionRunState.COMPLETED)
+            } catch (_: ApprovalPauseException) {
+                setSessionState(sessId, SessionRunState.WAITING_APPROVAL)
+            } catch (cancellation: CancellationException) {
+                if (!approvalResultPersisted) {
+                    withContext(NonCancellable) {
+                        approvalRepository.mark(
+                            request.id,
+                            if (approved) top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_FAILED
+                            else top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_REJECTED,
+                        )
+                        repairDanglingToolCalls(sessId, interrupted = true)
+                    }
+                }
+                setSessionState(sessId, SessionRunState.IDLE)
+            } catch (throwable: Throwable) {
+                if (!approvalResultPersisted) {
+                    approvalRepository.mark(request.id, top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_FAILED)
+                    append(
+                        sessId,
+                        ToolResult(
+                            id = newId(),
+                            createdAt = now(),
+                            toolCallId = request.toolCallId,
+                            success = false,
+                            output = "批准操作执行失败：${friendly(throwable)}",
+                        ),
+                    )
+                }
+                setError(sessId, throwable.message ?: "审批操作执行失败")
+                setSessionState(sessId, SessionRunState.FAILED)
+            } finally {
+                finishRun(sessId)
+            }
+        }
+    }
+
+    private suspend fun appendCapabilityEvents(
+        sessId: String,
+        userMessageId: String,
+        mentionedNames: Set<String>,
+        model: ModelConfig,
+    ) {
+        if (mentionedNames.isEmpty()) return
+        val messages = getOrCreateLiveMessages(sessId).value
+        if (userMessageId.isBlank()) return
+        val skills = runCatching { skillRepository.allSkills.first() }.getOrDefault(emptyList())
+            .filter { skill ->
+                val names = setOf(skill.name.lowercase(), skill.id.lowercase(), skill.triggerCommand?.removePrefix("/")?.lowercase().orEmpty())
+                names.any { it.isNotBlank() && it in mentionedNames }
+            }
+        skills.forEach { skill ->
+            val key = "skill:$userMessageId:${skill.id}"
+            if (messages.filterIsInstance<CapabilityEvent>().none { it.id == key }) {
+                append(
+                    sessId,
+                    CapabilityEvent(key, now(), CapabilityEvent.Kind.SKILL, skill.name, skill.description),
+                )
+            }
+        }
+        val configuredMcp = runCatching { mcpServerRepository.servers.first() }
+            .getOrDefault(emptyList())
+            .map { it.id to it.name }
+        val discoveredMcp = model.dynamicMcpTools.map { it.serverId to it.serverName }
+        (configuredMcp + discoveredMcp)
+            .distinctBy { it.first }
+            .filter { (serverId, serverName) -> serverId.lowercase() in mentionedNames || serverName.lowercase() in mentionedNames }
+            .forEach { (serverId, serverName) ->
+                val key = "mcp:$userMessageId:$serverId"
+                if (messages.filterIsInstance<CapabilityEvent>().none { it.id == key }) {
+                    append(
+                        sessId,
+                        CapabilityEvent(
+                            key,
+                            now(),
+                            CapabilityEvent.Kind.MCP,
+                            serverName,
+                            if (model.dynamicMcpTools.any { it.serverId == serverId }) {
+                                "MCP 工具已挂载，模型可按需调用"
+                            } else {
+                                "已选择 MCP 服务，正在尝试发现工具；若服务离线，后续会显示连接错误"
+                            },
+                        ),
+                    )
+                }
+            }
+    }
+
     companion object {
-        const val STREAM_FLUSH_INTERVAL_MS = 40L
+        const val STREAM_FLUSH_INTERVAL_MS = 80L
         const val MAX_ROUNDS = 200
         val KNOWN_TOOL_NAMES = setOf("read", "write", "edit", "base", "memory", "plan", "scratchpad", "invoke_subagent", "subagent")
         const val PROJECT_CONTEXT_MAX_BYTES = 16 * 1024
         const val MAX_STREAM_RETRIES = 5
         const val RETRY_BACKOFF_MS = 1_000L
+        const val RETRY_BACKOFF_SEC = 2L
         const val MAX_STATUS_ARG_LENGTH = 60
         const val MAX_STORAGE_STRING_LENGTH = 128 * 1024
         const val STORAGE_KEEP_LENGTH = 60 * 1024
@@ -1421,3 +1756,5 @@ class HarnessLoop @Inject constructor(
         """.trimIndent()
     }
 }
+
+private class ApprovalPauseException : RuntimeException()

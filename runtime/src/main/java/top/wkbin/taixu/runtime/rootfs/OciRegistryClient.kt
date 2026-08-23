@@ -163,7 +163,7 @@ class OciRegistryClient @Inject constructor(
             onProgress(DownloadProgress(total, total.takeIf { it > 0 }))
             logger.i("Applied OCI layer ${index + 1}/${layers.size}: ${blob.file.name.takeLast(16)}")
         }
-        return ImageInfo("oci-5.7.0-${distribution.id}-${parsed.tag}", digest ?: error("OCI manifest 未返回 digest"))
+        return ImageInfo("oci-5.8.0-${distribution.id}-${parsed.tag}", digest ?: error("OCI manifest 未返回 digest"))
     }
 
     private fun resolveFrom(endpoint: Endpoint, distribution: DistributionSpec): ImageInfo {
@@ -190,7 +190,7 @@ class OciRegistryClient @Inject constructor(
             )
         }
         check(response.body["layers"]?.jsonArray != null) { "OCI manifest 没有文件系统层" }
-        return ImageInfo("oci-5.7.0-${distribution.id}-${parsed.tag}", digest ?: error("OCI manifest 未返回 digest"))
+        return ImageInfo("oci-5.8.0-${distribution.id}-${parsed.tag}", digest ?: error("OCI manifest 未返回 digest"))
     }
 
     private fun getJson(url: String, token: String, accept: String, client: OkHttpClient): JsonObject {
@@ -377,7 +377,7 @@ class OciRegistryClient @Inject constructor(
     }
 
     private companion object {
-        const val USER_AGENT = "TaiXu/proot-distro-5.7.0-compatible"
+        const val USER_AGENT = "TaiXu/proot-distro-5.8.0"
         const val ACCEPT_MANIFESTS =
             "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json"
         /** OCI layer 并行下载并发数（移动网络单连接限速时多路并发可显著提速）。 */

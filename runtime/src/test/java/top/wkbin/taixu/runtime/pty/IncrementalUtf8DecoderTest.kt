@@ -18,6 +18,21 @@ class IncrementalUtf8DecoderTest {
     }
 
     @Test
+    fun preservesFourByteEmojiAcrossEveryUtf8Boundary() {
+        val emoji = "🚀"
+        val bytes = emoji.toByteArray(Charsets.UTF_8)
+
+        for (split in 1 until bytes.size) {
+            val decoder = IncrementalUtf8Decoder(maxChunkBytes = 8)
+            val first = decoder.decode(bytes.copyOfRange(0, split), split)
+            val secondBytes = bytes.copyOfRange(split, bytes.size)
+            val second = decoder.decode(secondBytes, secondBytes.size)
+
+            assertEquals(emoji, first + second + decoder.finish())
+        }
+    }
+
+    @Test
     fun replacesIncompleteSequenceAtEndOfInput() {
         val decoder = IncrementalUtf8Decoder(maxChunkBytes = 8)
         val bytes = "太".toByteArray(Charsets.UTF_8)

@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -15,6 +16,15 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import java.util.UUID
 
 private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
@@ -25,6 +35,8 @@ class SettingsDataStore @Inject constructor(
 ) {
     private val developerModeKey = booleanPreferencesKey("developer_mode")
     private val themeModeKey = stringPreferencesKey("theme_mode")
+    private val themeStyleKey = stringPreferencesKey("theme_style")
+    private val chengmingBackgroundUriKey = stringPreferencesKey("chengming_background_uri")
     private val onboardingCompletedKey = booleanPreferencesKey("onboarding_completed")
     private val selectedDistributionKey = stringPreferencesKey("selected_distribution")
     private val mirrorPolicyKey = stringPreferencesKey("mirror_policy")
@@ -42,6 +54,102 @@ class SettingsDataStore @Inject constructor(
     private val thinkingLanguageKey = stringPreferencesKey("thinking_language")
     private val customSystemPromptEnabledKey = booleanPreferencesKey("custom_system_prompt_enabled")
     private val customSystemPromptKey = stringPreferencesKey("custom_system_prompt")
+    private val environmentVariablesKey = stringPreferencesKey("environment_variables_json")
+    private val environmentPrivacyModeKey = booleanPreferencesKey("environment_privacy_mode")
+    private val environmentJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    private val environmentKeyRegex = Regex("^[A-Z_][A-Z0-9_]*$")
+
+    private val settingsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val _environmentVariables = MutableStateFlow<List<top.wkbin.taixu.core.model.EnvironmentVariable>>(emptyList())
+    val environmentVariables: StateFlow<List<top.wkbin.taixu.core.model.EnvironmentVariable>> = _environmentVariables.asStateFlow()
+    private val _environmentValues = MutableStateFlow<Map<String, String>>(emptyMap())
+    val environmentValues: StateFlow<Map<String, String>> = _environmentValues.asStateFlow()
+    val environmentPrivacyMode: Flow<Boolean> = context.settingsDataStore.data.map { it[environmentPrivacyModeKey] ?: true }
+
+    init {
+        settingsScope.launch {
+            context.settingsDataStore.data.collect { prefs ->
+                val encoded = prefs[environmentVariablesKey].orEmpty()
+                val records = if (encoded.isBlank()) emptyList() else runCatching {
+                    environmentJson.decodeFromString<List<StoredEnvironmentVariable>>(encoded)
+                }.getOrDefault(emptyList())
+                _environmentVariables.value = records.map { it.metadata }
+                _environmentValues.value = records.associate { it.metadata.key to (secretManager.decrypt(it.encryptedValue).orEmpty()) }
+            }
+        }
+    }
+
+    fun isValidEnvironmentKey(key: String): Boolean = environmentKeyRegex.matches(key.trim().uppercase())
+
+    suspend fun setEnvironmentPrivacyMode(enabled: Boolean) {
+        context.settingsDataStore.edit { it[environmentPrivacyModeKey] = enabled }
+    }
+
+    suspend fun addEnvironmentVariable(key: String, value: String, note: String = ""): Boolean {
+        val normalized = key.trim().uppercase()
+        if (!isValidEnvironmentKey(normalized) || isReservedEnvironmentKey(normalized) || value.isEmpty()) return false
+        return updateEnvironmentRecords { records ->
+            if (records.any { it.metadata.key == normalized }) return@updateEnvironmentRecords null
+            records + StoredEnvironmentVariable(
+                metadata = top.wkbin.taixu.core.model.EnvironmentVariable(UUID.randomUUID().toString(), normalized, note.trim(), System.currentTimeMillis()),
+                encryptedValue = secretManager.encrypt(value),
+            )
+        }
+    }
+
+    suspend fun updateEnvironmentVariable(id: String, key: String, value: String?, note: String = ""): Boolean {
+        val normalized = key.trim().uppercase()
+        if (!isValidEnvironmentKey(normalized) || isReservedEnvironmentKey(normalized)) return false
+        return updateEnvironmentRecords { records ->
+            val current = records.firstOrNull { it.metadata.id == id } ?: return@updateEnvironmentRecords null
+            if (records.any { it.metadata.id != id && it.metadata.key == normalized }) return@updateEnvironmentRecords null
+            records.map {
+                if (it.metadata.id != id) it else it.copy(
+                    metadata = it.metadata.copy(key = normalized, note = note.trim()),
+                    encryptedValue = if (value.isNullOrEmpty()) it.encryptedValue else secretManager.encrypt(value),
+                )
+            }
+        }
+    }
+
+    suspend fun deleteEnvironmentVariable(id: String): Boolean = updateEnvironmentRecords { records ->
+        if (records.none { it.metadata.id == id }) null else records.filterNot { it.metadata.id == id }
+    }
+
+    suspend fun readEnvironmentVariable(key: String): String? = _environmentValues.value[key.trim().uppercase()]
+
+    fun isReservedEnvironmentKey(key: String): Boolean {
+        val normalized = key.trim().uppercase()
+        return normalized in setOf(
+            "HOME", "PATH", "TERM", "PS1", "DEBIAN_FRONTEND", "CI", "NONINTERACTIVE",
+            "TAIXU_BRIDGE_URL", "TAIXU_BRIDGE_PORT", "ANDROID_BIN_PATH", "ANDROID_LIB_PATH",
+        ) || normalized.startsWith("TAIXU_") || normalized.startsWith("ANDROID_")
+    }
+
+    private suspend fun updateEnvironmentRecords(transform: (List<StoredEnvironmentVariable>) -> List<StoredEnvironmentVariable>?): Boolean {
+        var changed = false
+        var updatedRecords: List<StoredEnvironmentVariable>? = null
+        context.settingsDataStore.edit { prefs ->
+            val existing = prefs[environmentVariablesKey].orEmpty().let { encoded ->
+                if (encoded.isBlank()) emptyList() else runCatching { environmentJson.decodeFromString<List<StoredEnvironmentVariable>>(encoded) }.getOrDefault(emptyList())
+            }
+            val updated = transform(existing) ?: return@edit
+            prefs[environmentVariablesKey] = environmentJson.encodeToString(updated)
+            updatedRecords = updated
+            changed = true
+        }
+        updatedRecords?.let { records ->
+            _environmentVariables.value = records.map { it.metadata }
+            _environmentValues.value = records.associate { it.metadata.key to (secretManager.decrypt(it.encryptedValue).orEmpty()) }
+        }
+        return changed
+    }
+
+    @kotlinx.serialization.Serializable
+    private data class StoredEnvironmentVariable(
+        val metadata: top.wkbin.taixu.core.model.EnvironmentVariable,
+        val encryptedValue: String,
+    )
 
     val thinkingLanguage: Flow<String> = context.settingsDataStore.data.map { preferences ->
         preferences[thinkingLanguageKey] ?: "zh"
@@ -103,6 +211,28 @@ class SettingsDataStore @Inject constructor(
         }
     }
 
+    /** 主题风格（玄同 / 澄明），默认玄同。 */
+    val themeStyle: Flow<String> = context.settingsDataStore.data.map { preferences ->
+        preferences[themeStyleKey] ?: "xuantong"
+    }
+
+    suspend fun setThemeStyle(style: String) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[themeStyleKey] = style
+        }
+    }
+
+    val chengmingBackgroundUri: Flow<String?> = context.settingsDataStore.data.map { preferences ->
+        preferences[chengmingBackgroundUriKey]
+    }
+
+    suspend fun setChengmingBackgroundUri(uri: String?) {
+        context.settingsDataStore.edit { preferences ->
+            if (uri.isNullOrBlank()) preferences.remove(chengmingBackgroundUriKey)
+            else preferences[chengmingBackgroundUriKey] = uri
+        }
+    }
+
     // 终端外观与显示定制
     private val terminalFontSizeKey = androidx.datastore.preferences.core.intPreferencesKey("terminal_font_size")
     private val terminalColorSchemeKey = stringPreferencesKey("terminal_color_scheme")
@@ -140,12 +270,12 @@ class SettingsDataStore @Inject constructor(
     }
 
     val appFontScale: Flow<Float> = context.settingsDataStore.data.map { prefs ->
-        prefs[appFontScaleKey] ?: 1.0f
+        (prefs[appFontScaleKey] ?: 1.0f).coerceIn(0.8f, 1.3f)
     }
 
     suspend fun setAppFontScale(scale: Float) {
         context.settingsDataStore.edit { prefs ->
-            prefs[appFontScaleKey] = scale
+            prefs[appFontScaleKey] = scale.coerceIn(0.8f, 1.3f)
         }
     }
 
@@ -165,50 +295,10 @@ class SettingsDataStore @Inject constructor(
         preferences[developerModeKey] ?: false
     }
 
-    private val installedDistributionsKey = stringPreferencesKey("installed_distributions_json")
-
     val onboardingCompleted: Flow<Boolean> = context.settingsDataStore.data.map { it[onboardingCompletedKey] ?: false }
     suspend fun setOnboardingCompleted(value: Boolean) { context.settingsDataStore.edit { it[onboardingCompletedKey] = value } }
     val selectedDistribution: Flow<String> = context.settingsDataStore.data.map { it[selectedDistributionKey] ?: "ubuntu" }
     suspend fun setSelectedDistribution(value: String) { context.settingsDataStore.edit { it[selectedDistributionKey] = value } }
-
-    /** 已安装的 Linux 发行版 ID 列表 */
-    val installedDistributions: Flow<List<String>> = context.settingsDataStore.data.map { prefs ->
-        val json = prefs[installedDistributionsKey]
-        if (!json.isNullOrBlank()) {
-            runCatching { jsonHelper.decodeFromString<List<String>>(json) }.getOrDefault(listOf(prefs[selectedDistributionKey] ?: "ubuntu"))
-        } else {
-            listOf(prefs[selectedDistributionKey] ?: "ubuntu")
-        }
-    }
-
-    suspend fun setInstalledDistributions(list: List<String>) {
-        context.settingsDataStore.edit {
-            it[installedDistributionsKey] = jsonHelper.encodeToString(list.distinct())
-        }
-    }
-
-    suspend fun addInstalledDistribution(id: String) {
-        context.settingsDataStore.edit { prefs ->
-            val json = prefs[installedDistributionsKey]
-            val current = if (!json.isNullOrBlank()) {
-                runCatching { jsonHelper.decodeFromString<List<String>>(json).toMutableList() }.getOrDefault(mutableListOf())
-            } else mutableListOf(prefs[selectedDistributionKey] ?: "ubuntu")
-            if (id !in current) current.add(id)
-            prefs[installedDistributionsKey] = jsonHelper.encodeToString(current.distinct())
-        }
-    }
-
-    suspend fun removeInstalledDistribution(id: String) {
-        context.settingsDataStore.edit { prefs ->
-            val json = prefs[installedDistributionsKey]
-            val current = if (!json.isNullOrBlank()) {
-                runCatching { jsonHelper.decodeFromString<List<String>>(json).toMutableList() }.getOrDefault(mutableListOf())
-            } else mutableListOf(prefs[selectedDistributionKey] ?: "ubuntu")
-            current.remove(id)
-            prefs[installedDistributionsKey] = jsonHelper.encodeToString(current.distinct())
-        }
-    }
 
     val mirrorPolicy: Flow<String> = context.settingsDataStore.data.map { it[mirrorPolicyKey] ?: "auto" }
     suspend fun setMirrorPolicy(value: String) { context.settingsDataStore.edit { it[mirrorPolicyKey] = value } }
@@ -316,9 +406,6 @@ class SettingsDataStore @Inject constructor(
     private val contextCompactionThresholdKey = androidx.datastore.preferences.core.intPreferencesKey("agent_context_compaction_threshold")
     private val maxToolRoundsKey = androidx.datastore.preferences.core.intPreferencesKey("agent_max_tool_rounds")
     private val autoWorkspaceCwdKey = booleanPreferencesKey("agent_auto_workspace_cwd")
-    private val enabledSkillsKey = stringPreferencesKey("agent_enabled_skills_ids")
-    private val customSkillsKey = stringPreferencesKey("agent_custom_skills_json")
-    private val enabledPluginsKey = stringPreferencesKey("agent_enabled_plugins_ids")
 
     val contextCompactionEnabled: Flow<Boolean> = context.settingsDataStore.data.map { it[contextCompactionEnabledKey] ?: true }
     suspend fun setContextCompactionEnabled(value: Boolean) { context.settingsDataStore.edit { it[contextCompactionEnabledKey] = value } }
@@ -359,15 +446,6 @@ class SettingsDataStore @Inject constructor(
     val maxConsecutiveFailures: Flow<Int> = context.settingsDataStore.data.map { it[maxConsecutiveFailuresKey] ?: 8 }
     suspend fun setMaxConsecutiveFailures(value: Int) { context.settingsDataStore.edit { it[maxConsecutiveFailuresKey] = value.coerceIn(1, 50) } }
 
-    /**
-     * 危险命令闸门：对 base 执行的破坏性 shell 命令做保护。
-     * true = 拦截（命中危险模式时拒绝执行并提示用户，默认）；
-     * false = 放行（遵循既有系统提示词约定，由模型自行判断）。
-     */
-    private val destructiveGuardEnabledKey = booleanPreferencesKey("agent_destructive_guard_enabled")
-    val destructiveGuardEnabled: Flow<Boolean> = context.settingsDataStore.data.map { it[destructiveGuardEnabledKey] ?: true }
-    suspend fun setDestructiveGuardEnabled(value: Boolean) { context.settingsDataStore.edit { it[destructiveGuardEnabledKey] = value } }
-
     // ==================== 内置 ADB（宿主桥接插件） ====================
 
     private val adbWirelessPortKey = androidx.datastore.preferences.core.intPreferencesKey("adb_wireless_debug_port")
@@ -391,105 +469,25 @@ class SettingsDataStore @Inject constructor(
     /** 插件启用状态的响应式流。 */
     fun isPluginEnabledFlow(pluginId: String): Flow<Boolean> = allPlugins.map { list -> list.any { it.id == pluginId && it.isEnabled } }
 
-    private val jsonHelper = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
-
-    /** 获取所有 Skill（预置 + 用户自定义），根据用户启用状态计算 isEnabled */
-    val allSkills: Flow<List<top.wkbin.taixu.core.model.AgentSkill>> = context.settingsDataStore.data.map { prefs ->
-        val enabledIdsJson = prefs[enabledSkillsKey]
-        val enabledIds: Set<String> = if (enabledIdsJson != null) {
-            runCatching { jsonHelper.decodeFromString<Set<String>>(enabledIdsJson) }.getOrElse { top.wkbin.taixu.core.model.BuiltinSkills.presets.map { s -> s.id }.toSet() }
-        } else {
-            top.wkbin.taixu.core.model.BuiltinSkills.presets.filter { it.isEnabled }.map { it.id }.toSet()
-        }
-
-        val customJson = prefs[customSkillsKey]
-        val customSkills: List<top.wkbin.taixu.core.model.AgentSkill> = if (!customJson.isNullOrBlank()) {
-            runCatching { jsonHelper.decodeFromString<List<top.wkbin.taixu.core.model.AgentSkill>>(customJson) }.getOrDefault(emptyList())
-        } else emptyList()
-
-        val all = top.wkbin.taixu.core.model.BuiltinSkills.presets + customSkills
-        all.map { skill -> if (skill.isImmutable) skill.copy(isEnabled = true) else skill.copy(isEnabled = skill.id in enabledIds) }
-    }
-
-    /** 获取当前已启用的 Skill 列表 */
-    val activeSkills: Flow<List<top.wkbin.taixu.core.model.AgentSkill>> = allSkills.map { list -> list.filter { it.isEnabled } }
-
-    suspend fun setSkillEnabled(skillId: String, enabled: Boolean) {
-        val target = top.wkbin.taixu.core.model.BuiltinSkills.presets.find { it.id == skillId }
-        if (target?.isImmutable == true && !enabled) return // 系统核心技能不可被关闭
-
-        context.settingsDataStore.edit { prefs ->
-            val enabledIdsJson = prefs[enabledSkillsKey]
-            val current: MutableSet<String> = if (enabledIdsJson != null) {
-                runCatching { jsonHelper.decodeFromString<Set<String>>(enabledIdsJson).toMutableSet() }
-                    .getOrElse { top.wkbin.taixu.core.model.BuiltinSkills.presets.map { it.id }.toMutableSet() }
-            } else {
-                top.wkbin.taixu.core.model.BuiltinSkills.presets.filter { it.isEnabled }.map { it.id }.toMutableSet()
-            }
-            if (enabled) current.add(skillId) else current.remove(skillId)
-            prefs[enabledSkillsKey] = jsonHelper.encodeToString(current)
-        }
-    }
-
-    suspend fun addCustomSkill(skill: top.wkbin.taixu.core.model.AgentSkill) {
-        context.settingsDataStore.edit { prefs ->
-            val customJson = prefs[customSkillsKey]
-            val current: MutableList<top.wkbin.taixu.core.model.AgentSkill> = if (!customJson.isNullOrBlank()) {
-                runCatching { jsonHelper.decodeFromString<List<top.wkbin.taixu.core.model.AgentSkill>>(customJson).toMutableList() }.getOrDefault(mutableListOf())
-            } else mutableListOf()
-            current.removeAll { it.id == skill.id }
-            current.add(skill)
-            prefs[customSkillsKey] = jsonHelper.encodeToString(current)
-
-            // 默认启用新添加的自定义技能
-            val enabledIdsJson = prefs[enabledSkillsKey]
-            val enabledSet: MutableSet<String> = if (enabledIdsJson != null) {
-                runCatching { jsonHelper.decodeFromString<Set<String>>(enabledIdsJson).toMutableSet() }
-                    .getOrElse { top.wkbin.taixu.core.model.BuiltinSkills.presets.map { it.id }.toMutableSet() }
-            } else {
-                top.wkbin.taixu.core.model.BuiltinSkills.presets.filter { it.isEnabled }.map { it.id }.toMutableSet()
-            }
-            enabledSet.add(skill.id)
-            prefs[enabledSkillsKey] = jsonHelper.encodeToString(enabledSet)
-        }
-    }
-
-    suspend fun deleteCustomSkill(skillId: String) {
-        context.settingsDataStore.edit { prefs ->
-            val customJson = prefs[customSkillsKey]
-            if (!customJson.isNullOrBlank()) {
-                val current = runCatching { jsonHelper.decodeFromString<List<top.wkbin.taixu.core.model.AgentSkill>>(customJson).toMutableList() }.getOrNull()
-                if (current != null) {
-                    current.removeAll { it.id == skillId }
-                    prefs[customSkillsKey] = jsonHelper.encodeToString(current)
-                }
-            }
-        }
-    }
-
     /** 获取所有 Plugin（预置），根据用户启用状态计算 isEnabled */
+    private val enabledPluginsKey = stringSetPreferencesKey("agent_enabled_plugin_ids")
+
     val allPlugins: Flow<List<top.wkbin.taixu.core.model.AgentPlugin>> = context.settingsDataStore.data.map { prefs ->
-        val enabledIdsJson = prefs[enabledPluginsKey]
-        val enabledIds: Set<String> = if (enabledIdsJson != null) {
-            runCatching { jsonHelper.decodeFromString<Set<String>>(enabledIdsJson) }
-                .getOrElse { top.wkbin.taixu.core.model.BuiltinPlugins.presets.filter { it.isEnabled }.map { it.id }.toSet() }
-        } else {
-            top.wkbin.taixu.core.model.BuiltinPlugins.presets.filter { it.isEnabled }.map { it.id }.toSet()
-        }
+        val defaults = top.wkbin.taixu.core.model.BuiltinPlugins.presets
+            .filter { it.isEnabled }
+            .mapTo(mutableSetOf()) { it.id }
+        val enabledIds = prefs[enabledPluginsKey] ?: defaults
         top.wkbin.taixu.core.model.BuiltinPlugins.presets.map { plugin -> plugin.copy(isEnabled = plugin.id in enabledIds) }
     }
 
     suspend fun setPluginEnabled(pluginId: String, enabled: Boolean) {
         context.settingsDataStore.edit { prefs ->
-            val enabledIdsJson = prefs[enabledPluginsKey]
-            val current: MutableSet<String> = if (enabledIdsJson != null) {
-                runCatching { jsonHelper.decodeFromString<Set<String>>(enabledIdsJson).toMutableSet() }
-                    .getOrElse { top.wkbin.taixu.core.model.BuiltinPlugins.presets.filter { it.isEnabled }.map { it.id }.toMutableSet() }
-            } else {
-                top.wkbin.taixu.core.model.BuiltinPlugins.presets.filter { it.isEnabled }.map { it.id }.toMutableSet()
-            }
+            val defaults = top.wkbin.taixu.core.model.BuiltinPlugins.presets
+                .filter { it.isEnabled }
+                .mapTo(mutableSetOf()) { it.id }
+            val current = (prefs[enabledPluginsKey] ?: defaults).toMutableSet()
             if (enabled) current.add(pluginId) else current.remove(pluginId)
-            prefs[enabledPluginsKey] = jsonHelper.encodeToString(current)
+            prefs[enabledPluginsKey] = current
         }
     }
 
@@ -497,7 +495,6 @@ class SettingsDataStore @Inject constructor(
     private val mountDownloadKey = booleanPreferencesKey("mount_download_enabled")
     private val mountDocumentsKey = booleanPreferencesKey("mount_documents_enabled")
     private val mountSharedStorageKey = booleanPreferencesKey("mount_shared_storage_enabled")
-    private val customMountsKey = stringPreferencesKey("custom_mount_bindings")
 
     val mountDownloadEnabled: Flow<Boolean> = context.settingsDataStore.data.map { it[mountDownloadKey] ?: true }
     suspend fun setMountDownloadEnabled(enabled: Boolean) {
@@ -514,154 +511,19 @@ class SettingsDataStore @Inject constructor(
         context.settingsDataStore.edit { it[mountSharedStorageKey] = enabled }
     }
 
-    val customMountBindings: Flow<List<top.wkbin.taixu.core.model.StorageMountBinding>> = context.settingsDataStore.data.map { prefs ->
-        val json = prefs[customMountsKey]
-        if (!json.isNullOrBlank()) {
-            runCatching { jsonHelper.decodeFromString<List<top.wkbin.taixu.core.model.StorageMountBinding>>(json) }.getOrDefault(emptyList())
-        } else {
-            emptyList()
-        }
-    }
-
-    suspend fun addCustomMountBinding(binding: top.wkbin.taixu.core.model.StorageMountBinding) {
-        context.settingsDataStore.edit { prefs ->
-            val json = prefs[customMountsKey]
-            val current = if (!json.isNullOrBlank()) {
-                runCatching { jsonHelper.decodeFromString<List<top.wkbin.taixu.core.model.StorageMountBinding>>(json).toMutableList() }.getOrDefault(mutableListOf())
-            } else mutableListOf()
-            current.removeAll { it.id == binding.id }
-            current.add(binding)
-            prefs[customMountsKey] = jsonHelper.encodeToString(current)
-        }
-    }
-
-    suspend fun removeCustomMountBinding(bindingId: String) {
-        context.settingsDataStore.edit { prefs ->
-            val json = prefs[customMountsKey]
-            if (!json.isNullOrBlank()) {
-                val current = runCatching { jsonHelper.decodeFromString<List<top.wkbin.taixu.core.model.StorageMountBinding>>(json).toMutableList() }.getOrNull()
-                if (current != null) {
-                    current.removeAll { it.id == bindingId }
-                    prefs[customMountsKey] = jsonHelper.encodeToString(current)
-                }
-            }
-        }
-    }
-
-    suspend fun setCustomMountEnabled(bindingId: String, enabled: Boolean) {
-        context.settingsDataStore.edit { prefs ->
-            val json = prefs[customMountsKey]
-            if (!json.isNullOrBlank()) {
-                val current = runCatching { jsonHelper.decodeFromString<List<top.wkbin.taixu.core.model.StorageMountBinding>>(json).toMutableList() }.getOrNull()
-                if (current != null) {
-                    val index = current.indexOfFirst { it.id == bindingId }
-                    if (index >= 0) {
-                        current[index] = current[index].copy(enabled = enabled)
-                        prefs[customMountsKey] = jsonHelper.encodeToString(current)
-                    }
-                }
-            }
-        }
-    }
-
-    // ── Tool Detail: Auto-start & Access Token ──────────────────────────
-
-    /** Whether the tool's gateway service should auto-start when the Linux Runtime becomes ready. */
-    fun toolAutoStart(toolId: String): Flow<Boolean> = context.settingsDataStore.data.map { prefs ->
-        prefs[booleanPreferencesKey("tool_${toolId}_auto_start")] ?: false
-    }
-
-    suspend fun setToolAutoStart(toolId: String, enabled: Boolean) {
-        context.settingsDataStore.edit { prefs ->
-            prefs[booleanPreferencesKey("tool_${toolId}_auto_start")] = enabled
-        }
-    }
-
     /** Persisted access token for generating shareable URLs to web-type tool services. */
-    fun toolAccessToken(toolId: String): Flow<String?> = context.settingsDataStore.data.map { prefs ->
-        prefs[stringPreferencesKey("tool_${toolId}_access_token")]?.let(::decodeProtectedValue)
+    fun toolAccessToken(distroId: String, toolId: String): Flow<String?> = context.settingsDataStore.data.map { prefs ->
+        prefs[stringPreferencesKey("tool_${distroId}_${toolId}_access_token")]?.let(::decodeProtectedValue)
     }
 
-    suspend fun setToolAccessToken(toolId: String, token: String?) {
+    suspend fun setToolAccessToken(distroId: String, toolId: String, token: String?) {
+        val key = stringPreferencesKey("tool_${distroId}_${toolId}_access_token")
         context.settingsDataStore.edit { prefs ->
             if (token == null) {
-                prefs.remove(stringPreferencesKey("tool_${toolId}_access_token"))
+                prefs.remove(key)
             } else {
-                prefs[stringPreferencesKey("tool_${toolId}_access_token")] = encodeProtectedValue(token)
+                prefs[key] = encodeProtectedValue(token)
             }
-        }
-    }
-
-    // ── MCP (Model Context Protocol) Servers Configuration ─────────────
-
-    private val mcpServersKey = stringPreferencesKey("mcp_servers_config_json")
-
-    val mcpServers: Flow<List<top.wkbin.taixu.core.model.McpServerConfig>> = context.settingsDataStore.data.map { preferences ->
-        val raw = preferences[mcpServersKey]
-        if (raw.isNullOrBlank()) {
-            top.wkbin.taixu.core.model.BuiltinMcpPresets.presets
-        } else {
-            val decoded = decodeMcpServers(raw)
-            val existingIds = decoded.map { it.id }.toSet()
-            val missingPresets = top.wkbin.taixu.core.model.BuiltinMcpPresets.presets.filter { it.id !in existingIds }
-            if (missingPresets.isNotEmpty()) {
-                decoded + missingPresets
-            } else {
-                decoded
-            }
-        }
-    }
-
-    suspend fun setMcpServers(servers: List<top.wkbin.taixu.core.model.McpServerConfig>) {
-        context.settingsDataStore.edit { preferences ->
-            preferences[mcpServersKey] = encodeMcpServers(servers)
-        }
-    }
-
-    suspend fun toggleMcpServer(serverId: String, enabled: Boolean) {
-        context.settingsDataStore.edit { preferences ->
-            val raw = preferences[mcpServersKey]
-            val current = if (raw.isNullOrBlank()) {
-                top.wkbin.taixu.core.model.BuiltinMcpPresets.presets.toMutableList()
-            } else {
-                decodeMcpServers(raw).toMutableList()
-            }
-            val index = current.indexOfFirst { it.id == serverId }
-            if (index >= 0) {
-                current[index] = current[index].copy(isEnabled = enabled)
-                preferences[mcpServersKey] = encodeMcpServers(current)
-            }
-        }
-    }
-
-    suspend fun saveMcpServer(server: top.wkbin.taixu.core.model.McpServerConfig) {
-        context.settingsDataStore.edit { preferences ->
-            val raw = preferences[mcpServersKey]
-            val current = if (raw.isNullOrBlank()) {
-                top.wkbin.taixu.core.model.BuiltinMcpPresets.presets.toMutableList()
-            } else {
-                decodeMcpServers(raw).toMutableList()
-            }
-            val index = current.indexOfFirst { it.id == server.id }
-            if (index >= 0) {
-                current[index] = server
-            } else {
-                current.add(server)
-            }
-            preferences[mcpServersKey] = encodeMcpServers(current)
-        }
-    }
-
-    suspend fun deleteMcpServer(serverId: String) {
-        context.settingsDataStore.edit { preferences ->
-            val raw = preferences[mcpServersKey]
-            val current = if (raw.isNullOrBlank()) {
-                top.wkbin.taixu.core.model.BuiltinMcpPresets.presets.toMutableList()
-            } else {
-                decodeMcpServers(raw).toMutableList()
-            }
-            current.removeAll { it.id == serverId }
-            preferences[mcpServersKey] = encodeMcpServers(current)
         }
     }
 
@@ -674,16 +536,6 @@ class SettingsDataStore @Inject constructor(
         } else {
             value
         }
-
-    private fun encodeMcpServers(servers: List<top.wkbin.taixu.core.model.McpServerConfig>): String =
-        encodeProtectedValue(jsonHelper.encodeToString(servers))
-
-    private fun decodeMcpServers(raw: String): List<top.wkbin.taixu.core.model.McpServerConfig> =
-        decodeProtectedValue(raw)?.let { decoded ->
-            runCatching {
-                jsonHelper.decodeFromString<List<top.wkbin.taixu.core.model.McpServerConfig>>(decoded)
-            }.getOrNull()
-        } ?: top.wkbin.taixu.core.model.BuiltinMcpPresets.presets
 
     private companion object {
         const val PROTECTED_VALUE_PREFIX = "enc:v1:"

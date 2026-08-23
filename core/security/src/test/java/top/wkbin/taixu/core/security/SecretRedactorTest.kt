@@ -20,6 +20,20 @@ class SecretRedactorTest {
         assertEqualsIgnoreCase("installed node v22.22.3", out)
     }
 
+    @Test
+    fun `masks configured environment secret`() {
+        val out = redactor.redact("value=ghp_1234567890abcdef", listOf("ghp_1234567890abcdef"))
+        assertFalse(out.contains("ghp_1234567890abcdef"))
+        assertTrue(out.contains("gh") && out.contains("ef"))
+    }
+
+    @Test
+    fun `privacy mode can be disabled`() {
+        val secret = "local-development-secret"
+        val out = redactor.redact(secret, listOf(secret), privacyMode = false)
+        assertTrue(out.contains(secret))
+    }
+
     private fun assertEqualsIgnoreCase(a: String, b: String) {
         assertTrue(a.equals(b, ignoreCase = true))
     }

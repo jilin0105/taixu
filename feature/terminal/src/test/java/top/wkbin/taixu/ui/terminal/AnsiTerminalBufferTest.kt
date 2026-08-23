@@ -34,4 +34,27 @@ class AnsiTerminalBufferTest {
         assertTrue(screen.size <= 3)
         assertEquals("four", screen.last().cells.joinToString("") { it.character.toString() })
     }
+
+    @Test
+    fun preservesTrailingSpacesBeforeCursor() {
+        val buffer = AnsiTerminalBuffer(columns = 20, maxRows = 10)
+        val screen = buffer.append("echo  ")
+
+        assertEquals("echo  ", screen.first().cells.joinToString("") { it.character.toString() })
+        assertEquals(6, buffer.cursor().column)
+    }
+
+    @Test
+    fun keepsEmojiSurrogatePairAsOneRenderableCell() {
+        val buffer = AnsiTerminalBuffer(columns = 20, maxRows = 10)
+        val emoji = "🙂"
+
+        val first = emoji.substring(0, 1)
+        val second = emoji.substring(1)
+        buffer.append("ok $first")
+        val screen = buffer.append(second)
+
+        assertEquals("ok $emoji", screen.first().cells.joinToString("") { it.character })
+        assertEquals(4, screen.first().cells.size)
+    }
 }

@@ -164,11 +164,11 @@ class OpenClawToolInstaller @Inject constructor(
     )
 
     private suspend fun resolveAccessToken(): String =
-        runCatching { settingsDataStore.toolAccessToken(toolId).first() }
+        runCatching { settingsDataStore.toolAccessToken(linuxRuntime.activeDistroId.value, toolId).first() }
             .getOrNull()
             ?.takeIf { it.isNotBlank() }
             ?: UUID.randomUUID().toString().replace("-", "").also {
-                settingsDataStore.setToolAccessToken(toolId, it)
+                settingsDataStore.setToolAccessToken(linuxRuntime.activeDistroId.value, toolId, it)
             }
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<InstallEvent>.executeAndReport(

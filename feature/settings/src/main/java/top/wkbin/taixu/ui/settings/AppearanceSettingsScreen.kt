@@ -1,5 +1,9 @@
 package top.wkbin.taixu.ui.settings
 
+import android.graphics.BitmapFactory
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,25 +25,35 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
+import top.wkbin.taixu.ui.components.RuntimeRadioButton as RadioButton
+import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
+import top.wkbin.taixu.ui.components.RuntimeSlider as Slider
+import top.wkbin.taixu.ui.components.RuntimeSwitch as Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlin.math.roundToInt
 import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
@@ -54,10 +68,31 @@ fun AppearanceSettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    val themeStyle by viewModel.themeStyle.collectAsStateWithLifecycle()
     val terminalFontSize by viewModel.terminalFontSize.collectAsStateWithLifecycle()
     val terminalColorScheme by viewModel.terminalColorScheme.collectAsStateWithLifecycle()
     val terminalHapticsEnabled by viewModel.terminalHapticsEnabled.collectAsStateWithLifecycle()
     val appFontScale by viewModel.appFontScale.collectAsStateWithLifecycle()
+    val backgroundUri by viewModel.chengmingBackgroundUri.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var terminalFontSizeSlider by remember { mutableFloatStateOf(terminalFontSize.toFloat()) }
+    var pageScaleSlider by remember { mutableFloatStateOf(appFontScale) }
+    LaunchedEffect(terminalFontSize) {
+        terminalFontSizeSlider = terminalFontSize.toFloat()
+    }
+    LaunchedEffect(appFontScale) {
+        pageScaleSlider = appFontScale
+    }
+    val backgroundPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }
+        viewModel.setChengmingBackgroundUri(uri.toString())
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -80,7 +115,7 @@ fun AppearanceSettingsScreen(
                 )
                 TerminalPreviewCard(
                     colorScheme = terminalColorScheme,
-                    fontSizeSp = terminalFontSize,
+                    fontSizeSp = terminalFontSizeSlider.roundToInt(),
                 )
             }
 
@@ -154,37 +189,35 @@ fun AppearanceSettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
                             Text(
-                                text = "${terminalFontSize} sp",
+                                text = "${terminalFontSizeSlider.roundToInt()} sp",
                                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.primary,
                             )
                         }
+                        Slider(
+                            value = terminalFontSizeSlider,
+                            onValueChange = { terminalFontSizeSlider = it.roundToInt().toFloat() },
+                            onValueChangeFinished = {
+                                viewModel.setTerminalFontSize(terminalFontSizeSlider.roundToInt())
+                            },
+                            valueRange = 10f..24f,
+                            steps = 13,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                         Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
-                            listOf(11 to "极小 11", 13 to "标准 13", 15 to "舒适 15", 17 to "大号 17").forEach { (size, label) ->
-                                val isSelected = terminalFontSize == size
-                                Surface(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clickable { viewModel.setTerminalFontSize(size) },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-                                    border = BorderStroke(
-                                        1.dp,
-                                        if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                                    ),
-                                ) {
-                                    Text(
-                                        text = label,
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal),
-                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier.padding(vertical = 8.dp),
-                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                    )
-                                }
-                            }
+                            Text(
+                                text = "10 sp",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                text = "24 sp",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
 
@@ -204,7 +237,65 @@ fun AppearanceSettingsScreen(
             // 3. 应用视觉与主题
             item {
                 Text(
-                    text = "应用视觉主题",
+                    text = "主题风格",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+                )
+                SettingsGroup {
+                    ThemeOptionRow(
+                        title = "玄同 · Xuantong",
+                        subtitle = "默认主题：源自《老子》「万物同归于玄」，曜石夜空与温润素白",
+                        accentColor = androidx.compose.ui.graphics.Color(0xFF4259C3),
+                        selected = themeStyle == "xuantong",
+                        onClick = { viewModel.setThemeStyle("xuantong") },
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    ThemeOptionRow(
+                        title = "澄明 · Chengming",
+                        subtitle = "液态玻璃：毛玻璃折射 + 流光 Aurora，通透清澈",
+                        accentColor = androidx.compose.ui.graphics.Color(0xFF6E7CE0),
+                        selected = themeStyle == "chengming",
+                        onClick = { viewModel.setThemeStyle("chengming") },
+                    )
+                }
+            }
+
+            item {
+                Text(
+                    text = "澄明背景",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+                )
+                SettingsGroup {
+                    Column(
+                        Modifier.fillMaxWidth().padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(
+                            text = if (backgroundUri == null) "无背景（默认）" else "使用用户图片作为玻璃折射源",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                        )
+                        backgroundUri?.let { uri -> ChengmingBackgroundPreview(uri) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(
+                                onClick = { backgroundPicker.launch(arrayOf("image/*")) },
+                            ) { Text(if (backgroundUri == null) "上传图片" else "更换图片") }
+                            if (backgroundUri != null) {
+                                TextButton(
+                                    onClick = { viewModel.setChengmingBackgroundUri(null) },
+                                ) { Text("移除背景") }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3.5 深浅色模式
+            item {
+                Text(
+                    text = "深浅色模式",
                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
@@ -233,10 +324,10 @@ fun AppearanceSettingsScreen(
                 }
             }
 
-            // 4. 应用全局字号缩放
+            // 4. 页面缩放
             item {
                 Text(
-                    text = "应用全局字号缩放",
+                    text = "页面缩放",
                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
@@ -249,42 +340,40 @@ fun AppearanceSettingsScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                text = "字号比例",
+                                text = "缩放比例",
                                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
                             Text(
-                                text = "${(appFontScale * 100).toInt()}%",
+                                text = "${(pageScaleSlider * 100).roundToInt()}%",
                                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.primary,
                             )
                         }
+                        Slider(
+                            value = pageScaleSlider,
+                            onValueChange = {
+                                pageScaleSlider = ((it * 20f).roundToInt() / 20f).coerceIn(0.8f, 1.3f)
+                            },
+                            onValueChangeFinished = { viewModel.setAppFontScale(pageScaleSlider) },
+                            valueRange = 0.8f..1.3f,
+                            steps = 9,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                         Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
-                            listOf(0.9f to "紧凑 90%", 1.0f to "标准 100%", 1.1f to "舒适 110%", 1.2f to "大字 120%").forEach { (scale, label) ->
-                                val isSelected = kotlin.math.abs(appFontScale - scale) < 0.05f
-                                Surface(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clickable { viewModel.setAppFontScale(scale) },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-                                    border = BorderStroke(
-                                        1.dp,
-                                        if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                                    ),
-                                ) {
-                                    Text(
-                                        text = label,
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal),
-                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier.padding(vertical = 8.dp),
-                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                    )
-                                }
-                            }
+                            Text(
+                                text = "80%",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                text = "130%",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                 }
@@ -373,6 +462,27 @@ private fun TerminalPreviewCard(
 }
 
 @Composable
+private fun ChengmingBackgroundPreview(uri: String) {
+    val context = LocalContext.current
+    val bitmap = remember(uri) {
+        runCatching {
+            context.contentResolver.openInputStream(android.net.Uri.parse(uri))?.use(BitmapFactory::decodeStream)
+        }.getOrNull()
+    }
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "澄明背景预览",
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(124.dp)
+                .clip(RoundedCornerShape(12.dp)),
+            contentScale = ContentScale.Crop,
+        )
+    }
+}
+
+@Composable
 private fun TerminalThemeChip(
     title: String,
     bg: Color,
@@ -423,6 +533,7 @@ private fun ThemeOptionRow(
     subtitle: String,
     selected: Boolean,
     onClick: () -> Unit,
+    accentColor: androidx.compose.ui.graphics.Color? = null,
 ) {
     Row(
         modifier = Modifier
@@ -432,17 +543,31 @@ private fun ThemeOptionRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (accentColor != null) {
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(accentColor),
+                )
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         RadioButton(
             selected = selected,

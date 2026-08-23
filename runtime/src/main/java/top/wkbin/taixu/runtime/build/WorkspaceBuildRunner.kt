@@ -130,9 +130,9 @@ class WorkspaceBuildRunner @Inject constructor(
 
                 // 1. 预检 Android 构建工具链 (Java / Gradle)
                 val probeJava = linuxRuntime.execute(ShellCommand(commandLine = "command -v java || test -x /usr/lib/jvm/java-17-openjdk-arm64/bin/java || test -d /usr/lib/jvm", timeoutMs = 5000L))
-                val probeGradle = linuxRuntime.execute(ShellCommand(commandLine = "command -v gradle || test -x /opt/gradle-8.9/bin/gradle || test -x /usr/local/bin/gradle || test -f ${project.linuxPath}/gradlew || test -d /opt/gradle-8.9", timeoutMs = 5000L))
+                val probeGradle = linuxRuntime.execute(ShellCommand(commandLine = "command -v gradle || test -x /opt/gradle-8.14.2/bin/gradle || test -x /usr/local/bin/gradle || test -f ${project.linuxPath}/gradlew || test -d /opt/gradle-8.14.2", timeoutMs = 5000L))
                 if (!probeJava.isSuccess && !probeGradle.isSuccess) {
-                    log("[TaiXu Build] ⚠️ 未检测到 Android 构建环境 (OpenJDK 17 / Gradle 8.9)")
+                    log("[TaiXu Build] ⚠️ 未检测到 Android 构建环境 (OpenJDK 17 / Gradle 8.14.2)")
                     log("[TaiXu Build] 💡 提示：请先在【插件与工具中心】中装配【Android & 移动全栈开发套件】")
                     send(
                         BuildRunProgress(
@@ -279,8 +279,7 @@ class WorkspaceBuildRunner @Inject constructor(
                 // 导出到手机公共存储 Download 目录
                 send(BuildRunProgress(step = "正在导出 APK 到手机下载目录...", progress = 0.93f, logOutput = logs.toString()))
                 val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                val targetApk = File(downloadDir, "${project.name}.apk")
-                copyApkAtomically(apkFile, targetApk)
+                val targetApk = copyApkAtomically(apkFile, File(downloadDir, "${project.name}.apk"))
                 log("[TaiXu Build] APK 已成功导出至: ${targetApk.absolutePath}")
 
                 // 多通道安装调度：1. 无线 ADB 直装；2. 调起系统原生 PackageInstaller
@@ -418,8 +417,7 @@ class WorkspaceBuildRunner @Inject constructor(
 
                 log("[TaiXu Build] 找到 Flutter APK: ${apkFile.absolutePath}")
                 val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                val targetApk = File(downloadDir, "${project.name}.apk")
-                copyApkAtomically(apkFile, targetApk)
+                val targetApk = copyApkAtomically(apkFile, File(downloadDir, "${project.name}.apk"))
                 log("[TaiXu Build] Flutter APK 已导出至: ${targetApk.absolutePath}")
 
                 send(BuildRunProgress(step = "正在安装到手机...", progress = 0.95f, logOutput = logs.toString()))
@@ -477,8 +475,8 @@ class WorkspaceBuildRunner @Inject constructor(
         }
     }.flowOn(Dispatchers.IO)
 
-    /** Write a complete APK before replacing the public download target. */
-    private fun copyApkAtomically(source: File, target: File) {
+    /** Write a complete APK into the public Download directory; returns the file actually written. */
+    private fun copyApkAtomically(source: File, target: File): File {
         check(source.isFile && source.length() > 0L) { "APK 源文件不存在或为空：${source.absolutePath}" }
         target.parentFile?.mkdirs()
         val temporary = File(target.parentFile, ".${target.name}.${System.nanoTime()}.part")
@@ -489,14 +487,35 @@ class WorkspaceBuildRunner @Inject constructor(
             check(temporary.length() == source.length()) {
                 "APK 导出不完整：${temporary.length()} / ${source.length()} 字节"
             }
-            if (!temporary.renameTo(target)) {
-                temporary.copyTo(target, overwrite = true)
-                check(target.length() == source.length()) { "APK 目标文件校验失败" }
-                temporary.delete()
+            // 优先覆盖固定名；若旧文件受 scoped storage 保护无法覆盖，则回退到带时间戳的唯一文件名。
+            val exported = if (replaceTarget(temporary, target)) target else {
+                val unique = uniqueTarget(target)
+                check(replaceTarget(temporary, unique)) { "APK 导出失败：无法写入手机 Download 目录" }
+                unique
             }
-            check(target.isFile && target.length() == source.length()) { "APK 导出目标无效" }
+            check(exported.isFile && exported.length() == source.length()) { "APK 导出目标无效" }
+            return exported
         } finally {
             temporary.delete()
         }
+    }
+
+    /** 用临时文件替换目标；覆盖失败（例如旧文件不可删除）返回 false。 */
+    private fun replaceTarget(source: File, target: File): Boolean = try {
+        java.nio.file.Files.move(
+            source.toPath(),
+            target.toPath(),
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+        )
+        true
+    } catch (_: Throwable) {
+        false
+    }
+
+    private fun uniqueTarget(target: File): File {
+        val dot = target.name.lastIndexOf('.')
+        val base = if (dot > 0) target.name.substring(0, dot) else target.name
+        val ext = if (dot > 0) target.name.substring(dot) else ""
+        return File(target.parentFile, "$base-${System.currentTimeMillis()}$ext")
     }
 }

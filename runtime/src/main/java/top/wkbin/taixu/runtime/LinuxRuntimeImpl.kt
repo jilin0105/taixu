@@ -24,6 +24,7 @@ import top.wkbin.taixu.runtime.shell.ShellCommand
 import top.wkbin.taixu.runtime.shell.ShellExecutor
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,6 +48,7 @@ class LinuxRuntimeImpl @Inject constructor(
     private val healthChecker: RuntimeHealthChecker,
     private val processRegistry: ProcessRegistry,
     private val settingsDataStore: top.wkbin.taixu.core.datastore.SettingsDataStore,
+    private val storageMountBindingRepository: top.wkbin.taixu.core.database.StorageMountBindingRepository,
     private val hostBridge: HostBridge,
     private val assetSynchronizer: top.wkbin.taixu.runtime.scripts.RuntimeAssetSynchronizer,
     private val logger: AppLogger,
@@ -62,6 +64,7 @@ class LinuxRuntimeImpl @Inject constructor(
     override val installedDistros: StateFlow<List<top.wkbin.taixu.core.model.InstalledDistro>> = _installedDistros.asStateFlow()
 
     private val initializeMutex = Mutex()
+    private val interactiveSessions = ConcurrentHashMap<LinuxSession, String>()
 
     override fun refreshInstalledDistros() {
         val ids = pathManager.listInstalledDistroIds()
@@ -121,7 +124,6 @@ class LinuxRuntimeImpl @Inject constructor(
             configureRootfs(distroId)
             configureDns(distroId)
             configureEnvironment(distroId)
-            settingsDataStore.addInstalledDistribution(distroId)
             refreshInstalledDistros()
             logger.i("Distro $distroId installed successfully")
             AppResult.Success(Unit)
@@ -137,15 +139,23 @@ class LinuxRuntimeImpl @Inject constructor(
                     AppError(ErrorCode.INSTALLATION_FAILED, "不能卸载唯一的 Linux 系统，请先安装其他系统后再卸载"),
                 )
             }
-            if (_activeDistroId.value == safeId) {
-                val nextDistro = installed.firstOrNull { it != safeId } ?: "ubuntu"
-                _activeDistroId.value = nextDistro
-                settingsDataStore.setSelectedDistribution(nextDistro)
+            closeInteractiveSessions(safeId)
+            processRegistry.stopAll()
+            val wasActive = _activeDistroId.value == safeId
+            if (wasActive) {
+                hostBridge.stop()
             }
             val res = rootfsInstaller.uninstallDistro(safeId)
             if (res is AppResult.Success) {
-                settingsDataStore.removeInstalledDistribution(safeId)
+                if (wasActive) {
+                    val nextDistro = installed.firstOrNull { it != safeId } ?: "ubuntu"
+                    _activeDistroId.value = nextDistro
+                    settingsDataStore.setSelectedDistribution(nextDistro)
+                }
                 refreshInstalledDistros()
+            }
+            if (wasActive && _state.value is RuntimeState.Ready && !hostBridge.isRunning.value) {
+                hostBridge.start()
             }
             res
         }
@@ -155,15 +165,20 @@ class LinuxRuntimeImpl @Inject constructor(
         withContext(Dispatchers.IO) {
             val safeId = (distroId ?: _activeDistroId.value).lowercase().trim()
             try {
+                closeInteractiveSessions(safeId)
                 processRegistry.stopAll()
                 hostBridge.stop()
                 val result = rootfsInstaller.uninstallDistro(safeId)
                 if (result is AppResult.Success) {
-                    settingsDataStore.removeInstalledDistribution(safeId)
                     _activeDistroId.value = "ubuntu"
                     settingsDataStore.setSelectedDistribution("ubuntu")
                     refreshInstalledDistros()
                     _state.value = RuntimeState.NotInitialized
+                } else {
+                    val error = result.errorOrNull()
+                    _state.value = RuntimeState.Error(
+                        error?.cause ?: IllegalStateException(error?.message ?: "Linux 环境重置失败"),
+                    )
                 }
                 result
             } catch (throwable: Throwable) {
@@ -206,7 +221,7 @@ class LinuxRuntimeImpl @Inject constructor(
 
                 val distroId = request.distributionId.lowercase().trim()
                 val distribution = DistributionCatalog.require(distroId)
-                updateInitializing("下载 ${distribution.displayName}", 0.2f, "通过 proot-distro 5.7.0 OCI 机制下载 linux/arm64 镜像")
+                updateInitializing("下载 ${distribution.displayName}", 0.2f, "通过 proot-distro 5.8.0 OCI 机制下载 linux/arm64 镜像")
                 val rootfsResult = rootfsInstaller.installOci(
                     distribution,
                     request.registryRoute,
@@ -241,7 +256,6 @@ class LinuxRuntimeImpl @Inject constructor(
 
                 _activeDistroId.value = distroId
                 settingsDataStore.setSelectedDistribution(distroId)
-                settingsDataStore.addInstalledDistribution(distroId)
                 refreshInstalledDistros()
 
                 hostBridge.start()
@@ -268,7 +282,11 @@ class LinuxRuntimeImpl @Inject constructor(
         }
     }
 
-    override suspend fun restoreInstalledState(): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun restoreInstalledState(): Boolean = initializeMutex.withLock {
+        withContext(Dispatchers.IO) {
+        if (_state.value is RuntimeState.Ready && hostBridge.isRunning.value) {
+            return@withContext true
+        }
         val selectedDistroId = runCatching { settingsDataStore.selectedDistribution.first() }.getOrDefault("ubuntu")
 
         if (!pathManager.isRootfsInstalled()) {
@@ -309,6 +327,7 @@ class LinuxRuntimeImpl @Inject constructor(
         _state.value = RuntimeState.Ready
         logger.i("Linux runtime restored from disk and ready with distro: $effectiveDistro")
         true
+        }
     }
 
     override suspend fun updateRootfs(distroId: String?): AppResult<Unit> = initializeMutex.withLock {
@@ -421,7 +440,7 @@ class LinuxRuntimeImpl @Inject constructor(
         val markerPath = "/opt/taixu/.pty-$markerId"
         val mounts = storageMounts()
         return try {
-            if (ptyManager.nativeAvailable) {
+            val session = if (ptyManager.nativeAvailable) {
                 ptyManager.openNative(
                     command = prootCommandBuilder.buildInteractive(
                         prootBinary = pathManager.activeProotFile(),
@@ -459,6 +478,7 @@ class LinuxRuntimeImpl @Inject constructor(
                     cleanup = { markerFile.delete() },
                 )
             }
+            trackInteractiveSession(session, safeDistro)
         } catch (throwable: Throwable) {
             markerFile.delete()
             throw throwable
@@ -476,7 +496,7 @@ class LinuxRuntimeImpl @Inject constructor(
         if (!sharedEnabled && settingsDataStore.mountDocumentsEnabled.first() && File("/storage/emulated/0/Documents").isDirectory) {
             add(StorageMountBinding("system-documents", "文档", "/storage/emulated/0/Documents", "/sdcard/Documents", true, true))
         }
-        addAll(settingsDataStore.customMountBindings.first().filter { it.enabled })
+        addAll(storageMountBindingRepository.bindings.first().filter { it.enabled })
     }
 
     private suspend fun resizePty(markerPath: String, columns: Int, rows: Int, distroId: String = "ubuntu") {
@@ -531,10 +551,43 @@ class LinuxRuntimeImpl @Inject constructor(
     }
 
     override suspend fun shutdown() {
+        closeInteractiveSessions()
         processRegistry.stopAll()
         hostBridge.stop()
         _state.value = RuntimeState.NotInitialized
         logger.i("Linux runtime shut down")
+    }
+
+    private fun trackInteractiveSession(session: LinuxSession, distroId: String): LinuxSession {
+        val tracked = object : LinuxSession {
+            override val pid: Long? get() = session.pid
+            override val isAlive: Boolean get() = session.isAlive
+            override val output = session.output
+
+            override suspend fun write(data: ByteArray) = session.write(data)
+            override suspend fun resize(columns: Int, rows: Int) = session.resize(columns, rows)
+            override suspend fun interrupt() = session.interrupt()
+
+            override suspend fun close() {
+                try {
+                    session.close()
+                } finally {
+                    interactiveSessions.remove(this)
+                }
+            }
+        }
+        interactiveSessions[tracked] = distroId
+        return tracked
+    }
+
+    private suspend fun closeInteractiveSessions(distroId: String? = null) {
+        val sessions = interactiveSessions.entries
+            .filter { distroId == null || it.value == distroId }
+            .map { it.key }
+        sessions.forEach { session ->
+            runCatching { session.close() }
+                .onFailure { logger.w("Failed to close interactive session before runtime cleanup: ${it.message}") }
+        }
     }
 
     override fun rootfsPath(distroId: String?): File =
@@ -567,7 +620,7 @@ class LinuxRuntimeImpl @Inject constructor(
         val rootfs = pathManager.rootfsDir(distroId)
         val etcDir = File(rootfs, "etc")
         etcDir.mkdirs()
-        File(etcDir, "taixu-runtime").writeText("taixu-runtime=0.1.0\n")
+        File(etcDir, "taixu-runtime").writeText("taixu-runtime=0.3.0\n")
         File(rootfs, "opt/taixu").mkdirs()
         pathManager.ensureDistroDirectories(distroId)
         stripSetuidBits(distroId)

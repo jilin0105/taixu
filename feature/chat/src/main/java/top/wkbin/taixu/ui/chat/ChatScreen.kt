@@ -1,5 +1,7 @@
 package top.wkbin.taixu.ui.chat
 
+import top.wkbin.taixu.ui.components.RuntimeAlertDialog
+
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -49,26 +51,27 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import top.wkbin.taixu.ui.components.RuntimeButton as Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator as CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.IconButton
+import top.wkbin.taixu.ui.components.RuntimeIconButton as IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import top.wkbin.taixu.ui.components.RuntimeOutlinedButton as OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
+import top.wkbin.taixu.ui.components.RuntimeLinearProgressIndicator as LinearProgressIndicator
+import top.wkbin.taixu.ui.components.RuntimeSwitch as Switch
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -84,7 +87,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -105,11 +110,14 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 import top.wkbin.taixu.core.database.AiModelEntity
 import top.wkbin.taixu.core.database.HarnessSessionEntity
+import top.wkbin.taixu.core.model.ApprovalMode
 import top.wkbin.taixu.harness.AssistantText
 import top.wkbin.taixu.harness.HarnessMessage
 import top.wkbin.taixu.harness.HarnessTool
+import top.wkbin.taixu.harness.CapabilityEvent
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.harness.UserMessage
@@ -117,6 +125,7 @@ import top.wkbin.taixu.runtime.WorkspaceProject
 import top.wkbin.taixu.ui.components.MainDestination
 import top.wkbin.taixu.ui.components.NoticeBanner
 import top.wkbin.taixu.ui.components.RuntimeBottomBar
+import top.wkbin.taixu.ui.components.liquidGlassContent
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
@@ -125,6 +134,13 @@ private val DotRunning = Color(0xFFB25E00)
 private val DotSuccess = Color(0xFF2E7D32)
 private val DotFailed = Color(0xFFBA1A1A)
 private val AgentBottomBarHeight = 78.dp
+
+private val ApprovalMode.label: String
+    get() = when (this) {
+        ApprovalMode.REQUEST -> "请求批准"
+        ApprovalMode.ASSISTED -> "帮我批准"
+        ApprovalMode.FULL_ACCESS -> "完全访问"
+    }
 
 /**
  * 太墟 · 智枢对话界面 (TaiXu Agent)
@@ -148,6 +164,7 @@ fun ChatScreen(
     val workspaces by viewModel.workspaces.collectAsStateWithLifecycle()
     val models by viewModel.models.collectAsStateWithLifecycle()
     val workspace by viewModel.workspace.collectAsStateWithLifecycle()
+    val sessionProjectType by viewModel.projectType.collectAsStateWithLifecycle()
     val matchingCommands by viewModel.matchingCommands.collectAsStateWithLifecycle()
     val matchingMentions by viewModel.matchingMentions.collectAsStateWithLifecycle()
     val attachedMentions by viewModel.attachedMentions.collectAsStateWithLifecycle()
@@ -158,10 +175,15 @@ fun ChatScreen(
     val installedDistros by viewModel.installedDistros.collectAsStateWithLifecycle()
     val allSkills by viewModel.allSkills.collectAsStateWithLifecycle()
     val mcpServers by viewModel.mcpServers.collectAsStateWithLifecycle()
+    val mcpConnectionStates by viewModel.mcpConnectionStates.collectAsStateWithLifecycle()
+    val initializing by viewModel.initializing.collectAsStateWithLifecycle()
+    val pendingApprovals by viewModel.pendingApprovals.collectAsStateWithLifecycle()
+    val contextUsage by viewModel.contextUsage.collectAsStateWithLifecycle()
 
     var showSessions by remember { mutableStateOf(false) }
     var showNewSession by remember { mutableStateOf(false) }
     var showModels by remember { mutableStateOf(false) }
+    var showApprovalModes by remember { mutableStateOf(false) }
     var showSkillsMcpSheet by remember { mutableStateOf(false) }
     var editTargetMessage by remember { mutableStateOf<UserMessage?>(null) }
 
@@ -172,6 +194,21 @@ fun ChatScreen(
     val context = LocalContext.current
 
     val activeModel = remember(models) { models.firstOrNull { it.isActive } }
+    val currentSession = remember(sessions, currentSessionId) { sessions.firstOrNull { it.id == currentSessionId } }
+    val currentApprovalMode = remember(currentSession?.approvalMode) { ApprovalMode.fromId(currentSession?.approvalMode) }
+    val activeWorkspaceProject = remember(workspace, workspaces) {
+        workspaces.firstOrNull { it.linuxPath == workspace }
+    }
+    val effectiveWorkspaceProject = remember(activeWorkspaceProject, sessionProjectType) {
+        val override = when (sessionProjectType.uppercase()) {
+            "ANDROID" -> top.wkbin.taixu.runtime.ProjectType.ANDROID
+            "FLUTTER" -> top.wkbin.taixu.runtime.ProjectType.FLUTTER
+            "REVERSE" -> top.wkbin.taixu.runtime.ProjectType.REVERSE
+            "GENERAL" -> top.wkbin.taixu.runtime.ProjectType.GENERAL
+            else -> null
+        }
+        activeWorkspaceProject?.let { project -> override?.let { project.copy(projectType = it) } ?: project }
+    }
     val distroDisplayName = remember(activeDistroId) {
         runCatching { top.wkbin.taixu.runtime.DistributionCatalog.require(activeDistroId).displayName }
             .getOrDefault(activeDistroId)
@@ -195,8 +232,16 @@ fun ChatScreen(
     var initialPositionedSessionKey by remember { mutableStateOf<String?>(null) }
     val currentSessionKey = remember(messages) { messages.firstOrNull()?.id ?: "" }
 
+    // Only the latest assistant message changes during streaming. Avoid summing the
+    // complete history on every live token, which scales with session length.
     val streamedChars = remember(messages) {
-        messages.filterIsInstance<AssistantText>().sumOf { (it.reasoning?.length ?: 0) + it.text.length }
+        messages.asReversed()
+            .firstOrNull { it is AssistantText }
+            ?.let { message ->
+                val assistant = message as AssistantText
+                (assistant.reasoning?.length ?: 0) + assistant.text.length
+            }
+            ?: 0
     }
     LaunchedEffect(messages.size, streamedChars, running) {
         if (messages.isNotEmpty()) {
@@ -248,6 +293,57 @@ fun ChatScreen(
                     }
                 }
 
+                Box {
+                    Surface(
+                        color = MaterialTheme.colorScheme.tertiaryContainer,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.clickable { showApprovalModes = true },
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            RuntimeIcon(RuntimeIconName.Shield, Modifier.size(14.dp), MaterialTheme.colorScheme.onTertiaryContainer)
+                            Text(
+                                text = currentApprovalMode.label,
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                    DropdownMenu(
+                        expanded = showApprovalModes,
+                        onDismissRequest = { showApprovalModes = false },
+                    ) {
+                        listOf(
+                            ApprovalMode.REQUEST to "所有写入、命令和外部工具调用先询问",
+                            ApprovalMode.ASSISTED to "常规开发自动执行，高风险操作询问",
+                            ApprovalMode.FULL_ACCESS to "直接执行工具，不弹出审批",
+                        ).forEach { (mode, description) ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text(mode.label, fontWeight = FontWeight.SemiBold)
+                                        Text(description, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                },
+                                leadingIcon = {
+                                    RuntimeIcon(
+                                        if (mode == currentApprovalMode) RuntimeIconName.Check else RuntimeIconName.Shield,
+                                        Modifier.size(18.dp),
+                                    )
+                                },
+                                onClick = {
+                                    showApprovalModes = false
+                                    viewModel.setCurrentSessionApprovalMode(mode)
+                                },
+                            )
+                        }
+                    }
+                }
+
                 IconButton(onClick = { showSessions = true }) {
                     RuntimeIcon(RuntimeIconName.List, Modifier.size(20.dp), MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -262,13 +358,17 @@ fun ChatScreen(
             val isDualPane = maxWidth >= 720.dp
 
             val knownMentionNames = remember(allSkills, mcpServers) {
-                (allSkills.map { it.name } + allSkills.map { it.id } + mcpServers.map { it.name } + mcpServers.map { it.id }).filter { it.isNotBlank() }.distinct()
+                (allSkills.filter { it.isEnabled }.flatMap { listOf(it.name, it.id) } +
+                    mcpServers.filter { it.isEnabled }.flatMap { listOf(it.name, it.id) })
+                    .filter { it.isNotBlank() }
+                    .distinct()
             }
 
             if (isDualPane) {
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
+                        .liquidGlassContent()
                         .padding(horizontal = 12.dp)
                         .padding(bottom = composerBottomPadding),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -287,6 +387,7 @@ fun ChatScreen(
                         liveThinkingMessageId = liveThinkingMessageId,
                         toolResults = toolResults,
                         workspace = workspace,
+                        workspaceProject = effectiveWorkspaceProject,
                         onOpenFile = onOpenFile,
                         onEditMessage = { editTargetMessage = it },
                         onDeleteMessage = viewModel::deleteMessage,
@@ -306,9 +407,13 @@ fun ChatScreen(
                         onTriggerMention = viewModel::triggerMentionInput,
                         onSend = { customText, images -> viewModel.send(customText, images) },
                         onStop = viewModel::stop,
+                        initializing = initializing,
                         activeSkillsCount = activeSkillsCount,
                         activeMcpCount = activeMcpCount,
                         onOpenSkillsMcp = { showSkillsMcpSheet = true },
+                        pendingApprovals = pendingApprovals,
+                        onResolveApproval = viewModel::resolveApproval,
+                        contextUsage = contextUsage,
                     )
 
                     VerticalDivider(
@@ -337,10 +442,11 @@ fun ChatScreen(
                 }
             } else {
                 // 单栏 Phone 视图
-                ChatPaneContent(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 12.dp)
+                    ChatPaneContent(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .liquidGlassContent()
+                            .padding(horizontal = 12.dp)
                         .padding(bottom = composerBottomPadding),
                     messages = messages,
                     listState = listState,
@@ -351,6 +457,7 @@ fun ChatScreen(
                     liveThinkingMessageId = liveThinkingMessageId,
                     toolResults = toolResults,
                     workspace = workspace,
+                    workspaceProject = effectiveWorkspaceProject,
                     onOpenFile = onOpenFile,
                     onEditMessage = { editTargetMessage = it },
                     onDeleteMessage = viewModel::deleteMessage,
@@ -370,9 +477,13 @@ fun ChatScreen(
                     onTriggerMention = viewModel::triggerMentionInput,
                     onSend = { customText, images -> viewModel.send(customText, images) },
                     onStop = viewModel::stop,
+                    initializing = initializing,
                     activeSkillsCount = activeSkillsCount,
                     activeMcpCount = activeMcpCount,
                     onOpenSkillsMcp = { showSkillsMcpSheet = true },
+                    pendingApprovals = pendingApprovals,
+                    onResolveApproval = viewModel::resolveApproval,
+                    contextUsage = contextUsage,
                     activeModel = activeModel,
                     onUpdateReasoning = viewModel::updateActiveModelReasoning,
                 )
@@ -415,9 +526,9 @@ fun ChatScreen(
         NewSessionDialog(
             workspaces = workspaces,
             onDismiss = { showNewSession = false },
-            onCreate = { title, selected ->
+            onCreate = { title, selected, selectedType ->
                 showNewSession = false
-                viewModel.createSession(title = title, workspace = selected)
+                viewModel.createSession(title = title, workspace = selected, projectType = selectedType.name)
             },
         )
     }
@@ -433,12 +544,21 @@ fun ChatScreen(
     }
 
     if (showSkillsMcpSheet) {
+        // 打开挂载面板时自动探测一次 MCP 连通性
+        LaunchedEffect(Unit) { viewModel.refreshMcpConnections() }
         SkillsAndMcpSheet(
             allSkills = allSkills,
             mcpServers = mcpServers,
+            mcpConnectionStates = mcpConnectionStates,
             onDismiss = { showSkillsMcpSheet = false },
-            onToggleSkill = { id, enabled -> viewModel.setSkillEnabled(id, enabled) },
-            onToggleMcpServer = { id, enabled -> viewModel.setMcpServerEnabled(id, enabled) },
+            onToggleSkill = { id, enabled ->
+                viewModel.setSkillEnabled(id, enabled)
+                showSkillsMcpSheet = false
+            },
+            onToggleMcpServer = { id, enabled ->
+                viewModel.setMcpServerEnabled(id, enabled)
+                showSkillsMcpSheet = false
+            },
             onNavigateToSettings = {
                 showSkillsMcpSheet = false
                 onNavigate(MainDestination.Settings)
@@ -459,6 +579,7 @@ private fun ChatPaneContent(
     liveThinkingMessageId: String?,
     toolResults: Map<String, ToolResult>,
     workspace: String,
+    workspaceProject: WorkspaceProject? = null,
     onOpenFile: ((projectName: String, relativePath: String) -> Unit)?,
     onEditMessage: (UserMessage) -> Unit,
     onDeleteMessage: (String) -> Unit,
@@ -478,11 +599,15 @@ private fun ChatPaneContent(
     onTriggerMention: () -> Unit = {},
     onSend: (String?, List<String>) -> Unit,
     onStop: () -> Unit,
+    initializing: Boolean = false,
     activeSkillsCount: Int = 0,
     activeMcpCount: Int = 0,
     onOpenSkillsMcp: () -> Unit = {},
     activeModel: top.wkbin.taixu.core.database.AiModelEntity? = null,
     onUpdateReasoning: (mode: String?, effort: String?) -> Unit = { _, _ -> },
+    pendingApprovals: List<top.wkbin.taixu.core.database.AgentApprovalRequestEntity> = emptyList(),
+    onResolveApproval: (String, Boolean) -> Unit = { _, _ -> },
+    contextUsage: ContextUsage = ContextUsage(),
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var attachments by remember { mutableStateOf<List<ChatAttachment>>(emptyList()) }
@@ -579,9 +704,16 @@ private fun ChatPaneContent(
             state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth(),
         ) {
-            if (messages.isEmpty()) {
+            if (initializing) {
+                item {
+                    ChatMessageSkeleton(
+                        modifier = Modifier.padding(vertical = 16.dp),
+                    )
+                }
+            } else if (messages.isEmpty()) {
                 item {
                     EmptyChatGuidance(
+                        workspaceProject = workspaceProject,
                         onSelectCommand = onApplyCommand,
                     )
                 }
@@ -594,6 +726,7 @@ private fun ChatPaneContent(
                 }
                 if (index > 0) Spacer(Modifier.height(top))
                 when (message) {
+                    is CapabilityEvent -> CapabilityEventCard(message)
                     is UserMessage -> UserBubble(
                         message = message,
                         knownMentionNames = knownMentionNames,
@@ -618,6 +751,7 @@ private fun ChatPaneContent(
                                 workspace = workspace,
                                 onOpenFile = onOpenFile,
                                 running = running,
+                                liveStatus = status,
                                 showReasoning = message.reasoning != null &&
                                     !reasoningAlreadyShown(messages, index, message.reasoning),
                                 defaultExpanded = thinkingExpanded,
@@ -628,6 +762,14 @@ private fun ChatPaneContent(
                 }
             }
             item {
+                pendingApprovals.firstOrNull()?.let { request ->
+                    ApprovalRequestCard(
+                        request = request,
+                        onApprove = { onResolveApproval(request.id, true) },
+                        onReject = { onResolveApproval(request.id, false) },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
                 if (running) {
                     val roundStart = remember(messages.size) {
                         messages.lastOrNull { it is UserMessage }?.createdAt ?: 0L
@@ -957,6 +1099,7 @@ private fun ChatPaneContent(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
+                            ContextUsageButton(contextUsage)
                             if (canSend) {
                                 Surface(
                                     onClick = doSend,
@@ -989,21 +1132,27 @@ private fun ChatPaneContent(
                             }
                         }
                     } else {
-                        Surface(
-                            onClick = { if (canSend) doSend() },
-                            enabled = canSend,
-                            shape = buttonShape,
-                            color = if (canSend) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.surfaceContainerHighest,
-                            modifier = Modifier.size(30.dp),
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                RuntimeIcon(
-                                    RuntimeIconName.ArrowUp,
-                                    Modifier.size(16.dp),
-                                    if (canSend) MaterialTheme.colorScheme.onPrimary
-                                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
-                                )
+                            ContextUsageButton(contextUsage)
+                            Surface(
+                                onClick = { if (canSend) doSend() },
+                                enabled = canSend,
+                                shape = buttonShape,
+                                color = if (canSend) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.surfaceContainerHighest,
+                                modifier = Modifier.size(30.dp),
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    RuntimeIcon(
+                                        RuntimeIconName.ArrowUp,
+                                        Modifier.size(16.dp),
+                                        if (canSend) MaterialTheme.colorScheme.onPrimary
+                                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
+                                    )
+                                }
                             }
                         }
                     }
@@ -1014,9 +1163,115 @@ private fun ChatPaneContent(
 }
 
 @Composable
+private fun ContextUsageButton(usage: ContextUsage) {
+    var expanded by remember { mutableStateOf(false) }
+    val ratio = usage.usedTokens.toFloat() / usage.limitTokens.coerceAtLeast(1)
+    val tint = when {
+        ratio >= 0.9f -> MaterialTheme.colorScheme.error
+        ratio >= 0.7f -> Color(0xFFB25E00)
+        else -> MaterialTheme.colorScheme.primary
+    }
+    Box {
+        Surface(
+            onClick = { expanded = true },
+            shape = RoundedCornerShape(9.dp),
+            color = tint.copy(alpha = 0.12f),
+            modifier = Modifier.height(30.dp).widthIn(min = 42.dp),
+        ) {
+            Box(
+                modifier = Modifier.padding(horizontal = 7.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "${(ratio * 100).roundToInt().coerceAtLeast(0)}%",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = tint,
+                )
+            }
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.widthIn(min = 248.dp, max = 292.dp),
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("上下文用量", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "${formatContextTokens(usage.usedTokens)} / ${formatContextTokens(usage.limitTokens)}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = tint,
+                    )
+                }
+                LinearProgressIndicator(
+                    progress = { ratio.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().height(5.dp),
+                    color = tint,
+                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                )
+                ContextUsageRow("系统提示词", usage.systemTokens)
+                ContextUsageRow("工具", usage.toolTokens)
+                ContextUsageRow("对话消息", usage.conversationTokens)
+                Text(
+                    if (ratio >= 1f) "已超过预算，下一次请求会自动压缩历史"
+                    else "估算值 · 发送前仍由 Harness 最终计算",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContextUsageRow(label: String, tokens: Int) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(formatContextTokens(tokens), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+    }
+}
+
+private fun formatContextTokens(tokens: Int): String = when {
+    tokens >= 1_000_000 -> "~${"%.1f".format(java.util.Locale.US, tokens / 1_000_000f)}M"
+    tokens >= 1_000 -> "~${"%.1f".format(java.util.Locale.US, tokens / 1_000f)}K"
+    else -> "~${tokens}"
+}
+
+@Composable
 private fun EmptyChatGuidance(
+    workspaceProject: WorkspaceProject? = null,
     onSelectCommand: (SlashCommandItem) -> Unit,
 ) {
+    val quickCommands = remember(workspaceProject?.projectType) {
+        when (workspaceProject?.projectType) {
+            top.wkbin.taixu.runtime.ProjectType.ANDROID -> listOf(
+                SlashCommandItem("/android-check", "检查 Android 工程", "检查 Gradle、Manifest、包名和当前构建环境", "请检查当前 Android 工程结构、Gradle 配置、Manifest、包名和构建环境；发现问题直接编辑文件修复并验证。", RuntimeIconName.Check),
+                SlashCommandItem("/android-build-install", "编译并安装到手机", "构建 Debug APK，导出并调起手机安装器", "请构建当前 Android 工程，成功后将 APK 导出到手机并调起安装器；优先使用当前工作区的构建脚本和 taixu-host install-apk。", RuntimeIconName.Play),
+                SlashCommandItem("/android-debug", "排查 Android 构建", "定位 Gradle、Kotlin、AAPT2 或安装问题", "请读取最近一次 Android 构建日志，定位真实错误并直接编辑脚本或工程文件修复，然后重新验证。", RuntimeIconName.Alert),
+            )
+            top.wkbin.taixu.runtime.ProjectType.FLUTTER -> listOf(
+                SlashCommandItem("/flutter-check", "检查 Flutter 工程", "检查 pubspec、Dart 入口和 Android 宿主配置", "请检查当前 Flutter 工程的 pubspec.yaml、Dart 入口和 Android Gradle 配置，发现问题直接修复并验证。", RuntimeIconName.Check),
+                SlashCommandItem("/flutter-build-install", "编译并安装 Flutter", "拉取依赖、构建 APK 并调起安装器", "请执行 Flutter 依赖检查和 Debug APK 构建，成功后将 APK 导出到手机并调起 taixu-host install-apk。", RuntimeIconName.Play),
+                SlashCommandItem("/flutter-debug", "排查 Flutter 构建", "定位依赖、Gradle 或 AAPT2 错误", "请读取 Flutter 最近一次构建错误，定位依赖、Gradle 或 AAPT2 根因，直接修改工程并重新验证。", RuntimeIconName.Alert),
+            )
+            top.wkbin.taixu.runtime.ProjectType.REVERSE -> listOf(
+                SlashCommandItem("/reverse-analyze", "分析 APK 工程", "读取清单、DEX、资源和加固特征", "请读取当前逆向工程的 apk-info.properties 和 REVERSE.md，使用 jadx/apktool 分析 APK 并汇报关键发现。", RuntimeIconName.Search),
+                SlashCommandItem("/reverse-decode", "解包并反编译", "执行 JADX 或 apktool 解包流程", "请对当前工程内的原始 APK 执行安全解包和反编译，保留原始文件并把产物写入新的输出目录。", RuntimeIconName.Code),
+            )
+            else -> SlashCommands.presetCommands.take(4)
+        }
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1034,7 +1289,7 @@ private fun EmptyChatGuidance(
             color = MaterialTheme.colorScheme.primary,
         )
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            SlashCommands.presetCommands.take(4).forEach { cmd ->
+            quickCommands.forEach { cmd ->
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceContainerLow,
                     shape = RoundedCornerShape(10.dp),
@@ -1377,13 +1632,23 @@ private fun AssistantBubble(
             )
         }
 
-        val planSteps = remember(message.text) { extractTaskPlanSteps(message.text) }
-        if (planSteps.size >= 2) {
-            TaskPlanCard(steps = planSteps)
+        if (!live) {
+            val planSteps = remember(message.text) { extractTaskPlanSteps(message.text) }
+            if (planSteps.size >= 2) {
+                TaskPlanCard(steps = planSteps)
+            }
         }
 
         if (message.text.isNotBlank()) {
-            MarkdownText(message.text, modifier = Modifier.fillMaxWidth())
+            if (live) {
+                Text(
+                    text = message.text,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            } else {
+                MarkdownText(message.text, modifier = Modifier.fillMaxWidth())
+            }
         }
 
         // 底部动作栏：耗时信息 + 复制按钮
@@ -1522,7 +1787,7 @@ private fun TaskPlanCard(
             }
 
             // 进度条
-            androidx.compose.material3.LinearProgressIndicator(
+            LinearProgressIndicator(
                 progress = { progress },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1710,7 +1975,50 @@ private fun ThinkingBlock(
                     .fillMaxWidth()
                     .padding(top = 4.dp),
             ) {
-                MarkdownText(reasoning, modifier = Modifier.fillMaxWidth())
+                if (live) {
+                    Text(
+                        text = reasoning,
+                        modifier = Modifier.fillMaxWidth(),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                } else {
+                    MarkdownText(reasoning, modifier = Modifier.fillMaxWidth())
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CapabilityEventCard(event: CapabilityEvent) {
+    val isSkill = event.kind == CapabilityEvent.Kind.SKILL
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        RuntimeIcon(
+            if (isSkill) RuntimeIconName.Brain else RuntimeIconName.Cpu,
+            Modifier.size(18.dp),
+            MaterialTheme.colorScheme.primary,
+        )
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                if (isSkill) "Skill: ${event.name}" else "MCP: ${event.name}",
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.primary,
+            )
+            if (event.details.isNotBlank()) {
+                Text(
+                    event.details,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }
@@ -1723,6 +2031,7 @@ private fun ToolCard(
     workspace: String,
     onOpenFile: ((String, String) -> Unit)?,
     running: Boolean,
+    liveStatus: String?,
     showReasoning: Boolean = false,
     defaultExpanded: Boolean = false,
 ) {
@@ -1757,7 +2066,7 @@ private fun ToolCard(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.size(7.dp).clip(CircleShape).background(dotColor))
                 Text(
-                    toolName(call.tool, call.rawToolName),
+                    if (call.tool == HarnessTool.MCP) "调用工具" else toolName(call.tool, call.rawToolName),
                     style = MaterialTheme.typography.labelLarge.copy(
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.SemiBold,
@@ -1765,7 +2074,11 @@ private fun ToolCard(
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Text(
-                    toolArgsSummary(call),
+                    if (call.tool == HarnessTool.MCP) {
+                        "${toolName(call.tool, call.rawToolName)} · ${toolArgsSummary(call)}"
+                    } else {
+                        toolArgsSummary(call)
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -1807,6 +2120,35 @@ private fun ToolCard(
                 }
             }
 
+            val downloadStatus = liveStatus?.takeIf {
+                call.tool == HarnessTool.DOWNLOAD && result == null && running &&
+                    (it.startsWith("下载中：") || it.startsWith("正在校验下载文件"))
+            }
+            if (downloadStatus != null) {
+                Text(
+                    downloadStatus,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontFamily = FontFamily.Monospace,
+                )
+                val percent = Regex("\\((\\d+)%\\)").find(downloadStatus)
+                    ?.groupValues?.getOrNull(1)?.toFloatOrNull()?.div(100f)
+                if (percent == null) {
+                LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        progress = { percent },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    )
+                }
+            }
+
             // 展开 Diff 与输出详情视图
             if (expanded) {
                 ToolDiffView(
@@ -1821,13 +2163,56 @@ private fun ToolCard(
 }
 
 @Composable
+private fun ApprovalRequestCard(
+    request: top.wkbin.taixu.core.database.AgentApprovalRequestEntity,
+    onApprove: () -> Unit,
+    onReject: () -> Unit,
+) {
+    val riskColor = when (request.riskLevel) {
+        "critical" -> MaterialTheme.colorScheme.error
+        "high" -> Color(0xFFB45309)
+        else -> MaterialTheme.colorScheme.primary
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = RoundedCornerShape(12.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, riskColor.copy(alpha = 0.55f)),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RuntimeIcon(RuntimeIconName.Shield, Modifier.size(18.dp), riskColor)
+                Text("需要你的批准", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
+                Surface(color = riskColor.copy(alpha = 0.12f), shape = RoundedCornerShape(4.dp)) {
+                    Text(
+                        request.riskLevel.uppercase(),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = riskColor,
+                    )
+                }
+            }
+            Text(request.summary, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace))
+            Text(request.reason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = onReject, modifier = Modifier.weight(1f)) { Text("拒绝") }
+                Button(onClick = onApprove, modifier = Modifier.weight(1f)) { Text("批准并继续") }
+            }
+        }
+    }
+}
+
+@Composable
 private fun EditAndResendDialog(
     originalText: String,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
     var text by remember(originalText) { mutableStateOf(originalText) }
-    AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("编辑并重发", fontWeight = FontWeight.Bold) },
         text = {
@@ -1871,7 +2256,7 @@ private fun SessionsDialog(
     onRename: (String, String) -> Unit,
 ) {
     var renameTarget by remember { mutableStateOf<HarnessSessionEntity?>(null) }
-    AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(
@@ -1934,6 +2319,7 @@ private fun SessionsDialog(
 
                         val (dotColor, stateLabel) = when (runState) {
                             top.wkbin.taixu.core.model.SessionRunState.RUNNING -> Color(0xFFF59E0B) to "进行中"
+                            top.wkbin.taixu.core.model.SessionRunState.WAITING_APPROVAL -> Color(0xFF8B5CF6) to "待批准"
                             top.wkbin.taixu.core.model.SessionRunState.FAILED -> Color(0xFFEF4444) to "失败"
                             top.wkbin.taixu.core.model.SessionRunState.COMPLETED -> Color(0xFF10B981) to "完成"
                             top.wkbin.taixu.core.model.SessionRunState.IDLE -> Color(0xFF10B981) to "就绪"
@@ -2078,7 +2464,7 @@ private fun RenameSessionDialog(
     onRename: (String) -> Unit,
 ) {
     var title by remember(currentTitle) { mutableStateOf(currentTitle) }
-    AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("重命名会话", fontWeight = FontWeight.Bold) },
         text = {
@@ -2113,7 +2499,7 @@ private fun ModelDialog(
             },
         )
     }
-    AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("选择模型", fontWeight = FontWeight.Bold) },
         text = {
@@ -2175,7 +2561,7 @@ private fun AddModelDialog(
     var provider by remember { mutableStateOf("自定义 OpenAI 兼容接口") }
     var model by remember { mutableStateOf("") }
     var baseUrl by remember { mutableStateOf("") }
-    AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("添加模型", fontWeight = FontWeight.Bold) },
         text = {
@@ -2199,13 +2585,15 @@ private fun AddModelDialog(
 private fun NewSessionDialog(
     workspaces: List<WorkspaceProject>,
     onDismiss: () -> Unit,
-    onCreate: (title: String, workspace: String) -> Unit,
+    onCreate: (title: String, workspace: String, projectType: top.wkbin.taixu.runtime.ProjectType) -> Unit,
 ) {
     var title by remember { mutableStateOf("新会话") }
     var selected by remember { mutableStateOf("") }
+    var selectedType by remember { mutableStateOf(top.wkbin.taixu.runtime.ProjectType.GENERAL) }
+    var typeMenuExpanded by remember { mutableStateOf(false) }
     val quickTags = listOf("新会话", "Bug排查", "特性开发", "环境配置", "代码重构")
 
-    AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2270,12 +2658,59 @@ private fun NewSessionDialog(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     item {
-                        WorkspaceOption("不关联工作区（纯对话与全局 Linux）", "/root", selected == "", onSelect = { selected = "" })
+                        WorkspaceOption("不关联工作区（纯对话与全局 Linux）", "/root", selected == "", onSelect = {
+                            selected = ""
+                            selectedType = top.wkbin.taixu.runtime.ProjectType.GENERAL
+                        })
                     }
                     items(workspaces.size) { index ->
                         val ws = workspaces[index]
                         WorkspaceOption(ws.name, ws.linuxPath, selected == ws.linuxPath) {
                             selected = ws.linuxPath
+                            selectedType = ws.projectType
+                        }
+                    }
+                }
+
+                val selectedProject = workspaces.firstOrNull { it.linuxPath == selected }
+                // Keep the detected type as the default, but allow an imported
+                // repository to be assigned to a different specialist Agent.
+                Text(
+                    if (selectedProject == null || selectedProject.projectType == top.wkbin.taixu.runtime.ProjectType.GENERAL) {
+                        "Agent 工程类型（需要手动选择）"
+                    } else {
+                        "Agent 工程类型（已自动识别，可修改）"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Box {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth().clickable { typeMenuExpanded = true },
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                selectedType.displayName,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text("选择", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                    DropdownMenu(expanded = typeMenuExpanded, onDismissRequest = { typeMenuExpanded = false }) {
+                        top.wkbin.taixu.runtime.ProjectType.entries.forEach { type ->
+                            DropdownMenuItem(
+                                text = { Text(type.displayName) },
+                                onClick = {
+                                    selectedType = type
+                                    typeMenuExpanded = false
+                                },
+                            )
                         }
                     }
                 }
@@ -2283,7 +2718,7 @@ private fun NewSessionDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onCreate(title.ifBlank { "新会话" }, selected) },
+                onClick = { onCreate(title.ifBlank { "新会话" }, selected, selectedType) },
                 shape = RoundedCornerShape(8.dp),
             ) {
                 Text("创建并开启会话")
@@ -2354,6 +2789,7 @@ private fun toolName(tool: HarnessTool, rawToolName: String? = null): String {
         HarnessTool.WRITE -> "write"
         HarnessTool.EDIT -> "edit"
         HarnessTool.BASE -> "base"
+        HarnessTool.DOWNLOAD -> "download"
         HarnessTool.MEMORY -> "memory"
         HarnessTool.PLAN -> "plan"
         HarnessTool.SCRATCHPAD -> "scratchpad"
@@ -2382,6 +2818,7 @@ private fun formatDuration(ms: Long): String {
 private fun SkillsAndMcpSheet(
     allSkills: List<top.wkbin.taixu.core.model.AgentSkill>,
     mcpServers: List<top.wkbin.taixu.core.model.McpServerConfig>,
+    mcpConnectionStates: Map<String, top.wkbin.taixu.core.model.McpConnectionState>,
     onDismiss: () -> Unit,
     onToggleSkill: (String, Boolean) -> Unit,
     onToggleMcpServer: (String, Boolean) -> Unit,
@@ -2587,6 +3024,7 @@ private fun SkillsAndMcpSheet(
                         ) {
                             items(mcpServers.size) { index ->
                                 val server = mcpServers[index]
+                                val connState = mcpConnectionStates[server.id] ?: top.wkbin.taixu.core.model.McpConnectionState.UNKNOWN
                                 Surface(
                                     color = if (server.isEnabled) MaterialTheme.colorScheme.surfaceContainerHigh
                                     else MaterialTheme.colorScheme.surfaceContainer,
@@ -2614,6 +3052,20 @@ private fun SkillsAndMcpSheet(
                                                         fontWeight = FontWeight.SemiBold,
                                                     ),
                                                     color = MaterialTheme.colorScheme.onSurface,
+                                                )
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(9.dp)
+                                                        .clip(CircleShape)
+                                                        .background(
+                                                            when {
+                                                                !server.isEnabled -> MaterialTheme.colorScheme.outlineVariant
+                                                                connState == top.wkbin.taixu.core.model.McpConnectionState.CHECKING -> MaterialTheme.colorScheme.tertiary
+                                                                connState == top.wkbin.taixu.core.model.McpConnectionState.ONLINE -> Color(0xFF2E7D32)
+                                                                connState == top.wkbin.taixu.core.model.McpConnectionState.OFFLINE -> MaterialTheme.colorScheme.error
+                                                                else -> MaterialTheme.colorScheme.outline
+                                                            }
+                                                        ),
                                                 )
                                                 Surface(
                                                     color = MaterialTheme.colorScheme.tertiaryContainer,
@@ -2854,6 +3306,99 @@ private fun ReasoningEffortSlider(
 }
 
 /** 构建精准匹配技能与插件实体的正则表达式（优先长词带空格全称匹配） */
+@Composable
+private fun ChatMessageSkeleton(modifier: Modifier = Modifier) {
+    val brush = shimmerBrush()
+    Column(modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+        // 用户消息占位（右侧）
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.65f)
+                    .height(42.dp)
+                    .clip(RoundedCornerShape(16.dp, 4.dp, 16.dp, 16.dp))
+                    .background(brush),
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+        // 助手消息占位（左侧）
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(brush),
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.85f)
+                    .height(14.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(brush),
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.55f)
+                    .height(14.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(brush),
+            )
+            Spacer(Modifier.height(6.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.7f)
+                    .height(60.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(brush),
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+        // 用户消息占位 2
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.45f)
+                    .height(42.dp)
+                    .clip(RoundedCornerShape(16.dp, 4.dp, 16.dp, 16.dp))
+                    .background(brush),
+            )
+        }
+    }
+}
+
+@Composable
+private fun shimmerBrush(): Brush {
+    val transition = rememberInfiniteTransition(label = "chatShimmer")
+    val translateAnim by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "chatShimmerTranslate",
+    )
+    val shimmerColors = listOf(
+        MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.55f),
+        MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.25f),
+        MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.55f),
+    )
+    return Brush.linearGradient(
+        colors = shimmerColors,
+        start = Offset(translateAnim - 200f, 0f),
+        end = Offset(translateAnim, 0f),
+    )
+}
+
 private fun buildMentionRegex(knownNames: List<String>): Regex {
     val sorted = knownNames.filter { it.isNotBlank() }.sortedByDescending { it.length }
     val escaped = sorted.map { Regex.escape(it) }

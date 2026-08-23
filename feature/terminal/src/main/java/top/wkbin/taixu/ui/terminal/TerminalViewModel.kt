@@ -66,6 +66,9 @@ class TerminalViewModel @Inject constructor(
     val cursor: StateFlow<TerminalCursor> = activeHandle
         .flatMapLatest { it?.cursor ?: flowOf(TerminalCursor(0, 0, false)) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TerminalCursor(0, 0, false))
+    val screenRevision: StateFlow<Long> = activeHandle
+        .flatMapLatest { it?.revision ?: flowOf(0L) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
     private val _activeLabel = MutableStateFlow("")
     val activeLabel: StateFlow<String> = activeHandle
@@ -121,6 +124,10 @@ class TerminalViewModel @Inject constructor(
     fun sendText(text: String) {
         if (text.isEmpty()) return
         activeIdOrNull()?.let { terminalManager.write(it, text.toByteArray(Charsets.UTF_8)) }
+    }
+
+    fun setTerminalFontSize(sizeSp: Int) {
+        viewModelScope.launch { settingsDataStore.setTerminalFontSize(sizeSp) }
     }
 
     fun interrupt() {

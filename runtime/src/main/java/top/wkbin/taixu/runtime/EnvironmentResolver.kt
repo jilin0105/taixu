@@ -1,11 +1,14 @@
 package top.wkbin.taixu.runtime
 
+import top.wkbin.taixu.core.datastore.SettingsDataStore
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /** Single source of truth for the environment visible inside Debian. */
 @Singleton
 class EnvironmentResolver @Inject constructor() {
+    @Inject
+    lateinit var settingsDataStore: SettingsDataStore
     fun runtimePath(): String = listOf(
         "/root/.local/bin",
         "/opt/taixu/bin",
@@ -47,5 +50,15 @@ class EnvironmentResolver @Inject constructor() {
         putAll(baseEnvironment(interactive))
         putAll(manifest)
         putAll(provider)
+        // User variables are applied last, matching the settings page contract.
+        // Reserved runtime keys remain protected from accidental replacement.
+        val userValues = if (::settingsDataStore.isInitialized) settingsDataStore.environmentValues.value else emptyMap()
+        userValues.forEach { (key, value) ->
+            if (value.isNotEmpty() && key !in RESERVED_KEYS) put(key, value)
+        }
+    }
+
+    private companion object {
+        val RESERVED_KEYS = setOf("HOME", "PATH", "TERM", "TAIXU_BRIDGE_URL", "TAIXU_BRIDGE_PORT", "ANDROID_BIN_PATH", "ANDROID_LIB_PATH")
     }
 }

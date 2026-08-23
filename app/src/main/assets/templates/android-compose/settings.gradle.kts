@@ -1,3 +1,5 @@
+import org.gradle.api.initialization.resolve.RepositoriesMode
+
 pluginManagement {
     repositories {
         maven { url = uri("https://maven.aliyun.com/repository/google") }

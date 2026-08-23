@@ -7,6 +7,7 @@ plugins {
 android {
     namespace "{{packageName}}"
     compileSdk 34
+    buildToolsVersion "34.0.0"
 
     defaultConfig {
         applicationId "{{packageName}}"
@@ -19,6 +20,22 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // NDK 只提供 linux-x86_64 的 llvm-strip，在 ARM64 PRoot 里无法启动。
+    // 保留 native 调试符号，避免 AGP 调用它导致构建失败。
+    packaging {
+        jniLibs {
+            keepDebugSymbols += "**/*.so"
+        }
+    }
+
+    // Flutter 引擎走 prefab + CMake 原生构建；默认 CMake 3.22.1 只有 linux-x86_64
+    // 二进制，在 ARM64 PRoot 里跑不起来。3.31.0 起提供 Linux-aarch64 二进制。
+    externalNativeBuild {
+        cmake {
+            version "3.31.0"
+        }
     }
 }
 

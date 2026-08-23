@@ -7,8 +7,8 @@
 set -e
 
 SDK_HOME="/opt/android-sdk"
-GRADLE_VER="8.9"
-GRADLE_SHA256="d725d707bfabd4dfdc958c624003b3c80accc03f7037b5122c4b1d0ef15cecab"
+GRADLE_VER="8.14.2"
+GRADLE_SHA256="7197a12f450794931532469d4ff21a59ea2c1cd59a3ec3f89c035c3c420a6999"
 PLATFORM_ZIP="platform-34-ext7_r03.zip"
 PLATFORM_SHA1="1f2e9478d6a7601425ceaa553311dc43191f103d"
 BUILD_TOOLS_ZIP="build-tools_r34-linux.zip"
@@ -20,14 +20,16 @@ ARM64_TOOLS_VERSION="35.0.2"
 ARM64_TOOLS_SHA256="DB1CEA2C4454D5F9C5A802646B2D1CF560B4EE7BADBE23E51AB8E1881BB50FC2"
 ARM64_TOOLS_URL="https://github.com/lzhiyong/android-sdk-tools/releases/download/${ARM64_TOOLS_VERSION}/android-sdk-tools-static-aarch64.zip"
 ARM64_TOOLS_URLS="
+https://ghfast.top/${ARM64_TOOLS_URL}
+https://ghproxy.net/${ARM64_TOOLS_URL}
+https://gh.llkk.cc/${ARM64_TOOLS_URL}
 https://gh-proxy.com/${ARM64_TOOLS_URL}
-https://mirror.ghproxy.com/${ARM64_TOOLS_URL}
 ${ARM64_TOOLS_URL}
 "
 ARM64_TOOLS_DIR="/opt/taixu/android-sdk-tools/${ARM64_TOOLS_VERSION}"
 # The APK ships an ARM64 qemu-x86_64-static payload.  Keep QEMU as the
 # deterministic default; set TAIXU_AAPT2_MODE=native only for benchmarking.
-AAPT2_MODE="${TAIXU_AAPT2_MODE:-qemu}"
+AAPT2_MODE="${TAIXU_AAPT2_MODE:-native}"
 
 echo "==> [TaiXu] 正在初始化 Android 核心基础环境 (插件装配期一次性部署)..."
 
@@ -381,7 +383,7 @@ for tool in aapt aapt2 adb zipalign apksigner; do
 done
 
 # ------------------------------------------------------------------------------
-# 步骤 6：部署官方独立 Gradle 8.9
+# 步骤 6：部署官方独立 Gradle 8.14.2
 # ------------------------------------------------------------------------------
 if [ ! -f /opt/gradle-$GRADLE_VER/lib/gradle-launcher-$GRADLE_VER.jar ]; then
     echo "==> [TaiXu] 正在从国内加速镜像拉取 Gradle $GRADLE_VER (~120MB)..."
@@ -417,15 +419,22 @@ fi
 # ------------------------------------------------------------------------------
 mkdir -p /root/.gradle
 cat << 'EOF' > /root/.gradle/init.gradle
+// TaiXu: 全局强制阿里云镜像，避免 Gradle 从国外源拉取依赖（国内网络慢/被墙）。
 gradle.beforeSettings { settings ->
     settings.pluginManagement.repositories {
         maven { url 'https://maven.aliyun.com/repository/google' }
         maven { url 'https://maven.aliyun.com/repository/public' }
         maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+        google()
+        mavenCentral()
+        gradlePluginPortal()
     }
     settings.dependencyResolutionManagement.repositories {
         maven { url 'https://maven.aliyun.com/repository/google' }
         maven { url 'https://maven.aliyun.com/repository/public' }
+        maven { url 'https://storage.flutter-io.cn/download.flutter.io' }
+        google()
+        mavenCentral()
     }
 }
 EOF

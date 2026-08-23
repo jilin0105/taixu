@@ -106,13 +106,20 @@ class WorkspaceManager @Inject constructor(
         ContextWrapper(null), pathManager, workspaceDao,
     )
     fun observeProjects(): Flow<List<WorkspaceProject>> = workspaceDao.observeAll().map { entities ->
-        entities.mapNotNull(::projectFromEntity)
+        val projectPaths = entities.mapNotNull { runCatching { File(it.path).canonicalPath }.getOrNull() }.toSet()
+        val filtered = entities.filter { entity ->
+            val entityCanonical = runCatching { File(entity.path).canonicalPath }.getOrNull() ?: return@filter true
+            projectPaths.none { otherPath ->
+                otherPath != entityCanonical && otherPath.startsWith(entityCanonical + File.separator)
+            }
+        }
+        filtered.mapNotNull(::projectFromEntity)
     }.flowOn(Dispatchers.IO)
 
     suspend fun listProjects(): List<WorkspaceProject> = withContext(Dispatchers.IO) {
         pathManager.workspaceDir.mkdirs()
         // 自动播种内置开箱即用示例工程 (android-demo, flutter-demo)
-        top.wkbin.taixu.runtime.samples.WorkspaceSampleSeeder.ensureBuiltinSamples(pathManager.workspaceDir, workspaceDao)
+        top.wkbin.taixu.runtime.samples.WorkspaceSampleSeeder.ensureBuiltinSamples(context, pathManager.workspaceDir, workspaceDao)
         // 目录为准；缺失的目录从 Room 补录
         val known = workspaceDao.listAll().associateBy { it.name }
         val knownPaths = known.values.mapNotNull { runCatching { File(it.path).canonicalPath }.getOrNull() }.toSet()
@@ -126,8 +133,18 @@ class WorkspaceManager @Inject constructor(
                 )
             }
         }
-        val entities = workspaceDao.listAll().filter { it.name in known || File(it.path).isDirectory }
-        entities
+        // 先收集所有有效实体，再过滤掉作为其他项目父目录的实体
+        // （避免嵌套路径创建项目时，父目录被误注册为独立项目）
+        val allEntities = workspaceDao.listAll().filter { it.name in known || File(it.path).isDirectory }
+        val projectPaths = allEntities.mapNotNull { runCatching { File(it.path).canonicalPath }.getOrNull() }.toSet()
+        val filtered = allEntities.filter { entity ->
+            val entityCanonical = runCatching { File(entity.path).canonicalPath }.getOrNull() ?: return@filter true
+            // 如果存在其他项目的路径以此实体路径为前缀，则此实体是父目录，应过滤掉
+            projectPaths.none { otherPath ->
+                otherPath != entityCanonical && otherPath.startsWith(entityCanonical + File.separator)
+            }
+        }
+        filtered
             .filter { entity -> File(entity.path).isDirectory }
             .sortedBy { it.name.lowercase() }
             .mapNotNull(::projectFromEntity)
@@ -489,6 +506,8 @@ class WorkspaceManager @Inject constructor(
         // 1. settings.gradle.kts
         File(projectDir, "settings.gradle.kts").writeText(
             """
+                import org.gradle.api.initialization.resolve.RepositoriesMode
+
                 pluginManagement {
                      repositories {
                          maven("https://maven.aliyun.com/repository/google")
@@ -518,9 +537,9 @@ class WorkspaceManager @Inject constructor(
         File(projectDir, "build.gradle.kts").writeText(
             """
             plugins {
-                id("com.android.application") version "8.7.3" apply false
-                id("org.jetbrains.kotlin.android") version "2.0.21" apply false
-                id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
+                id("com.android.application") version "8.11.1" apply false
+                id("org.jetbrains.kotlin.android") version "2.2.20" apply false
+                id("org.jetbrains.kotlin.plugin.compose") version "2.2.20" apply false
             }
             """.trimIndent()
         )
@@ -662,7 +681,7 @@ class WorkspaceManager @Inject constructor(
             """
             distributionBase=GRADLE_USER_HOME
             distributionPath=wrapper/dists
-            distributionUrl=https\://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip
+            distributionUrl=https\://mirrors.cloud.tencent.com/gradle/gradle-8.14.2-bin.zip
             zipStoreBase=GRADLE_USER_HOME
             zipStorePath=wrapper/dists
             """.trimIndent()
@@ -676,8 +695,8 @@ class WorkspaceManager @Inject constructor(
             DIR="$(cd "$(dirname "${'$'}0")" && pwd)"
             if [ -f "${'$'}DIR/gradle/wrapper/gradle-wrapper.jar" ]; then
                 exec java -jar "${'$'}DIR/gradle/wrapper/gradle-wrapper.jar" "${'$'}@"
-            elif [ -x /opt/gradle-8.9/bin/gradle ]; then
-                exec /opt/gradle-8.9/bin/gradle "${'$'}@"
+            elif [ -x /opt/gradle-8.14.2/bin/gradle ]; then
+                exec /opt/gradle-8.14.2/bin/gradle "${'$'}@"
             elif [ -x /opt/gradle-8.7/bin/gradle ]; then
                 exec /opt/gradle-8.7/bin/gradle "${'$'}@"
             elif [ -x /usr/local/bin/gradle ]; then
@@ -794,6 +813,83 @@ class WorkspaceManager @Inject constructor(
             }
             """.trimIndent()
         )
+
+        val packagePath = packageName.replace('.', '/')
+        val androidDir = File(projectDir, "android").apply { mkdirs() }
+        File(androidDir, "settings.gradle").writeText(
+            """
+            pluginManagement {
+                def flutterSdkPath = "/opt/flutter"
+                includeBuild("${'$'}{flutterSdkPath}/packages/flutter_tools/gradle")
+                repositories { google(); mavenCentral(); gradlePluginPortal() }
+            }
+            plugins {
+                id "dev.flutter.flutter-plugin-loader" version "1.0.0"
+                id "com.android.application" version "8.11.1" apply false
+                id "org.jetbrains.kotlin.android" version "2.2.20" apply false
+            }
+            rootProject.name = "$cleanName"
+            include ":app"
+            """.trimIndent()
+        )
+        File(androidDir, "build.gradle").writeText(
+            """
+            allprojects { repositories { google(); mavenCentral() } }
+            tasks.register("clean", Delete) { delete rootProject.layout.buildDirectory }
+            """.trimIndent()
+        )
+        val androidAppDir = File(androidDir, "app").apply { mkdirs() }
+        File(androidAppDir, "build.gradle").writeText(
+            """
+            plugins {
+                id "com.android.application"
+                id "org.jetbrains.kotlin.android"
+                id "dev.flutter.flutter-gradle-plugin"
+            }
+            android {
+                namespace "$packageName"
+                compileSdk 34
+                defaultConfig {
+                    applicationId "$packageName"
+                    minSdk 21
+                    targetSdk 34
+                    versionCode 1
+                    versionName "1.0"
+                }
+                compileOptions {
+                    sourceCompatibility JavaVersion.VERSION_17
+                    targetCompatibility JavaVersion.VERSION_17
+                }
+            }
+            flutter { source "../.." }
+            """.trimIndent()
+        )
+        val androidMainDir = File(androidAppDir, "src/main").apply { mkdirs() }
+        File(androidMainDir, "AndroidManifest.xml").writeText(
+            """
+            <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+                <application android:label="$name">
+                    <activity android:name=".MainActivity" android:exported="true">
+                        <intent-filter>
+                            <action android:name="android.intent.action.MAIN" />
+                            <category android:name="android.intent.category.LAUNCHER" />
+                        </intent-filter>
+                    </activity>
+                    <meta-data android:name="flutterEmbedding" android:value="2" />
+                </application>
+            </manifest>
+            """.trimIndent()
+        )
+        val kotlinDir = File(androidMainDir, "kotlin/$packagePath").apply { mkdirs() }
+        File(kotlinDir, "MainActivity.kt").writeText(
+            """
+            package $packageName
+
+            import io.flutter.embedding.android.FlutterActivity
+
+            class MainActivity : FlutterActivity()
+            """.trimIndent()
+        )
     }
 
     /** Materializes the checked-in template and expands package directories. */
@@ -813,7 +909,13 @@ class WorkspaceManager @Inject constructor(
                 }
                 return
             }
-            val outputPath = relativePath.replace("__PACKAGE_PATH__", packagePath)
+            val outputPath = when (relativePath) {
+                "app/src/main/java/MainActivity.kt.template" ->
+                    "app/src/main/java/$packagePath/MainActivity.kt"
+                else -> relativePath
+                    .replace("__PACKAGE_PATH__", packagePath)
+                    .removeSuffix(".template")
+            }
             val target = File(projectDir, outputPath).canonicalFile
             check(isInside(projectDir.canonicalFile, target)) { "模板路径越界：$relativePath" }
             target.parentFile?.mkdirs()
@@ -839,7 +941,7 @@ class WorkspaceManager @Inject constructor(
         if (!expectedSource.isFile) {
             runCatching {
                 expectedSource.parentFile?.mkdirs()
-                context.assets.open("templates/android-compose/app/src/main/java/__PACKAGE_PATH__/MainActivity.kt").use { input ->
+                context.assets.open("templates/android-compose/app/src/main/java/MainActivity.kt.template").use { input ->
                     var text = input.readBytes().toString(Charsets.UTF_8)
                     replacements.forEach { (token, value) -> text = text.replace(token, value) }
                     expectedSource.writeText(text, Charsets.UTF_8)
@@ -921,7 +1023,13 @@ class WorkspaceManager @Inject constructor(
                 }
                 return
             }
-            val outputPath = relativePath.replace("__PACKAGE_PATH__", packagePath)
+            val outputPath = when (relativePath) {
+                "android/app/src/main/kotlin/MainActivity.kt.template" ->
+                    "android/app/src/main/kotlin/$packagePath/MainActivity.kt"
+                else -> relativePath
+                    .replace("__PACKAGE_PATH__", packagePath)
+                    .removeSuffix(".template")
+            }
             val target = File(projectDir, outputPath).canonicalFile
             check(isInside(projectDir.canonicalFile, target)) { "模板路径越界：$relativePath" }
             target.parentFile?.mkdirs()
@@ -938,6 +1046,26 @@ class WorkspaceManager @Inject constructor(
         }
         runCatching { visit("templates/flutter", "") }.getOrElse {
             generateFlutterTemplate(projectDir, name, packageName)
+        }
+        validateFlutterTemplate(projectDir, packageName)
+    }
+
+    private fun validateFlutterTemplate(projectDir: File, packageName: String) {
+        val packagePath = packageName.replace('.', File.separatorChar)
+        val source = File(projectDir, "android/app/src/main/kotlin/$packagePath/MainActivity.kt")
+        check(source.isFile) { "Flutter 模板缺少 MainActivity.kt：${source.absolutePath}" }
+        check(source.readText(Charsets.UTF_8).lineSequence().firstOrNull()?.trim() == "package $packageName") {
+            "Flutter 模板包名替换失败：MainActivity.kt"
+        }
+        val requiredFiles = listOf(
+            File(projectDir, "pubspec.yaml"),
+            File(projectDir, "lib/main.dart"),
+            File(projectDir, "android/settings.gradle"),
+            File(projectDir, "android/app/build.gradle"),
+        )
+        requiredFiles.forEach { file ->
+            check(file.isFile) { "Flutter 模板缺少文件：${file.absolutePath}" }
+            check("{{" !in file.readText(Charsets.UTF_8)) { "Flutter 模板变量未完成替换：${file.name}" }
         }
     }
 

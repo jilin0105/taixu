@@ -4,6 +4,8 @@ import top.wkbin.taixu.core.model.AgentPlugin
 import top.wkbin.taixu.core.model.AgentSkill
 import top.wkbin.taixu.core.model.BuiltinPlugins
 import top.wkbin.taixu.core.model.BuiltinSkills
+import top.wkbin.taixu.core.model.AgentSubagent
+import top.wkbin.taixu.core.model.BuiltinSubagents
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -50,5 +52,19 @@ class AgentSkillPluginSerializationTest {
         val decoded = json.decodeFromString<AgentSkill>(encoded)
         assertEquals(custom.name, decoded.name)
         assertEquals(custom.triggerCommand, decoded.triggerCommand)
+    }
+
+    @Test
+    fun testBuiltinSubagentsAreValidAndSerializable() {
+        val profiles = BuiltinSubagents.presets
+        assertTrue(profiles.isNotEmpty())
+        assertEquals(profiles.size, profiles.map { it.id }.distinct().size)
+        assertEquals(profiles.indices.toList(), profiles.map { it.sortOrder })
+        assertTrue(profiles.all { it.id.matches(Regex("[a-z0-9_-]+")) })
+        assertTrue(profiles.all { it.name.isNotBlank() && it.description.isNotBlank() && it.systemPrompt.isNotBlank() })
+
+        val encoded = json.encodeToString(profiles)
+        val decoded = json.decodeFromString<List<AgentSubagent>>(encoded)
+        assertEquals(profiles, decoded)
     }
 }

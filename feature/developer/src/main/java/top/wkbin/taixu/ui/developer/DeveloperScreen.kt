@@ -1,5 +1,7 @@
 package top.wkbin.taixu.ui.developer
 
+import top.wkbin.taixu.ui.components.RuntimeAlertDialog
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -13,17 +15,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import top.wkbin.taixu.ui.components.RuntimeButton as Button
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.LinearProgressIndicator
+import top.wkbin.taixu.ui.components.RuntimeLinearProgressIndicator as LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import top.wkbin.taixu.ui.components.RuntimeOutlinedButton as OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
+import top.wkbin.taixu.ui.components.RuntimeSwitch as Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -330,7 +331,7 @@ fun DeveloperScreen(
     }
 
     cleanupTarget?.let { runtime ->
-        AlertDialog(
+        RuntimeAlertDialog(
             onDismissRequest = { cleanupTarget = null },
             title = { Text("清理 ${runtime.name.name}？") },
             text = { Text("将移除未被工具引用的共享 Runtime，此操作无法自动恢复。") },
@@ -339,7 +340,7 @@ fun DeveloperScreen(
         )
     }
     if (showCacheConfirmation) {
-        AlertDialog(
+        RuntimeAlertDialog(
             onDismissRequest = { showCacheConfirmation = false },
             title = { Text("清理下载缓存？") },
             text = { Text("只删除未激活的下载和临时文件，不会影响 Linux 系统、工具或工作区。") },
@@ -348,7 +349,7 @@ fun DeveloperScreen(
         )
     }
     if (showResetConfirmation) {
-        AlertDialog(
+        RuntimeAlertDialog(
             onDismissRequest = { showResetConfirmation = false },
             title = { Text("恢复 Linux 初始状态？") },
             text = { Text("将删除当前 Linux RootFS、已安装工具和沙箱缓存，但保留 /workspace 工程和手机共享存储。此操作不可撤销。") },
@@ -361,7 +362,7 @@ fun DeveloperScreen(
         )
     }
     if (showRootfsUpdateConfirmation) {
-        AlertDialog(
+        RuntimeAlertDialog(
             onDismissRequest = { showRootfsUpdateConfirmation = false },
             title = { Text("更新 Linux RootFS？") },
             text = { Text("将在线下载并校验新版本，保留 /root 与 /opt/taixu。更新期间后台 Linux 进程会停止，失败时自动恢复旧版本。") },
@@ -370,7 +371,7 @@ fun DeveloperScreen(
         )
     }
     if (showAgentLogDialog) {
-        AlertDialog(
+        RuntimeAlertDialog(
             onDismissRequest = { showAgentLogDialog = false },
             title = { Text("智能体本地调试日志") },
             text = {

@@ -35,6 +35,20 @@ data class McpServerConfig(
 )
 
 /**
+ * MCP 服务连通性检测状态（运行时状态，不持久化）
+ */
+enum class McpConnectionState {
+    /** 尚未检测（默认态 / 服务未启用） */
+    UNKNOWN,
+    /** 正在检测连通性 */
+    CHECKING,
+    /** 已连通，服务在线可用 */
+    ONLINE,
+    /** 检测失败 / 服务离线不可达 */
+    OFFLINE,
+}
+
+/**
  * 动态从 MCP Server 发现并注册的工具定义
  */
 @Serializable
@@ -66,8 +80,8 @@ object BuiltinMcpPresets {
             name = "SQLite 数据库探索器",
             description = "查询、分析与操作沙箱或工作区内的 SQLite 数据库文件",
             transportType = McpTransportType.STDIO,
-            command = "npx",
-            args = listOf("-y", "@modelcontextprotocol/server-sqlite", "--db-path", "/root/taixu.db"),
+            command = "python3",
+            args = listOf("-u", "/opt/taixu/scripts/sqlite_mcp_server.py", "--db-path", "/root/taixu.db"),
             isEnabled = false,
             isBuiltin = true,
         ),
@@ -76,8 +90,8 @@ object BuiltinMcpPresets {
             name = "Web 内容抓取与解析",
             description = "安全抓取外部网页、Markdown 文档并提取核心正文数据",
             transportType = McpTransportType.STDIO,
-            command = "npx",
-            args = listOf("-y", "@modelcontextprotocol/server-fetch"),
+            command = "python3",
+            args = listOf("-u", "/opt/taixu/scripts/fetch_mcp_server.py"),
             isEnabled = false,
             isBuiltin = true,
         ),
@@ -86,8 +100,8 @@ object BuiltinMcpPresets {
             name = "Git 仓库协同中心",
             description = "深入分析 Git 历史提交、分支拓扑、Diff 差异与工作区状态",
             transportType = McpTransportType.STDIO,
-            command = "npx",
-            args = listOf("-y", "@modelcontextprotocol/server-git", "--repository", "/workspace"),
+            command = "python3",
+            args = listOf("-u", "/opt/taixu/scripts/git_mcp_server.py", "--repository", "/workspace"),
             isEnabled = false,
             isBuiltin = true,
         ),

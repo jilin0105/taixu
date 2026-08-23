@@ -232,6 +232,8 @@ class OnboardingViewModel @Inject constructor(
         viewModelScope.launch {
             val existing = modelDao.observeAll().first()
             val id = UUID.randomUUID().toString()
+            val secretRef = "model_${id.replace("-", "")}" 
+            if (_apiKey.value.isNotBlank()) settings.setModelApiKey(secretRef, _apiKey.value)
             modelDao.upsert(
                 AiModelEntity(
                     id = id,
@@ -239,7 +241,7 @@ class OnboardingViewModel @Inject constructor(
                     provider = _modelProvider.value.trim(),
                     model = model,
                     baseUrl = _baseUrl.value.trim(),
-                    apiKey = _apiKey.value.trim(),
+                    secretRef = secretRef,
                     isActive = existing.none { it.isActive },
                     createdAt = System.currentTimeMillis(),
                 ),

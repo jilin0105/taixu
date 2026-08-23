@@ -13,15 +13,26 @@ export FLUTTER_STORAGE_BASE_URL="${FLUTTER_STORAGE_BASE_URL:-https://storage.flu
 
 mkdir -p /opt/flutter /usr/local/bin /usr/bin 2>/dev/null || true
 
+# The official Linux archive is x86_64-only.  Always require the community
+# native ARM64 archive marker so an older x86_64 installation is replaced.
+FLUTTER_ARM64_MARKER=/opt/flutter/.taixu-arm64
+
 if [ ! -f "${ANDROID_HOME:-/opt/android-sdk}/platforms/android-34/android.jar" ]; then
     echo "!! [TaiXu] Flutter APK 构建依赖 Android 核心基础环境 (Platform 34)，请先安装 android-core"
 fi
 
 # 1. 下载 Flutter SDK 压缩包（HTTP Range 分片 + 断点续传）
-if [ ! -f /opt/flutter/bin/flutter ]; then
-    echo "==> [TaiXu] 正在获取 Flutter stable SDK 发布信息..."
+if [ ! -f /opt/flutter/bin/flutter ] || [ ! -f "$FLUTTER_ARM64_MARKER" ]; then
+    if [ -n "${TAIXU_FLUTTER_ARCHIVE:-}" ] && [ -s "$TAIXU_FLUTTER_ARCHIVE" ]; then
+        echo "==> [TaiXu] 使用应用内下载器已准备的 Flutter SDK 压缩包：$TAIXU_FLUTTER_ARCHIVE"
+        FLUTTER_ARCHIVE="$TAIXU_FLUTTER_ARCHIVE"
+    else
+    echo "==> [TaiXu] 正在获取 Flutter stable SDK 发布信息 (固定版本)..."
+    # 固定到特定 tag，避免 latest 每次更新抬高 Gradle/AGP/Kotlin 最低版本要求。
+    # 本版本对应的最低工具链：Gradle 8.14+ / AGP 8.11.1+ / Kotlin 2.2.20+。
+    FLUTTER_PINNED_TAG="flutter-3.47.1-87-linux"
     FLUTTER_META="/tmp/taixu-flutter-releases.json"
-    FLUTTER_META_URL="https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json"
+    FLUTTER_META_URL="https://api.github.com/repos/MohamedAlkindi/flutter-native-arm64/releases/tags/${FLUTTER_PINNED_TAG}"
     rm -f "$FLUTTER_META"
     curl -fsSL --retry 4 --retry-all-errors --connect-timeout 20 --max-time 120 \
         "$FLUTTER_META_URL" -o "$FLUTTER_META" || {
@@ -32,10 +43,10 @@ if [ ! -f /opt/flutter/bin/flutter ]; then
         echo "!! [TaiXu] 缺少 jq，无法解析 Flutter 发布索引"
         exit 1
     }
-    FLUTTER_ARCHIVE_REL=$(jq -r '[.releases[] | select(.channel == "stable" and .dart_sdk_arch == "x64")][0].archive // empty' "$FLUTTER_META")
-    FLUTTER_SHA256=$(jq -r '[.releases[] | select(.channel == "stable" and .dart_sdk_arch == "x64")][0].sha256 // empty' "$FLUTTER_META")
+    FLUTTER_ARCHIVE_REL=$(jq -r '[.assets[] | select(.name | contains("linux_arm64_android_web_sdk"))][0].browser_download_url // empty' "$FLUTTER_META")
+    FLUTTER_SHA256=""
     rm -f "$FLUTTER_META"
-    [ -n "$FLUTTER_ARCHIVE_REL" ] && [ "$FLUTTER_SHA256" != "" ] || {
+    [ -n "$FLUTTER_ARCHIVE_REL" ] || {
         echo "!! [TaiXu] 未找到可用的 Flutter stable Linux SDK"
         exit 1
     }
@@ -119,18 +130,20 @@ if [ ! -f /opt/flutter/bin/flutter ]; then
             rm -rf "$chunk_dir"
         fi
         [ "$(wc -c < "$FLUTTER_ARCHIVE")" -eq "$total_size" ] || return 1
-        if command -v sha256sum >/dev/null 2>&1; then
+        if [ -n "$FLUTTER_SHA256" ] && command -v sha256sum >/dev/null 2>&1; then
             echo "$FLUTTER_SHA256  $FLUTTER_ARCHIVE" | sha256sum -c - >/dev/null 2>&1 || return 1
         fi
         return 0
     }
 
     FLUTTER_SDK_READY=0
-    rm -f "$FLUTTER_ARCHIVE"
+    case "$FLUTTER_ARCHIVE" in
+        /tmp/*) rm -f "$FLUTTER_ARCHIVE" ;;
+    esac
     for FLUTTER_BASE in \
-        "${FLUTTER_STORAGE_BASE_URL%/}/flutter_infra_release/releases" \
-        "https://storage.googleapis.com/flutter_infra_release/releases"; do
-        if download_flutter_archive "$FLUTTER_BASE/$FLUTTER_ARCHIVE_REL"; then
+        ""; do
+        FLUTTER_URL="$FLUTTER_ARCHIVE_REL"
+        if download_flutter_archive "$FLUTTER_URL"; then
             FLUTTER_SDK_READY=1
             break
         fi
@@ -142,19 +155,54 @@ if [ ! -f /opt/flutter/bin/flutter ]; then
         echo "!! [TaiXu] Flutter SDK 下载失败，未执行 Git 全量克隆"
         exit 1
     }
+    fi
 
     echo "==> [TaiXu] 正在校验并解压 Flutter SDK..."
     FLUTTER_STAGING="/tmp/taixu-flutter-staging"
     rm -rf "$FLUTTER_STAGING"
     mkdir -p "$FLUTTER_STAGING"
-    tar -xJf "$FLUTTER_ARCHIVE" -C "$FLUTTER_STAGING"
+    # The community ARM64 release is tar.gz, while official Flutter releases
+    # are tar.xz. Select the decompressor from the archive suffix and validate
+    # the stream before extracting so a stale/HTML download gets a useful error.
+    case "$FLUTTER_ARCHIVE" in
+        *.tar.gz|*.tgz|*.gz)
+            gzip -t "$FLUTTER_ARCHIVE" || {
+                echo "!! [TaiXu] Flutter SDK gzip 压缩包损坏：$FLUTTER_ARCHIVE"
+                exit 1
+            }
+            tar -xzf "$FLUTTER_ARCHIVE" -C "$FLUTTER_STAGING"
+            ;;
+        *.tar.xz|*.txz|*.xz)
+            xz -t "$FLUTTER_ARCHIVE" || {
+                echo "!! [TaiXu] Flutter SDK xz 压缩包损坏：$FLUTTER_ARCHIVE"
+                exit 1
+            }
+            tar -xJf "$FLUTTER_ARCHIVE" -C "$FLUTTER_STAGING"
+            ;;
+        *.tar)
+            tar -tf "$FLUTTER_ARCHIVE" >/dev/null || {
+                echo "!! [TaiXu] Flutter SDK tar 包损坏：$FLUTTER_ARCHIVE"
+                exit 1
+            }
+            tar -xf "$FLUTTER_ARCHIVE" -C "$FLUTTER_STAGING"
+            ;;
+        *)
+            echo "!! [TaiXu] 无法识别 Flutter SDK 压缩格式：$FLUTTER_ARCHIVE"
+            file "$FLUTTER_ARCHIVE" 2>/dev/null || true
+            exit 1
+            ;;
+    esac
     [ -f "$FLUTTER_STAGING/flutter/bin/flutter" ] || {
         echo "!! [TaiXu] Flutter SDK 压缩包结构无效"
         exit 1
     }
     rm -rf /opt/flutter
     mv "$FLUTTER_STAGING/flutter" /opt/flutter
-    rm -rf "$FLUTTER_STAGING" "$FLUTTER_ARCHIVE"
+    touch "$FLUTTER_ARM64_MARKER"
+    rm -rf "$FLUTTER_STAGING"
+    case "$FLUTTER_ARCHIVE" in
+        /tmp/*) rm -f "$FLUTTER_ARCHIVE" ;;
+    esac
 fi
 
 # 2. 建立全局软链接并授权

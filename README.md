@@ -32,7 +32,7 @@
 
 ## 当前形态
 
-太墟当前版本为 **0.1.0**，面向 **Android 10+、ARM64** 设备，仍处于快速演进阶段。它已经形成从 Linux 运行时、模型接入、Agent 工具循环到终端与工作区的完整主链路，同时仍需要更多真机、复杂 TUI 和第三方工具组合验证。
+太墟当前版本为 **0.3.0**，面向 **Android 10+、ARM64** 设备，仍处于快速演进阶段。它已经形成从 Linux 运行时、模型接入、Agent 工具循环到终端、工作区和受管理工具的完整主链路，同时仍需要更多真机、复杂 TUI 和第三方工具组合验证。
 
 ```text
 人的意图
@@ -52,7 +52,7 @@
 
 太墟以 **PRoot** 为边界，在不获取 Root 权限、不修改 Android 系统分区的前提下运行完整 Linux 用户空间。
 
-- 支持 Ubuntu 24.04、Debian 12、Kali Rolling、Arch Linux、Fedora 40、Alpine 3.19、AlmaLinux 9 与 openSUSE Tumbleweed。
+- 支持 Ubuntu 24.04 LTS、Debian 12 (Bookworm)、Kali Rolling、Arch Linux、Fedora 40、Alpine 3.19、AlmaLinux 9、Rocky Linux 9、openSUSE Tumbleweed 与 Manjaro Rolling。
 - 支持多发行版安装、切换、空间统计与生命周期管理。
 - RootFS 通过 OCI Registry 获取，支持 ARM64 manifest、SHA-256 layer 校验、gzip/zstd 解压与 OCI whiteout 合并。
 - RootFS 更新采用 staging、健康检查与两阶段提交；激活失败或异常中断时可恢复旧系统。
@@ -71,9 +71,12 @@
 - **指令如律**：支持 `/run`、`/install`、`/init`、`/git` 等快捷指令，精简高频开发链路，让意图直达行动。
 - **专精赋能**：支持挂载 `@Android 统一开发助手`、`@Android 逆向与代码审计`、`@全栈构建与排错` 等专精技能，从工程骨架生成、现代 Compose UI 编写到构建后一键安装至本机。
 - **诸智共鸣**：支持主智能体派发并观测多个专业子智能体（Researcher, Coder, Tester），在隔离上下文中并发推进复杂工程。
+- **知止而行**：支持按会话配置工具审批模式；危险命令、工作区外写入与高风险操作可以先停在门前，等待使用者确认。
+- **推理有度**：支持按 Provider 能力设置推理开关与强度，并适配 OpenAI、Anthropic、Gemini、智谱、豆包与 OpenRouter 等请求格式。
 - **多模态视觉感知**：支持超大手机照片（>6MB/20MB）原生自适应下采样与高保真压缩，直接将高清视觉流交付多模态模型，对话气泡内嵌图像预览。
 - 内置 `read`、`write`、`edit`、`base` 等工作区与 Linux 执行工具。
 - 支持 MCP STDIO 与 SSE 服务，能够发现工具定义、动态注入模型并执行调用。
+- 内置 Git、网页抓取、SQLite 与 APKTool MCP 服务脚本，可把版本控制、资料获取、数据查询和逆向辅助纳入同一工具循环。
 - 会话、消息、工具执行、模型档案与推理内容通过 Room 持久化。
 - 能从 Markdown 检查项提取任务计划，在对话中展示步骤与进度。
 
@@ -120,6 +123,7 @@
 | Hermes Agent | Web Dashboard | Python 依赖、Dashboard 服务与后台进程管理 |
 | Base DevTools | 一次性工具包 | ripgrep、fd、jq、tmux |
 | Android DevTools | PTY / 工具包 | OpenJDK 17、Gradle 8.9、Android 34 平台包 (android.jar)、ADB、AAPT、apksigner、Google Android CLI (android)、zipalign、阿里云 Maven 全局镜像 |
+| Flutter DevTools | PTY / 工具包 | Linux ARM64 Flutter SDK、Dart、Android 构建桥接与国内 pub/storage 镜像 |
 | Android RE Tools | PTY / 工具包 | APKTool、JADX-CLI、Smali 逆向分析环境 |
 | Hello Tool | 测试工具 | 验证安装、启动、校验与回滚链路 |
 
@@ -132,7 +136,7 @@
 - `/opt/taixu/tools/{toolId}` 程序隔离、`/opt/taixu/data/{toolId}` 数据持久化与稳定命令入口。
 - 安装、更新、验证、卸载、失败回滚和中断恢复事务。
 - Web 工具后台启动、日志观察、停止、自动启动与安全访问令牌。
-- APK 内置 Registry，以及 HTTPS + Ed25519 验签的远程 Registry 更新能力。
+- APK 内置 Registry，以及 HTTPS + Ed25519 验签的远程 Registry 更新能力；正式信任锚仍需由发布方配置，默认不宣称远程清单已经具备端到端防篡改信任。
 - 下载协议、响应大小、重定向目标、端点地址与日志秘密的安全检查。
 
 器物扩展能力，也放大风险。因此一件工具只有在来源、权限、状态和失败路径都能被看见时，才真正属于使用者。
@@ -231,9 +235,10 @@ cat /etc/os-release
 ### 开发环境
 
 - Android Studio 与 JDK 17
-- Android SDK 37
+- Android SDK 37（应用目标/编译 API 37；工具套件另装 Android 34 平台包）
 - Android NDK `30.0.15729638`
 - CMake 3.22.1
+- Gradle 9.7（项目 Wrapper）
 - PowerShell（运行项目辅助脚本）
 
 仓库不把 Linux RootFS 打进 APK；PRoot ARM64 loader 需要先准备：
@@ -253,13 +258,13 @@ $env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
 Debug APK 位于：
 
 ```text
-app/build/outputs/apk/debug/app-debug.apk
+app/build/outputs/apk/debug/taixu-v0.3.0-debug.apk
 ```
 
 可选的真机安装与启动：
 
 ```powershell
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/debug/taixu-v0.3.0-debug.apk
 adb shell am start -n top.wkbin.taixu/.MainActivity
 ```
 
@@ -269,11 +274,12 @@ adb shell am start -n top.wkbin.taixu/.MainActivity
 
 太墟已经能够运行，但尚未宣称抵达稳定。
 
-- 当前仅正式面向 ARM64；其他 ABI 会在初始化阶段停止。
+- 当前仅正式面向 ARM64；其他 ABI 会在初始化阶段停止。应用目标与编译 API 为 37，工具链中的 Android 项目模板仍以 API 34 为兼容基线。
 - 终端触摸滚动与部分中文输入法组合文本仍需完善。
 - JNI PTY 已启用并带有回退路径，但复杂 TUI 仍需更多 ARM64 真机覆盖。
 - Codex、OpenClaw 与 Hermes 的上游安装脚本和 CLI 会持续变化，发布前仍需逐版本锁定、审计与整机验收。
-- 远程工具 Registry 的验证机制已经存在，但项目尚未预置正式签名 Registry 地址。
+- MCP 已支持 STDIO 与 HTTP/SSE，但明文 HTTP 仅允许回环地址及受限的 `192.168.*` 局域网地址；远程工具 Registry 尚未预置正式签名地址。
+- Codex、OpenClaw、Hermes、Flutter 与 Android 核心套件的完整安装、启动和健康检查仍需更多 ARM64 真机验收；上游版本变化可能改变结果。
 - RootFS 与工具更新具备回滚机制，但第三方软件可能写入未持久化的系统目录，复杂组合仍需迁移验证。
 - UI 层自动化测试覆盖仍少于 Runtime、Harness 与数据层。
 - PRoot 提供的是用户态兼容环境，不等同于虚拟机，也不承诺兼容所有内核能力、容器技术或系统服务。

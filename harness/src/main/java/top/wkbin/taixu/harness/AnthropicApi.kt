@@ -44,6 +44,9 @@ internal class AnthropicApi(
             call.execute().use { response ->
                 val body = response.body.string()
                 if (!response.isSuccessful) {
+                    if (response.code == 429) {
+                        throw ProviderClient.rateLimitException(response.code, body, response.header("Retry-After"))
+                    }
                     throw IllegalStateException("Claude 请求失败 HTTP ${response.code}：${extractError(body)}")
                 }
                 parseFinalResponse(body)
@@ -64,6 +67,9 @@ internal class AnthropicApi(
             call.execute().use { response ->
                 if (!response.isSuccessful) {
                     val errorBody = response.body.string()
+                    if (response.code == 429) {
+                        throw ProviderClient.rateLimitException(response.code, errorBody, response.header("Retry-After"))
+                    }
                     throw IllegalStateException("Claude 请求失败 HTTP ${response.code}：${extractError(errorBody)}")
                 }
                 val source = response.body.source()

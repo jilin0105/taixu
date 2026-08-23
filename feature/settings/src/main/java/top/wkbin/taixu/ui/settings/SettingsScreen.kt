@@ -1,5 +1,7 @@
 package top.wkbin.taixu.ui.settings
 
+import top.wkbin.taixu.ui.components.RuntimeAlertDialog
+
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,27 +30,28 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
+import top.wkbin.taixu.ui.components.RuntimeButton as Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator as CircularProgressIndicator
+import top.wkbin.taixu.ui.components.RuntimeLinearProgressIndicator as LinearProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.IconButton
+import top.wkbin.taixu.ui.components.RuntimeIconButton as IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import top.wkbin.taixu.ui.components.RuntimeOutlinedButton as OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
+import top.wkbin.taixu.ui.components.RuntimeSwitch as Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -74,7 +78,9 @@ import top.wkbin.taixu.core.tools.ProviderEndpointPolicy
 import top.wkbin.taixu.ui.components.IconTile
 import top.wkbin.taixu.ui.components.MainDestination
 import top.wkbin.taixu.ui.components.RuntimeBottomBar
+import top.wkbin.taixu.ui.components.liquidGlassContent
 import top.wkbin.taixu.ui.components.RuntimeCard
+import top.wkbin.taixu.ui.components.RuntimeSwitch
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
@@ -121,8 +127,9 @@ fun SettingsScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+                .liquidGlassContent()
+                .padding(top = padding.calculateTopPadding()),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 104.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             item {
@@ -194,7 +201,7 @@ fun SettingsScreen(
                     iconBg = Color(0xFF3B82F6).copy(alpha = 0.12f),
                     title = "关于、更新与官方社区",
                     subtitle = "检查新版本 · GitHub 开源仓库 · 官方 QQ 交流群",
-                    badge = "v0.1.0 稳定版",
+                    badge = "v0.3.0 稳定版",
                     onClick = onOpenAboutCommunity,
                 )
             }
@@ -370,6 +377,7 @@ fun LinuxEnvironmentSettingsScreen(
     onBack: () -> Unit,
     onOpenDistroManagement: () -> Unit,
     onOpenStorageMounts: () -> Unit,
+    onOpenEnvironmentVariables: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val executionMode by viewModel.executionMode.collectAsStateWithLifecycle()
@@ -394,7 +402,7 @@ fun LinuxEnvironmentSettingsScreen(
     }
 
     privilegeResultMessage?.let { errorMsg ->
-        androidx.compose.material3.AlertDialog(
+        RuntimeAlertDialog(
             onDismissRequest = { privilegeResultMessage = null },
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -442,6 +450,13 @@ fun LinuxEnvironmentSettingsScreen(
                         subtitle = "PRoot 宿主存储映射 (-b /sdcard)",
                         onClick = onOpenStorageMounts,
                     )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(
+                        icon = RuntimeIconName.Key,
+                        title = "环境变量",
+                        subtitle = "为终端、Agent 和工具注入加密变量",
+                        onClick = onOpenEnvironmentVariables,
+                    )
                 }
             }
 
@@ -464,6 +479,103 @@ fun LinuxEnvironmentSettingsScreen(
             }
         }
     }
+}
+
+@Composable
+fun EnvironmentVariableSettingsScreen(
+    onBack: () -> Unit,
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
+    val entries by viewModel.environmentVariables.collectAsStateWithLifecycle()
+    val privacyMode by viewModel.environmentPrivacyMode.collectAsStateWithLifecycle()
+    var showEditor by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<top.wkbin.taixu.core.model.EnvironmentVariable?>(null) }
+    var showDelete by remember { mutableStateOf<top.wkbin.taixu.core.model.EnvironmentVariable?>(null) }
+
+    if (showEditor) {
+        EnvironmentVariableEditor(
+            entry = editing,
+            onDismiss = { showEditor = false; editing = null },
+            onSave = { key, value, note ->
+                if (editing == null) viewModel.addEnvironmentVariable(key, value, note) { if (it) { showEditor = false } }
+                else viewModel.updateEnvironmentVariable(editing!!.id, key, value.ifBlank { null }, note) { if (it) { showEditor = false; editing = null } }
+            },
+        )
+    }
+    showDelete?.let { entry ->
+        RuntimeAlertDialog(
+            onDismissRequest = { showDelete = null },
+            title = { Text("删除环境变量") },
+            text = { Text("确定删除 ${entry.key}？") },
+            confirmButton = { TextButton(onClick = { viewModel.deleteEnvironmentVariable(entry.id); showDelete = null }) { Text("删除") } },
+            dismissButton = { TextButton(onClick = { showDelete = null }) { Text("取消") } },
+        )
+    }
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = { RuntimeTopBar("环境变量", onBack, actions = { IconButton(onClick = { editing = null; showEditor = true }) { RuntimeIcon(RuntimeIconName.Plus) } }) },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                SettingsGroup {
+                    SettingsRow(
+                        icon = RuntimeIconName.Shield,
+                        title = "隐私模式",
+                        subtitle = "发送给 Agent 前遮盖已配置变量值",
+                        trailing = { Switch(checked = privacyMode, onCheckedChange = viewModel::setEnvironmentPrivacyMode) },
+                    )
+                }
+            }
+            item {
+                Text("变量会在下一次命令或终端会话启动时生效。值使用 Android Keystore 加密保存。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (entries.isEmpty()) {
+                item { RuntimeCard(modifier = Modifier.fillMaxWidth()) { Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) { Text("暂无环境变量", style = MaterialTheme.typography.titleMedium); Text("点击右上角 + 添加", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } } }
+            } else {
+                items(entries, key = { it.id }) { entry ->
+                    RuntimeCard(modifier = Modifier.fillMaxWidth(), onClick = { editing = entry; showEditor = true }) {
+                        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(entry.key, style = MaterialTheme.typography.titleMedium, fontFamily = FontFamily.Monospace)
+                                if (entry.note.isNotBlank()) Text(entry.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("••••••••", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            IconButton(onClick = { showDelete = entry }) { RuntimeIcon(RuntimeIconName.Trash, tint = MaterialTheme.colorScheme.error) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EnvironmentVariableEditor(
+    entry: top.wkbin.taixu.core.model.EnvironmentVariable?,
+    onDismiss: () -> Unit,
+    onSave: (String, String, String) -> Unit,
+) {
+    var key by remember(entry) { mutableStateOf(entry?.key.orEmpty()) }
+    var value by remember(entry) { mutableStateOf("") }
+    var note by remember(entry) { mutableStateOf(entry?.note.orEmpty()) }
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (entry == null) "添加环境变量" else "编辑环境变量") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(value = key, onValueChange = { key = it.uppercase() }, label = { Text("名称") }, singleLine = true)
+                OutlinedTextField(value = value, onValueChange = { value = it }, label = { Text(if (entry == null) "值" else "新值（留空保留原值）") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
+                OutlinedTextField(value = note, onValueChange = { note = it }, label = { Text("备注（可选）") }, singleLine = true)
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(key, value, note) }, enabled = key.isNotBlank() && (entry != null || value.isNotEmpty())) { Text("保存") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 /**
@@ -657,7 +769,7 @@ fun AboutCommunityScreen(
                     onDismiss = { viewModel.clearUpdateState() },
                 )
             } else {
-                androidx.compose.material3.AlertDialog(
+                RuntimeAlertDialog(
                     onDismissRequest = { viewModel.clearUpdateState() },
                     title = {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -677,7 +789,7 @@ fun AboutCommunityScreen(
             }
         }
         is top.wkbin.taixu.core.model.UpdateCheckState.Error -> {
-            androidx.compose.material3.AlertDialog(
+            RuntimeAlertDialog(
                 onDismissRequest = { viewModel.clearUpdateState() },
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -721,8 +833,8 @@ fun AboutCommunityScreen(
                         icon = RuntimeIconName.Update,
                         title = "检查新版本",
                         subtitle = "基于 GitHub Releases 自动检测与在线升级",
-                        value = if (updateCheckState is top.wkbin.taixu.core.model.UpdateCheckState.Checking) "检查中…" else "v0.1.0",
-                        onClick = { viewModel.checkForUpdates("0.1.0") },
+                        value = if (updateCheckState is top.wkbin.taixu.core.model.UpdateCheckState.Checking) "检查中…" else "v0.3.0",
+                        onClick = { viewModel.checkForUpdates("0.3.0") },
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     ToggleRow(
@@ -777,7 +889,7 @@ private fun ExecutionModeDialog(
     onSelectMode: (ExecutionMode) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    androidx.compose.material3.AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = { if (!switching) onDismiss() },
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -886,7 +998,7 @@ private fun BatteryOptimizationDialog(
     // 从系统授权页返回时刷新豁免状态
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { onRefresh() }
 
-    androidx.compose.material3.AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -982,7 +1094,7 @@ private fun ThemeSelectionDialog(
     onSelect: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    androidx.compose.material3.AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Text("选择外观主题", fontWeight = FontWeight.Bold)
@@ -1082,7 +1194,7 @@ private fun ThemeOptionItem(
 @Composable
 private fun AboutAppDialog(onDismiss: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    androidx.compose.material3.AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1093,7 +1205,7 @@ private fun AboutAppDialog(onDismiss: () -> Unit) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Android 原生 Linux PRoot 沙箱与 AI 结对编程中枢", style = MaterialTheme.typography.bodyMedium)
-                Text("版本: v0.1.0 (Material 3 Expressive)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text("版本: v0.3.0 (Material 3 Expressive)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 Text("架构: aarch64 · chroot-less user-space virtualization", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("协议: Apache-2.0 License", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(4.dp))
@@ -1123,7 +1235,7 @@ private fun UpdateInfoDialog(
     onOpenBrowser: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    androidx.compose.material3.AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = { if (!isDownloading) onDismiss() },
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1171,12 +1283,12 @@ private fun UpdateInfoDialog(
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("正在下载更新安装包...", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         if (downloadProgress != null) {
-                            androidx.compose.material3.LinearProgressIndicator(
+                            LinearProgressIndicator(
                                 progress = { downloadProgress },
                                 modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
                             )
                         } else {
-                            androidx.compose.material3.LinearProgressIndicator(
+                            LinearProgressIndicator(
                                 modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
                             )
                         }
@@ -1344,6 +1456,7 @@ internal fun SettingsRow(
     subtitle: String,
     value: String? = null,
     onClick: (() -> Unit)? = null,
+    trailing: @Composable RowScope.() -> Unit = {},
 ) {
     val rowModifier = if (onClick == null) Modifier else Modifier.clickable(onClick = onClick)
     Row(
@@ -1400,6 +1513,7 @@ internal fun SettingsRow(
         if (onClick != null) {
             RuntimeIcon(RuntimeIconName.ChevronRight, Modifier.size(16.dp), MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        trailing()
     }
 }
 
@@ -1432,13 +1546,9 @@ internal fun ToggleRow(
             Text(title, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold), color = MaterialTheme.colorScheme.onSurface)
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Switch(
+        RuntimeSwitch(
             checked = checked,
             onCheckedChange = change,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
-            ),
         )
     }
 }
@@ -1467,7 +1577,7 @@ private fun ModelEditor(
     var name by remember(existing?.id) { mutableStateOf(existing?.name.orEmpty()) }
     var model by remember(existing?.id) { mutableStateOf(existing?.model ?: provider.recommendedModels.firstOrNull().orEmpty()) }
     var url by remember(existing?.id) { mutableStateOf(existing?.baseUrl ?: provider.baseUrl) }
-    var key by remember(existing?.id) { mutableStateOf(existing?.apiKey.orEmpty()) }
+    var key by remember(existing?.id) { mutableStateOf("") }
 
     // 推理与上下文参数
     var temperatureText by remember(existing?.id) { mutableStateOf(existing?.temperature?.toString().orEmpty()) }

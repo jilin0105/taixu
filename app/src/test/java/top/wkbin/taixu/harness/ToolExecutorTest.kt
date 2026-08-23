@@ -1,10 +1,15 @@
 ﻿package top.wkbin.taixu.harness
 
 import top.wkbin.taixu.core.security.SecretRedactor
+import top.wkbin.taixu.core.network.DownloadEvent
+import top.wkbin.taixu.core.network.DownloadRequest
+import top.wkbin.taixu.core.network.FileDownloader
 import top.wkbin.taixu.runtime.FakeLinuxRuntime
 import top.wkbin.taixu.runtime.shell.CommandResult
 import java.io.File
 import java.util.UUID
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -23,6 +28,7 @@ class ToolExecutorTest {
 
     private lateinit var runtime: FakeLinuxRuntime
     private lateinit var executor: ToolExecutor
+    private lateinit var downloader: RecordingDownloader
 
     private fun toolCall(tool: HarnessTool, args: kotlinx.serialization.json.JsonObject) =
         ToolCall(UUID.randomUUID().toString(), 0L, tool, args)
@@ -31,7 +37,8 @@ class ToolExecutorTest {
     fun setUp() {
         val root = temporaryFolder.newFolder("workspace")
         runtime = FakeLinuxRuntime()
-        executor = ToolExecutor(WorkspaceFileAccess(root), runtime, SecretRedactor())
+        downloader = RecordingDownloader()
+        executor = ToolExecutor(WorkspaceFileAccess(root), runtime, SecretRedactor(), downloader)
     }
 
     @Test
@@ -110,5 +117,59 @@ class ToolExecutorTest {
             put("cwd", "/workspace/proj")
         }))
         assertEquals("/workspace/proj", runtime.executedShellCommands.single().workingDirectory)
+    }
+
+    @Test
+    fun `download tool uses built in downloader and workspace destination`() = runBlocking {
+        val result = executor.execute(toolCall(HarnessTool.DOWNLOAD, buildJsonObject {
+            put("url", "https://example.com/archive.tar.gz")
+            put("destination", "dist/archive.tar.gz")
+            put("max_attempts", 2)
+        }))
+
+        assertTrue(result.success)
+        assertTrue(result.output.contains("dist/archive.tar.gz"))
+        assertTrue(result.output.contains("断点续传"))
+        assertEquals("https://example.com/archive.tar.gz", downloader.request.url)
+        assertEquals("payload", File(downloader.request.destination.absolutePath).readText())
+    }
+
+    @Test
+    fun `download tool rejects workspace escape`() = runBlocking {
+        val result = executor.execute(toolCall(HarnessTool.DOWNLOAD, buildJsonObject {
+            put("url", "https://example.com/archive.tar.gz")
+            put("destination", "../outside.tar.gz")
+        }))
+
+        assertFalse(result.success)
+        assertTrue(result.output.contains("路径越界"))
+    }
+
+    @Test
+    fun `download tool reports progress while download is active`() = runBlocking {
+        val progress = mutableListOf<String>()
+        executor.execute(
+            toolCall(HarnessTool.DOWNLOAD, buildJsonObject {
+                put("url", "https://example.com/archive.tar.gz")
+                put("destination", "dist/archive.tar.gz")
+            }),
+            progressReporter = { progress += it },
+        )
+
+        assertTrue(progress.any { it.startsWith("下载中：") })
+        assertTrue(progress.any { it.contains("100%") })
+    }
+
+    private class RecordingDownloader : FileDownloader {
+        lateinit var request: DownloadRequest
+
+        override fun download(request: DownloadRequest): Flow<DownloadEvent> = flow {
+            this@RecordingDownloader.request = request
+            request.destination.parentFile?.mkdirs()
+            request.destination.writeText("payload")
+            emit(DownloadEvent.Started)
+            emit(DownloadEvent.Progress(7L, 7L))
+            emit(DownloadEvent.Completed(request.destination))
+        }
     }
 }

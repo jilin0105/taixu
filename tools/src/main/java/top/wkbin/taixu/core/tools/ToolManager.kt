@@ -63,7 +63,10 @@ class ToolManager @Inject constructor(
     private val toolCommandLinker: top.wkbin.taixu.runtime.tools.ToolCommandLinker,
     private val notificationNotifier: ToolNotificationNotifier,
     private val secretRedactor: SecretRedactor,
+    private val toolSettingsRepository: top.wkbin.taixu.core.database.ToolSettingsRepository,
+    private val settingsDataStore: top.wkbin.taixu.core.datastore.SettingsDataStore,
     private val assetSynchronizer: top.wkbin.taixu.runtime.scripts.RuntimeAssetSynchronizer,
+    private val flutterSdkDownloader: FlutterSdkDownloader,
     installerAdapters: Set<@JvmSuppressWildcards ToolRuntimeAdapter>,
 ) {
     private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -330,7 +333,7 @@ class ToolManager @Inject constructor(
                         else -> when {
                             "apt-get update" in step -> "正在同步软件源并聚合下载全部依赖包..."
                             "apt-get" in step -> "正在安装 Android/开发套件系统依赖..."
-                            "gradle" in step -> "正在部署并链接 Gradle 8.9 自动化构建环境..."
+                            "gradle" in step -> "正在部署并链接 Gradle 8.14.2 自动化构建环境..."
                             "setup_android_core" in step -> "正在部署 Android SDK 平台包与 Gradle 构建环境 (国内镜像加速)..."
                             "jadx" in step -> "正在部署 JADX-CLI 源码反编译工具包..."
                             "android" in step -> "正在配置 Android SDK 官方开发工具链..."
@@ -350,10 +353,33 @@ class ToolManager @Inject constructor(
                     notificationNotifier.showProgress("dev_bundle_install", bundleTitle, stepLabel, progress)
                     emit(InstallEvent.Progress("components", stepLabel, progress))
 
+                    val flutterArchive = if ("setup_flutter.sh" in step) {
+                        appendBundleInstallLog("==> [TaiXu] 使用应用内断点下载器获取 Flutter SDK（不在 PRoot 内调用 curl）...")
+                        var lastFlutterLogAt = 0L
+                        var lastFlutterLoggedBytes = -1L
+                        flutterSdkDownloader.prepare(distroId) { downloaded, total ->
+                            val totalText = total?.takeIf { it > 0 }?.let { " / ${it / (1024 * 1024)} MB" }.orEmpty()
+                            val downloadedMb = downloaded / (1024 * 1024)
+                            val now = System.currentTimeMillis()
+                            val completed = total != null && total > 0L && downloaded >= total
+                            val shouldLog = downloaded == 0L || completed ||
+                                (downloaded > lastFlutterLoggedBytes && now - lastFlutterLogAt >= FLUTTER_DOWNLOAD_LOG_INTERVAL_MS)
+                            if (shouldLog) {
+                                appendBundleInstallLog("[TaiXu] Flutter SDK 应用内下载：$downloadedMb MB$totalText")
+                                lastFlutterLoggedBytes = downloaded
+                                lastFlutterLogAt = now
+                            }
+                        }
+                    } else {
+                        null
+                    }
                     val result = linuxRuntime.execute(
                         top.wkbin.taixu.runtime.shell.ShellCommand(
                             commandLine = step,
                             workingDirectory = "/root",
+                            environment = flutterArchive?.let {
+                                mapOf("TAIXU_FLUTTER_ARCHIVE" to it.guestPath)
+                            }.orEmpty(),
                             timeoutMs = stepTimeoutMs,
                         ),
                         distroId = distroId,
@@ -655,7 +681,11 @@ class ToolManager @Inject constructor(
                 state = if (outcome.success) ToolState.AVAILABLE.name else ToolState.FAILED.name,
                 installedVersion = if (outcome.success) null else toolRepository.findById(distroId, toolId)?.installedVersion,
             )
-            if (outcome.success) releaseRuntimeReferences(toolId, distroId)
+            if (outcome.success) {
+                releaseRuntimeReferences(toolId, distroId)
+                toolSettingsRepository.delete(distroId, toolId)
+                settingsDataStore.setToolAccessToken(distroId, toolId, null)
+            }
             updateTask(distroId, toolId, if (outcome.success) TASK_COMPLETED else TASK_FAILED, safeMessage)
             installLogRepository.insert(InstallLogEntity(distroId = distroId, toolId = toolId, event = event, message = safeMessage))
         } catch (cancellation: CancellationException) {
@@ -679,9 +709,13 @@ class ToolManager @Inject constructor(
 
     /** Drop persisted tool/install state after the corresponding distro is reset. */
     suspend fun resetDistroState(distroId: String) {
+        toolRepository.getForDistro(distroId).forEach { tool ->
+            settingsDataStore.setToolAccessToken(distroId, tool.id, null)
+        }
         toolRepository.deleteByDistro(distroId)
         installTaskRepository.deleteByDistro(distroId)
         installLogRepository.deleteByDistro(distroId)
+        toolSettingsRepository.deleteByDistro(distroId)
         _installProgress.value = emptyMap()
         _verifications.value = emptyMap()
     }
@@ -974,6 +1008,7 @@ class ToolManager @Inject constructor(
 
         /** 重型下载型脚本 (Android SDK 平台包 / Gradle / Flutter SDK / JADX) 的超时，与 GenericRecipeInstaller 对齐 */
         const val HEAVY_SETUP_STEP_TIMEOUT_MS = 20 * 60_000L
+        const val FLUTTER_DOWNLOAD_LOG_INTERVAL_MS = 2_000L
         const val MAX_BUNDLE_LOG_CHARS = 120 * 1024
         const val MAX_BUNDLE_LINE_CHARS = 8 * 1024
         const val MAX_BUNDLE_LOG_LINES = 2048

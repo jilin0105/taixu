@@ -3,6 +3,9 @@ package top.wkbin.taixu.harness
 import top.wkbin.taixu.core.database.AiModelDao
 import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.core.tools.ProviderRepository
+import java.io.IOException
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -24,6 +27,13 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
+/** HTTP 429 的结构化错误，供 Harness 区分临时限流与账户额度耗尽。 */
+class LlmRateLimitException(
+    message: String,
+    val retryAfterSeconds: Long? = null,
+    val quotaExhausted: Boolean = false,
+) : IOException(message)
+
 /** 可独立测试的 HTTP 层：OpenAI 兼容 chat/completions 请求与响应解析。 */
 internal class ChatApi(
     private val okHttpClient: OkHttpClient,
@@ -34,6 +44,9 @@ internal class ChatApi(
             okHttpClient.newCall(buildRequest(model, messages, stream = false)).execute().use { response ->
                 val body = response.body.string()
                 if (!response.isSuccessful) {
+                    if (response.code == 429) {
+                        throw ProviderClient.rateLimitException(response.code, body, response.header("Retry-After"))
+                    }
                     throw IllegalStateException(ProviderClient.formatHttpErrorMessage(response.code, body))
                 }
                 val parsed = json.decodeFromString(ChatCompletionResponse.serializer(), body)
@@ -71,6 +84,9 @@ internal class ChatApi(
             call.execute().use { response ->
                 if (!response.isSuccessful) {
                     val rawBody = response.body.string().take(512)
+                    if (response.code == 429) {
+                        throw ProviderClient.rateLimitException(response.code, rawBody, response.header("Retry-After"))
+                    }
                     throw IllegalStateException(ProviderClient.formatHttpErrorMessage(response.code, rawBody))
                 }
                 val source = response.body.source()
@@ -465,7 +481,9 @@ class ProviderClient @Inject constructor(
                 provider = provider,
                 model = model,
                 baseUrl = baseUrl,
-                apiKey = apiKey.ifBlank { providerRepository.readApiKey().orEmpty() }.ifBlank { null },
+                apiKey = providerRepository.readModelApiKey(secretRef).orEmpty()
+                    .ifBlank { providerRepository.readApiKey().orEmpty() }
+                    .ifBlank { null },
                 protocol = inferProtocol(baseUrl, provider),
                 temperature = temperature,
                 maxTokens = maxTokens,
@@ -548,6 +566,26 @@ class ProviderClient @Inject constructor(
             }
         }
 
+        internal fun rateLimitException(code: Int, rawBody: String, retryAfter: String?): LlmRateLimitException {
+            val message = formatHttpErrorMessage(code, rawBody)
+            val lower = message.lowercase()
+            val quotaExhausted = listOf(
+                "insufficient_quota",
+                "quota exceeded",
+                "allocated quota",
+                "quota exhausted",
+                "resource_exhausted",
+                "余额",
+                "额度已用尽",
+            ).any { it in lower }
+            val retrySeconds = retryAfter?.trim()?.toLongOrNull()?.coerceIn(1L, 300L)
+                ?: runCatching {
+                    ZonedDateTime.parse(retryAfter?.trim().orEmpty(), DateTimeFormatter.RFC_1123_DATE_TIME)
+                        .toEpochSecond() - System.currentTimeMillis() / 1000L
+                }.getOrNull()?.takeIf { it > 0 }?.coerceAtMost(300L)
+            return LlmRateLimitException(message, retrySeconds, quotaExhausted)
+        }
+
         private const val READ_TIMEOUT_MS = 3 * 60 * 1000L
         internal val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
@@ -586,6 +624,15 @@ class ProviderClient @Inject constructor(
                     description = "在 Debian Linux 沙箱中执行 shell 命令，返回退出码/stdout/stderr。用于安装软件（apt-get/npm/pip install）、运行脚本、查看文件/进程/网络、执行任意 bash。命令有超时与输出截断；可用 cwd 指定工作目录（会话关联工作区时默认在其目录执行）。",
                     parameters = Json.parseToJsonElement(
                         """{"type":"object","properties":{"command":{"type":"string","description":"要执行的 shell 命令"},"cwd":{"type":"string","description":"工作目录，默认 /root"}},"required":["command"]}""",
+                    ).jsonObject,
+                ),
+            ),
+            ApiToolDefinition(
+                function = ApiFunctionDefinition(
+                    name = "download",
+                    description = "使用内置 HTTPS 下载器把远程文件保存到工作区。支持 HTTP Range 断点续传、自动重试、最大文件大小限制和可选 SHA-256 校验；当前为单连接续传，不是多线程分片。destination 必须位于当前工作区内，不要填写宿主机绝对路径。",
+                    parameters = Json.parseToJsonElement(
+                        """{"type":"object","properties":{"url":{"type":"string","description":"HTTPS 下载地址"},"destination":{"type":"string","description":"工作区内目标路径，例如 dist/tool.tar.gz"},"sha256":{"type":"string","description":"可选 SHA-256 十六进制摘要"},"max_attempts":{"type":"integer","description":"可选最大尝试次数，1-10，默认 3"},"max_bytes":{"type":"integer","description":"可选最大文件大小（字节），默认 1 GiB，最大 4 GiB"}},"required":["url","destination"]}""",
                     ).jsonObject,
                 ),
             ),

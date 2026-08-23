@@ -1,5 +1,6 @@
 ﻿package top.wkbin.taixu.runtime.samples
 
+import android.content.Context
 import top.wkbin.taixu.core.database.WorkspaceDao
 import top.wkbin.taixu.core.database.WorkspaceEntity
 import java.io.File
@@ -13,11 +14,11 @@ import java.io.File
  */
 object WorkspaceSampleSeeder {
 
-    suspend fun ensureBuiltinSamples(workspaceDir: File, workspaceDao: WorkspaceDao) {
+    suspend fun ensureBuiltinSamples(context: Context, workspaceDir: File, workspaceDao: WorkspaceDao) {
         runCatching {
             workspaceDir.mkdirs()
             seedAndroidDemo(File(workspaceDir, "android-demo"), workspaceDao)
-            seedFlutterDemo(File(workspaceDir, "flutter-demo"), workspaceDao)
+            seedFlutterDemo(context, File(workspaceDir, "flutter-demo"), workspaceDao)
         }
     }
 
@@ -28,6 +29,8 @@ object WorkspaceSampleSeeder {
         // 1. settings.gradle.kts
         File(projectDir, "settings.gradle.kts").writeText(
             """
+            import org.gradle.api.initialization.resolve.RepositoriesMode
+
             pluginManagement {
                 repositories {
                     maven("https://maven.aliyun.com/repository/google")
@@ -57,9 +60,9 @@ object WorkspaceSampleSeeder {
         File(projectDir, "build.gradle.kts").writeText(
             """
             plugins {
-                id("com.android.application") version "8.7.3" apply false
-                id("org.jetbrains.kotlin.android") version "2.0.21" apply false
-                id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
+                id("com.android.application") version "8.11.1" apply false
+                id("org.jetbrains.kotlin.android") version "2.2.20" apply false
+                id("org.jetbrains.kotlin.plugin.compose") version "2.2.20" apply false
             }
             """.trimIndent()
         )
@@ -92,6 +95,7 @@ object WorkspaceSampleSeeder {
             android {
                 namespace = "com.example.taixudemo"
                 compileSdk = 34
+                buildToolsVersion = "34.0.0"
 
                 defaultConfig {
                     applicationId = "com.example.taixudemo"
@@ -192,7 +196,7 @@ object WorkspaceSampleSeeder {
                     }
                 }
             }
-            """.replace("count", "${'$'}count").trimIndent()
+            """.trimIndent()
         )
 
         // 7. gradle/wrapper/gradle-wrapper.properties (国内腾讯云镜像)
@@ -201,7 +205,7 @@ object WorkspaceSampleSeeder {
             """
             distributionBase=GRADLE_USER_HOME
             distributionPath=wrapper/dists
-            distributionUrl=https\://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip
+            distributionUrl=https\://mirrors.cloud.tencent.com/gradle/gradle-8.14.2-bin.zip
             zipStoreBase=GRADLE_USER_HOME
             zipStorePath=wrapper/dists
             """.trimIndent()
@@ -215,8 +219,8 @@ object WorkspaceSampleSeeder {
             DIR="$(cd "$(dirname "${'$'}0")" && pwd)"
             if [ -f "${'$'}DIR/gradle/wrapper/gradle-wrapper.jar" ]; then
                 exec java -jar "${'$'}DIR/gradle/wrapper/gradle-wrapper.jar" "${'$'}@"
-            elif [ -x /opt/gradle-8.9/bin/gradle ]; then
-                exec /opt/gradle-8.9/bin/gradle "${'$'}@"
+            elif [ -x /opt/gradle-8.14.2/bin/gradle ]; then
+                exec /opt/gradle-8.14.2/bin/gradle "${'$'}@"
             elif [ -x /opt/gradle-8.7/bin/gradle ]; then
                 exec /opt/gradle-8.7/bin/gradle "${'$'}@"
             elif [ -x /usr/local/bin/gradle ]; then
@@ -256,7 +260,7 @@ object WorkspaceSampleSeeder {
         )
     }
 
-    private suspend fun seedFlutterDemo(projectDir: File, workspaceDao: WorkspaceDao) {
+    private suspend fun seedFlutterDemo(context: Context, projectDir: File, workspaceDao: WorkspaceDao) {
         if (projectDir.exists() && projectDir.listFiles()?.isNotEmpty() == true) return
         projectDir.mkdirs()
 
@@ -359,6 +363,9 @@ object WorkspaceSampleSeeder {
             """.trimIndent()
         )
 
+        // 2.5. Android Gradle 宿主工程（v2 embedding，复用应用内置模板）
+        materializeFlutterAndroidHost(context, projectDir)
+
         // 3. README.md 说明
         File(projectDir, "README.md").writeText(
             """
@@ -385,5 +392,51 @@ object WorkspaceSampleSeeder {
                 ownsDirectory = false,
             )
         )
+    }
+
+    /**
+     * 生成 flutter-demo 的 Android Gradle 宿主工程（v2 embedding）。
+     *
+     * 直接复用应用内置 `assets/templates/flutter/android` 目录下的模板文件，避免在
+     * Kotlin 字符串里手写 Groovy/Kotlin 模板而产生 `$` 转义错误（与 android-demo
+     * 此前 `.replace("count", ...)` 同类问题）。模板内容与「新建 Flutter 工程」完全一致。
+     */
+    private fun materializeFlutterAndroidHost(context: Context, projectDir: File) {
+        val packageName = "com.example.flutterdemo"
+        val packagePath = packageName.replace('.', '/')
+        val replacements = mapOf(
+            "{{projectName}}" to "flutter-demo",
+            "{{appName}}" to "TaiXu Flutter Demo",
+            "{{flutterProjectName}}" to "flutter_demo",
+            "{{packageName}}" to packageName,
+            "{{packagePath}}" to packagePath,
+        )
+
+        fun visit(assetPath: String, relativePath: String) {
+            val children = context.assets.list(assetPath).orEmpty()
+            if (children.isNotEmpty()) {
+                children.forEach { child ->
+                    visit("$assetPath/$child", if (relativePath.isBlank()) child else "$relativePath/$child")
+                }
+                return
+            }
+            val outputRel = if (relativePath == "app/src/main/kotlin/MainActivity.kt.template") {
+                "app/src/main/kotlin/$packagePath/MainActivity.kt"
+            } else {
+                relativePath
+            }
+            val target = File(projectDir, "android/$outputRel")
+            target.parentFile?.mkdirs()
+            context.assets.open(assetPath).use { input ->
+                var text = input.readBytes().toString(Charsets.UTF_8)
+                replacements.forEach { (token, value) -> text = text.replace(token, value) }
+                target.writeText(text, Charsets.UTF_8)
+            }
+            if (target.name == "gradlew") {
+                runCatching { target.setExecutable(true) }
+            }
+        }
+
+        visit("templates/flutter/android", "")
     }
 }

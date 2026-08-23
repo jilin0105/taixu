@@ -46,7 +46,7 @@ class LxcImagesClient @Inject constructor(
                 val expectedSha = fetchExpectedSha256(base, lxcPath, buildDir)
                 val blob = downloadRootfs(base, lxcPath, buildDir, expectedSha, cacheDir, onProgress)
                 applyLayer(blob, MEDIA_TYPE_ROOTFS_TAR_XZ)
-                return@withContext "lxc-5.7.0-${distribution.id}-$buildDir"
+                return@withContext "lxc-5.8.0-${distribution.id}-$buildDir"
             } catch (failure: Throwable) {
                 lastFailure = failure
                 logger.w("lxc-images 镜像源 $base 不可用（${distribution.id}）", failure)
@@ -185,7 +185,7 @@ class LxcImagesClient @Inject constructor(
             "https://mirrors.tuna.tsinghua.edu.cn/lxc-images/images",
             "https://images.linuxcontainers.org/images",
         )
-        const val USER_AGENT = "TaiXu/proot-distro-5.7.0-compatible"
+        const val USER_AGENT = "TaiXu/proot-distro-5.8.0"
         const val MEDIA_TYPE_ROOTFS_TAR_XZ = "application/x-tar.xz"
 
         /**

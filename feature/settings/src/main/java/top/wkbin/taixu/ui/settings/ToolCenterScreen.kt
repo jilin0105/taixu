@@ -1,5 +1,7 @@
 package top.wkbin.taixu.ui.settings
 
+import top.wkbin.taixu.ui.components.RuntimeAlertDialog
+
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -29,23 +31,24 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import top.wkbin.taixu.ui.components.RuntimeButton as Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.FilledTonalButton
+import top.wkbin.taixu.ui.components.RuntimeFilledTonalButton as FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
+import top.wkbin.taixu.ui.components.RuntimeIconButton as IconButton
+import top.wkbin.taixu.ui.components.RuntimeLinearProgressIndicator as LinearProgressIndicator
+import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator
+import top.wkbin.taixu.ui.components.RuntimeCheckbox
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import top.wkbin.taixu.ui.components.RuntimeOutlinedButton as OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -180,7 +183,7 @@ fun ToolCenterScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 ) {
-                                    androidx.compose.material3.CircularProgressIndicator(
+                                    RuntimeCircularProgressIndicator(
                                         modifier = Modifier.size(18.dp),
                                         strokeWidth = 2.dp,
                                         color = MaterialTheme.colorScheme.primary,
@@ -268,6 +271,7 @@ fun ToolCenterScreen(
                                                 "Android" -> RuntimeIconName.Android
                                                 "Flutter" -> RuntimeIconName.Flutter
                                                 "Globe" -> RuntimeIconName.Globe
+                                                "Search" -> RuntimeIconName.Search
                                                 else -> RuntimeIconName.Code
                                             },
                                             modifier = Modifier.size(22.dp),
@@ -414,7 +418,7 @@ fun ToolCenterScreen(
             val toolName = tools.firstOrNull { it.id == toolId }?.name ?: toolId
             val hasErrors = toolLogs.any { it.event.contains("FAIL", ignoreCase = true) || it.message.startsWith("ERR") }
 
-            AlertDialog(
+            RuntimeAlertDialog(
                 onDismissRequest = { viewModel.viewLogs(null) },
                 title = { Text("工具执行日志 ($toolName)") },
                 text = {
@@ -507,7 +511,7 @@ fun ToolCenterScreen(
 
         if (showBundleInstallLog) {
             val context = androidx.compose.ui.platform.LocalContext.current
-            AlertDialog(
+            RuntimeAlertDialog(
                 onDismissRequest = { showBundleInstallLog = false },
                 title = { Text("开发套件安装日志") },
                 text = {
@@ -555,7 +559,7 @@ fun ToolCenterScreen(
 
         // 🛠️ 聚合大插件子组件装配弹窗 (Bundle Component Setup Dialog)
         activeBundle?.let { bundle ->
-            AlertDialog(
+            RuntimeAlertDialog(
                 onDismissRequest = viewModel::closeBundleSetup,
                 title = {
                     Row(
@@ -567,6 +571,7 @@ fun ToolCenterScreen(
                                 "Android" -> RuntimeIconName.Android
                                 "Flutter" -> RuntimeIconName.Flutter
                                 "Globe" -> RuntimeIconName.Globe
+                                "Search" -> RuntimeIconName.Search
                                 else -> RuntimeIconName.Code
                             },
                             modifier = Modifier.size(22.dp),
@@ -577,7 +582,12 @@ fun ToolCenterScreen(
                 },
                 text = {
                     Column(
-                        modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            // Keep the dialog actions in the viewport when a bundle has many components.
+                            // The component list remains fully accessible through this scroll container.
+                            .heightIn(max = 360.dp)
+                            .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         Text(
@@ -594,7 +604,7 @@ fun ToolCenterScreen(
                             ) {
                                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        androidx.compose.material3.CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                        RuntimeCircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                                         Text(componentInstallProgress ?: "正在执行批量原子装配流水线...", style = MaterialTheme.typography.bodySmall, maxLines = 2)
                                     }
                                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)))
@@ -640,7 +650,7 @@ fun ToolCenterScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                                     ) {
-                                        androidx.compose.material3.Checkbox(
+                                        RuntimeCheckbox(
                                             checked = isChecked,
                                             onCheckedChange = { if (!isUninstalledRequired) viewModel.toggleComponent(comp) },
                                             enabled = !isInstallingComponents && !isUninstalledRequired,

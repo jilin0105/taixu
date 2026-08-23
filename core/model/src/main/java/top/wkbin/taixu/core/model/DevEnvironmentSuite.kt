@@ -35,7 +35,7 @@ data class PluginBundle(
 object BuiltinPluginBundles {
     /** 基础核心包：始终隐式自动预装，保证 Linux 基础终端与工具可用 */
     val baseRequiredPackages: List<String> = listOf(
-        "curl", "wget", "git", "ca-certificates", "ripgrep", "fd-find", "jq", "tmux", "tar", "gzip", "xz-utils",
+        "curl", "wget", "git", "python3", "ca-certificates", "ripgrep", "fd-find", "fzf", "bat", "jq", "tmux", "tar", "gzip", "xz-utils",
     )
 
     /** 核心聚合大插件清单 */
@@ -61,7 +61,7 @@ object BuiltinPluginBundles {
                     postInstallSteps = listOf(
                         "/bin/sh /opt/taixu/scripts/setup_android_core.sh",
                     ),
-                    checkCommand = ". /etc/profile.d/taixu-android.sh 2>/dev/null || true; test -x \"${'$'}JAVA_HOME/bin/java\" && test -s \"${'$'}JAVA_HOME/conf/security/java.security\" && test -f \"${'$'}JAVA_HOME/conf/security/policy/unlimited/default_local.policy\" && test -s \"${'$'}JAVA_HOME/lib/security/cacerts\" && test -f /opt/android-sdk/platforms/android-34/android.jar && test -s /opt/android-sdk/licenses/android-sdk-license && test -f /opt/android-sdk/build-tools/34.0.0/source.properties && test -f /opt/android-sdk/build-tools/34.0.0/lib/d8.jar && (test -f /opt/gradle-8.9/lib/gradle-launcher-8.9.jar || command -v gradle) && test -x \"${'$'}{TAIXU_AAPT2_PATH:-/opt/taixu/android-sdk-tools/qemu/aapt2}\" && \"${'$'}{TAIXU_AAPT2_PATH:-/opt/taixu/android-sdk-tools/qemu/aapt2}\" version >/dev/null 2>&1",
+                    checkCommand = ". /etc/profile.d/taixu-android.sh 2>/dev/null || true; test -x \"${'$'}JAVA_HOME/bin/java\" && test -s \"${'$'}JAVA_HOME/conf/security/java.security\" && test -f \"${'$'}JAVA_HOME/conf/security/policy/unlimited/default_local.policy\" && test -s \"${'$'}JAVA_HOME/lib/security/cacerts\" && test -f /opt/android-sdk/platforms/android-34/android.jar && test -s /opt/android-sdk/licenses/android-sdk-license && test -f /opt/android-sdk/build-tools/34.0.0/source.properties && test -f /opt/android-sdk/build-tools/34.0.0/lib/d8.jar && (test -f /opt/gradle-8.14.2/lib/gradle-launcher-8.9.jar || command -v gradle) && test -x \"${'$'}{TAIXU_AAPT2_PATH:-/opt/taixu/android-sdk-tools/qemu/aapt2}\" && \"${'$'}{TAIXU_AAPT2_PATH:-/opt/taixu/android-sdk-tools/qemu/aapt2}\" version >/dev/null 2>&1",
                 ),
                 PluginComponent(
                     id = "flutter",
@@ -95,6 +95,24 @@ object BuiltinPluginBundles {
                         "/bin/sh /opt/taixu/scripts/setup_jadx.sh",
                     ),
                     checkCommand = "command -v apktool || command -v jadx || test -x /opt/jadx/bin/jadx",
+                ),
+            ),
+        ),
+        PluginBundle(
+            id = "code-search-suite",
+            name = "代码检索与终端效率套件",
+            summary = "rg、fd、fzf、bat 代码检索四件套",
+            description = "集成 ripgrep 全文检索、fd 文件查找、fzf 模糊筛选与 bat 语法高亮预览，并统一 Debian/Ubuntu 下的命令名称。",
+            iconName = "Search",
+            category = "开发效率",
+            components = listOf(
+                PluginComponent(
+                    id = "code-search-toolkit",
+                    name = "代码检索四件套 (rg / fd / fzf / bat)",
+                    description = "高速全文检索、文件发现、交互式模糊筛选与带语法高亮的源码预览",
+                    isRequired = true,
+                    aptPackages = listOf("ripgrep", "fd-find", "fzf", "bat"),
+                    checkCommand = "command -v rg && command -v fd && command -v fzf && command -v bat",
                 ),
             ),
         ),
@@ -184,7 +202,11 @@ object BuiltinPluginBundles {
             steps.add("DEBIAN_FRONTEND=noninteractive apt-get $aptOpts install -y --no-install-recommends $packageArg || DEBIAN_FRONTEND=noninteractive apt-get $aptOpts -f install -y --no-install-recommends && DEBIAN_FRONTEND=noninteractive apt-get $aptOpts install -y --no-install-recommends $packageArg")
         }
 
-        // 3. 各子组件后置处理
+        // 3. Debian/Ubuntu 将 fd、bat 分别命名为 fdfind、batcat；统一暴露常用命令名。
+        steps.add("mkdir -p /usr/local/bin; if ! command -v fd >/dev/null 2>&1 && command -v fdfind >/dev/null 2>&1; then ln -sf \"${'$'}(command -v fdfind)\" /usr/local/bin/fd; fi")
+        steps.add("mkdir -p /usr/local/bin; if ! command -v bat >/dev/null 2>&1 && command -v batcat >/dev/null 2>&1; then ln -sf \"${'$'}(command -v batcat)\" /usr/local/bin/bat; fi")
+
+        // 4. 各子组件后置处理
         allComponents.forEach { comp ->
             steps.addAll(comp.postInstallSteps)
         }

@@ -72,17 +72,19 @@ class HostBridge @Inject constructor(
 
     private val bridgeScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    /** 启动 HTTP 监听。重复调用安全。 */
+    /** 启动 HTTP 监听。重复调用安全，且绑定操作不会被并发启动打断。 */
+    @Synchronized
     fun start() {
         if (_isRunning.value) return
         try {
-            serverSocket = ServerSocket(BRIDGE_PORT, 16, InetAddress.getByName(BRIDGE_HOST))
+            val socket = ServerSocket(BRIDGE_PORT, 16, InetAddress.getByName(BRIDGE_HOST))
+            serverSocket = socket
             _isRunning.value = true
             serverJob = bridgeScope.launch {
                 logger.i("HostBridge listening on $BRIDGE_HOST:$BRIDGE_PORT")
                 while (isActive) {
                     try {
-                        val client = serverSocket?.accept() ?: break
+                        val client = socket.accept()
                         launch { handleClient(client) }
                     } catch (e: Exception) {
                         if (isActive) logger.w("HostBridge accept error", e)
@@ -90,11 +92,15 @@ class HostBridge @Inject constructor(
                 }
             }
         } catch (e: Exception) {
+            serverSocket?.runCatching { close() }
+            serverSocket = null
+            _isRunning.value = false
             logger.e("Failed to start HostBridge on port $BRIDGE_PORT", e)
         }
     }
 
     /** 停止 HTTP 监听。 */
+    @Synchronized
     fun stop() {
         serverJob?.cancel()
         serverSocket?.runCatching { close() }

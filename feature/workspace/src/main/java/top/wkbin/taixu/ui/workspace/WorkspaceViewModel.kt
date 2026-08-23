@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -125,7 +126,11 @@ class WorkspaceViewModel @Inject constructor(
     val isInstallingSuites: StateFlow<Boolean> get() = _isInstallingComponents
 
     // ==================== 项目列表状态 ====================
+    private val _loadingProjects = MutableStateFlow(true)
+    val loadingProjects: StateFlow<Boolean> = _loadingProjects.asStateFlow()
+
     val projects: StateFlow<List<WorkspaceProject>> = workspaceManager.observeProjects()
+        .onEach { if (_loadingProjects.value) _loadingProjects.value = false }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _message = MutableStateFlow<String?>(null)

@@ -1,5 +1,7 @@
 package top.wkbin.taixu.ui.workspace
 
+import top.wkbin.taixu.ui.components.RuntimeAlertDialog
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,20 +20,19 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import top.wkbin.taixu.ui.components.RuntimeButton as Button
+import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator as CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.IconButton
+import top.wkbin.taixu.ui.components.RuntimeIconButton as IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -226,7 +227,7 @@ fun WorkspaceExplorerScreen(
 
     // 新建文件对话框
     if (showCreateFileDialog) {
-        AlertDialog(
+        RuntimeAlertDialog(
             onDismissRequest = { showCreateFileDialog = false },
             title = { Text("新建文件", fontWeight = FontWeight.Bold) },
             text = {
@@ -256,7 +257,7 @@ fun WorkspaceExplorerScreen(
 
     // 新建文件夹对话框
     if (showCreateFolderDialog) {
-        AlertDialog(
+        RuntimeAlertDialog(
             onDismissRequest = { showCreateFolderDialog = false },
             title = { Text("新建文件夹", fontWeight = FontWeight.Bold) },
             text = {
@@ -284,7 +285,7 @@ fun WorkspaceExplorerScreen(
 
     // 重命名对话框
     renameTarget?.let { target ->
-        AlertDialog(
+        RuntimeAlertDialog(
             onDismissRequest = { renameTarget = null },
             title = { Text("重命名 ${target.name}", fontWeight = FontWeight.Bold) },
             text = {
@@ -311,7 +312,7 @@ fun WorkspaceExplorerScreen(
 
     // 删除确认对话框
     deleteTarget?.let { target ->
-        AlertDialog(
+        RuntimeAlertDialog(
             onDismissRequest = { deleteTarget = null },
             title = { Text("删除 ${target.name}？", fontWeight = FontWeight.Bold) },
             text = {

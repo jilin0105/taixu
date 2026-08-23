@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "{{packageName}}"
     compileSdk = 34
+    buildToolsVersion = "34.0.0"
     defaultConfig {
         applicationId = "{{packageName}}"
         minSdk = 26
@@ -16,6 +17,14 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+    // The bundled runtime is ARM64. Android's NDK archive ships a
+    // linux-x86_64 llvm-strip, which cannot start inside our ARM64 PRoot.
+    // Keep native symbols in the debug APK so AGP does not invoke it.
+    packagingOptions {
+        jniLibs {
+            keepDebugSymbols += "**/*.so"
+        }
     }
     buildFeatures { compose = true }
 }

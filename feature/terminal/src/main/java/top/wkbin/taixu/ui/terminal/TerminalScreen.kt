@@ -1,5 +1,7 @@
 package top.wkbin.taixu.ui.terminal
 
+import top.wkbin.taixu.ui.components.RuntimeAlertDialog
+
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -10,6 +12,9 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,13 +38,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.IconButton
+import top.wkbin.taixu.ui.components.RuntimeIconButton as IconButton
+import top.wkbin.taixu.ui.components.RuntimeButton as Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -65,6 +70,8 @@ import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -87,12 +94,17 @@ import top.wkbin.taixu.ui.components.NoticeBanner
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
+import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private val TermBg = Color(0xFF0F1117)
 private val TermHeaderBg = Color(0xFF181A22)
 private val TermTextDefault = Color(0xFFE2E2E9)
 private val TermDimText = Color(0xFF8E9099)
 private val TermBorder = Color(0xFF282A36)
+private const val MIN_TERMINAL_FONT_SIZE_SP = 10f
+private const val MAX_TERMINAL_FONT_SIZE_SP = 24f
 
 /**
  * 太墟 · 矩阵控制台 (Matrix Terminal)
@@ -120,7 +132,7 @@ fun TerminalScreen(
     val view = LocalView.current
     val density = LocalDensity.current
 
-    var fontSizeSp by remember(configuredFontSize) { mutableFloatStateOf(configuredFontSize.toFloat()) }
+    var fontSizeSp by remember { mutableFloatStateOf(configuredFontSize.toFloat()) }
     var terminalPxWidth by remember { mutableFloatStateOf(0f) }
     var terminalPxHeight by remember { mutableFloatStateOf(0f) }
 
@@ -166,15 +178,21 @@ fun TerminalScreen(
 
     val terminalFocusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+    val coroutineScope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     var visibleRows by remember { mutableStateOf(0) }
     var inputFocused by remember { mutableStateOf(false) }
+    var isLeaving by remember { mutableStateOf(false) }
     var followOutput by remember { mutableStateOf(true) }
     var showSessions by remember { mutableStateOf(false) }
     var showCreateSession by remember { mutableStateOf(false) }
 
     LaunchedEffect(project) {
         viewModel.initialize(project)
+    }
+
+    LaunchedEffect(configuredFontSize) {
+        fontSizeSp = configuredFontSize.toFloat()
     }
 
     LaunchedEffect(listState) {
@@ -186,6 +204,9 @@ fun TerminalScreen(
 
     LaunchedEffect(fontSizeSp, terminalPxWidth, terminalPxHeight, activeId) {
         if (terminalPxWidth > 0f && terminalPxHeight > 0f) {
+            // Pinch gestures can emit many frames per second. Text updates immediately;
+            // native PTY resize follows the latest dimensions after a short debounce.
+            delay(80)
             val renderWidthPx = terminalPxWidth - with(density) { 24.dp.toPx() }
             val rows = (terminalPxHeight / terminalLineHeight).toInt().coerceIn(5, 200)
             visibleRows = rows
@@ -196,7 +217,7 @@ fun TerminalScreen(
         }
     }
 
-    LaunchedEffect(screen.size, cursor.row, followOutput, activeId) {
+    LaunchedEffect(screen.size, cursor.row, cursor.column, followOutput, activeId) {
         if (followOutput && screen.isNotEmpty()) {
             listState.scrollToItem(screen.size - 1)
         }
@@ -218,6 +239,24 @@ fun TerminalScreen(
 
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
 
+    val navigateBack = {
+        if (!isLeaving) {
+            isLeaving = true
+            if (inputFocused) {
+                keyboard?.hide()
+                focusManager.clearFocus(force = true)
+                inputFocused = false
+                // Let the IME begin its close animation before removing the terminal page.
+                coroutineScope.launch {
+                    delay(180)
+                    onBack()
+                }
+            } else {
+                onBack()
+            }
+        }
+    }
+
     androidx.activity.compose.BackHandler(enabled = inputFocused) {
         keyboard?.hide()
         focusManager.clearFocus()
@@ -233,7 +272,7 @@ fun TerminalScreen(
         topBar = {
             RuntimeTopBar(
                 title = if (project.isNotBlank()) "矩阵 · $project" else "太墟 · 矩阵控制台",
-                onBack = onBack,
+                onBack = navigateBack,
                 statusText = "$distributionName · PRoot",
             ) {
                 IconButton(onClick = { showSessions = true }) {
@@ -311,6 +350,31 @@ fun TerminalScreen(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
+                            .pointerInput(Unit) {
+                                awaitEachGesture {
+                                    awaitFirstDown(requireUnconsumed = false)
+                                    var zoomChanged = false
+                                    do {
+                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                        val pressedPointers = event.changes.count { it.pressed }
+                                        if (pressedPointers >= 2) {
+                                            val zoom = event.calculateZoom()
+                                            if (zoom != 1f) {
+                                                fontSizeSp = (fontSizeSp * zoom).coerceIn(
+                                                    MIN_TERMINAL_FONT_SIZE_SP,
+                                                    MAX_TERMINAL_FONT_SIZE_SP,
+                                                )
+                                                zoomChanged = true
+                                            }
+                                            event.changes.forEach { it.consume() }
+                                        }
+                                    } while (event.changes.any { it.pressed })
+
+                                    if (zoomChanged) {
+                                        viewModel.setTerminalFontSize(fontSizeSp.roundToInt())
+                                    }
+                                }
+                            }
                             .onSizeChanged { size ->
                                 terminalPxWidth = size.width.toFloat()
                                 terminalPxHeight = size.height.toFloat()
@@ -340,7 +404,10 @@ fun TerminalScreen(
                                     .padding(horizontal = 12.dp, vertical = 8.dp),
                                 state = listState,
                             ) {
-                                itemsIndexed(screen, key = { index, _ -> index }) { index, line ->
+                                itemsIndexed(
+                                    screen,
+                                    key = { index, _ -> index },
+                                ) { index, line ->
                                     TerminalLineRow(
                                         line = line,
                                         showCursor = cursor.visible && index == cursor.row,
@@ -486,7 +553,7 @@ private fun CreateTerminalDialog(
     var selectedDistroId by remember { mutableStateOf(installedDistros.firstOrNull { it.isActive }?.id ?: installedDistros.firstOrNull()?.id ?: "ubuntu") }
     val quickLabels = listOf("主终端", "后台构建", "服务调试", "Git运维", "Python环境")
 
-    AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -597,7 +664,7 @@ private fun CreateTerminalDialog(
             }
         },
         confirmButton = {
-            androidx.compose.material3.Button(
+            Button(
                 onClick = { onCreate(label.ifBlank { "终端 $nextSessionIndex" }, selectedDir, selectedDistroId) },
                 shape = RoundedCornerShape(8.dp),
             ) {
@@ -655,7 +722,7 @@ private fun SessionListDialog(
     onCreate: () -> Unit,
     onClose: (String) -> Unit,
 ) {
-    AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(
@@ -799,7 +866,7 @@ private fun SessionListDialog(
             }
         },
         confirmButton = {
-            androidx.compose.material3.Button(onClick = onCreate, shape = RoundedCornerShape(8.dp)) {
+            Button(onClick = onCreate, shape = RoundedCornerShape(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     RuntimeIcon(RuntimeIconName.Plus, Modifier.size(16.dp), MaterialTheme.colorScheme.onPrimary)
                     Text("新建终端")
@@ -887,17 +954,11 @@ private fun TerminalLineRow(
                         background = if (isCursor) Color(0xFF00F0FF) else Color.Unspecified,
                         fontWeight = if (cell.bold) FontWeight.Bold else FontWeight.Normal,
                     ),
-                ) {
-                    append(cell.character)
-                }
+                ) { append(cell.character) }
             }
             if (showCursor && cursorColumn >= line.cells.size) {
-                withStyle(
-                    SpanStyle(
-                        color = termBg,
-                        background = Color(0xFF00F0FF),
-                    ),
-                ) { append(" ") }
+                repeat(cursorColumn - line.cells.size) { append(" ") }
+                withStyle(SpanStyle(color = termBg, background = Color(0xFF00F0FF))) { append(" ") }
             }
         },
         fontFamily = FontFamily.Monospace,

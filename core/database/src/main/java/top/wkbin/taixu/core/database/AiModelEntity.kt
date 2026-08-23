@@ -19,7 +19,6 @@ data class AiModelEntity(
     val provider: String,
     val model: String,
     val baseUrl: String = "",
-    val apiKey: String = "",
     val secretRef: String = "",
     val isActive: Boolean = false,
     val createdAt: Long,

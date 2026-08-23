@@ -51,6 +51,7 @@ class HarnessApiMapperTest {
         assertEquals(HarnessTool.READ, HarnessApiMapper.toolByName("read"))
         assertEquals(HarnessTool.WRITE, HarnessApiMapper.toolByName("Write"))
         assertEquals(HarnessTool.EDIT, HarnessApiMapper.toolByName("edit"))
+        assertEquals(HarnessTool.DOWNLOAD, HarnessApiMapper.toolByName("download"))
         assertEquals(HarnessTool.BASE, HarnessApiMapper.toolByName("base"))
         assertEquals(HarnessTool.BASE, HarnessApiMapper.toolByName("execute"))
         assertEquals(HarnessTool.SUBAGENT, HarnessApiMapper.toolByName("invoke_subagent"))

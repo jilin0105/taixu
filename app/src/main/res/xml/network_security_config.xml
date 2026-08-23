@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- 全局默认强制 HTTPS/TLS 安全传输 -->
-    <base-config cleartextTrafficPermitted="false" />
+    <!--
+        Android Network Security Config 不支持按 CIDR/通配符放行 192.168.0.0/16。
+        因此网络层允许明文连接，再由各业务端点策略收口；MCP 目前仅允许
+        localhost/回环地址与 192.168.*，公网 MCP 仍强制 HTTPS。
+    -->
+    <base-config cleartextTrafficPermitted="true" />
 
     <!-- 豁免本地沙箱回环通信（HostBridge 7980、沙箱本地 Web 服务等）明文 HTTP -->
     <domain-config cleartextTrafficPermitted="true">

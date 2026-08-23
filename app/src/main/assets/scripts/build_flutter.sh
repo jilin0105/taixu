@@ -7,7 +7,7 @@ set -e
 
 PROJECT_PATH="${1:-.}"
 TARGET="${2:-apk --debug}"
-GRADLE_VER="8.9"
+GRADLE_VER="8.14.2"
 
 echo "==> [TaiXu Build Engine] 启动 Flutter 项目跨端编译..."
 echo "==> [TaiXu Build] 项目路径: $PROJECT_PATH"
@@ -16,7 +16,7 @@ echo "==> [TaiXu Build] 项目路径: $PROJECT_PATH"
 if [ -f /etc/profile.d/taixu-android.sh ]; then
     . /etc/profile.d/taixu-android.sh
 fi
-export PATH="/opt/flutter/bin:/opt/gradle-8.9/bin:/opt/gradle-8.7/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+export PATH="/opt/flutter/bin:/opt/gradle-8.14.2/bin:/opt/gradle-8.7/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 export ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 export PUB_HOSTED_URL="https://pub.flutter-io.cn"
@@ -35,6 +35,10 @@ if ! command -v flutter >/dev/null 2>&1; then
     echo "==> [TaiXu Build] ❌ 未找到 Flutter SDK，请安装 Flutter 跨平台开发套件"
     exit 127
 fi
+if [ ! -f /opt/flutter/.taixu-arm64 ] || [ ! -x /opt/flutter/bin/cache/dart-sdk/bin/dart ]; then
+    echo "==> [TaiXu Build] ❌ Flutter SDK 不是可用的 Linux ARM64 版本，请在工坊重新装配 Flutter 套件"
+    exit 126
+fi
 if [ ! -f "${ANDROID_HOME}/platforms/android-34/android.jar" ]; then
     echo "==> [TaiXu Build] ❌ 缺少 Android SDK Platform 34，请同时安装 Android 核心基础环境"
     exit 126
@@ -48,8 +52,10 @@ mkdir -p "$PUB_CACHE" android
 if [ -f /opt/flutter/bin/flutter ]; then
     printf 'sdk.dir=%s\nflutter.sdk=/opt/flutter\n' "$ANDROID_HOME" > android/local.properties
 fi
-if [ "${TAIXU_AAPT2_MODE:-qemu}" = "qemu" ]; then
-    AAPT2_PATH="${TAIXU_AAPT2_PATH:-/opt/taixu/android-sdk-tools/qemu/aapt2}"
+AAPT2_MODE="${TAIXU_AAPT2_MODE:-native}"
+ AAPT2_PATH="${TAIXU_AAPT2_PATH:-}"
+if [ "$AAPT2_MODE" = "qemu" ]; then
+    AAPT2_PATH="${AAPT2_PATH:-/opt/taixu/android-sdk-tools/qemu/aapt2}"
     if [ ! -x "$AAPT2_PATH" ]; then
         echo "==> [TaiXu Build] ❌ Flutter Android 构建需要 QEMU AAPT2 包装器: $AAPT2_PATH"
         exit 126
@@ -62,12 +68,84 @@ if [ "${TAIXU_AAPT2_MODE:-qemu}" = "qemu" ]; then
     # Flutter invokes Gradle internally, so pass the same override through the
     # standard Gradle project-property environment channel.
     export ORG_GRADLE_PROJECT_android_aapt2FromMavenOverride="$AAPT2_PATH"
+elif [ -z "$AAPT2_PATH" ] || [ ! -x "$AAPT2_PATH" ]; then
+    for candidate in \
+        "/opt/taixu/android-sdk-tools/35.0.2/build-tools/aapt2" \
+        "/usr/local/bin/aapt2" \
+        "/usr/bin/aapt2"; do
+        if [ -x "$candidate" ]; then
+            AAPT2_PATH="$candidate"
+            break
+        fi
+    done
+    if [ -n "$AAPT2_PATH" ] && [ -x "$AAPT2_PATH" ]; then
+        export ORG_GRADLE_PROJECT_android_aapt2FromMavenOverride="$AAPT2_PATH"
+        echo "==> [TaiXu Build] 使用 ARM64 原生 AAPT2: $AAPT2_PATH"
+    fi
+elif [ -x "$AAPT2_PATH" ]; then
+    export ORG_GRADLE_PROJECT_android_aapt2FromMavenOverride="$AAPT2_PATH"
+    echo "==> [TaiXu Build] 使用 ARM64 原生 AAPT2: $AAPT2_PATH"
 fi
 
 export GRADLE_OPTS="${GRADLE_OPTS:-} -Dorg.gradle.jvmargs=-Xmx1024m"
 
 echo "==> [TaiXu Build] 正在拉取 Flutter 依赖 (flutter pub get)..."
 flutter pub get
+
+# 3. 确保 Android 宿主使用本地 Gradle 8.14.2 + 国内镜像，避免 Wrapper 从 services.gradle.org
+#    下载发行版（国内网络易被重置，报 SocketException: connection abort）。
+mkdir -p android/gradle/wrapper
+cat > android/gradle/wrapper/gradle-wrapper.properties <<'EOF'
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\://mirrors.cloud.tencent.com/gradle/gradle-8.14.2-bin.zip
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+EOF
+cat > android/gradlew <<'EOF'
+#!/bin/sh
+# 优先复用插件装配期已装好的本地 Gradle 8.14.2，避免 Wrapper 重新下载发行版。
+DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -x /opt/gradle-8.14.2/bin/gradle ]; then
+    exec /opt/gradle-8.14.2/bin/gradle "$@"
+elif [ -x /opt/gradle-8.7/bin/gradle ]; then
+    exec /opt/gradle-8.7/bin/gradle "$@"
+elif [ -f "$DIR/gradle/wrapper/gradle-wrapper.jar" ]; then
+    exec java -jar "$DIR/gradle/wrapper/gradle-wrapper.jar" "$@"
+elif [ -x /usr/local/bin/gradle ]; then
+    exec /usr/local/bin/gradle "$@"
+elif command -v gradle >/dev/null 2>&1; then
+    exec gradle "$@"
+else
+    exec /usr/bin/gradle "$@"
+fi
+EOF
+chmod +x android/gradlew
+
+# 4. 全局强制阿里云镜像：Flutter 每次会重写工程文件，这里兜底写入全局 init 脚本，
+#    并把 GRADLE_USER_HOME 固定到 /root/.gradle，确保依赖解析一定走国内源。
+export GRADLE_USER_HOME="/root/.gradle"
+mkdir -p "$GRADLE_USER_HOME"
+cat > "$GRADLE_USER_HOME/init.gradle" <<'EOF'
+// TaiXu: 全局强制阿里云镜像。
+gradle.beforeSettings { settings ->
+    settings.pluginManagement.repositories {
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+    settings.dependencyResolutionManagement.repositories {
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        maven { url 'https://storage.flutter-io.cn/download.flutter.io' }
+        google()
+        mavenCentral()
+    }
+}
+EOF
 
 echo "==> [TaiXu Build] 正在执行 Flutter 打包编译 (flutter build $TARGET)..."
 exec flutter build $TARGET

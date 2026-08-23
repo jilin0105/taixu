@@ -31,6 +31,7 @@ dependencies {
     implementation(project(":core:datastore"))
     implementation(project(":core:database"))
     implementation(project(":core:security"))
+    implementation(project(":core:network"))
     implementation(project(":runtime"))
     implementation(project(":tools"))
     implementation(libs.androidx.core.ktx)

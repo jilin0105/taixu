@@ -18,8 +18,16 @@ import androidx.room.RoomDatabase
         AgentMemoryEntity::class,
         AgentPlanEntity::class,
         AgentScratchpadEntity::class,
+        AgentSubagentEntity::class,
+        AgentSubagentSettingsEntity::class,
+        McpServerEntity::class,
+        AgentSkillEntity::class,
+        StorageMountBindingEntity::class,
+        ToolSettingsEntity::class,
+        AgentApprovalRequestEntity::class,
+        AgentApprovalSettingsEntity::class,
     ],
-    version = 22,
+    version = 27,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -33,4 +41,10 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun workspaceDao(): WorkspaceDao
     abstract fun terminalSessionDao(): TerminalSessionDao
     abstract fun agentContextDao(): AgentContextDao
+    abstract fun agentSubagentDao(): AgentSubagentDao
+    abstract fun mcpServerDao(): McpServerDao
+    abstract fun agentSkillDao(): AgentSkillDao
+    abstract fun storageMountBindingDao(): StorageMountBindingDao
+    abstract fun toolSettingsDao(): ToolSettingsDao
+    abstract fun agentApprovalDao(): AgentApprovalDao
 }

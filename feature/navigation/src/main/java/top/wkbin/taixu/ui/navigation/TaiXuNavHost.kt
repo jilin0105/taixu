@@ -1,5 +1,8 @@
 package top.wkbin.taixu.ui.navigation
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -49,6 +52,7 @@ sealed interface AppDestination : NavKey
 @Serializable data class ToolDetailDestination(val toolId: String) : AppDestination
 @Serializable data object DistroManagementDestination : AppDestination
 @Serializable data object StorageMountSettingsDestination : AppDestination
+@Serializable data object EnvironmentVariableSettingsDestination : AppDestination
 @Serializable data object ModelProfilesDestination : AppDestination
 @Serializable data class ModelEditorDestination(val modelId: String? = null) : AppDestination
 @Serializable data object DeveloperDestination : AppDestination
@@ -94,6 +98,12 @@ fun TaiXuNavHost() {
             rememberSaveableStateHolderNavEntryDecorator(),
             rememberViewModelStoreNavEntryDecorator(),
         ),
+        // Navigation 3's default transition is a 700 ms crossfade. In the glass
+        // theme that keeps two full pages and their blur/lens layers composited
+        // during every tab switch, causing visible frame drops.
+        transitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
+        popTransitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
+        predictivePopTransitionSpec = { _, _ -> EnterTransition.None togetherWith ExitTransition.None },
         entryProvider = entryProvider {
             entry<HomeDestination> {
                 HomeScreen(
@@ -165,6 +175,7 @@ fun TaiXuNavHost() {
                     onBack = ::popBack,
                     onOpenDistroManagement = { settingsStack.push(DistroManagementDestination) },
                     onOpenStorageMounts = { settingsStack.push(StorageMountSettingsDestination) },
+                    onOpenEnvironmentVariables = { settingsStack.push(EnvironmentVariableSettingsDestination) },
                 )
             }
             entry<SystemDevSettingsDestination> {
@@ -211,6 +222,9 @@ fun TaiXuNavHost() {
             }
             entry<StorageMountSettingsDestination> {
                 top.wkbin.taixu.ui.settings.StorageMountSettingsScreen(onBack = ::popBack)
+            }
+            entry<EnvironmentVariableSettingsDestination> {
+                top.wkbin.taixu.ui.settings.EnvironmentVariableSettingsScreen(onBack = ::popBack)
             }
             entry<ModelProfilesDestination> {
                 ModelProfilesScreen(

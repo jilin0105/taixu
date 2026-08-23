@@ -4,6 +4,7 @@ import top.wkbin.taixu.core.database.HarnessMessageDao
 import top.wkbin.taixu.core.database.HarnessSessionDao
 import top.wkbin.taixu.core.database.HarnessSessionEntity
 import top.wkbin.taixu.core.model.SubagentTaskSpec
+import top.wkbin.taixu.core.model.AgentSubagent
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Provider
@@ -29,6 +30,7 @@ class SubagentOrchestrator @Inject constructor(
     private val sessionDao: HarnessSessionDao,
     private val messageDao: HarnessMessageDao,
     private val harnessLoopProvider: Provider<HarnessLoop>,
+    private val subagentRepository: top.wkbin.taixu.core.database.AgentSubagentRepository,
 ) {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
@@ -39,19 +41,40 @@ class SubagentOrchestrator @Inject constructor(
         val parentSession = sessionDao.findById(parentSessionId)
         val workspace = parentSession?.workspace.orEmpty()
         val modelId = parentSession?.modelId
+        val projectType = parentSession?.projectType.orEmpty()
+        if (parentSession?.title?.startsWith(SUBAGENT_SESSION_PREFIX) == true) {
+            return@withContext false to "子智能体会话禁止再次派发子智能体，请直接完成当前子任务"
+        }
 
         val specs = parseSubagentSpecs(args)
         if (specs.isEmpty()) {
             return@withContext false to "未解析到有效的 subagents 任务列表，请检查参数"
         }
 
+        val profiles = subagentRepository.enabledProfiles()
+        if (profiles.isEmpty()) {
+            return@withContext false to "当前没有启用的子智能体角色，请先在 Agent 设置中添加或启用角色"
+        }
         val harnessLoop = harnessLoopProvider.get()
 
         val results = specs.map { spec ->
             async {
+                val profile = profiles.firstOrNull { configured ->
+                    configured.id.equals(spec.role, ignoreCase = true) ||
+                        configured.name.equals(spec.role, ignoreCase = true)
+                }
+                if (profile == null) {
+                    return@async SubagentExecutionOutcome(
+                        spec = spec,
+                        subSessionId = "",
+                        isSuccess = false,
+                        summary = "角色 ${spec.role} 未配置或未启用。可用角色：${profiles.joinToString { it.id }}",
+                        toolCallCount = 0,
+                    )
+                }
                 val now = System.currentTimeMillis()
                 val subSessionId = UUID.randomUUID().toString()
-                val subSessionTitle = "子任务: ${spec.taskName} (${spec.role})"
+                val subSessionTitle = "$SUBAGENT_SESSION_PREFIX ${spec.taskName} (${profile.name})"
                 val subSession = HarnessSessionEntity(
                     id = subSessionId,
                     title = subSessionTitle,
@@ -59,11 +82,13 @@ class SubagentOrchestrator @Inject constructor(
                     updatedAt = now,
                     modelId = modelId,
                     workspace = workspace,
+                    projectType = projectType,
+                    approvalMode = parentSession?.approvalMode ?: top.wkbin.taixu.core.model.ApprovalMode.ASSISTED.id,
                 )
                 sessionDao.upsert(subSession)
 
                 // 启动子智能体
-                val prompt = buildSubagentPrompt(spec, workspace)
+                val prompt = buildSubagentPrompt(spec, profile, workspace)
                 harnessLoop.send(prompt, subSessionId)
 
                 // 等待子智能体执行收尾（最长等待 3 分钟）
@@ -118,16 +143,18 @@ class SubagentOrchestrator @Inject constructor(
                 list.add(SubagentTaskSpec(taskName, role, prompt))
             }
         }
-        return list
+        return list.take(MAX_SUBAGENTS)
     }
 
-    private fun buildSubagentPrompt(spec: SubagentTaskSpec, workspace: String): String {
+    private fun buildSubagentPrompt(spec: SubagentTaskSpec, profile: AgentSubagent, workspace: String): String {
         return buildString {
             append("【子智能体任务指派】\n")
-            append("角色定位：${spec.role}\n")
+            append("角色定位：${profile.name} (${profile.id})\n")
             append("任务目标：${spec.taskName}\n")
             if (workspace.isNotBlank()) append("工作区：$workspace\n")
+            append("\n角色专属指导：\n${profile.systemPrompt.trim()}\n")
             append("\n任务详情：\n${spec.prompt}\n\n")
+            append("你是被主智能体派发的子智能体，禁止调用 invoke_subagent 或继续拆分子智能体。")
             append("请集中精力使用工具解决该特定任务，并在最后输出清晰简明的结论与发现。")
         }
     }
@@ -153,4 +180,9 @@ class SubagentOrchestrator @Inject constructor(
         val summary: String,
         val toolCallCount: Int,
     )
+
+    private companion object {
+        const val MAX_SUBAGENTS = 6
+        const val SUBAGENT_SESSION_PREFIX = "子任务:"
+    }
 }

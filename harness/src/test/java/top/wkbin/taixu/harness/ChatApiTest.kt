@@ -90,6 +90,21 @@ class ChatApiTest {
     }
 
     @Test
+    fun `429 exposes retry after and quota exhaustion`() {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(429)
+                .setHeader("Retry-After", "7")
+                .setBody("""{"error":{"message":"Workspace allocated quota exceeded, please increase your quota limit."}}"""),
+        )
+        val thrown = runCatching { runBlocking { api.chat(model(), emptyList()) } }.exceptionOrNull()
+        assertTrue(thrown is LlmRateLimitException)
+        val rateLimit = thrown as LlmRateLimitException
+        assertEquals(7L, rateLimit.retryAfterSeconds)
+        assertTrue(rateLimit.quotaExhausted)
+    }
+
+    @Test
     fun `openai official maps reasoning effort to reasoning_effort`() = runBlocking {
         server.enqueue(MockResponse().setBody("""{"choices":[]}"""))
         api.chat(
