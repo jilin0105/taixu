@@ -3,6 +3,7 @@ package top.wkbin.taixu.ui.navigation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.ime
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -260,11 +261,18 @@ fun TaiXuNavHost() {
             },
         )
         if (LocalLiquidGlassBackdrop.current != null && activeStack.size == 1 && WindowInsets.ime.getBottom(density) == 0) {
-            RuntimeBottomBar(
-                selected = selectedMain,
-                onNavigate = ::navigateMain,
-                modifier = Modifier.align(Alignment.BottomCenter),
-            )
+            // Keep placement in the NavHost's Box. Passing BoxScope alignment through the
+            // glass component's modifier chain can leave the bar at the top on some devices.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth(),
+            ) {
+                RuntimeBottomBar(
+                    selected = selectedMain,
+                    onNavigate = ::navigateMain,
+                )
+            }
         }
     }
 }
