@@ -166,10 +166,11 @@ object BuiltinPluginBundles {
         steps.add("mkdir -p /etc/dpkg/dpkg.cfg.d /usr/bin /usr/sbin /usr/lib 2>/dev/null || true")
         steps.add("printf 'force-unsafe-io\\nforce-overwrite\\n' > /etc/dpkg/dpkg.cfg.d/taixu-proot 2>/dev/null || true")
         steps.add("rm -rf /var/lib/dpkg/updates/* /var/lib/dpkg/lock* /var/lib/apt/lists/lock /var/cache/apt/archives/lock /usr/bin/*.dpkg-new /usr/sbin/*.dpkg-new /usr/lib/*.dpkg-new 2>/dev/null || true")
-        // A previously interrupted unzip transaction can never complete in
-        // PRoot because dpkg cannot chown zipinfo.dpkg-new. Remove that
-        // optional helper before configuring the remaining packages.
-        steps.add("DEBIAN_FRONTEND=noninteractive dpkg --remove --force-remove-reinstreq unzip 2>/dev/null || true")
+        // A previously interrupted unzip/java-wrappers transaction can never
+        // complete in PRoot because dpkg cannot chown zipinfo.dpkg-new. These
+        // optional helpers are not needed: the APK supplies its own JAR-backed
+        // unzip command and setup_android_core.sh links it into PATH.
+        steps.add("DEBIAN_FRONTEND=noninteractive dpkg --remove --force-remove-reinstreq --force-depends unzip java-wrappers 2>/dev/null || true")
         steps.add("DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>/dev/null || true")
 
         // 2. 批量聚合 APT 安装（仅执行 1 次 update 和 1 次 install；
