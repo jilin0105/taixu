@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f3f0e7">
+  <meta name="theme-color" content="#f7f7f8">
   <meta name="description" content="太墟 TaiXu：在 Android 无 Root 环境中运行 Linux、多智能体与原生终端的掌上创作空间。">
   <meta property="og:title" content="太墟 TaiXu — 掌中归墟，万象可期">
   <meta property="og:description" content="Android 无 Root Linux Runtime · Agent Harness · 原生 PTY · 工作区与工具生态">
@@ -31,8 +31,9 @@
     <nav class="site-nav" aria-label="主导航" data-nav>
       <a href="#vision">理念</a>
       <a href="#capabilities">能力</a>
+      <a href="#themes">界面</a>
+      <a href="#plugins">插件</a>
       <a href="#architecture">架构</a>
-      <a href="#start">开始</a>
       <a class="nav-github" href="https://github.com/wkbin/taixu" target="_blank" rel="noreferrer">
         GitHub <span aria-hidden="true">↗</span>
       </a>
@@ -41,12 +42,12 @@
 
   <main id="main">
     <section class="hero" id="top">
-      <div class="hero-orbit orbit-one" aria-hidden="true"></div>
-      <div class="hero-orbit orbit-two" aria-hidden="true"></div>
       <div class="hero-copy reveal">
-        <div class="eyebrow"><span></span> Android 上的 Linux AI Runtime</div>
-        <h1>于方寸之间，<br><em>构筑你的计算世界。</em></h1>
-        <p class="hero-lead">太墟让完整 Linux、AI Agent、原生终端与工程工作区，在一台无需 Root 的 Android 设备中共同生长。</p>
+        <div class="hero-logo"><img src="assets/taixu-logo.png" alt="太墟 Logo"></div>
+        <div class="eyebrow">Android 上的 Linux AI Runtime</div>
+        <h1>太墟</h1>
+        <p class="hero-tagline">掌中归墟，万象可期。</p>
+        <p class="hero-lead">无需 Root，在 Android 上运行完整 Linux、AI Agent、原生终端与工程工作区。</p>
         <div class="hero-actions">
           <a class="button button-primary" href="https://github.com/wkbin/taixu/releases" target="_blank" rel="noreferrer">
             <span>获取最新版本</span><span aria-hidden="true">↗</span>
@@ -61,38 +62,15 @@
       </div>
 
       <div class="hero-stage reveal" data-delay="1">
-        <div class="seal" aria-hidden="true"><span>太</span><span>墟</span></div>
-        <div class="phone-shell" aria-label="太墟应用界面概念预览">
-          <div class="phone-top"><span>9:41</span><span class="camera"></span><span>◒ 87%</span></div>
-          <div class="app-head">
-            <div><small>LINUX RUNTIME</small><strong>太墟</strong></div>
-            <div class="avatar">墟</div>
-          </div>
-          <div class="runtime-card">
-            <div class="runtime-label"><span class="pulse-dot"></span> 沙箱运行中</div>
-            <div class="runtime-title">Debian 12 <span>BOOKWORM</span></div>
-            <div class="runtime-stats">
-              <div><span>MEMORY</span><strong>1.8<small> GB</small></strong></div>
-              <div><span>STORAGE</span><strong>8.4<small> GB</small></strong></div>
-              <div><span>PROCESSES</span><strong>24</strong></div>
-            </div>
-            <div class="meter"><span></span></div>
-          </div>
-          <div class="workbench-title"><strong>工作台</strong><span>全部活动</span></div>
-          <div class="agent-card">
-            <div class="agent-icon">智</div>
-            <div><strong>Agent Harness</strong><p>正在分析项目结构并制定构建方案…</p></div>
-            <span class="agent-live">LIVE</span>
-          </div>
-          <div class="terminal-card">
-            <div class="terminal-bar"><span><i></i><i></i><i></i></span><b>taixu — bash</b></div>
-            <code><span class="muted">~/workspace</span> $ ./gradlew assembleDebug<br><span class="green">✓ BUILD SUCCESSFUL</span><br><span class="muted">~/workspace</span> $ <span class="cursor"></span></code>
-          </div>
-          <div class="phone-nav"><b>◈<small>概览</small></b><span>◇<small>智枢</small></span><span>⌁<small>终端</small></span><span>□<small>工作区</small></span></div>
-        </div>
-        <div class="stage-note note-agent"><b>01</b><span>Agent<br>自主执行</span></div>
-        <div class="stage-note note-linux"><b>02</b><span>Linux<br>完整用户态</span></div>
-        <div class="stage-caption">PRODUCT INTERFACE / CONCEPT VIEW</div>
+        <div class="glass-orb glass-orb-a" aria-hidden="true"></div>
+        <div class="glass-orb glass-orb-b" aria-hidden="true"></div>
+        <figure class="device-shot device-shot-dark">
+          <img src="assets/theme-chengming-dark.jpg" alt="太墟澄明液态玻璃深色主题实机界面">
+        </figure>
+        <figure class="device-shot device-shot-light">
+          <img src="assets/theme-chengming-light.jpg" alt="太墟澄明液态玻璃浅色主题实机界面">
+        </figure>
+        <div class="glass-badge"><span></span> 实机界面 · 澄明液态玻璃</div>
       </div>
     </section>
 
@@ -108,9 +86,22 @@
       </div>
     </section>
 
+    <section class="themes section-pad" id="themes">
+      <div class="section-heading reveal">
+        <div><div class="section-index">02 / 界面主题</div><h2>玄同与澄明，<br>各有深浅。</h2></div>
+        <p>以下全部来自 Android 真机。玄同强调纯粹表面与清晰层级；澄明通过实时背景模糊、边缘高光与折射构成液态玻璃。</p>
+      </div>
+      <div class="theme-gallery">
+        <figure class="theme-shot reveal"><a href="assets/theme-xuantong-light.jpg" target="_blank"><img src="assets/theme-xuantong-light.jpg" alt="玄同浅色主题"></a><figcaption><b>玄同 · 浅色</b><span>Material Expressive</span></figcaption></figure>
+        <figure class="theme-shot reveal"><a href="assets/theme-chengming-light.jpg" target="_blank"><img src="assets/theme-chengming-light.jpg" alt="澄明液态玻璃浅色主题"></a><figcaption><b>澄明 · 浅色</b><span>Liquid Glass</span></figcaption></figure>
+        <figure class="theme-shot reveal"><a href="assets/theme-xuantong-dark.jpg" target="_blank"><img src="assets/theme-xuantong-dark.jpg" alt="玄同深色主题"></a><figcaption><b>玄同 · 深色</b><span>Material Expressive</span></figcaption></figure>
+        <figure class="theme-shot reveal"><a href="assets/theme-chengming-dark.jpg" target="_blank"><img src="assets/theme-chengming-dark.jpg" alt="澄明液态玻璃深色主题"></a><figcaption><b>澄明 · 深色</b><span>Liquid Glass</span></figcaption></figure>
+      </div>
+    </section>
+
     <section class="capabilities section-pad" id="capabilities">
       <div class="section-heading reveal">
-        <div><div class="section-index">02 / 核心能力</div><h2>一台设备，<br>一座完整工坊。</h2></div>
+        <div><div class="section-index">03 / 核心能力</div><h2>一台设备，<br>一座完整工坊。</h2></div>
         <p>从运行环境到智能体，从工具执行到工程构建，太墟将分散的能力编织成一条完整链路。</p>
       </div>
 
@@ -164,8 +155,30 @@
       </div>
     </section>
 
+    <section class="plugins section-pad" id="plugins">
+      <div class="plugin-intro reveal">
+        <div class="section-index">04 / 插件生态</div>
+        <h2>把你的工具，<br>装进太墟。</h2>
+        <p>一个 <code>.txplugin</code> 包由清单与离线 payload 组成。声明 ARM64 架构、安装步骤、命令入口和最小权限，即可交给太墟完成导入、安装、验证与卸载。</p>
+        <a class="button button-primary" href="plugins.html">阅读插件制作教程 <span>→</span></a>
+      </div>
+      <div class="plugin-steps reveal" data-delay="1">
+        <div><b>01</b><strong>组织目录</strong><span>manifest.json + payload/</span></div>
+        <div><b>02</b><strong>声明能力</strong><span>ARM64 · 权限 · 启动类型</span></div>
+        <div><b>03</b><strong>打包导入</strong><span>ZIP 容器，扩展名 .txplugin</span></div>
+        <div><b>04</b><strong>验证发布</strong><span>离线安装 · 重复安装 · 卸载</span></div>
+        <pre><code>{
+  "id": "hello-arm64",
+  "launchType": "command",
+  "architectures": ["ARM64"],
+  "offlineOnly": true,
+  "commandLinks": ["hello"]
+}</code></pre>
+      </div>
+    </section>
+
     <section class="architecture section-pad" id="architecture">
-      <div class="section-index reveal">03 / 运行架构</div>
+      <div class="section-index reveal">05 / 运行架构</div>
       <div class="architecture-title reveal"><h2>意图进入太墟，<br><span>行动抵达系统。</span></h2><p>每一步都有上下文，每一次执行都有回声。未完成，便继续。</p></div>
       <div class="flow reveal" data-delay="1">
         <div class="flow-node"><small>01</small><strong>人的意图</strong><span>自然语言 / 指令</span></div>
@@ -187,7 +200,7 @@
     <section class="start section-pad" id="start">
       <div class="start-mark reveal"><img src="assets/taixu-logo.png" alt="太墟 Logo"></div>
       <div class="start-copy reveal" data-delay="1">
-        <div class="section-index">04 / 从此处开始</div>
+        <div class="section-index">06 / 从此处开始</div>
         <h2>把一座 Linux 工坊，<br>装进你的口袋。</h2>
         <p>太墟仍在快速演进。欢迎下载体验、阅读源码，或一同参与这个掌上计算世界的建造。</p>
         <div class="hero-actions">
@@ -202,7 +215,7 @@
   <footer>
     <div class="footer-brand"><strong>太墟</strong><span>TAIXU / LINUX AI RUNTIME</span></div>
     <p>于太墟中立极，于方寸间创世。</p>
-    <div class="footer-links"><a href="https://github.com/wkbin/taixu">GitHub</a><a href="https://github.com/wkbin/taixu/issues">Issues</a><a href="https://github.com/wkbin/taixu/blob/main/README_EN.md">English README</a></div>
+    <div class="footer-links"><a href="plugins.html">插件教程</a><a href="https://github.com/wkbin/taixu">GitHub</a><a href="https://github.com/wkbin/taixu/issues">Issues</a><a href="https://github.com/wkbin/taixu/blob/main/README_EN.md">English README</a></div>
     <small>© <span data-year></span> TaiXu Project. Open source on GitHub.</small>
   </footer>
 </body>

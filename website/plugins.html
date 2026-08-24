@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f7f8">
+  <meta name="description" content="太墟插件制作教程：从 manifest.json 到 .txplugin 离线插件包。">
+  <title>插件制作教程 · 太墟 TaiXu</title>
+  <link rel="icon" href="assets/taixu-logo.png">
+  <link rel="stylesheet" href="styles.css">
+  <script src="script.js" defer></script>
+</head>
+<body class="docs-page">
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <header class="site-header docs-header" data-header>
+    <a class="brand" href="index.html" aria-label="返回太墟首页"><span class="brand-mark"><img src="assets/taixu-logo.png" alt=""></span><span class="brand-name">太墟</span><span class="brand-roman">TAIXU</span></a>
+    <button class="menu-toggle" type="button" aria-label="打开导航" aria-expanded="false" data-menu-toggle><span></span><span></span></button>
+    <nav class="site-nav" aria-label="主导航" data-nav><a href="index.html#vision">理念</a><a href="index.html#themes">界面</a><a href="index.html#plugins">插件</a><a class="nav-github" href="https://github.com/wkbin/taixu/blob/main/docs/PLUGIN_DEVELOPMENT_GUIDELINES.md" target="_blank" rel="noreferrer">GitHub 文档 ↗</a></nav>
+  </header>
+
+  <main id="main" class="docs-main">
+    <section class="docs-hero reveal">
+      <div class="section-index">TAIXU PLUGIN GUIDE / 01</div>
+      <h1>把你的工具，<br>装进太墟。</h1>
+      <p>太墟插件是一个可验证、可回滚、面向 ARM64 Linux 用户态的工具包。用一个 <code>.txplugin</code> 文件，把命令、SDK、脚本或本地 Web 服务带进你的沙箱。</p>
+    </section>
+
+    <div class="docs-layout">
+      <aside class="docs-toc"><b>目录</b><a href="#format">包格式</a><a href="#manifest">清单字段</a><a href="#hello">Hello 示例</a><a href="#package">打包与导入</a><a href="#large">大型离线依赖</a><a href="#checklist">发布检查</a></aside>
+      <article class="docs-content">
+        <section id="format" class="reveal"><h2>01 / 插件包格式</h2><p>离线插件使用 ZIP 容器，文件扩展名为 <code>.txplugin</code>。ZIP 根目录必须直接包含 <code>manifest.json</code> 和 <code>payload/</code>，不能再多包一层目录。</p><pre><code>hello-arm64.txplugin
+├── manifest.json
+└── payload/
+    ├── archives/       # SDK、Gradle、Flutter 等大文件
+    ├── scripts/        # 安装脚本或配置
+    └── bin/            # ARM64 可执行文件</code></pre><p class="callout">包内路径不允许绝对路径或 <code>..</code>。大型依赖应随包携带，离线插件安装时不会替你再次下载。</p></section>
+
+        <section id="manifest" class="reveal"><h2>02 / 编写 manifest.json</h2><p>清单是插件的能力声明。当前 schema 为 <code>1</code>；应用会校验 id、架构、启动类型、权限和安装方式。</p><pre><code>{
+  "schemaVersion": 1,
+  "id": "hello-arm64",
+  "name": "Hello ARM64",
+  "description": "TaiXu 本地插件示例",
+  "version": "1.0.0",
+  "publisher": "Your Name",
+  "category": "DEVELOPER",
+  "launchType": "command",
+  "architectures": ["ARM64"],
+  "permissions": [],
+  "source": "LOCAL",
+  "offlineOnly": true,
+  "installMethod": "LOCAL_PACKAGE",
+  "commandLinks": ["hello"],
+  "verifyCommand": "hello"
+}</code></pre><table><thead><tr><th>字段</th><th>作用</th></tr></thead><tbody><tr><td><code>id</code></td><td>稳定唯一标识，只能使用小写字母、数字和连字符。</td></tr><tr><td><code>launchType</code></td><td><code>command</code> 命令行；<code>pty</code> 交互终端；<code>web</code>/<code>service</code> 后台服务。</td></tr><tr><td><code>architectures</code></td><td>必须包含 <code>ARM64</code>，当前应用只支持 arm64-v8a。</td></tr><tr><td><code>permissions</code></td><td>只申请实际需要的 NETWORK、WORKSPACE_READ、WORKSPACE_WRITE、LOCAL_WEB。</td></tr><tr><td><code>commandLinks</code></td><td>暴露到 <code>/opt/taixu/bin</code> 的稳定命令入口。</td></tr></tbody></table></section>
+
+        <section id="hello" class="reveal"><h2>03 / 从零制作 Hello 插件</h2><p>创建以下目录，并将脚本放在 <code>payload/bin/hello</code>：</p><pre><code>hello-arm64/
+├── manifest.json
+└── payload/bin/hello</code></pre><p>脚本内容：</p><pre><code>#!/bin/sh
+echo "hello from TaiXu"</code></pre><p>在安装步骤中再次设置执行权限，避免 Windows 打包时丢失 Unix 执行位：</p><pre><code>"installSteps": [
+  "test -f "$TAIXU_PLUGIN_PAYLOAD/bin/hello"",
+  "mkdir -p "$TAIXU_TOOL_DIR/bin"",
+  "cp "$TAIXU_PLUGIN_PAYLOAD/bin/hello" "$TAIXU_TOOL_DIR/bin/hello"",
+  "chmod +x "$TAIXU_TOOL_DIR/bin/hello""
+]</code></pre></section>
+
+        <section id="package" class="reveal"><h2>04 / 打包与导入</h2><h3>Windows PowerShell</h3><pre><code>Compress-Archive -Path .\hello-arm64\manifest.json, .\hello-arm64\payload -DestinationPath .\hello-arm64.txplugin -Force</code></pre><h3>Linux / macOS</h3><pre><code>cd hello-arm64
+zip -r ../hello-arm64.txplugin manifest.json payload</code></pre><p>在太墟中打开“设置 → 插件与工具中心”，点击文件导入，选择 <code>.txplugin</code>，然后安装并等待 <code>verifyCommand</code> 通过。</p></section>
+
+        <section id="large" class="reveal"><h2>05 / 大型离线依赖</h2><p>Flutter、Android SDK、Gradle、NDK 等依赖放在 <code>payload/archives/</code>，安装脚本只能通过 <code>$TAIXU_PLUGIN_PAYLOAD</code> 读取。</p><pre><code>set -eu
+archive="$TAIXU_PLUGIN_PAYLOAD/archives/flutter-arm64.tar.xz"
+test -s "$archive"
+echo "&lt;SHA256&gt;  $archive" | sha256sum -c -
+rm -rf /opt/flutter.staging
+mkdir -p /opt/flutter.staging
+tar -xJf "$archive" -C /opt/flutter.staging
+test -x /opt/flutter.staging/flutter/bin/flutter</code></pre><p class="callout">不要把 x86_64 工具伪装成 ARM64。对 ELF 文件执行 <code>readelf -h</code> 检查 AArch64，对归档执行 SHA-256 校验。</p></section>
+
+        <section id="checklist" class="reveal"><h2>06 / 发布前检查</h2><ul><li>ZIP 根目录只有 <code>manifest.json</code> 与 <code>payload/</code>。</li><li>全新安装、重复安装、升级和卸载都通过。</li><li>断网可以完成安装、验证和启动。</li><li>命令链接、PTY / Web 服务和日志均正常。</li><li>没有 <code>../</code>、绝对路径、RootFS 外路径或未声明权限。</li></ul><a class="button button-primary" href="https://github.com/wkbin/taixu/blob/main/docs/PLUGIN_DEVELOPMENT_GUIDELINES.md" target="_blank" rel="noreferrer">查看完整开发准则 <span>↗</span></a></section>
+      </article>
+    </div>
+  </main>
+  <footer><div class="footer-brand"><strong>太墟</strong><span>TAIXU / LINUX AI RUNTIME</span></div><p>于太墟中立极，于方寸间创世。</p><div class="footer-links"><a href="index.html">首页</a><a href="https://github.com/wkbin/taixu">GitHub</a></div><small>© <span data-year></span> TaiXu Project. Open source on GitHub.</small></footer>
+</body>
+</html>
