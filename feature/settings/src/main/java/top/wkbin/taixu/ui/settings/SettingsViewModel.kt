@@ -51,6 +51,17 @@ class SettingsViewModel @Inject constructor(
     private val storageMountBindingRepository: StorageMountBindingRepository,
     private val approvalRepository: top.wkbin.taixu.core.database.AgentApprovalRepository,
 ) : ViewModel() {
+    val installedDistros = linuxRuntime.installedDistros
+    val activeDistroId = linuxRuntime.activeDistroId
+    val runtimeState = linuxRuntime.state
+
+    val environmentVariables = linuxEnvironmentManager.variables
+
+    private val _environmentLoading = MutableStateFlow(false)
+    val environmentLoading: StateFlow<Boolean> = _environmentLoading.asStateFlow()
+
+    private val _environmentError = MutableStateFlow<String?>(null)
+    val environmentError: StateFlow<String?> = _environmentError.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -68,18 +79,6 @@ class SettingsViewModel @Inject constructor(
                 }
         }
     }
-
-    val installedDistros = linuxRuntime.installedDistros
-    val activeDistroId = linuxRuntime.activeDistroId
-    val runtimeState = linuxRuntime.state
-
-    val environmentVariables = linuxEnvironmentManager.variables
-
-    private val _environmentLoading = MutableStateFlow(false)
-    val environmentLoading: StateFlow<Boolean> = _environmentLoading.asStateFlow()
-
-    private val _environmentError = MutableStateFlow<String?>(null)
-    val environmentError: StateFlow<String?> = _environmentError.asStateFlow()
 
     val environmentPrivacyMode: StateFlow<Boolean> = settingsDataStore.environmentPrivacyMode
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)

@@ -320,22 +320,23 @@ class ToolManager @Inject constructor(
             try {
                 steps.forEachIndexed { index, step ->
                     val progress = 0.1f + 0.8f * (index.toFloat() / steps.size.toFloat())
-                    val shortDesc = when (index) {
-                        0 -> "正在创建 dpkg 配置目录..."
-                        1 -> "正在写入 PRoot dpkg 安全策略..."
-                        2 -> "正在清理 dpkg/apt 残留锁与临时文件..."
-                        3 -> "正在恢复未完成的 dpkg 事务..."
-                        else -> when {
-                            "apt-get update" in step -> "正在同步软件源并聚合下载全部依赖包..."
-                            "apt-get" in step -> "正在安装 Android/开发套件系统依赖..."
-                            "gradle" in step -> "正在部署并链接 Gradle 8.14.2 自动化构建环境..."
-                            "setup_android_core" in step -> "正在部署 Android SDK 平台包与 Gradle 构建环境 (国内镜像加速)..."
-                            "termux_ndk" in step -> "正在下载、校验并原子装配 Linux AArch64 NDK..."
-                            "jadx" in step -> "正在部署 JADX-CLI 源码反编译工具包..."
-                            "android" in step -> "正在配置 Android SDK 官方开发工具链..."
-                            "flutter" in step -> "正在拉取并配置 Flutter SDK 跨端开发环境..."
-                            else -> "正在执行环境准备步骤..."
-                        }
+                    val shortDesc = when {
+                        index == 0 -> "正在创建 dpkg 配置目录..."
+                        index == 1 -> "正在写入 PRoot dpkg 安全策略..."
+                        index == 2 -> "正在清理 dpkg/apt 残留锁与临时文件..."
+                        "dpkg --remove" in step -> "正在清理无法完成的可选软件包事务..."
+                        "dpkg --configure" in step -> "正在恢复未完成的 dpkg 事务..."
+                        // apt-get 后面带有 -o 参数，不能用固定的
+                        // "apt-get update" 子串判断，否则会误落入安装文案。
+                        "apt-get" in step && " update " in step -> "正在同步软件源并聚合下载全部依赖包..."
+                        "apt-get" in step -> "正在安装 [$compNames] 所需系统依赖..."
+                        "gradle" in step -> "正在部署并链接 Gradle 8.14.2 自动化构建环境..."
+                        "setup_android_core" in step -> "正在部署 Android SDK 平台包与 Gradle 构建环境 (国内镜像加速)..."
+                        "termux_ndk" in step -> "正在下载、校验并原子装配 Linux AArch64 NDK..."
+                        "jadx" in step -> "正在部署 JADX-CLI 源码反编译工具包..."
+                        "android" in step -> "正在配置 Android SDK 官方开发工具链..."
+                        "flutter" in step -> "正在拉取并配置 Flutter SDK 跨端开发环境..."
+                        else -> "正在执行环境准备步骤..."
                     }
                     // 重型下载型脚本 (SDK 平台包 ~60MB / Gradle ~120MB / Flutter SDK git clone) 放宽超时
                     val stepTimeoutMs = when {
