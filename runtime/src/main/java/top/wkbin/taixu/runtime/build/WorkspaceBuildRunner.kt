@@ -12,6 +12,7 @@ import top.wkbin.taixu.runtime.ProjectType
 import top.wkbin.taixu.runtime.WorkspaceProject
 import top.wkbin.taixu.runtime.bridge.adb.EmbeddedAdbManager
 import top.wkbin.taixu.runtime.shell.ShellCommand
+import top.wkbin.taixu.core.datastore.RuntimePreferences
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -19,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.first
 
 data class StepDuration(
     val step: String,
@@ -49,6 +51,7 @@ class WorkspaceBuildRunner @Inject constructor(
     private val linuxRuntime: LinuxRuntime,
     private val embeddedAdbManager: EmbeddedAdbManager,
     private val assetSynchronizer: top.wkbin.taixu.runtime.scripts.RuntimeAssetSynchronizer,
+    private val runtimePreferences: RuntimePreferences,
     private val logger: AppLogger,
 ) {
     fun launchPackageInstaller(apkFile: File): Boolean {
@@ -128,18 +131,37 @@ class WorkspaceBuildRunner @Inject constructor(
                 log("[TaiXu Build] Linux 路径: ${project.linuxPath}")
                 send(BuildRunProgress(step = "正在预检 Android 构建环境...", progress = 0.15f, logOutput = logs.toString()))
 
-                // 1. 预检 Android 构建工具链 (Java / Gradle)
-                val probeJava = linuxRuntime.execute(ShellCommand(commandLine = "command -v java || test -x /usr/lib/jvm/java-17-openjdk-arm64/bin/java || test -d /usr/lib/jvm", timeoutMs = 5000L))
-                val probeGradle = linuxRuntime.execute(ShellCommand(commandLine = "command -v gradle || test -x /opt/gradle-8.14.2/bin/gradle || test -x /usr/local/bin/gradle || test -f ${project.linuxPath}/gradlew || test -d /opt/gradle-8.14.2", timeoutMs = 5000L))
-                if (!probeJava.isSuccess && !probeGradle.isSuccess) {
+                // 1. 预检完整 Android 工具链；失败时不启动 Gradle。
+                val qemuEnabled = runtimePreferences.qemuCompatibilityEnabled.first()
+                val probe = linuxRuntime.execute(ShellCommand(
+                    commandLine = BuildEnvironmentPreflight.command(project.linuxPath, ProjectType.ANDROID),
+                    timeoutMs = 15_000L,
+                ))
+                var useQemuBuild = false
+                if (!probe.isSuccess && qemuEnabled && shouldRetryWithQemu(probe)) {
+                    val qemuProbe = runCatching {
+                        linuxRuntime.execute(ShellCommand(
+                            commandLine = BuildEnvironmentPreflight.command(project.linuxPath, ProjectType.ANDROID, qemu = true),
+                            timeoutMs = 30_000L,
+                            useQemuCompatibility = true,
+                        ))
+                    }.getOrNull()
+                    if (qemuProbe?.isSuccess == true) {
+                        useQemuBuild = true
+                        log("[TaiXu Build] ARM64 工具架构不兼容，QEMU x86_64 环境预检通过")
+                    }
+                }
+                if (!probe.isSuccess && !useQemuBuild) {
+                    val reason = (probe.stderr + "\n" + probe.stdout).trim().takeLast(800)
                     log("[TaiXu Build] ⚠️ 未检测到 Android 构建环境 (OpenJDK 17 / Gradle 8.14.2)")
+                    log("[TaiXu Build] 预检原因: $reason")
                     log("[TaiXu Build] 💡 提示：请先在【插件与工具中心】中装配【Android & 移动全栈开发套件】")
                     send(
                         BuildRunProgress(
                             step = "缺少 Android 构建环境",
                             isRunning = false,
                             isSuccess = false,
-                            message = "未检测到 Android 构建环境 (Gradle / OpenJDK 17)，请点击下方按钮一键安装开发环境套件包。",
+                            message = "Android 构建前置检查失败：${reason.ifBlank { "工具链不完整" }}",
                             logOutput = logs.toString(),
                             suggestedSuiteId = "android-suite",
                         )
@@ -165,15 +187,17 @@ class WorkspaceBuildRunner @Inject constructor(
                     lastStepTime = now
                 }
 
-                val buildCmd = "/bin/sh /opt/taixu/scripts/build_android.sh \"${project.linuxPath}\" assembleDebug"
+                val buildCmd = "/bin/sh /opt/taixu/scripts/taixu-build.sh android \"${project.linuxPath}\" assembleDebug" +
+                    if (useQemuBuild) " --qemu" else ""
                 var lastEmitTime = System.currentTimeMillis()
                 var currentStep = "正在执行 Gradle 构建任务..."
                 var currentProgress = 0.35f
 
-                val outcome = linuxRuntime.execute(
+                var outcome = linuxRuntime.execute(
                     ShellCommand(
                         commandLine = buildCmd,
                         timeoutMs = 1800_000L, // 30 分钟充足超时，适配移动端首次下载海量依赖
+                        useQemuCompatibility = useQemuBuild,
                         onOutput = { chunk ->
                             log(chunk.trimEnd())
                             val lower = chunk.lowercase()
@@ -215,6 +239,28 @@ class WorkspaceBuildRunner @Inject constructor(
                         },
                     ),
                 )
+
+                if (!useQemuBuild && !outcome.isSuccess && shouldRetryWithQemu(outcome) && qemuEnabled) {
+                    log("[TaiXu Build] ARM64 工具链无法执行，检测到兼容开关已开启，切换隔离 x86_64 QEMU 构建环境...")
+                    send(BuildRunProgress(step = "正在切换 QEMU x86_64 兼容环境...", progress = 0.25f, logOutput = logs.toString()))
+                    outcome = runCatching {
+                        linuxRuntime.execute(ShellCommand(
+                            commandLine = "/bin/sh /opt/taixu/scripts/taixu-build.sh android \"${project.linuxPath}\" assembleDebug --qemu",
+                            timeoutMs = 1800_000L,
+                            useQemuCompatibility = true,
+                            onOutput = { chunk ->
+                                log(chunk.trimEnd())
+                                val now = System.currentTimeMillis()
+                                if (now - lastEmitTime > 100) {
+                                    lastEmitTime = now
+                                    progressChannel.trySend(BuildRunProgress(step = "正在执行 QEMU x86_64 Android 构建...", progress = 0.5f, logOutput = logs.toString()))
+                                }
+                            },
+                        ))
+                    }.getOrElse { error ->
+                        top.wkbin.taixu.runtime.shell.CommandResult(-1, "", error.message ?: "QEMU 兼容环境启动失败", 0L)
+                    }
+                }
 
                 if (!outcome.isSuccess) {
                     // The output callback is buffered; flush it before publishing
@@ -268,6 +314,21 @@ class WorkspaceBuildRunner @Inject constructor(
                             isRunning = false,
                             isSuccess = false,
                             message = "构建完成但未在 outputs 目录找到 APK",
+                            logOutput = logs.toString(),
+                        )
+                    )
+                    return@channelFlow
+                }
+
+                val artifactVerification = ApkArtifactVerifier.verify(apkFile)
+                log("[TaiXu Build] APK 产物校验: ${artifactVerification.message}")
+                if (!artifactVerification.isValid) {
+                    send(
+                        BuildRunProgress(
+                            step = "APK 架构校验失败",
+                            isRunning = false,
+                            isSuccess = false,
+                            message = artifactVerification.message,
                             logOutput = logs.toString(),
                         )
                     )
@@ -331,17 +392,37 @@ class WorkspaceBuildRunner @Inject constructor(
                 log("[TaiXu Build] Flutter 跨平台编译，环境: PUB_HOSTED_URL=https://pub.flutter-io.cn")
                 send(BuildRunProgress(step = "正在预检 Flutter 跨端开发环境...", progress = 0.15f, logOutput = logs.toString()))
 
-                // 1. 预检 Flutter SDK
-                val probeFlutter = linuxRuntime.execute(ShellCommand(commandLine = "command -v flutter || test -x /opt/flutter/bin/flutter || test -d /opt/flutter", timeoutMs = 5000L))
-                if (!probeFlutter.isSuccess) {
+                // 1. 预检 Flutter、Dart 与 Android ARM64 工具链。
+                val qemuEnabled = runtimePreferences.qemuCompatibilityEnabled.first()
+                val probeFlutter = linuxRuntime.execute(ShellCommand(
+                    commandLine = BuildEnvironmentPreflight.command(project.linuxPath, ProjectType.FLUTTER),
+                    timeoutMs = 15_000L,
+                ))
+                var useQemuBuild = false
+                if (!probeFlutter.isSuccess && qemuEnabled && shouldRetryWithQemu(probeFlutter)) {
+                    val qemuProbe = runCatching {
+                        linuxRuntime.execute(ShellCommand(
+                            commandLine = BuildEnvironmentPreflight.command(project.linuxPath, ProjectType.FLUTTER, qemu = true),
+                            timeoutMs = 30_000L,
+                            useQemuCompatibility = true,
+                        ))
+                    }.getOrNull()
+                    if (qemuProbe?.isSuccess == true) {
+                        useQemuBuild = true
+                        log("[TaiXu Build] Flutter ARM64 工具架构不兼容，QEMU x86_64 环境预检通过")
+                    }
+                }
+                if (!probeFlutter.isSuccess && !useQemuBuild) {
+                    val reason = (probeFlutter.stderr + "\n" + probeFlutter.stdout).trim().takeLast(800)
                     log("[TaiXu Build] ⚠️ 未检测到 Flutter SDK 环境")
+                    log("[TaiXu Build] 预检原因: $reason")
                     log("[TaiXu Build] 💡 提示：请先在【插件与工具中心】中装配【Android & 移动全栈开发套件 (含 Flutter)】")
                     send(
                         BuildRunProgress(
                             step = "缺少 Flutter 构建环境",
                             isRunning = false,
                             isSuccess = false,
-                            message = "未检测到 Flutter SDK 环境，请点击下方按钮一键安装开发套件。",
+                            message = "Flutter 构建前置检查失败：${reason.ifBlank { "工具链不完整" }}",
                             logOutput = logs.toString(),
                             suggestedSuiteId = "flutter-suite",
                         )
@@ -352,13 +433,15 @@ class WorkspaceBuildRunner @Inject constructor(
                 log("[TaiXu Build] 执行 Flutter APK 构建...")
                 send(BuildRunProgress(step = "正在执行 Flutter 构建 (flutter build apk)...", progress = 0.3f, logOutput = logs.toString()))
 
-                val buildCmd = "/bin/sh /opt/taixu/scripts/build_flutter.sh \"${project.linuxPath}\" \"apk --debug --target-platform android-arm64\""
+                val buildCmd = "/bin/sh /opt/taixu/scripts/taixu-build.sh flutter \"${project.linuxPath}\" apk --debug --target-platform android-arm64" +
+                    if (useQemuBuild) " --qemu" else ""
                 var lastEmitTime = System.currentTimeMillis()
 
-                val outcome = linuxRuntime.execute(
+                var outcome = linuxRuntime.execute(
                     ShellCommand(
                         commandLine = buildCmd,
                         timeoutMs = 1800_000L,
+                        useQemuCompatibility = useQemuBuild,
                         onOutput = { chunk ->
                             log(chunk.trimEnd())
                             val now = System.currentTimeMillis()
@@ -371,6 +454,28 @@ class WorkspaceBuildRunner @Inject constructor(
                         },
                     ),
                 )
+
+                if (!useQemuBuild && !outcome.isSuccess && shouldRetryWithQemu(outcome) && qemuEnabled) {
+                    log("[TaiXu Build] Flutter ARM64 工具链无法执行，切换隔离 x86_64 QEMU 构建环境...")
+                    send(BuildRunProgress(step = "正在切换 QEMU x86_64 Flutter 环境...", progress = 0.25f, logOutput = logs.toString()))
+                    outcome = runCatching {
+                        linuxRuntime.execute(ShellCommand(
+                            commandLine = "/bin/sh /opt/taixu/scripts/taixu-build.sh flutter \"${project.linuxPath}\" --qemu",
+                            timeoutMs = 1800_000L,
+                            useQemuCompatibility = true,
+                            onOutput = { chunk ->
+                                log(chunk.trimEnd())
+                                val now = System.currentTimeMillis()
+                                if (now - lastEmitTime > 100) {
+                                    lastEmitTime = now
+                                    progressChannel.trySend(BuildRunProgress(step = "正在执行 QEMU x86_64 Flutter 构建...", progress = 0.5f, logOutput = logs.toString()))
+                                }
+                            },
+                        ))
+                    }.getOrElse { error ->
+                        top.wkbin.taixu.runtime.shell.CommandResult(-1, "", error.message ?: "QEMU 兼容环境启动失败", 0L)
+                    }
+                }
 
                 if (!outcome.isSuccess) {
                     flushLogBuffer()
@@ -419,6 +524,21 @@ class WorkspaceBuildRunner @Inject constructor(
                             isRunning = false,
                             isSuccess = false,
                             message = "构建完成但未在 outputs 目录找到 APK",
+                            logOutput = logs.toString(),
+                        )
+                    )
+                    return@channelFlow
+                }
+
+                val artifactVerification = ApkArtifactVerifier.verify(apkFile)
+                log("[TaiXu Build] Flutter APK 产物校验: ${artifactVerification.message}")
+                if (!artifactVerification.isValid) {
+                    send(
+                        BuildRunProgress(
+                            step = "Flutter APK 架构校验失败",
+                            isRunning = false,
+                            isSuccess = false,
+                            message = artifactVerification.message,
                             logOutput = logs.toString(),
                         )
                     )
@@ -494,6 +614,22 @@ class WorkspaceBuildRunner @Inject constructor(
             }
         }
     }.flowOn(Dispatchers.IO)
+
+    private fun shouldRetryWithQemu(outcome: top.wkbin.taixu.runtime.shell.CommandResult): Boolean {
+        val text = (outcome.stdout + "\n" + outcome.stderr).lowercase()
+        return outcome.exitCode == 126 ||
+            text.contains("exec format") ||
+            text.contains("not executable") ||
+            text.contains("wrong elf class") ||
+            text.contains("taixu_preflight_fail: java_arch") ||
+            text.contains("taixu_preflight_fail: aapt2_arch") ||
+            text.contains("taixu_preflight_fail: ndk_arch") ||
+            text.contains("taixu_preflight_fail: dart_arch") ||
+            text.contains("elf 架构不匹配") ||
+            text.contains("不是 arm64 elf") ||
+            text.contains("aarch64") && text.contains("架构") ||
+            text.contains("主机工具不是可执行")
+    }
 
     /** Write a complete APK into the public Download directory; returns the file actually written. */
     private fun copyApkAtomically(

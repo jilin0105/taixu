@@ -9,6 +9,7 @@ import top.wkbin.taixu.core.database.AgentSkillRepository
 import top.wkbin.taixu.core.database.McpServerRepository
 import top.wkbin.taixu.core.database.StorageMountBindingRepository
 import top.wkbin.taixu.core.tools.ProviderRepository
+import top.wkbin.taixu.core.tools.ToolManager
 import top.wkbin.taixu.core.tools.AgentModelDiscovery
 import top.wkbin.taixu.core.tools.AgentProviderCatalog
 import top.wkbin.taixu.core.tools.AgentModelConnectionTester
@@ -50,12 +51,14 @@ class SettingsViewModel @Inject constructor(
     private val mcpServerRepository: McpServerRepository,
     private val storageMountBindingRepository: StorageMountBindingRepository,
     private val approvalRepository: top.wkbin.taixu.core.database.AgentApprovalRepository,
+    private val toolManager: ToolManager,
 ) : ViewModel() {
     val installedDistros = linuxRuntime.installedDistros
     val activeDistroId = linuxRuntime.activeDistroId
     val runtimeState = linuxRuntime.state
 
     val environmentVariables = linuxEnvironmentManager.variables
+    val effectiveEnvironment = linuxEnvironmentManager.effectiveEnvironment
 
     private val _environmentLoading = MutableStateFlow(false)
     val environmentLoading: StateFlow<Boolean> = _environmentLoading.asStateFlow()
@@ -353,6 +356,9 @@ class SettingsViewModel @Inject constructor(
     val developerMode: StateFlow<Boolean> = settingsDataStore.developerMode
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    val qemuCompatibilityEnabled: StateFlow<Boolean> = settingsDataStore.qemuCompatibilityEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     val themeMode: StateFlow<String> = settingsDataStore.themeMode
         .stateIn(viewModelScope, SharingStarted.Eagerly, "system")
 
@@ -564,6 +570,13 @@ class SettingsViewModel @Inject constructor(
     fun setDeveloperMode(enabled: Boolean) {
         viewModelScope.launch {
             settingsDataStore.setDeveloperMode(enabled)
+        }
+    }
+
+    fun setQemuCompatibilityEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsDataStore.setQemuCompatibilityEnabled(enabled)
+            if (enabled) toolManager.startInstall("qemu-x86-64-compat")
         }
     }
 

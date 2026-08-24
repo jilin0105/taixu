@@ -29,12 +29,14 @@ class RuntimePreferences @Inject constructor(private val store: SettingsDataStor
     val mountDocumentsEnabled get() = store.mountDocumentsEnabled
     val mountSharedStorageEnabled get() = store.mountSharedStorageEnabled
     val executionMode get() = store.executionMode
+    val qemuCompatibilityEnabled get() = store.qemuCompatibilityEnabled
     val adbWirelessPort get() = store.adbWirelessPort
     suspend fun readLegacyEnvironmentVariables() = store.readLegacyEnvironmentVariables()
     suspend fun clearLegacyEnvironmentVariables() = store.clearLegacyEnvironmentVariables()
     suspend fun setSelectedDistribution(value: String) = store.setSelectedDistribution(value)
     suspend fun setMirrorPolicy(value: String) = store.setMirrorPolicy(value)
     suspend fun setExecutionMode(value: top.wkbin.taixu.core.model.ExecutionMode) = store.setExecutionMode(value)
+    suspend fun setQemuCompatibilityEnabled(value: Boolean) = store.setQemuCompatibilityEnabled(value)
     suspend fun setAdbPairedOnce(value: Boolean) = store.setAdbPairedOnce(value)
 }
 

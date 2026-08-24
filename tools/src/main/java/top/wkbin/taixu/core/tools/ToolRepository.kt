@@ -3,6 +3,8 @@
 import top.wkbin.taixu.core.database.ToolDao
 import top.wkbin.taixu.core.database.ToolEntity
 import top.wkbin.taixu.core.model.ToolManifest
+import android.net.Uri
+import top.wkbin.taixu.core.common.result.AppResult
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
@@ -24,4 +26,9 @@ class ToolRepository @Inject constructor(
     suspend fun deleteByDistro(distroId: String) = toolDao.deleteByDistro(distroId)
     fun manifests(): List<ToolManifest> = toolRegistry.load()
     fun manifest(id: String): ToolManifest? = manifests().firstOrNull { it.id == id }
+    suspend fun importLocal(
+        uri: Uri,
+        onProgress: (LocalPluginImportProgress) -> Unit = {},
+    ): AppResult<ToolManifest> = toolRegistry.importLocal(uri, onProgress)
+    suspend fun inspectLocal(uri: Uri): AppResult<LocalPluginPreview> = toolRegistry.inspectLocal(uri)
 }

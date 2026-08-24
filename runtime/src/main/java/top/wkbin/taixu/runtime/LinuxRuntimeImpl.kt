@@ -10,6 +10,7 @@ import top.wkbin.taixu.core.model.CpuArch
 import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.core.model.StorageMountBinding
 import top.wkbin.taixu.runtime.proot.ProotCommandBuilder
+import top.wkbin.taixu.runtime.proot.QemuCompatibilityLayout
 import top.wkbin.taixu.runtime.bridge.HostBridge
 import top.wkbin.taixu.runtime.pty.PtyManager
 import top.wkbin.taixu.runtime.proot.ProotInstaller
@@ -416,23 +417,52 @@ class LinuxRuntimeImpl @Inject constructor(
         ensureReady()
         val safeDistro = distroId?.lowercase()?.trim()?.takeIf { it.isNotBlank() } ?: _activeDistroId.value
         val mounts = storageMounts()
+        val execution = resolveExecutionLayout(safeDistro, command.useQemuCompatibility)
         return shellExecutor.execute(
             command = prootCommandBuilder.build(
                 prootBinary = pathManager.activeProotFile(),
-                rootfsDir = pathManager.rootfsDir(safeDistro),
+                rootfsDir = execution.rootfsDir,
                 workspaceDir = pathManager.workspaceDir,
                 homeDir = pathManager.homeDir(safeDistro),
-                optDir = pathManager.taixuRootDir(safeDistro),
+                optDir = execution.optDir,
                 tmpDir = pathManager.tmpDir,
                 attachmentsDir = pathManager.attachmentsDir,
                 command = command,
                 mounts = mounts,
+                emulatorBinary = execution.emulatorBinary,
             ),
-            environment = pathManager.hostProcessEnvironment(safeDistro),
+            environment = pathManager.hostProcessEnvironment(safeDistro, execution.rootfsDir),
             timeoutMs = command.timeoutMs,
             onOutput = command.onOutput,
         )
     }
+
+    private suspend fun resolveExecutionLayout(
+        distroId: String,
+        useQemuCompatibility: Boolean,
+    ): ExecutionLayout {
+        if (!useQemuCompatibility) {
+            return ExecutionLayout(pathManager.rootfsDir(distroId), null, pathManager.taixuRootDir(distroId))
+        }
+        check(settingsDataStore.qemuCompatibilityEnabled.first()) {
+            "QEMU 兼容模式未开启，请先在设置中打开兼容开关"
+        }
+        val taixuRoot = pathManager.taixuRootDir(distroId)
+        check(QemuCompatibilityLayout.isReady(taixuRoot)) {
+            "QEMU 兼容环境未就绪，请先安装并验证 qemu-x86-64-compat 插件"
+        }
+        return ExecutionLayout(
+            rootfsDir = QemuCompatibilityLayout.guestRootfs(taixuRoot),
+            emulatorBinary = QemuCompatibilityLayout.qemuBinary(taixuRoot),
+            optDir = taixuRoot,
+        )
+    }
+
+    private data class ExecutionLayout(
+        val rootfsDir: File,
+        val emulatorBinary: File?,
+        val optDir: File,
+    )
 
     override suspend fun startSession(config: SessionConfig, distroId: String?): LinuxSession {
         ensureReady()

@@ -5,10 +5,32 @@ import top.wkbin.taixu.runtime.shell.SessionConfig
 import top.wkbin.taixu.runtime.EnvironmentResolver
 import top.wkbin.taixu.core.model.StorageMountBinding
 import java.io.File
+import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ProotCommandBuilderTest {
+
+    @Test
+    fun buildAddsQemuOnlyWhenAnExecutableEmulatorIsProvided() {
+        val emulator = Files.createTempFile("qemu-x86_64", ".bin").toFile().apply {
+            setExecutable(true)
+        }
+        try {
+            val args = ProotCommandBuilder(EnvironmentResolver()).build(
+                prootBinary = File("/p"),
+                rootfsDir = File("/compat/rootfs"),
+                workspaceDir = File("/w"),
+                command = ShellCommand(commandLine = "true"),
+                emulatorBinary = emulator,
+            )
+            val index = args.indexOf("-q")
+            assert(index >= 0)
+            assertEquals(emulator.absolutePath, args[index + 1])
+        } finally {
+            emulator.delete()
+        }
+    }
 
     @Test
     fun buildProducesProotArgsAndShellCommand() {

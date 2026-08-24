@@ -181,6 +181,10 @@ cd "$PROJECT_PATH"
 
 # 4. 调度 Gradle 构建
 EXTRA_ARGS="--console=plain --stacktrace --no-daemon -Dorg.gradle.native=false -Pandroid.builder.sdkDownload=false"
+if [ "${TAIXU_OFFLINE:-0}" = "1" ]; then
+    EXTRA_ARGS="$EXTRA_ARGS --offline"
+    echo "==> [TaiXu Build] 离线模式：禁止 Gradle 网络请求，仅使用本地缓存"
+fi
 if [ "$AAPT2_MACHINE" = "183" ] && [ -x "$AAPT2_OVERRIDE" ] && \
    "$AAPT2_OVERRIDE" version >/dev/null 2>&1; then
     EXTRA_ARGS="$EXTRA_ARGS -Pandroid.aapt2FromMavenOverride=$AAPT2_OVERRIDE"

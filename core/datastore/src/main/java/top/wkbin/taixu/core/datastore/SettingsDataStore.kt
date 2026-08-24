@@ -25,6 +25,7 @@ class SettingsDataStore @Inject constructor(
     private val secretManager: SecretManager,
 ) {
     private val developerModeKey = booleanPreferencesKey("developer_mode")
+    private val qemuCompatibilityEnabledKey = booleanPreferencesKey("qemu_compatibility_enabled")
     private val themeModeKey = stringPreferencesKey("theme_mode")
     private val themeStyleKey = stringPreferencesKey("theme_style")
     private val chengmingBackgroundUriKey = stringPreferencesKey("chengming_background_uri")
@@ -223,6 +224,11 @@ class SettingsDataStore @Inject constructor(
         preferences[developerModeKey] ?: false
     }
 
+    /** Optional x86_64 compatibility mode; ARM64 remains the default. */
+    val qemuCompatibilityEnabled: Flow<Boolean> = context.settingsDataStore.data.map { preferences ->
+        preferences[qemuCompatibilityEnabledKey] ?: false
+    }
+
     val onboardingCompleted: Flow<Boolean> = context.settingsDataStore.data.map { it[onboardingCompletedKey] ?: false }
     suspend fun setOnboardingCompleted(value: Boolean) { context.settingsDataStore.edit { it[onboardingCompletedKey] = value } }
     val selectedDistribution: Flow<String> = context.settingsDataStore.data.map { it[selectedDistributionKey] ?: "ubuntu" }
@@ -234,6 +240,12 @@ class SettingsDataStore @Inject constructor(
     suspend fun setDeveloperMode(enabled: Boolean) {
         context.settingsDataStore.edit { preferences ->
             preferences[developerModeKey] = enabled
+        }
+    }
+
+    suspend fun setQemuCompatibilityEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[qemuCompatibilityEnabledKey] = enabled
         }
     }
 

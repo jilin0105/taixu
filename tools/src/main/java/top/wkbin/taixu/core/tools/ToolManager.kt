@@ -35,6 +35,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import android.net.Uri
+import top.wkbin.taixu.core.common.result.AppResult
 
 data class ToolInstallProgress(
     val toolId: String,
@@ -42,6 +44,27 @@ data class ToolInstallProgress(
     val progress: Float? = null,
     val terminal: Boolean = false,
 )
+
+sealed interface LocalPluginImportState {
+    data object Idle : LocalPluginImportState
+    /** The URI has been selected; only manifest metadata is being read. */
+    data class Reading(val fileName: String) : LocalPluginImportState
+    data class PendingConfirmation(
+        val uri: Uri,
+        val fileName: String,
+        val manifest: ToolManifest,
+        val archiveSizeBytes: Long?,
+    ) : LocalPluginImportState
+    data class Importing(
+        val fileName: String,
+        val progress: Float?,
+        val bytesRead: Long,
+        val totalBytes: Long?,
+        val currentEntry: String?,
+    ) : LocalPluginImportState
+    data class Succeeded(val pluginName: String, val version: String) : LocalPluginImportState
+    data class Failed(val message: String) : LocalPluginImportState
+}
 
 private data class UninstallOutcome(
     val success: Boolean,
@@ -65,6 +88,7 @@ class ToolManager @Inject constructor(
     private val settingsDataStore: top.wkbin.taixu.core.datastore.ToolPreferences,
     private val assetSynchronizer: top.wkbin.taixu.runtime.scripts.RuntimeAssetSynchronizer,
     private val flutterSdkDownloader: FlutterSdkDownloader,
+    private val localPluginPayloadManager: LocalPluginPayloadManager,
     private val serviceController: ToolServiceController,
     installerAdapters: Set<@JvmSuppressWildcards ToolRuntimeAdapter>,
 ) {
@@ -83,6 +107,10 @@ class ToolManager @Inject constructor(
 
     private val _isBatchInstalling = MutableStateFlow(false)
     val isBatchInstalling: StateFlow<Boolean> = _isBatchInstalling.asStateFlow()
+
+    private val _localPluginImportState = MutableStateFlow<LocalPluginImportState>(LocalPluginImportState.Idle)
+    val localPluginImportState: StateFlow<LocalPluginImportState> = _localPluginImportState.asStateFlow()
+    private var localPluginImportJob: Job? = null
 
     private val staticInstallerById = installerAdapters.associateBy { it.toolId }
 
@@ -109,6 +137,110 @@ class ToolManager @Inject constructor(
 
     /** Expose manifest metadata for detail screens. */
     fun manifest(toolId: String): ToolManifest? = toolRepository.manifest(toolId)
+
+    suspend fun importLocalPlugin(
+        uri: Uri,
+        onProgress: (LocalPluginImportProgress) -> Unit = {},
+    ): AppResult<ToolManifest> {
+        val result = toolRepository.importLocal(uri, onProgress)
+        if (result is AppResult.Success) syncRegistry()
+        return result
+    }
+
+    /** Read and validate package metadata; no extraction or registry mutation occurs yet. */
+    @Synchronized
+    fun startLocalPluginImport(uri: Uri, fileName: String): Job {
+        localPluginImportJob?.takeIf { it.isActive }?.let { return it }
+        _localPluginImportState.value = LocalPluginImportState.Reading(fileName)
+        return managerScope.launch {
+            val result = toolRepository.inspectLocal(uri)
+            _localPluginImportState.value = when (result) {
+                is AppResult.Success -> LocalPluginImportState.PendingConfirmation(
+                    uri = uri,
+                    fileName = fileName,
+                    manifest = result.data.manifest,
+                    archiveSizeBytes = result.data.archiveSizeBytes,
+                )
+                is AppResult.Failure -> LocalPluginImportState.Failed(result.error.message)
+            }
+        }.also { localPluginImportJob = it }
+    }
+
+    /** Confirm a previously previewed package and perform extraction/registration. */
+    @Synchronized
+    fun confirmLocalPluginImport(): Job? {
+        val pending = _localPluginImportState.value as? LocalPluginImportState.PendingConfirmation ?: return null
+        _localPluginImportState.value = LocalPluginImportState.Importing(
+            fileName = pending.fileName,
+            progress = null,
+            bytesRead = 0L,
+            totalBytes = pending.archiveSizeBytes,
+            currentEntry = null,
+        )
+        return managerScope.launch {
+            try {
+                val result = importLocalPlugin(pending.uri) { progress ->
+                    _localPluginImportState.value = LocalPluginImportState.Importing(
+                        fileName = pending.fileName,
+                        progress = progress.fraction,
+                        bytesRead = progress.bytesRead,
+                        totalBytes = progress.totalBytes,
+                        currentEntry = progress.currentEntry,
+                    )
+                }
+                _localPluginImportState.value = when (result) {
+                is AppResult.Success -> {
+                    val manifest = result.data
+                    var installCompleted = false
+                    var installFailure: String? = null
+                    try {
+                        install(manifest.id).collect { event ->
+                            when (event) {
+                                is InstallEvent.Progress -> _localPluginImportState.value = LocalPluginImportState.Importing(
+                                    fileName = pending.fileName,
+                                    progress = event.progress,
+                                    bytesRead = pending.archiveSizeBytes ?: 0L,
+                                    totalBytes = pending.archiveSizeBytes,
+                                    currentEntry = event.message,
+                                )
+                                is InstallEvent.Completed -> installCompleted = true
+                                is InstallEvent.Failed -> installFailure = event.message
+                                is InstallEvent.Cancelled -> installFailure = "插件安装已取消"
+                                else -> Unit
+                            }
+                        }
+                    } catch (throwable: Throwable) {
+                        installFailure = throwable.message ?: "插件安装失败"
+                    }
+                    if (installCompleted) {
+                        LocalPluginImportState.Succeeded(manifest.name, manifest.version)
+                    } else {
+                        LocalPluginImportState.Failed(installFailure ?: "插件已解压，但安装流程未完成")
+                    }
+                }
+                    is AppResult.Failure -> LocalPluginImportState.Failed(result.error.message)
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (throwable: Throwable) {
+                _localPluginImportState.value = LocalPluginImportState.Failed(
+                    "本地插件安装失败：${throwable.message ?: "未知错误"}",
+                )
+            }
+        }.also { localPluginImportJob = it }
+    }
+
+    fun cancelLocalPluginImport() {
+        if (_localPluginImportState.value is LocalPluginImportState.PendingConfirmation) {
+            _localPluginImportState.value = LocalPluginImportState.Idle
+        }
+    }
+
+    fun clearLocalPluginImportState() {
+        if (localPluginImportJob?.isActive != true) {
+            _localPluginImportState.value = LocalPluginImportState.Idle
+        }
+    }
 
     /** Check whether a background gateway process is alive AND its port is listening (web services). */
     fun isGatewayRunning(toolId: String): Boolean {
@@ -183,6 +315,7 @@ class ToolManager @Inject constructor(
                 dependencyManager = dependencyManager,
                 providerManager = providerManager,
                 toolCommandLinker = toolCommandLinker,
+                localPluginPayloadManager = localPluginPayloadManager,
             )
         }
         return null
@@ -239,8 +372,15 @@ class ToolManager @Inject constructor(
                     ),
                 )
             }
+        // Registry parsing is a recoverable boundary. A malformed optional/remote
+        // manifest must not terminate the application or the local-plugin flow.
+        val manifests = try {
+            toolRepository.manifests()
+        } catch (_: Throwable) {
+            return
+        }
         distroIds.forEach { distroId ->
-            toolRepository.manifests().forEach { manifest ->
+            manifests.forEach { manifest ->
                 val existing = toolRepository.findById(distroId, manifest.id)
                 toolRepository.upsert(manifest.toEntity(distroId, existing))
                 if (existing?.state == ToolState.INSTALLING.name && manifest.id !in liveInstallTools) {

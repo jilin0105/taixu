@@ -13,6 +13,7 @@ object ToolManifestValidator {
     private val allowedLaunchTypes = setOf("one_shot", "pty", "web", "service", "command")
     private val allowedPermissions = setOf("NETWORK", "WORKSPACE_READ", "WORKSPACE_WRITE", "LOCAL_WEB")
     private val allowedUpdateStrategies = setOf("REINSTALL", "IN_PLACE")
+    private val allowedInstallMethods = setOf("SCRIPT", "LOCAL_PACKAGE")
 
     fun validateAll(manifests: List<ToolManifest>): List<ToolManifest> {
         require(manifests.isNotEmpty()) { "工具清单不能为空" }
@@ -36,6 +37,12 @@ object ToolManifestValidator {
             require(manifest.updateStrategy in allowedUpdateStrategies) {
                 "不支持的更新策略：${manifest.updateStrategy}"
             }
+            require(manifest.installMethod in allowedInstallMethods) { "不支持的安装方式：${manifest.installMethod}" }
+            require(manifest.source in setOf("REMOTE", "LOCAL")) { "不支持的工具来源：${manifest.source}" }
+            if (manifest.source == "LOCAL") {
+                require(manifest.offlineOnly) { "本地插件必须声明 offlineOnly=true：${manifest.id}" }
+                require(manifest.installMethod == "LOCAL_PACKAGE") { "本地插件必须使用 LOCAL_PACKAGE：${manifest.id}" }
+            }
             manifest.permissions.forEach { permission ->
                 require(permission in allowedPermissions) { "不支持的工具权限：$permission" }
             }
@@ -53,10 +60,12 @@ object ToolManifestValidator {
                     "本地服务路径不安全：${manifest.id}"
                 }
             }
-            manifest.dependencies.forEach { dependency ->
-                val parsed = ManifestDependencyParser.parse(dependency)
-                require(parsed != null && parsed.name in allowedDependencies) {
-                    "不支持的依赖类型：$dependency"
+            if (!manifest.offlineOnly) {
+                manifest.dependencies.forEach { dependency ->
+                    val parsed = ManifestDependencyParser.parse(dependency)
+                    require(parsed != null && parsed.name in allowedDependencies) {
+                        "不支持的依赖类型：$dependency"
+                    }
                 }
             }
         }

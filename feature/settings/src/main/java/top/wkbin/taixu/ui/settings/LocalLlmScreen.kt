@@ -60,6 +60,12 @@ fun LocalLlmScreen(
     val engineInstalled by viewModel.engineInstalled.collectAsStateWithLifecycle()
     val deviceRamBytes = viewModel.deviceRamBytes
     val mobileModelPresets = viewModel.mobileModelPresets
+    val topBarStatus = when (val state = serviceState) {
+        LocalLlmServiceState.Stopped -> "服务未启动"
+        is LocalLlmServiceState.Starting -> "正在启动 · ${state.fileName}"
+        is LocalLlmServiceState.Running -> "运行中 · ${state.fileName}"
+        is LocalLlmServiceState.Failed -> "启动失败"
+    }
 
     var showDownloadDialog by remember { mutableStateOf(false) }
     var showPathDialog by remember { mutableStateOf(false) }
@@ -104,7 +110,25 @@ fun LocalLlmScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = { RuntimeTopBar("本地 LLM", onBack) },
+        topBar = {
+            RuntimeTopBar(
+                title = "本地 LLM",
+                onBack = onBack,
+                statusText = topBarStatus,
+                actions = {
+                    if (serviceState is LocalLlmServiceState.Running) {
+                        RuntimeOutlinedButton(
+                            onClick = viewModel::stop,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp),
+                        ) {
+                            RuntimeIcon(RuntimeIconName.Stop, Modifier.size(16.dp))
+                            Spacer(Modifier.size(4.dp))
+                            Text("停止")
+                        }
+                    }
+                },
+            )
+        },
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
@@ -465,7 +489,10 @@ private fun ModelCard(
             } else {
                 RuntimeButton(
                     onClick = start,
-                    enabled = engineInstalled && serviceState !is LocalLlmServiceState.Starting,
+                    enabled = engineInstalled && (
+                        serviceState is LocalLlmServiceState.Stopped ||
+                            serviceState is LocalLlmServiceState.Failed
+                        ),
                     contentPadding = PaddingValues(horizontal = 11.dp, vertical = 8.dp),
                 ) {
                     RuntimeIcon(RuntimeIconName.Play, Modifier.size(17.dp))

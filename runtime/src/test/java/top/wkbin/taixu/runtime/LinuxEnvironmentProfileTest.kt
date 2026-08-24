@@ -7,6 +7,29 @@ import top.wkbin.taixu.core.model.EnvironmentVariable
 
 class LinuxEnvironmentProfileTest {
     @Test
+    fun parsesCurrentEnvironmentSnapshotBetweenMarkers() {
+        val output = """
+            profile noise
+            __TAIXU_ENV_SNAPSHOT_BEGIN__
+            HOME=/root
+            EMPTY=
+            VALUE=one=two
+            invalid line
+            __TAIXU_ENV_SNAPSHOT_END__
+            trailing noise
+        """.trimIndent()
+
+        assertEquals(
+            listOf(
+                EffectiveEnvironmentVariable("EMPTY", false),
+                EffectiveEnvironmentVariable("HOME", true),
+                EffectiveEnvironmentVariable("VALUE", true),
+            ),
+            LinuxEnvironmentSnapshot.parse(output),
+        )
+    }
+
+    @Test
     fun renderAndParseRoundTripShellSensitiveValues() {
         val records = listOf(
             LinuxEnvironmentRecord(

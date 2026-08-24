@@ -13,19 +13,29 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import top.wkbin.taixu.core.network.DownloadEvent
 import top.wkbin.taixu.core.network.DownloadRequest
 import top.wkbin.taixu.core.network.FileDownloader
 import top.wkbin.taixu.runtime.service.LocalServiceLauncher
 import top.wkbin.taixu.runtime.service.LocalServiceSpec
+import top.wkbin.taixu.runtime.shell.ManagedProcess
 import top.wkbin.taixu.runtime.shell.ProcessType
 import top.wkbin.taixu.runtime.shell.ShellCommand
 
@@ -68,6 +78,20 @@ class LocalLlmManager @Inject constructor(
 
     private val _serviceState = MutableStateFlow<LocalLlmServiceState>(LocalLlmServiceState.Stopped)
     val serviceState: StateFlow<LocalLlmServiceState> = _serviceState.asStateFlow()
+
+    private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val serviceMutex = Mutex()
+    private var serviceProcess: ManagedProcess? = null
+    private var serviceMonitorJob: Job? = null
+
+    init {
+        managerScope.launch {
+            linuxRuntime.activeDistroId.drop(1).collect {
+                stop()
+                refresh()
+            }
+        }
+    }
 
     fun refresh() {
         val directory = modelDirectory()
@@ -157,13 +181,26 @@ class LocalLlmManager @Inject constructor(
         return import(source.name, FileInputStream(source), source.length())
     }
 
-    suspend fun start(fileName: String) {
+    suspend fun start(fileName: String) = serviceMutex.withLock {
         check(Build.SUPPORTED_ABIS.any { it.equals("arm64-v8a", ignoreCase = true) }) {
             "当前设备不是 ARM64，无法运行本地 llama.cpp 推理引擎"
         }
         val model = resolveModelFile(fileName)
         require(model.isFile) { "模型文件不存在：$fileName" }
         validateGguf(model)
+
+        val currentState = _serviceState.value
+        val currentProcess = serviceProcess
+        if (currentState is LocalLlmServiceState.Running && currentProcess?.session?.isAlive == true) {
+            check(currentState.fileName == model.name) {
+                "已有本地模型正在运行，请先停止后再启动其他模型"
+            }
+            return@withLock
+        }
+
+        serviceMonitorJob?.cancel()
+        serviceMonitorJob = null
+        serviceProcess = null
         _serviceState.value = LocalLlmServiceState.Starting(model.name)
         try {
             val probe = linuxRuntime.execute(
@@ -197,11 +234,15 @@ class LocalLlmManager @Inject constructor(
                     ),
                 )
             }
+            serviceProcess = handle.process
             _serviceState.value = LocalLlmServiceState.Running(model.name, handle.url)
+            monitorService(handle.process)
         } catch (cancellation: CancellationException) {
+            serviceProcess = null
             _serviceState.value = LocalLlmServiceState.Stopped
             throw cancellation
         } catch (throwable: Throwable) {
+            serviceProcess = null
             _serviceState.value = LocalLlmServiceState.Failed(
                 throwable.message ?: "本地模型服务启动失败",
             )
@@ -209,7 +250,10 @@ class LocalLlmManager @Inject constructor(
         }
     }
 
-    suspend fun stop() {
+    suspend fun stop() = serviceMutex.withLock {
+        serviceMonitorJob?.cancel()
+        serviceMonitorJob = null
+        serviceProcess = null
         serviceLauncher.stop(SERVICE_ID)
         _serviceState.value = LocalLlmServiceState.Stopped
     }
@@ -278,6 +322,22 @@ class LocalLlmManager @Inject constructor(
         context.getSystemService(ActivityManager::class.java)?.getMemoryInfo(info)
     }.totalMem
 
+    private fun monitorService(process: ManagedProcess) {
+        serviceMonitorJob = managerScope.launch {
+            while (process.session.isAlive) {
+                delay(SERVICE_MONITOR_INTERVAL_MS)
+            }
+            serviceMutex.withLock {
+                if (serviceProcess === process) {
+                    serviceLauncher.stop(SERVICE_ID)
+                    serviceProcess = null
+                    serviceMonitorJob = null
+                    _serviceState.value = LocalLlmServiceState.Stopped
+                }
+            }
+        }
+    }
+
     companion object {
         const val TOOL_ID = "llama-cpp"
         const val SERVICE_PORT = 8080
@@ -291,6 +351,7 @@ class LocalLlmManager @Inject constructor(
         private const val MAX_MODEL_BYTES = 32L * 1024L * 1024L * 1024L
         private const val ENGINE_PROBE_TIMEOUT_MS = 10_000L
         private const val SERVICE_START_TIMEOUT_MS = 5 * 60_000L
+        private const val SERVICE_MONITOR_INTERVAL_MS = 1_000L
         private const val LOW_MEMORY_CONTEXT_SIZE = 2048
         private const val DEFAULT_CONTEXT_SIZE = 4096
         private const val MIN_INFERENCE_THREADS = 2

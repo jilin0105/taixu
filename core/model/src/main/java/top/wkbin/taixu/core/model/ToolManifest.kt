@@ -29,6 +29,10 @@ data class ToolManifest(
     val verifyCommand: String? = null,
     val commandLinks: List<String> = emptyList(),
     val environment: Map<String, String> = emptyMap(),
+    /** REMOTE is supplied by the signed/online registry; LOCAL is imported from a .txplugin package. */
+    val source: String = "REMOTE",
+    /** Local packages must be self-contained and may use TAIXU_PLUGIN_PAYLOAD. */
+    val offlineOnly: Boolean = false,
 ) {
     val installScript: String?
         get() = installSteps.takeIf { it.isNotEmpty() }?.joinToString("\n")

@@ -1,0 +1,10 @@
+#!/bin/sh
+# TaiXu-managed Gradle entry. Set TAIXU_BUILD_GUARD_BYPASS=1 only for a
+# deliberate non-Android diagnostic invocation.
+if [ "${TAIXU_BUILD_GUARD_BYPASS:-0}" = "1" ] || [ "${TAIXU_BUILD_ENGINE:-0}" = "1" ]; then
+    if [ -x /opt/gradle-8.14.2/bin/gradle ]; then
+        exec /opt/gradle-8.14.2/bin/gradle "$@"
+    fi
+    exec /usr/bin/gradle "$@"
+fi
+exec /bin/sh /opt/taixu/bin/taixu-build-guard gradle "$@"

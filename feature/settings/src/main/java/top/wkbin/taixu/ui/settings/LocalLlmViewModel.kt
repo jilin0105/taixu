@@ -15,7 +15,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -85,12 +84,6 @@ class LocalLlmViewModel @Inject constructor(
 
     init {
         localLlmManager.refresh()
-        viewModelScope.launch {
-            linuxRuntime.activeDistroId.collectLatest {
-                localLlmManager.stop()
-                localLlmManager.refresh()
-            }
-        }
     }
 
     fun download(url: String, sha256: String? = null) {

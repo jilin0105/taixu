@@ -488,7 +488,7 @@ fun LinuxEnvironmentSettingsScreen(
                     SettingsRow(
                         icon = RuntimeIconName.Key,
                         title = "环境变量",
-                        subtitle = "为终端、Agent 和工具注入加密变量",
+                        subtitle = "为终端、Agent 和工具注入用户变量",
                         onClick = onOpenEnvironmentVariables,
                     )
                 }
@@ -521,6 +521,7 @@ fun EnvironmentVariableSettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val entries by viewModel.environmentVariables.collectAsStateWithLifecycle()
+    val effectiveEntries by viewModel.effectiveEnvironment.collectAsStateWithLifecycle()
     val privacyMode by viewModel.environmentPrivacyMode.collectAsStateWithLifecycle()
     val loading by viewModel.environmentLoading.collectAsStateWithLifecycle()
     val error by viewModel.environmentError.collectAsStateWithLifecycle()
@@ -584,7 +585,7 @@ fun EnvironmentVariableSettingsScreen(
             }
             item {
                 Text(
-                    "变量直接保存在 $activeDistroId 的 Linux /etc/profile.d 中，并在下一次命令或终端会话启动时生效。",
+                    "用户变量保存在 $activeDistroId 的 Linux /etc/profile.d 中，并在下一次命令或终端会话启动时生效。值以受限文件权限保存。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -601,6 +602,13 @@ fun EnvironmentVariableSettingsScreen(
                     }
                 }
             }
+            item {
+                SectionHeader(
+                    title = "用户变量",
+                    subtitle = "可编辑的 TaiXu 用户配置",
+                    trailing = { Text(entries.size.toString(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                )
+            }
             if (loading && entries.isEmpty()) {
                 item {
                     Row(Modifier.fillMaxWidth().padding(24.dp), horizontalArrangement = Arrangement.Center) {
@@ -608,7 +616,7 @@ fun EnvironmentVariableSettingsScreen(
                     }
                 }
             } else if (entries.isEmpty()) {
-                item { RuntimeCard(modifier = Modifier.fillMaxWidth()) { Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) { Text("暂无环境变量", style = MaterialTheme.typography.titleMedium); Text("点击右上角 + 添加", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } } }
+                item { RuntimeCard(modifier = Modifier.fillMaxWidth()) { Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) { Text("暂无用户变量", style = MaterialTheme.typography.titleMedium); Text("点击右上角 + 添加", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } } }
             } else {
                 items(entries, key = { it.id }) { entry ->
                     RuntimeCard(modifier = Modifier.fillMaxWidth(), onClick = { editing = entry; showEditor = true }) {
@@ -619,6 +627,39 @@ fun EnvironmentVariableSettingsScreen(
                                 Text("••••••••", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             IconButton(onClick = { showDelete = entry }) { RuntimeIcon(RuntimeIconName.Trash, tint = MaterialTheme.colorScheme.error) }
+                        }
+                    }
+                }
+            }
+            item {
+                SectionHeader(
+                    title = "当前有效环境",
+                    subtitle = "新命令实际可见的变量；值已隐藏",
+                    trailing = { Text(effectiveEntries.size.toString(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                )
+            }
+            if (loading && effectiveEntries.isEmpty()) {
+                item {
+                    Row(Modifier.fillMaxWidth().padding(24.dp), horizontalArrangement = Arrangement.Center) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                    }
+                }
+            } else if (effectiveEntries.isEmpty()) {
+                item {
+                    RuntimeCard(modifier = Modifier.fillMaxWidth()) {
+                        Text("暂无可读取的运行时环境", modifier = Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            } else {
+                item {
+                    SettingsGroup {
+                        effectiveEntries.forEachIndexed { index, entry ->
+                            if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                            SettingsRow(
+                                icon = RuntimeIconName.Key,
+                                title = entry.key,
+                                subtitle = if (entry.hasValue) "已设置，值已隐藏" else "空值",
+                            )
                         }
                     }
                 }
@@ -662,6 +703,7 @@ fun SystemDevSettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val developer by viewModel.developerMode.collectAsStateWithLifecycle()
+    val qemuCompatibilityEnabled by viewModel.qemuCompatibilityEnabled.collectAsStateWithLifecycle()
     val phantomStatus by viewModel.phantomProcessStatus.collectAsStateWithLifecycle()
     val phantomBusy by viewModel.phantomProcessBusy.collectAsStateWithLifecycle()
     val phantomMessage by viewModel.phantomProcessMessage.collectAsStateWithLifecycle()
@@ -779,6 +821,24 @@ fun SystemDevSettingsScreen(
                             onClick = onOpenDeveloper,
                         )
                     }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    ToggleRow(
+                        icon = RuntimeIconName.Cpu,
+                        title = "QEMU x86_64 兼容模式",
+                        subtitle = "允许第三方项目使用 x86_64 Linux 构建工具；ARM64 项目仍优先使用 ARM64 工具链",
+                        checked = qemuCompatibilityEnabled,
+                        change = viewModel::setQemuCompatibilityEnabled,
+                    )
+                    Text(
+                        text = if (qemuCompatibilityEnabled) {
+                            "已开启，并已请求后台安装 qemu-x86-64-compat。可在插件中心查看下载进度；兼容包包含 ARM64 QEMU、x86_64 RootFS 与用户态库。"
+                        } else {
+                            "默认关闭，不会下载或使用 x86_64 工具。开启后仅对明确选择兼容环境的第三方项目生效，不会改变 APK 的 arm64-v8a 默认 ABI。"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                    )
                 }
             }
         }

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="app/src/main/res/drawable/logo.webp" width="96" alt="太墟 Logo" />
+  <img src="app/src/main/res/drawable/taixu_logo.webp" width="96" alt="太墟 Logo" />
 </p>
 
 <h1 align="center">太墟 · TaiXu</h1>

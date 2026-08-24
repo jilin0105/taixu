@@ -156,8 +156,13 @@ fi
 
 export GRADLE_OPTS="${GRADLE_OPTS:-} -Dorg.gradle.jvmargs=-Xmx1024m"
 
-echo "==> [TaiXu Build] 正在拉取 Flutter 依赖 (flutter pub get)..."
-flutter pub get
+if [ "${TAIXU_OFFLINE:-0}" = "1" ]; then
+    echo "==> [TaiXu Build] 离线模式：使用本地 Flutter Pub 缓存"
+    flutter pub get --offline
+else
+    echo "==> [TaiXu Build] 正在拉取 Flutter 依赖 (flutter pub get)..."
+    flutter pub get
+fi
 
 # 3. 确保 Android 宿主使用本地 Gradle 8.14.2 + 国内镜像，避免 Wrapper 从 services.gradle.org
 #    下载发行版（国内网络易被重置，报 SocketException: connection abort）。
@@ -215,4 +220,8 @@ gradle.beforeSettings { settings ->
 EOF
 
 echo "==> [TaiXu Build] 正在执行 Flutter 打包编译 (flutter build $TARGET)..."
-exec flutter build $TARGET
+if [ "${TAIXU_OFFLINE:-0}" = "1" ]; then
+    exec flutter build $TARGET --offline
+else
+    exec flutter build $TARGET
+fi

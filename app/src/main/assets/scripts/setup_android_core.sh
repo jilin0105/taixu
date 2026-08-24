@@ -481,7 +481,9 @@ export TAIXU_NDK_SHA256="$TAIXU_NDK_SHA256"
 export ANDROID_NDK_HOME="$TAIXU_NDK_PATH"
 export ANDROID_NDK_ROOT="$TAIXU_NDK_PATH"
 export TAIXU_LLVM_STRIP_PATH="$TAIXU_LLVM_STRIP_PATH"
-export PATH="\$JAVA_HOME/bin:\$GRADLE_HOME/bin:\$PATH"
+# /opt/taixu/bin 必须保持首位：终端与 Agent 直接执行 gradle/gradlew 时
+# 先经过 TaiXu ARM64 工具链自检，再调度固定 Gradle。
+export PATH="/opt/taixu/bin:\$JAVA_HOME/bin:\$GRADLE_HOME/bin:\$PATH"
 # PRoot sandbox: use non-blocking entropy
 export _JAVA_OPTIONS="-Djava.security.egd=file:/dev/urandom"
 EOF
@@ -498,7 +500,7 @@ TAIXU_NDK_SHA256=$TAIXU_NDK_SHA256
 ANDROID_NDK_HOME=$TAIXU_NDK_PATH
 ANDROID_NDK_ROOT=$TAIXU_NDK_PATH
 TAIXU_LLVM_STRIP_PATH=$TAIXU_LLVM_STRIP_PATH
-PATH=$JAVA_HOME_RESOLVED/bin:/opt/gradle-$GRADLE_VER/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+PATH=/opt/taixu/bin:$JAVA_HOME_RESOLVED/bin:/opt/gradle-$GRADLE_VER/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 _JAVA_OPTIONS=-Djava.security.egd=file:/dev/urandom
 EOF
 

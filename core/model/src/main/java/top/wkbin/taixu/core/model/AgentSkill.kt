@@ -100,6 +100,45 @@ object BuiltinSkills {
             category = "编程开发",
         ),
         AgentSkill(
+            id = "mobile_build_guard",
+            name = "移动端构建环境守卫",
+            description = "Android/Flutter 构建前强制自检，优先使用太墟 ARM64 工具链，并在必要时显式切换 QEMU 兼容会话",
+            systemPrompt = """
+                【移动端构建环境守卫】：
+                1. 在执行 Android 或 Flutter 构建前，先运行 `taixu-build doctor <项目路径>`；不得跳过自检后直接下载或执行未知主机架构的工具。
+                2. 自检通过后统一使用 `taixu-build android <项目路径> [Gradle任务]` 或 `taixu-build flutter <项目路径> [Flutter参数]`。优先使用太墟内置 JDK、Android SDK、Gradle、AAPT2、NDK 与 Flutter SDK。
+                3. 不要用 `apt`、`sdkmanager`、Gradle 自动下载或 Flutter 自动修复去覆盖太墟工具链；不要下载 x86/x86_64 AAPT2、JDK、NDK 或 Android 主机工具替代 ARM64 核心资源。
+                4. 第三方项目版本不匹配时，先读取 Gradle wrapper、AGP、Kotlin、compileSdk、NDK 与 Flutter/Dart 约束，再以当前工具链为基准做最小项目对齐。修改前向用户说明需要升级或降级的文件与版本。
+                5. 只有自检明确报告“x86_64 主机 ELF/Exec format error”且 QEMU 兼容环境已经就绪时，才使用 `taixu-build ... --qemu`；QEMU 只运行隔离 x86_64 用户态工具，最终 APK 仍必须只面向 ARM64。
+                6. 如果用户直接要求 `./gradlew` 或 `flutter build apk`，仍先执行 doctor；构建失败时保留原始日志，区分项目源码错误、依赖版本错误、网络错误与主机架构错误，禁止把所有失败都盲目转入 QEMU。
+            """.trimIndent(),
+            triggerCommand = "/buildguard",
+            iconName = "Shield",
+            isEnabled = true,
+            isBuiltin = true,
+            category = "移动端开发",
+        ),
+        AgentSkill(
+            id = "mobile_project_align",
+            name = "移动端项目兼容对齐",
+            description = "分析第三方 Android/Flutter 项目与 TaiXu ARM64 工具链的差异，生成变更计划并在确认后执行最小调整",
+            systemPrompt = """
+                【移动端项目兼容对齐】：
+                1. 这是只读分析优先的 Skill。先运行 `taixu-build analyze <项目路径>`，必要时加 `--offline`，并读取输出中的 compileSdk、Gradle Wrapper、AGP、Kotlin、ABI 与缓存结论。
+                2. 未获得用户确认前，不得修改第三方项目的 Gradle、pubspec、AndroidManifest、ABI 或 Wrapper 文件；先给出明确的变更清单、当前值、目标值和风险。
+                3. TaiXu 默认基准是 ARM64、Android Platform 34、Build-Tools 35、Gradle 8.14.2、Flutter Android arm64。不要为了迁就项目静默下载 x86/x86_64 JDK、AAPT2、NDK 或其他主机工具。
+                4. 用户确认对齐后，只做最小修改：优先修改 compileSdk/targetSdk、Wrapper 调度和 ABI 声明；保留业务代码与用户自定义仓库；每个文件修改后立即检查 diff。
+                5. 如果项目依赖版本无法在当前 ARM64/离线缓存中满足，提供三种选择：补齐离线缓存、显式使用 QEMU x86_64 会话、取消构建。不要把网络错误伪装成架构错误。
+                6. 对齐或构建完成后必须运行 `taixu-build doctor <项目路径>`，构建 APK 后再运行统一 ABI 验证；最终只接受 arm64-v8a，不接受 x86/x86_64 产物。
+            """.trimIndent(),
+            triggerCommand = "/alignmobile",
+            iconName = "Adjustments",
+            isEnabled = true,
+            isBuiltin = true,
+            isImmutable = true,
+            category = "移动端开发",
+        ),
+        AgentSkill(
             id = "android_cli",
             name = "Google Android 原生开发助手",
             description = "精通 Android SDK 工具链、Jetpack Compose 与现代 Gradle 流水线",
@@ -114,7 +153,7 @@ object BuiltinSkills {
                 3. 构建与运行指南：
                    - 系统已预装 OpenJDK 17、adb、Gradle 8.14.2、不可变 ARM64 AAPT2 与 lzhiyong/termux-ndk r29；Android 34 平台包由插件装配期就位于 /opt/android-sdk，不要假设存在官方 `android` CLI；
                    - 全局 Gradle 已注入阿里云 Maven 镜像 (/root/.gradle/init.gradle)，依赖下载自动走国内加速，无需手工配置；
-                   - 构建排错时优先使用 `/opt/taixu/scripts/build_android.sh <工作区> assembleDebug`，或在项目根目录下通过 `./gradlew assembleDebug` 编译；
+                   - 构建排错时先运行 `taixu-build doctor <工作区>`，再使用 `taixu-build android <工作区> assembleDebug`；
                    - 诊断环境使用 `java -version`、`adb version`、`gradle --version` 和实际 Gradle/AAPT2 错误输出，不要调用 `android doctor` 或 `android skills`；
                     - 【ARM64 沙箱构建核心铁律】：AAPT2 与 NDK 路径由插件写入 Gradle 用户级策略并锁定到 SHA-256 不可变目录；不要在项目中另写 AAPT2/NDK 路径。项目 `gradle.properties` 只需保留：
                       ```properties
@@ -174,7 +213,7 @@ object BuiltinSkills {
                    - 已预设环境变量 PUB_HOSTED_URL=https://pub.flutter-io.cn 与 FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn；
                    - 依赖拉取优先执行：`flutter pub get`；
                 3. 构建与编译指南：
-                   - 构建 Debug APK 命令：`flutter build apk --debug`；
+                   - 构建前先运行 `taixu-build doctor <工作区>`；构建 Debug APK 使用 `taixu-build flutter <工作区> apk --debug`；
                    - 若遇 Gradle 插件下载超时，优先在 android/build.gradle 中使用国内阿里云/腾讯云 Maven 镜像替代海外源；
                 4. 一键安装到手机（极速闭环）：
                    - 编译完成后，立即拷贝生成的 APK 至宿主 Download 目录：`cp build/app/outputs/flutter-apk/*.apk /sdcard/Download/<项目名>.apk`；

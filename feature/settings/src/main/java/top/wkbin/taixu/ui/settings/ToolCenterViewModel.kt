@@ -17,6 +17,7 @@ import top.wkbin.taixu.core.tools.ToolManager
 import top.wkbin.taixu.core.tools.ToolVerification
 import top.wkbin.taixu.runtime.LinuxRuntime
 import javax.inject.Inject
+import android.net.Uri
 
 @HiltViewModel
 class ToolCenterViewModel @Inject constructor(
@@ -40,6 +41,8 @@ class ToolCenterViewModel @Inject constructor(
     private val _toolLogs = MutableStateFlow<List<InstallLogEntity>>(emptyList())
     val toolLogs: StateFlow<List<InstallLogEntity>> = _toolLogs.asStateFlow()
 
+    val localPluginImport: StateFlow<top.wkbin.taixu.core.tools.LocalPluginImportState> = toolManager.localPluginImportState
+
     fun syncRegistry() {
         viewModelScope.launch {
             try {
@@ -48,6 +51,27 @@ class ToolCenterViewModel @Inject constructor(
                 logger.w("Failed to sync tool registry: ${e.message}", e)
             }
         }
+    }
+
+    fun importLocalPlugin(uri: Uri) {
+        val fileName = uri.lastPathSegment
+            ?.substringAfterLast('/')
+            ?.substringAfterLast(':')
+            ?.takeIf { it.isNotBlank() }
+            ?: "本地插件包"
+        toolManager.startLocalPluginImport(uri, fileName)
+    }
+
+    fun clearLocalPluginImportState() {
+        toolManager.clearLocalPluginImportState()
+    }
+
+    fun confirmLocalPluginImport() {
+        toolManager.confirmLocalPluginImport()
+    }
+
+    fun cancelLocalPluginImport() {
+        toolManager.cancelLocalPluginImport()
     }
 
     fun setCategory(category: String) {

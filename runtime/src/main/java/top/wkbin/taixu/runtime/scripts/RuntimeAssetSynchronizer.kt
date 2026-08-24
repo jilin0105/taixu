@@ -28,6 +28,7 @@ class RuntimeAssetSynchronizer @Inject constructor(
 
         val scriptsTargetDir = pathManager.taixuScriptsDir(safeDistro)
         val toolsTargetDir = pathManager.taixuToolsDir(safeDistro)
+        val binTargetDir = pathManager.taixuBinDir(safeDistro)
 
         // 1. 同步 assets/scripts/ -> /opt/taixu/scripts/
         syncAssetFolder("scripts", scriptsTargetDir)
@@ -35,15 +36,18 @@ class RuntimeAssetSynchronizer @Inject constructor(
         // 2. 同步 assets/tools/ -> /opt/taixu/tools/
         syncAssetFolder("tools", toolsTargetDir)
 
-        // 3. 同步 assets/certs/ -> /opt/taixu/certs/ 与 /etc/ssl/certs/java/cacerts
+        // 3. /opt/taixu/bin 位于终端与 Agent PATH 首位，部署受管构建入口。
+        syncAssetFolder("bin", binTargetDir)
+
+        // 4. 同步 assets/certs/ -> /opt/taixu/certs/ 与 /etc/ssl/certs/java/cacerts
         val certsTargetDir = File(pathManager.taixuRootDir(safeDistro), "certs")
         syncAssetBinaryFolder("certs", certsTargetDir)
 
-        // 4. Android/Flutter project templates live outside a distro so that
+        // 5. Android/Flutter project templates live outside a distro so that
         // creating a workspace does not depend on which distro is active.
         syncAssetTree("templates", File(pathManager.baseDir, "templates"))
 
-        // 5. 精准将标准 cacerts 注入沙箱 OpenJDK 与 系统证书路径
+        // 6. 精准将标准 cacerts 注入沙箱 OpenJDK 与 系统证书路径
         val builtinCacerts = File(certsTargetDir, "cacerts")
         if (builtinCacerts.exists() && builtinCacerts.length() > 0) {
             val rootfsRoot = pathManager.rootfsDir(safeDistro)

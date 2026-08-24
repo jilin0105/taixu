@@ -32,8 +32,10 @@ class ProotCommandBuilder private constructor(
         attachmentsDir: File = File(rootfsDir.parentFile, "attachments"),
         command: ShellCommand,
         mounts: List<top.wkbin.taixu.core.model.StorageMountBinding> = emptyList(),
+        emulatorBinary: File? = null,
     ): List<String> = buildList {
         add(prootBinary.absolutePath)
+        addEmulator(emulatorBinary)
         add("--kill-on-exit")
         add("--link2symlink")
         add("-L")
@@ -86,10 +88,12 @@ class ProotCommandBuilder private constructor(
         ptyMarker: String? = null,
         nativePty: Boolean = false,
         mounts: List<top.wkbin.taixu.core.model.StorageMountBinding> = emptyList(),
+        emulatorBinary: File? = null,
     ): List<String> = buildList {
         val columns = config.columns.coerceIn(20, 400)
         val rows = config.rows.coerceIn(5, 200)
         add(prootBinary.absolutePath)
+        addEmulator(emulatorBinary)
         add("--kill-on-exit")
         add("--link2symlink")
         add("-L")
@@ -162,6 +166,16 @@ class ProotCommandBuilder private constructor(
 
     private fun shellQuote(value: String): String =
         "'${value.replace("'", "'\\\''")}'"
+
+    /** Add PRoot QEMU user-mode emulation for a dedicated x86_64 guest only. */
+    private fun MutableList<String>.addEmulator(emulatorBinary: File?) {
+        if (emulatorBinary == null) return
+        require(emulatorBinary.isFile && emulatorBinary.canExecute()) {
+            "QEMU emulator 不可执行：${emulatorBinary.absolutePath}"
+        }
+        add("-q")
+        add(emulatorBinary.absolutePath)
+    }
 
     /**
      * The Termux PRoot build stores emulated hard-link payloads under the host-side

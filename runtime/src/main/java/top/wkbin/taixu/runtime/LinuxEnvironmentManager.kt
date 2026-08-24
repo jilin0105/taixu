@@ -14,6 +14,9 @@ import top.wkbin.taixu.core.datastore.RuntimePreferences
 import top.wkbin.taixu.core.model.EnvironmentVariable
 import top.wkbin.taixu.runtime.shell.ShellCommand
 
+private const val ENV_SNAPSHOT_BEGIN = "__TAIXU_ENV_SNAPSHOT_BEGIN__"
+private const val ENV_SNAPSHOT_END = "__TAIXU_ENV_SNAPSHOT_END__"
+
 /**
  * Reads and persists user-managed variables inside the active Linux distribution.
  *
@@ -31,6 +34,10 @@ class LinuxEnvironmentManager @Inject constructor(
 
     private val _values = MutableStateFlow<Map<String, String>>(emptyMap())
     val values: StateFlow<Map<String, String>> = _values.asStateFlow()
+
+    private val _effectiveEnvironment = MutableStateFlow<List<EffectiveEnvironmentVariable>>(emptyList())
+    /** Environment visible to a fresh non-interactive command in the active distro. */
+    val effectiveEnvironment: StateFlow<List<EffectiveEnvironmentVariable>> = _effectiveEnvironment.asStateFlow()
 
     private var loadedDistroId: String? = null
 
@@ -106,6 +113,8 @@ class LinuxEnvironmentManager @Inject constructor(
             val updated = transform(records)
             writeRecords(distroId, updated)
             publish(distroId, updated)
+            _effectiveEnvironment.value = runCatching { readEffectiveEnvironment(distroId) }
+                .getOrDefault(_effectiveEnvironment.value)
         }
     }
 
@@ -113,8 +122,14 @@ class LinuxEnvironmentManager @Inject constructor(
         if (loadedDistroId != distroId) {
             _variables.value = emptyList()
             _values.value = emptyMap()
+            _effectiveEnvironment.value = emptyList()
         }
-        publish(distroId, readRecords(distroId))
+        val records = readRecords(distroId)
+        publish(distroId, records)
+        // A broken optional probe must not hide otherwise readable user variables.
+        _effectiveEnvironment.value = runCatching {
+            readEffectiveEnvironment(distroId)
+        }.getOrDefault(emptyList())
     }
 
     private suspend fun readRecords(distroId: String): List<LinuxEnvironmentRecord> {
@@ -151,6 +166,17 @@ class LinuxEnvironmentManager @Inject constructor(
         check(result.isSuccess) { result.stderr.trim().ifBlank { "写入 Linux 环境变量失败" } }
     }
 
+    private suspend fun readEffectiveEnvironment(distroId: String): List<EffectiveEnvironmentVariable> {
+        val result = linuxRuntime.execute(
+            ShellCommand(
+                "printf '%s\\n' '$ENV_SNAPSHOT_BEGIN'; env; printf '%s\\n' '$ENV_SNAPSHOT_END'",
+            ),
+            distroId,
+        )
+        if (!result.isSuccess) return emptyList()
+        return LinuxEnvironmentSnapshot.parse(result.stdout)
+    }
+
     private fun publish(distroId: String, records: List<LinuxEnvironmentRecord>) {
         loadedDistroId = distroId
         _variables.value = records.map(LinuxEnvironmentRecord::metadata).sortedBy(EnvironmentVariable::key)
@@ -183,6 +209,32 @@ class LinuxEnvironmentManager @Inject constructor(
         val RESERVED_KEYS = setOf(
             "HOME", "PATH", "TERM", "PS1", "DEBIAN_FRONTEND", "CI", "NONINTERACTIVE",
         )
+    }
+}
+
+data class EffectiveEnvironmentVariable(
+    val key: String,
+    val hasValue: Boolean,
+)
+
+internal object LinuxEnvironmentSnapshot {
+    private val environmentKey = Regex("^[A-Za-z_][A-Za-z0-9_]*$")
+
+    fun parse(output: String): List<EffectiveEnvironmentVariable> {
+        val body = output.substringAfter("$ENV_SNAPSHOT_BEGIN\n", "")
+            .substringBefore("\n$ENV_SNAPSHOT_END", "")
+        if (body.isBlank()) return emptyList()
+        return body.lineSequence()
+            .mapNotNull { line ->
+                val separator = line.indexOf('=')
+                if (separator <= 0) return@mapNotNull null
+                val key = line.substring(0, separator)
+                if (!environmentKey.matches(key)) return@mapNotNull null
+                EffectiveEnvironmentVariable(key, line.length > separator + 1)
+            }
+            .distinctBy { it.key }
+            .sortedBy { it.key }
+            .toList()
     }
 }
 

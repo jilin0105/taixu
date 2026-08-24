@@ -28,6 +28,7 @@ class GenericRecipeInstaller(
     private val dependencyManager: DependencyManager,
     private val providerManager: ProviderManager,
     private val toolCommandLinker: ToolCommandLinker,
+    private val localPluginPayloadManager: top.wkbin.taixu.core.tools.LocalPluginPayloadManager? = null,
 ) : ToolRuntimeAdapter {
     override val toolId: String = manifest.id
 
@@ -36,9 +37,15 @@ class GenericRecipeInstaller(
         try {
             checkReady()
 
+            val localPayload = if (manifest.source == "LOCAL") {
+                emit(InstallEvent.Progress(toolId, "正在装载本地插件资源", 0.05f, InstallEvent.Phase.PREPARING))
+                localPluginPayloadManager?.prepare(toolId, linuxRuntime.activeDistroId.value)
+                    ?: error("本地插件 payload 不存在")
+            } else null
+
             // 1. 准备前置依赖
             emit(InstallEvent.Progress(toolId, "正在解析并准备工具依赖...", 0.15f, InstallEvent.Phase.INSTALLING_DEPENDENCY))
-            for (depString in manifest.dependencies) {
+            for (depString in manifest.dependencies.takeUnless { manifest.offlineOnly }.orEmpty()) {
                 val parsed = ManifestDependencyParser.parse(depString)
                 if (parsed != null) {
                     val runtimeName = when (parsed.name.lowercase()) {
@@ -61,14 +68,7 @@ class GenericRecipeInstaller(
             val toolDataDir = ToolLayout.toolDataDirectory(toolId)
             executeAndReport("mkdir -p $toolDir $toolDataDir")
 
-            val baseEnvironment = providerManager.environment() + mapOf(
-                "TAIXU_TOOL_ID" to toolId,
-                "TAIXU_TOOL_DIR" to toolDir,
-                "TAIXU_TOOL_DATA" to toolDataDir,
-                "npm_config_prefix" to toolDir,
-                "NPM_CONFIG_PREFIX" to toolDir,
-                "PATH" to "$toolDir/bin:/opt/taixu/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-            ) + manifest.environment
+            val baseEnvironment = runtimeEnvironment(localPayload)
 
             // 2.5 预检与自愈基础系统包管理状态 (清理残留锁、已损坏的 updates 事务与未配置的 dpkg 状态)
             val preflightCmd = "rm -rf /var/lib/dpkg/updates/* /var/lib/dpkg/lock* /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null || true; DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>/dev/null || true"
@@ -166,7 +166,7 @@ class GenericRecipeInstaller(
 
     override suspend fun interactiveSessionConfig(): SessionConfig = SessionConfig(
         commandLine = "exec ${manifest.launchCommand ?: manifest.id}",
-        environment = providerManager.environment() + manifest.environment,
+        environment = runtimeEnvironment(),
         allowSttyResize = false,
     )
 
@@ -174,7 +174,7 @@ class GenericRecipeInstaller(
         id = "${toolId}-service",
         command = ShellCommand(
             commandLine = manifest.launchCommand ?: manifest.id,
-            environment = providerManager.environment() + manifest.environment,
+            environment = runtimeEnvironment(),
         ),
         toolId = toolId,
         type = ProcessType.SERVICE,
@@ -186,12 +186,12 @@ class GenericRecipeInstaller(
         val links = if (manifest.commandLinks.isNotEmpty()) manifest.commandLinks else listOf(manifest.id)
 
         for (link in links) {
-            toolCommandLinker.remove(link, providerManager.environment())
+            toolCommandLinker.remove(link, runtimeEnvironment())
         }
 
         val customUninstall = manifest.uninstallScript
         if (!customUninstall.isNullOrBlank()) {
-            linuxRuntime.execute(ShellCommand(customUninstall, environment = providerManager.environment()))
+            linuxRuntime.execute(ShellCommand(customUninstall, environment = runtimeEnvironment()))
         }
 
         val dataCleanup = if (deleteData) " && rm -rf $toolDataDir" else ""
@@ -209,8 +209,29 @@ class GenericRecipeInstaller(
     }
 
     private suspend fun execute(command: String) = linuxRuntime.execute(
-        ShellCommand(command, environment = providerManager.environment() + manifest.environment),
+        ShellCommand(command, environment = runtimeEnvironment()),
     )
+
+    private suspend fun runtimeEnvironment(localPayload: String? = null): Map<String, String> {
+        val toolDir = ToolLayout.toolDirectory(toolId)
+        val runtimePath = "/root/.local/bin:/opt/taixu/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        val declaredPath = manifest.environment["PATH"]
+        val effectivePath = declaredPath
+            ?.replace("\${PATH}", runtimePath)
+            ?.replace("\$PATH", runtimePath)
+            ?: runtimePath
+        val payloadPath = localPayload ?: if (manifest.source == "LOCAL") "/opt/taixu/imports/$toolId" else null
+        return providerManager.environment().filterKeys { it != "PATH" } +
+            manifest.environment.filterKeys { it != "PATH" } +
+            mapOf(
+                "TAIXU_TOOL_ID" to toolId,
+                "TAIXU_TOOL_DIR" to toolDir,
+                "TAIXU_TOOL_DATA" to ToolLayout.toolDataDirectory(toolId),
+                "npm_config_prefix" to toolDir,
+                "NPM_CONFIG_PREFIX" to toolDir,
+                "PATH" to "$toolDir/bin:$effectivePath",
+            ) + payloadPath?.let { mapOf("TAIXU_PLUGIN_PAYLOAD" to it) }.orEmpty()
+    }
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<InstallEvent>.executeAndReport(
         result: CommandResult,

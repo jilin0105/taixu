@@ -171,9 +171,9 @@ class RuntimePathManager @Inject constructor(
      * the `.so` suffix, so copy the bundled library to the exact SONAME expected by
      * the linker in the app-private runtime directory before launching PRoot.
      */
-    fun hostProcessEnvironment(distroId: String = "ubuntu"): Map<String, String> {
+    fun hostProcessEnvironment(distroId: String = "ubuntu", rootfsOverride: File? = null): Map<String, String> {
         ensureDirectories()
-        val rfs = rootfsDir(distroId)
+        val rfs = rootfsOverride ?: rootfsDir(distroId)
         // Remove the app-managed QEMU payload left by versions that used an
         // x86_64 AAPT2 fallback. Current Android tooling is ARM64-native.
         File(taixuBinDir(distroId), "qemu-x86_64-static").delete()

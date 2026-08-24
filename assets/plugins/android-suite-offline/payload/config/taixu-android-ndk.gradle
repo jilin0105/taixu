@@ -1,0 +1,4 @@
+def taixuNdk = System.getenv('ANDROID_NDK_HOME') ?: '/opt/taixu/toolchains/android/ndk'
+allprojects {
+    ext.set('taixuNdkPath', taixuNdk)
+}
