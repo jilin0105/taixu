@@ -77,7 +77,7 @@ This file tracks known issues and environment notes for the TaiXu Android projec
   - JAVA_HOME 推导、java/gradle 全局软链、cacerts 注入。
 - `build_android.sh` 重构为纯执行器：加载 profile 环境 → 前置校验（缺 java.jar/gradle 快速失败并指引插件中心）→ 写 local.properties → 多级 Gradle 调度。`android init` 脚手架直接预置阿里云镜像（替代旧版构建期 sed 自愈注入）。
 - ToolManager 批量装配对重型下载脚本（setup_android_core.sh / setup_flutter.sh / setup_jadx.sh / setup_pnpm.sh）超时从 180s 放宽到 20 分钟（与 GenericRecipeInstaller 对齐）；apt 聚合安装整批失败时降级 `--ignore-missing`，避免个别发行版缺包（如 apksigner）导致全部装不上。
-- Android 核心套件默认随 APK 内置 ARM64 `qemu-x86_64-static`，构建脚本强制通过 QEMU 执行 Google x86_64 AAPT2，并将真实路径传给 AGP 的 `android.aapt2FromMavenOverride`。AAPT2 启动失败时先确认 `/opt/taixu/bin/qemu-x86_64-static` 与 `aapt2` 包装器存在。
+- Android 核心套件使用 ARM64 原生 AAPT2，并通过稳定路径 `/opt/taixu/android-sdk-tools/aapt2` 传给 AGP 的 `android.aapt2FromMavenOverride`；不再随 APK 内置 QEMU。AAPT2 启动失败时重新装配 Android 核心环境并检查该稳定软链。
 - 注意：插件中心的组件就绪探针已升级为校验真实 SDK（java + aapt + android.jar + gradle launcher jar），老沙箱升级 App 后探针会显示未就绪，重新装配一次即可（幂等，已下载组件会跳过）。
 
 ---

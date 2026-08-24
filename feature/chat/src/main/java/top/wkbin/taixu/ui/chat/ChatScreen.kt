@@ -18,7 +18,6 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -51,6 +50,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import top.wkbin.taixu.ui.components.RuntimeButton as Button
 import androidx.compose.material3.ButtonDefaults
 import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator as CircularProgressIndicator
@@ -90,7 +90,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -109,6 +108,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 import top.wkbin.taixu.core.database.AiModelEntity
@@ -230,7 +231,10 @@ fun ChatScreen(
         maxOf(imeBottom, navigationBottom + AgentBottomBarHeight.roundToPx()).toDp()
     }
 
-    var initialPositionedSessionKey by remember { mutableStateOf<String?>(null) }
+    // Navigation3 removes inactive tab content from composition. Persist this marker with the
+    // entry so returning to 智枢 does not perform a second, redundant scrollToItem during the
+    // tab transition.
+    var initialPositionedSessionKey by rememberSaveable { mutableStateOf<String?>(null) }
     val currentSessionKey = remember(messages) { messages.firstOrNull()?.id ?: "" }
 
     // Only the latest assistant message changes during streaming. Avoid summing the
@@ -687,12 +691,14 @@ private fun ChatPaneContent(
                 } else if (imageBase64List.isNotEmpty()) {
                     append("请分析附带的图片：")
                 }
-                if (nonImageFiles.isNotEmpty()) {
-                    append("\n\n[文件附件]\n")
-                    nonImageFiles.forEachIndexed { i, att ->
+                if (attachments.isNotEmpty()) {
+                    append("\n\n[附件：已复制并挂载到 Linux 沙箱]\n")
+                    attachments.forEachIndexed { i, att ->
                         val guestPath = att.guestFilePath ?: "/attachments/${att.name}"
-                        append("${i + 1}. [文件] ${att.name} (${AttachmentHelper.formatFileSize(att.sizeBytes)}) -> 沙箱内路径: $guestPath\n")
+                        val kind = if (att.isImage) "图片" else "文件"
+                        append("${i + 1}. [$kind] ${att.name} (${AttachmentHelper.formatFileSize(att.sizeBytes)}) -> Linux 沙箱绝对路径: $guestPath\n")
                     }
+                    append("需要通过工具访问时，请使用 base 在上述绝对路径读取；不要使用 Android content:// URI 或宿主机路径。")
                 }
             }
             onSend(fullMessage, imageBase64List)
@@ -711,55 +717,60 @@ private fun ChatPaneContent(
                         modifier = Modifier.padding(vertical = 16.dp),
                     )
                 }
-            } else if (messages.isEmpty()) {
-                item {
-                    EmptyChatGuidance(
-                        workspaceProject = workspaceProject,
-                        onSelectCommand = onApplyCommand,
-                    )
-                }
-            }
-            itemsIndexed(messages, key = { _, message -> message.id }) { index, message ->
-                if (message is ToolResult) return@itemsIndexed
-                val top = when {
-                    message is ToolCall && prevRenderedIsToolCall(messages, index) -> 2.dp
-                    else -> 8.dp
-                }
-                if (index > 0) Spacer(Modifier.height(top))
-                when (message) {
-                    is CapabilityEvent -> CapabilityEventCard(message)
-                    is UserMessage -> UserBubble(
-                        message = message,
-                        knownMentionNames = knownMentionNames,
-                        onEdit = { onEditMessage(message) },
-                        onDelete = { onDeleteMessage(message.id) },
-                    )
-                    is AssistantText -> AssistantBubble(
-                        message = message,
-                        defaultExpanded = thinkingExpanded,
-                        live = thinkingLive && message.id == liveThinkingMessageId,
-                    )
-                    is ToolCall -> {
-                        if (message.tool == HarnessTool.SUBAGENT) {
-                            SubagentCard(
-                                call = message,
-                                result = toolResults[message.id],
-                            )
-                        } else {
-                            ToolCard(
-                                call = message,
-                                result = toolResults[message.id],
-                                workspace = workspace,
-                                onOpenFile = onOpenFile,
-                                running = running,
-                                liveStatus = status,
-                                showReasoning = message.reasoning != null &&
-                                    !reasoningAlreadyShown(messages, index, message.reasoning),
-                                defaultExpanded = thinkingExpanded,
-                            )
-                        }
+            } else {
+                if (messages.isEmpty()) {
+                    item {
+                        EmptyChatGuidance(
+                            workspaceProject = workspaceProject,
+                            onSelectCommand = onApplyCommand,
+                        )
                     }
-                    is ToolResult -> Unit
+                }
+                // The skeleton is the complete message-list placeholder. Do not compose the
+                // restored history behind it, otherwise Base64/Markdown work still competes with
+                // the navigation frame and the skeleton provides no performance isolation.
+                itemsIndexed(messages, key = { _, message -> message.id }) { index, message ->
+                    if (message is ToolResult) return@itemsIndexed
+                    val top = when {
+                        message is ToolCall && prevRenderedIsToolCall(messages, index) -> 2.dp
+                        else -> 8.dp
+                    }
+                    if (index > 0) Spacer(Modifier.height(top))
+                    when (message) {
+                        is CapabilityEvent -> CapabilityEventCard(message)
+                        is UserMessage -> UserBubble(
+                            message = message,
+                            knownMentionNames = knownMentionNames,
+                            onEdit = { onEditMessage(message) },
+                            onDelete = { onDeleteMessage(message.id) },
+                        )
+                        is AssistantText -> AssistantBubble(
+                            message = message,
+                            defaultExpanded = thinkingExpanded,
+                            live = thinkingLive && message.id == liveThinkingMessageId,
+                        )
+                        is ToolCall -> {
+                            if (message.tool == HarnessTool.SUBAGENT) {
+                                SubagentCard(
+                                    call = message,
+                                    result = toolResults[message.id],
+                                )
+                            } else {
+                                ToolCard(
+                                    call = message,
+                                    result = toolResults[message.id],
+                                    workspace = workspace,
+                                    onOpenFile = onOpenFile,
+                                    running = running,
+                                    liveStatus = status,
+                                    showReasoning = message.reasoning != null &&
+                                        !reasoningAlreadyShown(messages, index, message.reasoning),
+                                    defaultExpanded = thinkingExpanded,
+                                )
+                            }
+                        }
+                        is ToolResult -> Unit
+                    }
                 }
             }
             item {
@@ -1501,8 +1512,14 @@ private fun UserBubble(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier.padding(bottom = 2.dp),
                 ) {
-                    items(message.imageUrls) { imageUrl ->
-                        ImageThumbnail(imageUrl = imageUrl)
+                    itemsIndexed(
+                        items = message.imageUrls,
+                        key = { index, _ -> "${message.id}:$index" },
+                    ) { index, imageUrl ->
+                        ImageThumbnail(
+                            imageUrl = imageUrl,
+                            cacheKey = "chat-image-${message.id}-$index",
+                        )
                     }
                 }
             }
@@ -1522,12 +1539,14 @@ private fun UserBubble(
                         val annotatedText = remember(message.text, knownMentionNames, mentionColor, mentionBg) {
                             formatMentionText(message.text, knownMentionNames, mentionColor, mentionBg)
                         }
-                        Text(
-                            text = annotatedText,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        )
+                        SelectionContainer {
+                            Text(
+                                text = annotatedText,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
                     }
 
                     DropdownMenu(
@@ -1572,40 +1591,47 @@ private fun UserBubble(
 }
 
 /**
- * 🌟 多模态图片优雅缩略图卡片（支持 Base64 Data URL 与 本地文件路径）
+ * 🌟 多模态图片优雅缩略图卡片（支持 Base64 Data URL 与本地文件路径）。
+ *
+ * Base64 解码不能放在 remember 里：remember 的计算发生在 Compose 主线程，历史大图会
+ * 直接阻塞切换智枢的首帧。交给 Coil 后，DataUriFetcher/图片解码在后台执行，并按缩略图
+ * 的实际尺寸采样；稳定的 cacheKey 也让 Navigation3 重组页面时直接命中内存缓存。
  */
 @Composable
-private fun ImageThumbnail(imageUrl: String) {
-    val bitmap = remember(imageUrl) {
-        runCatching {
-            if (imageUrl.startsWith("data:image")) {
-                val base64 = imageUrl.substringAfter("base64,")
-                val bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
-                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-            } else if (imageUrl.startsWith("file:") || imageUrl.startsWith("/")) {
-                val file = java.io.File(imageUrl.removePrefix("file://"))
-                if (file.exists()) {
-                    android.graphics.BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap()
-                } else null
-            } else null
-        }.getOrNull()
+private fun ImageThumbnail(
+    imageUrl: String,
+    cacheKey: String,
+) {
+    val context = LocalContext.current
+    val thumbnailPx = with(LocalDensity.current) { 130.dp.roundToPx() }
+    val request = remember(imageUrl, cacheKey, thumbnailPx) {
+        val data: Any = when {
+            imageUrl.startsWith("file://") -> java.io.File(imageUrl.removePrefix("file://"))
+            imageUrl.startsWith("/") -> java.io.File(imageUrl)
+            else -> imageUrl
+        }
+        ImageRequest.Builder(context)
+            .data(data)
+            .size(thumbnailPx, thumbnailPx)
+            .memoryCacheKey(cacheKey)
+            .diskCacheKey(cacheKey)
+            .build()
     }
 
-    if (bitmap != null) {
-        androidx.compose.foundation.Image(
-            bitmap = bitmap,
-            contentDescription = "用户上传图片",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(width = 130.dp, height = 130.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .border(
-                    1.dp,
-                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
-                    RoundedCornerShape(12.dp),
-                ),
-        )
-    }
+    AsyncImage(
+        model = request,
+        contentDescription = "用户上传图片",
+        contentScale = ContentScale.Crop,
+        modifier = Modifier
+            .size(width = 130.dp, height = 130.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                RoundedCornerShape(12.dp),
+            ),
+    )
 }
 
 @Composable
@@ -1642,11 +1668,13 @@ private fun AssistantBubble(
 
         if (message.text.isNotBlank()) {
             if (live) {
-                Text(
-                    text = message.text,
-                    modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                SelectionContainer {
+                    Text(
+                        text = message.text,
+                        modifier = Modifier.fillMaxWidth(),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
             } else {
                 MarkdownText(message.text, modifier = Modifier.fillMaxWidth())
             }
@@ -1977,11 +2005,13 @@ private fun ThinkingBlock(
                     .padding(top = 4.dp),
             ) {
                 if (live) {
-                    Text(
-                        text = reasoning,
-                        modifier = Modifier.fillMaxWidth(),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
+                    SelectionContainer {
+                        Text(
+                            text = reasoning,
+                            modifier = Modifier.fillMaxWidth(),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
                 } else {
                     MarkdownText(reasoning, modifier = Modifier.fillMaxWidth())
                 }

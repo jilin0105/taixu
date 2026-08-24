@@ -14,9 +14,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.zIndex
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.navigation3.runtime.NavBackStack
+import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
@@ -33,6 +37,7 @@ import top.wkbin.taixu.ui.settings.AgentSettingsScreen
 import top.wkbin.taixu.ui.settings.ModelEditorScreen
 import top.wkbin.taixu.ui.settings.ModelProfilesScreen
 import top.wkbin.taixu.ui.settings.SettingsScreen
+import top.wkbin.taixu.ui.settings.SettingsViewModel
 import top.wkbin.taixu.ui.settings.ToolDetailScreen
 import top.wkbin.taixu.ui.terminal.TerminalScreen
 import top.wkbin.taixu.ui.workspace.CodeEditorScreen
@@ -72,6 +77,14 @@ sealed interface AppDestination : NavKey
  */
 @Composable
 fun TaiXuNavHost() {
+    // Root tab entries are removed from composition when another tab becomes active. Keep the
+    // conversation owner at the Activity scope so switching back to 智枢 does not rebuild Hilt's
+    // graph, restore the latest session, and restart its initialization skeleton on every visit.
+    val chatViewModel: ChatViewModel = hiltViewModel()
+    // SettingsViewModel owns dozens of eagerly shared DataStore/database streams and performs
+    // repository initialization. Let the settings navigation graph share the Activity-scoped
+    // instance instead of constructing that whole graph once for every Navigation3 entry.
+    val settingsViewModel: SettingsViewModel = hiltViewModel()
     val homeStack = rememberNavBackStack(HomeDestination)
     val agentStack = rememberNavBackStack(AgentDestination)
     val workspaceStack = rememberNavBackStack(WorkspaceDestination)
@@ -98,17 +111,7 @@ fun TaiXuNavHost() {
         if (activeStack.size > 1) activeStack.removeLastOrNull()
     }
 
-    val density = LocalDensity.current
-    Box(Modifier.fillMaxSize()) {
-        NavDisplay(
-            backStack = activeStack,
-            modifier = Modifier.fillMaxSize(),
-            onBack = ::popBack,
-            entryDecorators = listOf(
-                rememberSaveableStateHolderNavEntryDecorator(),
-                rememberViewModelStoreNavEntryDecorator(),
-            ),
-            entryProvider = entryProvider {
+    val appEntryProvider: (NavKey) -> NavEntry<NavKey> = entryProvider {
             entry<HomeDestination> {
                 HomeScreen(
                     onNavigate = ::navigateMain,
@@ -116,7 +119,6 @@ fun TaiXuNavHost() {
                 )
             }
             entry<AgentDestination> {
-                val chatViewModel: ChatViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
                 LaunchedEffect(pendingHealingTask) {
                     pendingHealingTask?.let { task ->
                         chatViewModel.startHealingTask(task.title, task.prompt)
@@ -168,10 +170,14 @@ fun TaiXuNavHost() {
                     onOpenAppearance = { settingsStack.push(AppearanceSettingsDestination) },
                     onOpenSystemDev = { settingsStack.push(SystemDevSettingsDestination) },
                     onOpenAboutCommunity = { settingsStack.push(AboutCommunityDestination) },
+                    viewModel = settingsViewModel,
                 )
             }
             entry<AppearanceSettingsDestination> {
-                top.wkbin.taixu.ui.settings.AppearanceSettingsScreen(onBack = ::popBack)
+                top.wkbin.taixu.ui.settings.AppearanceSettingsScreen(
+                    onBack = ::popBack,
+                    viewModel = settingsViewModel,
+                )
             }
             entry<AgentEcoSettingsDestination> {
                 top.wkbin.taixu.ui.settings.AgentEcoSettingsScreen(
@@ -180,6 +186,7 @@ fun TaiXuNavHost() {
                     onOpenToolCenter = { settingsStack.push(ToolCenterDestination) },
                     onOpenAgentSettings = { settingsStack.push(AgentSettingsDestination) },
                     onOpenMcpSettings = { settingsStack.push(McpSettingsDestination) },
+                    viewModel = settingsViewModel,
                 )
             }
             entry<LinuxEnvSettingsDestination> {
@@ -188,31 +195,45 @@ fun TaiXuNavHost() {
                     onOpenDistroManagement = { settingsStack.push(DistroManagementDestination) },
                     onOpenStorageMounts = { settingsStack.push(StorageMountSettingsDestination) },
                     onOpenEnvironmentVariables = { settingsStack.push(EnvironmentVariableSettingsDestination) },
+                    viewModel = settingsViewModel,
                 )
             }
             entry<SystemDevSettingsDestination> {
                 top.wkbin.taixu.ui.settings.SystemDevSettingsScreen(
                     onBack = ::popBack,
                     onOpenDeveloper = { settingsStack.push(DeveloperDestination) },
+                    viewModel = settingsViewModel,
                 )
             }
             entry<AboutCommunityDestination> {
-                top.wkbin.taixu.ui.settings.AboutCommunityScreen(onBack = ::popBack)
+                top.wkbin.taixu.ui.settings.AboutCommunityScreen(
+                    onBack = ::popBack,
+                    viewModel = settingsViewModel,
+                )
             }
             entry<DistroManagementDestination> {
-                top.wkbin.taixu.ui.settings.DistroManagementScreen(onBack = ::popBack)
+                top.wkbin.taixu.ui.settings.DistroManagementScreen(
+                    onBack = ::popBack,
+                    viewModel = settingsViewModel,
+                )
             }
             entry<AgentSettingsDestination> {
-                AgentSettingsScreen(onBack = ::popBack)
+                AgentSettingsScreen(
+                    onBack = ::popBack,
+                    viewModel = settingsViewModel,
+                )
             }
             entry<McpSettingsDestination> {
-                top.wkbin.taixu.ui.settings.McpSettingsScreen(onBack = ::popBack)
+                top.wkbin.taixu.ui.settings.McpSettingsScreen(
+                    onBack = ::popBack,
+                    viewModel = settingsViewModel,
+                )
             }
             entry<ToolCenterDestination> {
                 top.wkbin.taixu.ui.settings.ToolCenterScreen(
                     onBack = ::popBack,
-                    onLaunchPty = { toolId -> homeStack.push(TerminalDestination(toolId = toolId)) },
-                    onOpenToolDetail = { toolId -> settingsStack.push(ToolDetailDestination(toolId = toolId)) },
+                    onLaunchPty = { toolId -> activeStack.push(TerminalDestination(toolId = toolId)) },
+                    onOpenToolDetail = { toolId -> activeStack.push(ToolDetailDestination(toolId = toolId)) },
                     onStartAiHealing = { toolId, toolName, logs ->
                         val prompt = top.wkbin.taixu.ui.settings.ToolSelfHealingHelper.buildHealingPrompt(toolId, toolName, logs)
                         pendingHealingTask = HealingTask("🔧 自愈: $toolName", prompt)
@@ -224,7 +245,7 @@ fun TaiXuNavHost() {
                 top.wkbin.taixu.ui.settings.ToolDetailScreen(
                     toolId = destination.toolId,
                     onBack = ::popBack,
-                    onLaunchTerminal = { toolId -> homeStack.push(TerminalDestination(toolId = toolId)) },
+                    onLaunchTerminal = { toolId -> activeStack.push(TerminalDestination(toolId = toolId)) },
                     onStartAiHealing = { toolId, toolName, logs ->
                         val prompt = top.wkbin.taixu.ui.settings.ToolSelfHealingHelper.buildHealingPrompt(toolId, toolName, logs)
                         pendingHealingTask = HealingTask("🔧 自愈: $toolName", prompt)
@@ -233,16 +254,23 @@ fun TaiXuNavHost() {
                 )
             }
             entry<StorageMountSettingsDestination> {
-                top.wkbin.taixu.ui.settings.StorageMountSettingsScreen(onBack = ::popBack)
+                top.wkbin.taixu.ui.settings.StorageMountSettingsScreen(
+                    onBack = ::popBack,
+                    viewModel = settingsViewModel,
+                )
             }
             entry<EnvironmentVariableSettingsDestination> {
-                top.wkbin.taixu.ui.settings.EnvironmentVariableSettingsScreen(onBack = ::popBack)
+                top.wkbin.taixu.ui.settings.EnvironmentVariableSettingsScreen(
+                    onBack = ::popBack,
+                    viewModel = settingsViewModel,
+                )
             }
             entry<ModelProfilesDestination> {
                 ModelProfilesScreen(
                     onBack = ::popBack,
                     onCreate = { settingsStack.push(ModelEditorDestination()) },
                     onEdit = { modelId -> settingsStack.push(ModelEditorDestination(modelId)) },
+                    viewModel = settingsViewModel,
                 )
             }
             entry<ModelEditorDestination> { destination ->
@@ -250,6 +278,7 @@ fun TaiXuNavHost() {
                     modelId = destination.modelId,
                     onBack = ::popBack,
                     onSaved = ::popBack,
+                    viewModel = settingsViewModel,
                 )
             }
             entry<DeveloperDestination> {
@@ -258,15 +287,38 @@ fun TaiXuNavHost() {
             entry<TerminalDestination> { destination ->
                 TerminalScreen(onBack = ::popBack, project = destination.project)
             }
-            },
+    }
+
+    val density = LocalDensity.current
+    val liquidGlassBackdrop = LocalLiquidGlassBackdrop.current
+    val showLiquidBottomBar = liquidGlassBackdrop != null &&
+        activeStack.size == 1 &&
+        WindowInsets.ime.getBottom(density) == 0
+    Box(Modifier.fillMaxSize()) {
+        NavDisplay(
+            backStack = activeStack,
+            modifier = Modifier.fillMaxSize(),
+            onBack = ::popBack,
+            entryDecorators = listOf(
+                rememberSaveableStateHolderNavEntryDecorator(),
+                rememberViewModelStoreNavEntryDecorator(),
+            ),
+            entryProvider = appEntryProvider,
         )
-        if (LocalLiquidGlassBackdrop.current != null && activeStack.size == 1 && WindowInsets.ime.getBottom(density) == 0) {
-            // Keep placement in the NavHost's Box. Passing BoxScope alignment through the
-            // glass component's modifier chain can leave the bar at the top on some devices.
+        if (liquidGlassBackdrop != null) {
+            // Keep the expensive glass layers composed while a secondary destination is open.
+            // Recreating both backdrop render layers in the same frame as the root screen was
+            // the main source of pop-navigation stalls. Moving the retained bar off-screen also
+            // prevents its invisible click targets from intercepting the secondary page.
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .fillMaxWidth(),
+                    .fillMaxWidth()
+                    .zIndex(if (showLiquidBottomBar) 1f else -1f)
+                    .graphicsLayer {
+                        alpha = if (showLiquidBottomBar) 1f else 0f
+                        translationY = if (showLiquidBottomBar) 0f else size.height
+                    },
             ) {
                 RuntimeBottomBar(
                     selected = selectedMain,

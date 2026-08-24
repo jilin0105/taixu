@@ -12,11 +12,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.HorizontalDivider
 import top.wkbin.taixu.ui.components.RuntimeIconButton as IconButton
 import androidx.compose.material3.MaterialTheme
@@ -26,49 +30,63 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil3.compose.SubcomposeAsyncImage
+import coil3.request.ImageRequest
+import coil3.request.crossfade
+import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator as CircularProgressIndicator
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.SyntaxHighlighter
 
 /**
  * 轻量 markdown 渲染组件：支持标题、段落、粗体/斜体、行内代码、
- * 代码块（带语言徽章、一键复制与语法高亮）、无序/有序列表、引用、链接与表格。
- * 自包含实现，不依赖第三方库。
+ * 代码块（带语言徽章、一键复制与语法高亮）、无序/有序列表、引用、链接、
+ * 远程图片与表格。远程图片由 Coil 加载，网页链接由 Compose LinkAnnotation 打开。
  */
 @Composable
 fun MarkdownText(markdown: String, modifier: Modifier = Modifier) {
     val blocks = remember(markdown) { parseMarkdownBlocks(markdown) }
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        blocks.forEach { block ->
-            when (block) {
-                is MdParagraph -> InlineText(block.text, MaterialTheme.typography.bodyMedium)
-                is MdHeading -> InlineText(
-                    block.text,
-                    when (block.level) {
-                        1 -> MaterialTheme.typography.headlineSmall
-                        2 -> MaterialTheme.typography.titleLarge
-                        3 -> MaterialTheme.typography.titleMedium
-                        else -> MaterialTheme.typography.titleSmall
-                    },
-                    bold = true,
-                )
-                is MdCodeBlock -> CodeBlock(block)
-                is MdList -> ListBlock(block)
-                is MdQuote -> QuoteBlock(block)
-                is MdTable -> TableBlock(block)
-                is MdHr -> HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    SelectionContainer(modifier = modifier) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            blocks.forEach { block ->
+                when (block) {
+                    is MdParagraph -> InlineText(block.text, MaterialTheme.typography.bodyMedium)
+                    is MdHeading -> InlineText(
+                        block.text,
+                        when (block.level) {
+                            1 -> MaterialTheme.typography.headlineSmall
+                            2 -> MaterialTheme.typography.titleLarge
+                            3 -> MaterialTheme.typography.titleMedium
+                            else -> MaterialTheme.typography.titleSmall
+                        },
+                        bold = true,
+                    )
+                    is MdCodeBlock -> CodeBlock(block)
+                    is MdList -> ListBlock(block)
+                    is MdQuote -> QuoteBlock(block)
+                    is MdTable -> TableBlock(block)
+                    is MdRemoteMedia -> RemoteMediaBlock(block)
+                    is MdHr -> HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                }
             }
         }
     }
@@ -84,12 +102,20 @@ private data class MdCodeBlock(val language: String, val code: String) : MdBlock
 private data class MdList(val ordered: Boolean, val items: List<String>) : MdBlock
 private data class MdQuote(val lines: List<String>) : MdBlock
 private data class MdTable(val headers: List<String>, val rows: List<List<String>>) : MdBlock
+private data class MdRemoteMedia(val url: String, val description: String) : MdBlock
 private object MdHr : MdBlock
 
 private val headingRegex = Regex("^\\s*(#{1,6})\\s+(.+?)\\s*#*\\s*$")
 private val orderedListRegex = Regex("^\\s*\\d+\\.\\s+(.*)$")
 private val unorderedListRegex = Regex("^\\s*[-*+]\\s+(.*)$")
 private val hrRegex = Regex("^\\s*(?:-{3,}|\\*{3,}|_{3,})\\s*$")
+private val markdownImageRegex = Regex(
+    pattern = "^\\s*!\\[([^]\\n]*)]\\((https?://[^)\\s]+)\\)\\s*$",
+    option = RegexOption.IGNORE_CASE,
+)
+private val standaloneWebUrlRegex = Regex("^https?://\\S+$", RegexOption.IGNORE_CASE)
+private val inlineMarkdownLinkRegex = Regex("\\[([^]\\n]+)]\\((https?://[^)\\s]+)\\)", RegexOption.IGNORE_CASE)
+private val inlineWebUrlRegex = Regex("https?://[^\\s<>\\[\\]{}\"']+", RegexOption.IGNORE_CASE)
 
 private fun parseMarkdownBlocks(md: String): List<MdBlock> {
     val lines = md.replace("\r\n", "\n").replace("\r", "\n").split("\n")
@@ -108,6 +134,21 @@ private fun parseMarkdownBlocks(md: String): List<MdBlock> {
                 }
                 i++ // skip closing fence
                 blocks.add(MdCodeBlock(lang, code.joinToString("\n").trim('\n')))
+            }
+            markdownImageRegex.matches(line) -> {
+                val match = markdownImageRegex.matchEntire(line)!!
+                blocks.add(
+                    MdRemoteMedia(
+                        url = match.groupValues[2],
+                        description = match.groupValues[1].ifBlank { "网络图片" },
+                    ),
+                )
+                i++
+            }
+            standaloneWebUrlRegex.matches(line.trim()) -> {
+                val url = trimUrlPunctuation(line.trim())
+                blocks.add(MdRemoteMedia(url = url, description = "网络内容"))
+                i++
             }
             headingRegex.matches(line.trim()) -> {
                 val m = headingRegex.find(line.trim())!!
@@ -158,6 +199,8 @@ private fun parseMarkdownBlocks(md: String): List<MdBlock> {
                         isTableStart(lines, i) ||
                         t.startsWith("```") ||
                         t.startsWith(">") ||
+                        markdownImageRegex.matches(l) ||
+                        standaloneWebUrlRegex.matches(l.trim()) ||
                         orderedListRegex.matches(l) ||
                         unorderedListRegex.matches(l)
                     ) break
@@ -180,12 +223,22 @@ private fun InlineText(
     color: Color = Color.Unspecified,
     modifier: Modifier = Modifier,
 ) {
-    val annotated = remember(text, bold) { buildInline(text, bold) }
+    val linkColor = MaterialTheme.colorScheme.primary
+    val annotated = remember(text, bold, linkColor) { buildInline(text, bold, linkColor) }
     Text(annotated, style = style, color = color, modifier = modifier)
 }
 
-private fun buildInline(text: String, forceBold: Boolean): AnnotatedString = buildAnnotatedString {
+private fun buildInline(
+    text: String,
+    forceBold: Boolean,
+    linkColor: Color,
+): AnnotatedString = buildAnnotatedString {
     if (forceBold) pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
+    val linkStyles = TextLinkStyles(
+        style = SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline),
+        hoveredStyle = SpanStyle(color = linkColor.copy(alpha = 0.8f)),
+        pressedStyle = SpanStyle(color = linkColor.copy(alpha = 0.65f)),
+    )
     var i = 0
     while (i < text.length) {
         when {
@@ -222,19 +275,21 @@ private fun buildInline(text: String, forceBold: Boolean): AnnotatedString = bui
                 } else { append(text[i]); i++ }
             }
             text.startsWith("[", i) -> {
-                val link = Regex("\\[([^\\]\\n]+)]\\(([^)\\n]+)\\)").find(text, i)
+                val link = inlineMarkdownLinkRegex.find(text, i)
                 if (link != null && link.range.first == i) {
-                    pushStringAnnotation("URL", link.groupValues[2])
-                    pushStyle(
-                        SpanStyle(
-                            textDecoration = TextDecoration.Underline,
-                            color = Color(0xFF0099FF),
-                        ),
-                    )
-                    append(link.groupValues[1])
-                    pop()
-                    pop()
+                    withLink(LinkAnnotation.Url(link.groupValues[2], linkStyles)) {
+                        append(link.groupValues[1])
+                    }
                     i = link.range.last + 1
+                } else { append(text[i]); i++ }
+            }
+            text.regionMatches(i, "https://", 0, 8, ignoreCase = true) ||
+                text.regionMatches(i, "http://", 0, 7, ignoreCase = true) -> {
+                val match = inlineWebUrlRegex.find(text, i)
+                if (match != null && match.range.first == i) {
+                    val url = trimUrlPunctuation(match.value)
+                    withLink(LinkAnnotation.Url(url, linkStyles)) { append(url) }
+                    i += url.length
                 } else { append(text[i]); i++ }
             }
             text[i] == '*' -> {
@@ -250,6 +305,103 @@ private fun buildInline(text: String, forceBold: Boolean): AnnotatedString = bui
         }
     }
     if (forceBold) pop()
+}
+
+private fun trimUrlPunctuation(value: String): String {
+    var result = value.trimEnd('.', ',', ';', ':', '!', '?')
+    while (result.endsWith(')') && result.count { it == ')' } > result.count { it == '(' }) {
+        result = result.dropLast(1)
+    }
+    return result
+}
+
+@Composable
+private fun RemoteMediaBlock(block: MdRemoteMedia) {
+    val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
+    val openSource = {
+        runCatching { uriHandler.openUri(block.url) }
+            .onFailure { Toast.makeText(context, "无法打开该链接", Toast.LENGTH_SHORT).show() }
+        Unit
+    }
+    val shape = RoundedCornerShape(12.dp)
+
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLowest,
+        shape = shape,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column {
+            SubcomposeAsyncImage(
+                model = remember(block.url) {
+                    ImageRequest.Builder(context)
+                        .data(block.url)
+                        .crossfade(true)
+                        .build()
+                },
+                contentDescription = block.description,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(4f / 3f)
+                    .clip(shape)
+                    .clickable(onClick = openSource),
+                loading = {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+                    }
+                },
+                error = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(20.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        RuntimeIcon(
+                            RuntimeIconName.Image,
+                            Modifier.size(32.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "图片加载失败，点击下方链接打开原地址",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = openSource)
+                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                RuntimeIcon(
+                    RuntimeIconName.OpenInNew,
+                    Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = block.url,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    textDecoration = TextDecoration.Underline,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
 }
 
 @Composable

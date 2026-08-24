@@ -40,10 +40,6 @@ class ToolCenterViewModel @Inject constructor(
     private val _toolLogs = MutableStateFlow<List<InstallLogEntity>>(emptyList())
     val toolLogs: StateFlow<List<InstallLogEntity>> = _toolLogs.asStateFlow()
 
-    init {
-        syncRegistry()
-    }
-
     fun syncRegistry() {
         viewModelScope.launch {
             try {

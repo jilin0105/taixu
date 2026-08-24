@@ -67,8 +67,8 @@ object AttachmentHelper {
             }
         }
 
-        // 统一复制到太墟沙箱共享目录：$filesDir/attachments/
-        val attachmentsDir = File(context.filesDir, "attachments").apply { mkdirs() }
+        // 统一复制到所有发行版共用的 Runtime 目录，PRoot 固定挂载为 /attachments。
+        val attachmentsDir = File(context.filesDir, "linux-runtime/attachments").apply { mkdirs() }
         val safeName = name.replace(Regex("[^a-zA-Z0-9._-]"), "_")
         val targetFile = File(attachmentsDir, "${System.currentTimeMillis()}_$safeName")
 
@@ -81,6 +81,9 @@ object AttachmentHelper {
             if (size == 0L) size = targetFile.length()
 
             val guestPath = "/attachments/${targetFile.name}"
+            val sourceMimeType = contentResolver.getType(uri)
+                ?.takeIf { it.startsWith("image/", ignoreCase = true) }
+                ?: "image/jpeg"
             val base64 = if (isImage) {
                 runCatching {
                     val boundsOptions = android.graphics.BitmapFactory.Options().apply {
@@ -111,7 +114,7 @@ object AttachmentHelper {
                     } else {
                         val bytes = targetFile.readBytes()
                         val encoded = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-                        "data:image/jpeg;base64,$encoded"
+                        "data:$sourceMimeType;base64,$encoded"
                     }
                 }.getOrNull()
             } else null

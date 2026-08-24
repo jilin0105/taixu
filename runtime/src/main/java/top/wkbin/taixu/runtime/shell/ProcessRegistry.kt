@@ -91,6 +91,7 @@ class ProcessRegistryImpl @Inject constructor(
                 homeDir = pathManager.homeDir(safeDistro),
                 optDir = pathManager.taixuRootDir(safeDistro),
                 tmpDir = pathManager.tmpDir,
+                attachmentsDir = pathManager.attachmentsDir,
                 command = command,
             ),
             hostEnvironment = pathManager.hostProcessEnvironment(safeDistro),

@@ -103,12 +103,15 @@ extensions.configure<ApplicationExtension> {
         jniLibs {
             // PRoot is launched as an extracted ARM64 executable on Android 10+.
             useLegacyPackaging = true
+            // TaiXu only supports arm64-v8a; Android AARs may also publish legacy/x86 ABIs.
+            excludes += listOf(
+                "**/armeabi-v7a/*.so",
+                "**/x86/*.so",
+                "**/x86_64/*.so",
+            )
             // The PRoot tracee loader is an executable payload, not a JNI library.
             // Preserve the official package bytes instead of running AGP's strip tool.
             keepDebugSymbols += "**/libproot-loader.so"
-            // QEMU user-mode is also an executable payload with a .so suffix so
-            // Android packages it under the ABI directory.
-            keepDebugSymbols += "**/libqemu-x86_64-static.so"
         }
         resources {
             excludes += listOf(
@@ -171,8 +174,8 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.okhttp)
-    // The AAR carries Android ARM64 JNI code; the plain JVM JAR does not.
-    implementation(libs.zstd)
+    // Android must use the AAR; the default JVM JAR does not package Android JNI libraries.
+    implementation("com.github.luben:zstd-jni:${libs.versions.zstd.get()}@aar")
     implementation(libs.kotlinx.serialization.json.jvm)
     implementation(libs.kotlinx.coroutines.core.jvm)
     implementation(libs.kotlinx.coroutines.android)
@@ -188,18 +191,12 @@ dependencies {
 val bundledProotLoader = layout.projectDirectory.file(
     "src/main/jniLibs/arm64-v8a/libproot-loader.so",
 )
-val bundledQemuX86_64 = layout.projectDirectory.file(
-    "src/main/jniLibs/arm64-v8a/libqemu-x86_64-static.so",
-)
 
 tasks.configureEach {
     if (name == "preBuild") {
         doFirst {
             check(bundledProotLoader.asFile.isFile && bundledProotLoader.asFile.length() > 4096L) {
                 "Missing ARM64 PRoot loader. Run tools/prepare-proot-runtime.ps1 before building."
-            }
-            check(bundledQemuX86_64.asFile.isFile && bundledQemuX86_64.asFile.length() > 1024L * 1024L) {
-                "Missing bundled ARM64 qemu-x86_64-static payload."
             }
         }
     }

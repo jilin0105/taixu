@@ -39,8 +39,8 @@ export ANDROID_SDK_ROOT="${ANDROID_HOME}"
 # android-core plugin installed the ARM64 tool bundle, pass the real aapt2
 # executable explicitly so AGP never tries to start the incompatible daemon.
 AAPT2_OVERRIDE="${TAIXU_AAPT2_PATH:-}"
-AAPT2_MODE="${TAIXU_AAPT2_MODE:-native}"
 for native_aapt2 in \
+    "/opt/taixu/android-sdk-tools/aapt2" \
     "/opt/taixu/android-sdk-tools/35.0.2/build-tools/aapt2" \
     "/usr/local/bin/aapt2" \
     "/usr/bin/aapt2"; do
@@ -49,14 +49,12 @@ for native_aapt2 in \
         break
     fi
 done
-if [ "${TAIXU_FORCE_QEMU_AAPT2:-0}" != "1" ] && [ -n "${AAPT2_NATIVE_CANDIDATE:-}" ]; then
-    AAPT2_MODE="native"
+if [ -n "${AAPT2_NATIVE_CANDIDATE:-}" ]; then
     AAPT2_OVERRIDE="$AAPT2_NATIVE_CANDIDATE"
 fi
-if [ "$AAPT2_MODE" = "qemu" ]; then
-    AAPT2_OVERRIDE="${TAIXU_AAPT2_PATH:-/opt/taixu/android-sdk-tools/qemu/aapt2}"
-elif [ -z "$AAPT2_OVERRIDE" ] || [ ! -x "$AAPT2_OVERRIDE" ]; then
+if [ -z "$AAPT2_OVERRIDE" ] || [ ! -x "$AAPT2_OVERRIDE" ]; then
     for candidate in \
+        "/opt/taixu/android-sdk-tools/aapt2" \
         "/opt/taixu/android-sdk-tools/35.0.2/build-tools/aapt2" \
         "/usr/local/bin/aapt2" \
         "/usr/bin/aapt2"; do
@@ -153,24 +151,7 @@ cd "$PROJECT_PATH"
 EXTRA_ARGS="--console=plain --info --stacktrace --no-daemon -Dorg.gradle.native=false"
 if [ -n "$AAPT2_OVERRIDE" ] && [ -x "$AAPT2_OVERRIDE" ]; then
     EXTRA_ARGS="$EXTRA_ARGS -Pandroid.aapt2FromMavenOverride=$AAPT2_OVERRIDE"
-    if [ "$AAPT2_MODE" = "qemu" ]; then
-        echo "==> [TaiXu Build] QEMU AAPT2: $AAPT2_OVERRIDE"
-        echo "==> [TaiXu Build] 校验 QEMU AAPT2 启动..."
-        AAPT2_CHECK_LOG="${TMPDIR:-/tmp}/taixu-aapt2-build-check.log"
-        if ! "$AAPT2_OVERRIDE" version >"$AAPT2_CHECK_LOG" 2>&1; then
-            sed -n '1,12p' "$AAPT2_CHECK_LOG" 2>/dev/null || true
-            rm -f "$AAPT2_CHECK_LOG"
-            echo "==> [TaiXu Build] ❌ QEMU AAPT2 无法启动。请检查 qemu-x86_64-static、x86_64 loader/运行库及 /opt/taixu bind mount"
-            exit 126
-        fi
-        rm -f "$AAPT2_CHECK_LOG"
-    else
-        echo "==> [TaiXu Build] ARM64 AAPT2: $AAPT2_OVERRIDE"
-    fi
-elif [ "$AAPT2_MODE" = "qemu" ]; then
-    echo "==> [TaiXu Build] ❌ 强制 QEMU 模式已启用，但 qemu-aapt2 包装器不存在"
-    echo "==> [TaiXu Build] 请重新装配 Android 核心环境，确认 APK 内置 QEMU 已同步到当前 RootFS"
-    exit 126
+    echo "==> [TaiXu Build] ARM64 AAPT2: $AAPT2_OVERRIDE"
 else
     echo "==> [TaiXu Build] 警告：未找到 ARM64 aapt2，将由 AGP 选择默认工具"
 fi

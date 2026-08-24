@@ -555,7 +555,7 @@ class WorkspaceManager @Inject constructor(
             kotlin.daemon.jvmargs=-Xmx512m -XX:MaxMetaspaceSize=256m
             android.useAndroidX=true
             android.nonTransitiveRClass=true
-            android.aapt2FromMavenOverride=/opt/taixu/android-sdk-tools/qemu/aapt2
+            android.aapt2FromMavenOverride=/opt/taixu/android-sdk-tools/aapt2
             """.trimIndent()
         )
 

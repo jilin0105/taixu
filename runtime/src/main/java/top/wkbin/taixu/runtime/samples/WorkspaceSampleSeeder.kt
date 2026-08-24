@@ -67,7 +67,7 @@ object WorkspaceSampleSeeder {
             """.trimIndent()
         )
 
-        // 3. gradle.properties (通过 QEMU 运行 x86_64 AAPT2，并限制 PRoot 内存峰值)
+        // 3. gradle.properties（使用 ARM64 原生 AAPT2，并限制 PRoot 内存峰值）
         File(projectDir, "gradle.properties").writeText(
             """
             org.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+UseSerialGC -Dfile.encoding=UTF-8
@@ -78,7 +78,7 @@ object WorkspaceSampleSeeder {
             kotlin.daemon.jvmargs=-Xmx512m -XX:MaxMetaspaceSize=256m
             android.useAndroidX=true
             android.nonTransitiveRClass=true
-            android.aapt2FromMavenOverride=/opt/taixu/android-sdk-tools/qemu/aapt2
+            android.aapt2FromMavenOverride=/opt/taixu/android-sdk-tools/aapt2
             """.trimIndent()
         )
 

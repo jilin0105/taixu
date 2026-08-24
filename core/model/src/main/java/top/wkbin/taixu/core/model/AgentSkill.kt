@@ -112,13 +112,13 @@ object BuiltinSkills {
                    - UI 框架：Jetpack Compose + Material3 现代化声明式 UI，模块化目录结构；
                    - 构建工具链：Gradle 8.9 (Kotlin DSL *.gradle.kts)；
                 3. 构建与运行指南：
-                   - 系统已预装 OpenJDK 17、adb 与 Gradle 8.9，Android 34 平台包 (android.jar) 已由【Android & 移动全栈开发套件】插件装配期就位于 /opt/android-sdk；AAPT2 按当前 ARM64 环境使用可用的原生工具或 QEMU-user 包装器，不要假设存在官方 `android` CLI；
+                   - 系统已预装 OpenJDK 17、adb 与 Gradle 8.9，Android 34 平台包 (android.jar) 已由【Android & 移动全栈开发套件】插件装配期就位于 /opt/android-sdk；AAPT2 使用 ARM64 原生工具，不要假设存在官方 `android` CLI；
                    - 全局 Gradle 已注入阿里云 Maven 镜像 (/root/.gradle/init.gradle)，依赖下载自动走国内加速，无需手工配置；
                    - 构建排错时优先使用 `/opt/taixu/scripts/build_android.sh <工作区> assembleDebug`，或在项目根目录下通过 `./gradlew assembleDebug` 编译；
                    - 诊断环境使用 `java -version`、`adb version`、`gradle --version` 和实际 Gradle/AAPT2 错误输出，不要调用 `android doctor` 或 `android skills`；
-                    - 【ARM64 沙箱构建核心铁律】：在 ARM64 Linux 沙箱中，必须通过内置的 QEMU 包装器运行 x86_64 AAPT2，并在项目根目录 `gradle.properties` 中加入：
+                    - 【ARM64 沙箱构建核心铁律】：在 ARM64 Linux 沙箱中必须使用原生 ARM64 AAPT2，并在项目根目录 `gradle.properties` 中加入：
                       ```properties
-                      android.aapt2FromMavenOverride=/opt/taixu/android-sdk-tools/qemu/aapt2
+                      android.aapt2FromMavenOverride=/opt/taixu/android-sdk-tools/aapt2
                       org.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+UseSerialGC -Dfile.encoding=UTF-8
                       org.gradle.daemon=false
                       org.gradle.parallel=false
@@ -126,7 +126,7 @@ object BuiltinSkills {
                       org.gradle.caching=true
                       kotlin.daemon.jvmargs=-Xmx512m -XX:MaxMetaspaceSize=256m
                       ```
-                      这样既避免 AGP 默认直接启动不兼容的 x86_64 AAPT2，也限制 PRoot 内 Gradle 的并发内存峰值。
+                      这样既避免 AGP 默认启动不兼容的 x86_64 AAPT2，也限制 PRoot 内 Gradle 的并发内存峰值。
                    - 若需要更新 Gradle，使用腾讯云国内镜像 `https://mirrors.cloud.tencent.com/gradle/gradle-8.14.2-bin.zip` 秒级满速部署！
                 4. 安装到本手机（极速交付流程）：
                    - 当用户要求“安装到手机 / 运行到本机 / 装上看看”时：

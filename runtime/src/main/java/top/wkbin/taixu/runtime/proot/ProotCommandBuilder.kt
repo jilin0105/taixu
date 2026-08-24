@@ -20,6 +20,7 @@ class ProotCommandBuilder @Inject constructor(
         homeDir: File = File(rootfsDir.parentFile, "home"),
         optDir: File = File(rootfsDir.parentFile, "opt/taixu"),
         tmpDir: File = File(rootfsDir.parentFile, "tmp"),
+        attachmentsDir: File = File(rootfsDir.parentFile, "attachments"),
         command: ShellCommand,
         mounts: List<top.wkbin.taixu.core.model.StorageMountBinding> = emptyList(),
     ): List<String> = buildList {
@@ -45,7 +46,7 @@ class ProotCommandBuilder @Inject constructor(
         add("${homeDir.absolutePath}:/root")
         add("-b")
         add("${optDir.absolutePath}:/opt/taixu")
-        val attachmentsDir = File(rootfsDir.parentFile, "attachments").apply { mkdirs() }
+        attachmentsDir.mkdirs()
         add("-b")
         add("${attachmentsDir.absolutePath}:/attachments")
         addHostSystemBindings()
@@ -69,6 +70,7 @@ class ProotCommandBuilder @Inject constructor(
         homeDir: File = File(rootfsDir.parentFile, "home"),
         optDir: File = File(rootfsDir.parentFile, "opt/taixu"),
         tmpDir: File = File(rootfsDir.parentFile, "tmp"),
+        attachmentsDir: File = File(rootfsDir.parentFile, "attachments"),
         config: top.wkbin.taixu.runtime.shell.SessionConfig,
         ptyMarker: String? = null,
         nativePty: Boolean = false,
@@ -98,7 +100,7 @@ class ProotCommandBuilder @Inject constructor(
         add("${homeDir.absolutePath}:/root")
         add("-b")
         add("${optDir.absolutePath}:/opt/taixu")
-        val attachmentsDir = File(rootfsDir.parentFile, "attachments").apply { mkdirs() }
+        attachmentsDir.mkdirs()
         add("-b")
         add("${attachmentsDir.absolutePath}:/attachments")
         addHostSystemBindings()

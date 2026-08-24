@@ -37,7 +37,8 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     implementation(libs.kotlinx.serialization.json.jvm)
     implementation(libs.kotlinx.coroutines.core.jvm)
-    implementation(libs.zstd)
+    // Android must use the AAR; the default JVM JAR does not package Android JNI libraries.
+    implementation("com.github.luben:zstd-jni:${libs.versions.zstd.get()}@aar")
     implementation(libs.xz)
     implementation(libs.okhttp)
     implementation(libs.shizuku.api)

@@ -93,6 +93,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.lerp as lerpColor
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -130,8 +131,6 @@ import androidx.compose.ui.util.fastCoerceIn
 import androidx.compose.ui.util.lerp
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
-import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
-import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.colorControls
@@ -263,10 +262,8 @@ private fun LiquidGlassBottomBar(
     var dragStartIndex by remember { mutableIntStateOf(selected.ordinal) }
     var dragDistancePx by remember { mutableFloatStateOf(0f) }
     val density = LocalDensity.current
-    val tabsBackdrop = rememberLayerBackdrop()
     val baseContentColor = if (isLightTheme) Color.Black else Color.White
     val currentSelected = rememberUpdatedState(selected)
-    val tabScale = lerp(1f, 1.2f, pressAnimation.value)
     fun press() {
         animationScope.launch {
             launch { pressAnimation.animateTo(1f, spring(1f, 1000f, 0.001f)) }
@@ -327,41 +324,118 @@ private fun LiquidGlassBottomBar(
             }
         }
         val trackModifier = Modifier
-            .graphicsLayer { translationX = panelOffset; val scale = lerp(1f, 1f + 16.dp.toPx() / size.width, pressAnimation.value); scaleX = scale; scaleY = scale }
-            .drawBackdrop(backdrop = backdrop, shape = { capsuleShape }, effects = { vibrancy(); blur(8.dp.toPx()); lens(24.dp.toPx(), 24.dp.toPx()) }, onDrawSurface = { drawRect(containerColor) })
+            .graphicsLayer { translationX = panelOffset }
+            .drawBackdrop(
+                backdrop = backdrop,
+                shape = { capsuleShape },
+                effects = {
+                    vibrancy()
+                    blur(8.dp.toPx())
+                    lens(24.dp.toPx(), 24.dp.toPx())
+                },
+                layerBlock = {
+                    // Deform only the glass track. Scaling the Row itself also scales the
+                    // unselected icons/text, while the tinted capture layer stays in place.
+                    val width = size.width.coerceAtLeast(1f)
+                    val scale = lerp(1f, 1f + 16.dp.toPx() / width, pressAnimation.value)
+                    scaleX = scale
+                    scaleY = scale
+                },
+                onDrawSurface = { drawRect(containerColor) },
+            )
             .height(64.dp).fillMaxWidth().padding(4.dp)
-        Row(trackModifier, verticalAlignment = Alignment.CenterVertically) {
-                destinations.forEach { destination ->
-                    Column(Modifier.clip(capsuleShape).fillMaxHeight().weight(1f).clickable(interactionSource = null, indication = null) { animateTo(destination.ordinal, true) }, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically), horizontalAlignment = Alignment.CenterHorizontally) {
-                        RuntimeIcon(destination.icon, Modifier.size(22.dp), tint = baseContentColor)
-                        Text(destination.label, color = baseContentColor, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-                    }
-                }
-        }
-        Row(
-                Modifier.align(Alignment.CenterStart).alpha(0f).layerBackdrop(tabsBackdrop).graphicsLayer { translationX = panelOffset }.drawBackdrop(backdrop = backdrop, shape = { capsuleShape }, effects = { vibrancy(); blur(8.dp.toPx()); lens(24.dp.toPx() * pressAnimation.value, 24.dp.toPx() * pressAnimation.value) }, highlight = { Highlight.Default.copy(alpha = pressAnimation.value) }, onDrawSurface = { drawRect(containerColor) }).height(56.dp).fillMaxWidth().padding(horizontal = 4.dp).graphicsLayer(colorFilter = ColorFilter.tint(accentColor)),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                destinations.forEach { destination ->
-                    Column(Modifier.fillMaxHeight().weight(1f).graphicsLayer { scaleX = tabScale; scaleY = tabScale }, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically), horizontalAlignment = Alignment.CenterHorizontally) {
-                        RuntimeIcon(destination.icon, Modifier.size(22.dp), tint = baseContentColor)
-                        Text(destination.label, color = baseContentColor, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-                    }
-                }
-        }
+        Box(trackModifier)
+
+        val indicatorTransform = Modifier
+            .align(Alignment.CenterStart)
+            .padding(horizontal = 4.dp)
+            .graphicsLayer {
+                translationX = indicatorAnimation.value * tabWidth + panelOffset
+                scaleX = scaleXAnimation.value
+                scaleY = scaleYAnimation.value
+                val velocity = indicatorAnimation.velocity / 10f
+                scaleX /= 1f - (velocity * 0.75f).fastCoerceIn(-0.2f, 0.2f)
+                scaleY *= 1f - (velocity * 0.25f).fastCoerceIn(-0.2f, 0.2f)
+            }
+
+        // The glass pill is below the only copy of the navigation content. It may blur the
+        // scene behind the bar, but can never cover or duplicate an icon/label.
         Box(
-                Modifier
-                    .align(Alignment.CenterStart)
-                    .padding(horizontal = 4.dp)
-                    .graphicsLayer {
-                        translationX = indicatorAnimation.value * tabWidth + panelOffset
-                        scaleX = scaleXAnimation.value
-                        scaleY = scaleYAnimation.value
-                        val velocity = indicatorAnimation.velocity / 10f
-                        scaleX /= 1f - (velocity * 0.75f).fastCoerceIn(-0.2f, 0.2f)
-                        scaleY *= 1f - (velocity * 0.25f).fastCoerceIn(-0.2f, 0.2f)
+            indicatorTransform
+                .drawBackdrop(
+                    backdrop = backdrop,
+                    shape = { capsuleShape },
+                    effects = {
+                        vibrancy()
+                        blur(8.dp.toPx())
+                        lens(
+                            10.dp.toPx() * pressAnimation.value,
+                            14.dp.toPx() * pressAnimation.value,
+                            chromaticAberration = true,
+                        )
+                    },
+                    highlight = { Highlight.Default.copy(alpha = pressAnimation.value) },
+                    shadow = { Shadow(alpha = pressAnimation.value) },
+                    innerShadow = {
+                        InnerShadow(
+                            radius = 8.dp * pressAnimation.value,
+                            alpha = pressAnimation.value,
+                        )
+                    },
+                    onDrawSurface = {
+                        drawRect(containerColor)
+                        drawRect(accentColor.copy(alpha = 0.06f + 0.04f * pressAnimation.value))
+                    },
+                )
+                .height(56.dp)
+                .fillMaxWidth(1f / destinations.size),
+        )
+
+        Row(
+            Modifier
+                .align(Alignment.CenterStart)
+                .graphicsLayer { translationX = panelOffset }
+                .height(56.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+                destinations.forEachIndexed { index, destination ->
+                    Column(
+                        Modifier
+                            .clip(capsuleShape)
+                            .fillMaxHeight()
+                            .weight(1f)
+                            .graphicsLayer {
+                                // Draw each icon and label exactly once. Tint follows the moving
+                                // indicator on the render layer, avoiding per-frame recomposition
+                                // and the coordinate drift caused by a second captured backdrop.
+                                val proximity = (1f - abs(indicatorAnimation.value - index))
+                                    .fastCoerceIn(0f, 1f)
+                                colorFilter = ColorFilter.tint(
+                                    lerpColor(baseContentColor, accentColor, proximity),
+                                )
+                            }
+                            .clickable(
+                                interactionSource = null,
+                                indication = null,
+                            ) { animateTo(destination.ordinal, true) },
+                        verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        RuntimeIcon(destination.icon, Modifier.size(22.dp), tint = baseContentColor)
+                        Text(destination.label, color = baseContentColor, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1)
                     }
-                    .drawBackdrop(backdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop), shape = { capsuleShape }, effects = { lens(10.dp.toPx() * pressAnimation.value, 14.dp.toPx() * pressAnimation.value, chromaticAberration = true) }, highlight = { Highlight.Default.copy(alpha = pressAnimation.value) }, shadow = { Shadow(alpha = pressAnimation.value) }, innerShadow = { InnerShadow(radius = 8.dp * pressAnimation.value, alpha = pressAnimation.value) }, onDrawSurface = { drawRect(if (isLightTheme) Color.Black.copy(alpha = 0.1f) else Color.White.copy(alpha = 0.1f), alpha = 1f - pressAnimation.value); drawRect(Color.Black.copy(alpha = 0.03f * pressAnimation.value)) }).height(56.dp).fillMaxWidth(1f / destinations.size).pointerInput(tabWidth) {
+                }
+        }
+
+        // A transparent hit target stays above the content. The gesture inspector does not
+        // consume taps, so the tab click targets below continue to receive normal presses.
+        Box(
+            indicatorTransform
+                .height(56.dp)
+                .fillMaxWidth(1f / destinations.size)
+                .pointerInput(tabWidth) {
                         inspectDragGestures(
                             onDragStart = { _ ->
                                 animationJob?.cancel()

@@ -117,24 +117,10 @@ mkdir -p "$PUB_CACHE" android
 if [ -f /opt/flutter/bin/flutter ]; then
     printf 'sdk.dir=%s\nflutter.sdk=/opt/flutter\n' "$ANDROID_HOME" > android/local.properties
 fi
-AAPT2_MODE="${TAIXU_AAPT2_MODE:-native}"
- AAPT2_PATH="${TAIXU_AAPT2_PATH:-}"
-if [ "$AAPT2_MODE" = "qemu" ]; then
-    AAPT2_PATH="${AAPT2_PATH:-/opt/taixu/android-sdk-tools/qemu/aapt2}"
-    if [ ! -x "$AAPT2_PATH" ]; then
-        echo "==> [TaiXu Build] ❌ Flutter Android 构建需要 QEMU AAPT2 包装器: $AAPT2_PATH"
-        exit 126
-    fi
-    echo "==> [TaiXu Build] 校验 QEMU AAPT2 启动..."
-    if ! "$AAPT2_PATH" version; then
-        echo "==> [TaiXu Build] ❌ QEMU AAPT2 无法启动。请检查 qemu-x86_64-static 与 x86_64 运行库"
-        exit 126
-    fi
-    # Flutter invokes Gradle internally, so pass the same override through the
-    # standard Gradle project-property environment channel.
-    export ORG_GRADLE_PROJECT_android_aapt2FromMavenOverride="$AAPT2_PATH"
-elif [ -z "$AAPT2_PATH" ] || [ ! -x "$AAPT2_PATH" ]; then
+AAPT2_PATH="${TAIXU_AAPT2_PATH:-}"
+if [ -z "$AAPT2_PATH" ] || [ ! -x "$AAPT2_PATH" ]; then
     for candidate in \
+        "/opt/taixu/android-sdk-tools/aapt2" \
         "/opt/taixu/android-sdk-tools/35.0.2/build-tools/aapt2" \
         "/usr/local/bin/aapt2" \
         "/usr/bin/aapt2"; do

@@ -17,8 +17,6 @@ class RuntimePathManager @Inject constructor(
     private val nativeLibraryDir: File = File(context.applicationInfo.nativeLibraryDir)
     val bundledProotLoaderFile: File = File(nativeLibraryDir, "libproot-loader.so")
     val bundledProotLoader32File: File = File(nativeLibraryDir, "libproot-loader32.so")
-    /** Statically linked ARM64 QEMU user-mode emulator for x86_64 SDK tools. */
-    val bundledQemuX86_64File: File = File(nativeLibraryDir, "libqemu-x86_64-static.so")
 
     val baseDir: File = File(appFilesDir, "linux-runtime")
     val binDir: File = File(baseDir, "bin")
@@ -35,6 +33,9 @@ class RuntimePathManager @Inject constructor(
     }
     val optDir: File = File(baseDir, "opt")
     val workspaceDir: File = File(baseDir, "workspace")
+    /** Host-side shared attachment directory, mounted into every distro at /attachments. */
+    val attachmentsDir: File = File(baseDir, "attachments")
+    private val legacyAttachmentsDir: File = File(appFilesDir, "attachments")
     val cacheDir: File = File(baseDir, "cache")
     val tmpDir: File = File(baseDir, "tmp")
     val logsDir: File = File(baseDir, "logs")
@@ -134,12 +135,25 @@ class RuntimePathManager @Inject constructor(
             distrosDir,
             optDir,
             workspaceDir,
+            attachmentsDir,
             cacheDir,
             tmpDir,
             logsDir,
             metadataDir,
         ).forEach { it.mkdirs() }
+        migrateLegacyAttachments()
         listInstalledDistroIds().forEach(::ensureDistroDirectories)
+    }
+
+    /** Preserve attachments created before the shared runtime mount was introduced. */
+    private fun migrateLegacyAttachments() {
+        if (!legacyAttachmentsDir.isDirectory) return
+        legacyAttachmentsDir.listFiles().orEmpty()
+            .filter { it.isFile }
+            .forEach { source ->
+                val target = File(attachmentsDir, source.name)
+                if (!target.exists()) runCatching { source.copyTo(target, overwrite = false) }
+            }
     }
 
     fun cleanupStalePtyMarkers(distroId: String = "ubuntu") {
@@ -160,6 +174,9 @@ class RuntimePathManager @Inject constructor(
     fun hostProcessEnvironment(distroId: String = "ubuntu"): Map<String, String> {
         ensureDirectories()
         val rfs = rootfsDir(distroId)
+        // Remove the app-managed QEMU payload left by versions that used an
+        // x86_64 AAPT2 fallback. Current Android tooling is ARM64-native.
+        File(taixuBinDir(distroId), "qemu-x86_64-static").delete()
         hostLibraries.forEach { (bundledName, hostName) ->
             val bundledFile = File(nativeLibraryDir, bundledName)
             val hostFile = File(binDir, hostName)
@@ -174,13 +191,6 @@ class RuntimePathManager @Inject constructor(
                 hostFile.setWritable(true, true)
             }
         }
-        val qemuHostFile = File(taixuBinDir(distroId), "qemu-x86_64-static")
-        if (bundledQemuX86_64File.isFile && bundledQemuX86_64File.length() > MIN_QEMU_BYTES) {
-            val needsCopy = !qemuHostFile.isFile || qemuHostFile.length() != bundledQemuX86_64File.length()
-            if (needsCopy) bundledQemuX86_64File.copyTo(qemuHostFile, overwrite = true)
-            qemuHostFile.setReadable(true, false)
-            qemuHostFile.setExecutable(true, false)
-        }
         return buildMap {
             put("PROOT_L2S_DIR", File(rfs, ".l2s").apply { mkdirs() }.absolutePath)
             if (isUsableNativeArtifact(bundledProotLoaderFile, MIN_PROOT_LOADER_BYTES)) {
@@ -188,9 +198,6 @@ class RuntimePathManager @Inject constructor(
             }
             if (isUsableNativeArtifact(bundledProotLoader32File, MIN_PROOT_LOADER_BYTES)) {
                 put("PROOT_LOADER_32", bundledProotLoader32File.absolutePath)
-            }
-            if (qemuHostFile.isFile && qemuHostFile.length() > MIN_QEMU_BYTES) {
-                put("TAIXU_QEMU_X86_64", "/opt/taixu/bin/qemu-x86_64-static")
             }
             put("TMPDIR", tmpDir.absolutePath)
             put("TMP", tmpDir.absolutePath)
@@ -232,6 +239,5 @@ class RuntimePathManager @Inject constructor(
         const val MIN_PROOT_BYTES = 4096L
         const val MIN_PROOT_LOADER_BYTES = 4096L
         const val MIN_TALLOC_BYTES = 4096L
-        const val MIN_QEMU_BYTES = 1024L * 1024L
     }
 }

@@ -27,9 +27,10 @@ https://gh-proxy.com/${ARM64_TOOLS_URL}
 ${ARM64_TOOLS_URL}
 "
 ARM64_TOOLS_DIR="/opt/taixu/android-sdk-tools/${ARM64_TOOLS_VERSION}"
-# The APK ships an ARM64 qemu-x86_64-static payload.  Keep QEMU as the
-# deterministic default; set TAIXU_AAPT2_MODE=native only for benchmarking.
-AAPT2_MODE="${TAIXU_AAPT2_MODE:-native}"
+AAPT2_STABLE_PATH="/opt/taixu/android-sdk-tools/aapt2"
+
+# Remove the obsolete x86_64 AAPT2 wrapper and payload from upgraded sandboxes.
+rm -rf /opt/taixu/android-sdk-tools/qemu 2>/dev/null || true
 
 echo "==> [TaiXu] 正在初始化 Android 核心基础环境 (插件装配期一次性部署)..."
 
@@ -276,36 +277,7 @@ Pkg.Revision=34.0.0
 Pkg.Path=build-tools;34.0.0
 EOF
 fi
-# Preserve Google's x86_64 aapt2 before replacing the SDK entry with an ARM64
-# implementation.  This gives the QEMU fallback a known executable to launch.
-AAPT2_X86_64_PATH="/opt/taixu/android-sdk-tools/qemu/aapt2-x86_64"
-is_x86_64_elf() {
-    file_path="$1"
-    [ -s "$file_path" ] || return 1
-    magic=$(od -An -t x1 -N4 "$file_path" 2>/dev/null | tr -d ' \n\r')
-    machine=$(dd if="$file_path" bs=1 skip=18 count=2 2>/dev/null | od -An -t x1 | tr -d ' \n\r')
-    [ "$magic" = "7f454c46" ] && [ "$machine" = "3e00" ]
-}
-
-# Do not retain a stale ARM binary, a symlink, or a truncated download as the
-# QEMU payload.  The previous existence-only check made all of those failures
-# surface later as an opaque AGP "Daemon startup failed" error.
-if [ "$AAPT2_MODE" = "qemu" ] && {
-    [ ! -x "$AAPT2_X86_64_PATH" ] ||
-    [ "$(wc -c < "$AAPT2_X86_64_PATH" 2>/dev/null || echo 0)" -lt 1048576 ] ||
-    ! is_x86_64_elf "$AAPT2_X86_64_PATH";
-}; then
-    rm -f "$AAPT2_X86_64_PATH"
-fi
-if [ "$AAPT2_MODE" = "qemu" ] && [ ! -e "$AAPT2_X86_64_PATH" ] &&
-    [ -f "$BUILD_TOOLS_DIR/aapt2" ] && [ ! -L "$BUILD_TOOLS_DIR/aapt2" ] &&
-    is_x86_64_elf "$BUILD_TOOLS_DIR/aapt2"; then
-    mkdir -p "$(dirname "$AAPT2_X86_64_PATH")"
-    cp -f "$BUILD_TOOLS_DIR/aapt2" "$AAPT2_X86_64_PATH"
-    chmod 755 "$AAPT2_X86_64_PATH" 2>/dev/null || true
-fi
 for tool in aapt aapt2 aidl zipalign apksigner; do
-    [ "$AAPT2_MODE" = "qemu" ] && [ "$tool" = "aapt2" ] && continue
     toolPath=$(command -v "$tool" 2>/dev/null || true)
     if [ -n "$toolPath" ] && [ -x "$toolPath" ]; then
         ln -sf "$toolPath" "$BUILD_TOOLS_DIR/$tool" 2>/dev/null || true
@@ -315,7 +287,7 @@ done
 # ------------------------------------------------------------------------------
 # ARM64 native SDK tools (aapt2 is the important one for AGP)
 # ------------------------------------------------------------------------------
-if [ "$AAPT2_MODE" != "qemu" ] && [ ! -x "$ARM64_TOOLS_DIR/build-tools/aapt2" ]; then
+if [ ! -x "$ARM64_TOOLS_DIR/build-tools/aapt2" ]; then
     echo "==> [TaiXu] 正在部署第三方 ARM64 Android SDK 工具 (aapt2/aidl/zipalign)..."
     ARM64_ARCHIVE="/tmp/android-sdk-tools-static-aarch64-${ARM64_TOOLS_VERSION}.zip"
     ARM64_STAGING="/tmp/android-sdk-tools-aarch64-staging"
@@ -360,7 +332,7 @@ fi
 
 # Put the ARM64 tools first in PATH.  Keep the SDK directory's Java tools and
 # metadata intact; only native host executables are replaced.
-if [ "$AAPT2_MODE" != "qemu" ] && [ -x "$ARM64_TOOLS_DIR/build-tools/aapt2" ]; then
+if [ -x "$ARM64_TOOLS_DIR/build-tools/aapt2" ]; then
     for tool in aapt aapt2 aidl zipalign; do
         if [ -x "$ARM64_TOOLS_DIR/build-tools/$tool" ]; then
             ln -sf "$ARM64_TOOLS_DIR/build-tools/$tool" "$BUILD_TOOLS_DIR/$tool"
@@ -368,42 +340,18 @@ if [ "$AAPT2_MODE" != "qemu" ] && [ -x "$ARM64_TOOLS_DIR/build-tools/aapt2" ]; t
             ln -sf "$ARM64_TOOLS_DIR/build-tools/$tool" "/usr/bin/$tool" 2>/dev/null || true
         fi
     done
-    export TAIXU_AAPT2_PATH="$ARM64_TOOLS_DIR/build-tools/aapt2"
-    # Existing generated projects may still point at the stable QEMU path.
-    # Keep that path valid by forwarding it to the ARM64 implementation.
-    mkdir -p /opt/taixu/android-sdk-tools/qemu
-    ln -sf "$ARM64_TOOLS_DIR/build-tools/aapt2" /opt/taixu/android-sdk-tools/qemu/aapt2
+    mkdir -p "$(dirname "$AAPT2_STABLE_PATH")"
+    ln -sf "$ARM64_TOOLS_DIR/build-tools/aapt2" "$AAPT2_STABLE_PATH"
+    export TAIXU_AAPT2_PATH="$AAPT2_STABLE_PATH"
 else
-    # Invoke the official x86_64 aapt2 through the APK-bundled ARM64
-    # qemu-user-static.  The wrapper name intentionally ends in `aapt2`, as
-    # required by AGP's custom AAPT2 validation.
-    QEMU_AAPT2=""
-    for candidate in "${TAIXU_QEMU_X86_64:-}" /usr/bin/qemu-x86_64-static /usr/bin/qemu-x86_64; do
-        if [ -x "$candidate" ]; then QEMU_AAPT2="$candidate"; break; fi
-    done
-    if [ -n "$QEMU_AAPT2" ] && [ -x "$AAPT2_X86_64_PATH" ]; then
-        QEMU_WRAPPER_DIR="/opt/taixu/android-sdk-tools/qemu"
-        QEMU_WRAPPER="$QEMU_WRAPPER_DIR/aapt2"
-        mkdir -p "$QEMU_WRAPPER_DIR"
-        printf '%s\n' '#!/bin/sh' 'set -eu' \
-            "QEMU=\"$QEMU_AAPT2\"" "AAPT2=\"$AAPT2_X86_64_PATH\"" \
-            '[ -x "$QEMU" ] || { echo "TaiXu: qemu-x86_64-static is not executable: $QEMU" >&2; exit 126; }' \
-            '[ -x "$AAPT2" ] || { echo "TaiXu: x86_64 aapt2 is not executable: $AAPT2" >&2; exit 126; }' \
-            'exec "$QEMU" "$AAPT2" "$@"' > "$QEMU_WRAPPER"
-        chmod 755 "$QEMU_WRAPPER"
-        export TAIXU_AAPT2_PATH="$QEMU_WRAPPER"
-        echo "==> [TaiXu] 使用 QEMU-user 执行 x86_64 AAPT2: $QEMU_WRAPPER"
-        # qemu-user needs an x86_64 glibc loader which is not present in some
-        # minimal ARM64 rootfs images. Probe now and use the bundled ARM64
-        # tool package below when the emulated binary cannot start.
-        if ! "$QEMU_WRAPPER" version >/dev/null 2>&1; then
-            echo "!! [TaiXu] QEMU AAPT2 缺少 x86_64 loader，自动切换第三方 ARM64 AAPT2"
-            AAPT2_MODE="native"
-            export TAIXU_AAPT2_PATH=""
-        fi
-    else
-        export TAIXU_AAPT2_PATH=""
-    fi
+    export TAIXU_AAPT2_PATH=""
+fi
+
+# Migrate projects generated by older releases to the ARM64-native stable path.
+if [ -d /workspace ]; then
+    find /workspace -type f -name gradle.properties -exec sed -i \
+        's#/opt/taixu/android-sdk-tools/qemu/aapt2#/opt/taixu/android-sdk-tools/aapt2#g' {} \; \
+        2>/dev/null || true
 fi
 
 # ------------------------------------------------------------------------------
@@ -483,7 +431,6 @@ export ANDROID_HOME="$SDK_HOME"
 export ANDROID_SDK_ROOT="$SDK_HOME"
 export GRADLE_HOME="/opt/gradle-$GRADLE_VER"
 export TAIXU_AAPT2_PATH="${TAIXU_AAPT2_PATH:-}"
-export TAIXU_AAPT2_MODE="$AAPT2_MODE"
 export TAIXU_LLVM_STRIP_PATH="$TAIXU_LLVM_STRIP_PATH"
 export PATH="\$JAVA_HOME/bin:\$GRADLE_HOME/bin:\$PATH"
 # PRoot sandbox: use non-blocking entropy
@@ -496,7 +443,6 @@ ANDROID_HOME=$SDK_HOME
 ANDROID_SDK_ROOT=$SDK_HOME
 GRADLE_HOME=/opt/gradle-$GRADLE_VER
 TAIXU_AAPT2_PATH=$TAIXU_AAPT2_PATH
-TAIXU_AAPT2_MODE=$AAPT2_MODE
 TAIXU_LLVM_STRIP_PATH=$TAIXU_LLVM_STRIP_PATH
 PATH=$JAVA_HOME_RESOLVED/bin:/opt/gradle-$GRADLE_VER/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 _JAVA_OPTIONS=-Djava.security.egd=file:/dev/urandom
@@ -521,23 +467,7 @@ echo "==> [TaiXu] 装配自检:"
 [ -s "$SDK_HOME/licenses/android-sdk-license" ] && echo "    [OK] Android SDK licenses" || { echo "    [MISS] Android SDK licenses"; exit 1; }
 [ -f "$BUILD_TOOLS_DIR/source.properties" ] && [ -f "$BUILD_TOOLS_DIR/lib/d8.jar" ] && echo "    [OK] Build-Tools 34 (d8/r8 + metadata)" || { echo "    [MISS] Build-Tools 34"; exit 1; }
 [ -x "$TAIXU_LLVM_STRIP_PATH" ] && "$TAIXU_LLVM_STRIP_PATH" --version >/dev/null 2>&1 && echo "    [OK] ARM64 llvm-strip" || { echo "    [MISS] ARM64 llvm-strip"; exit 1; }
-if [ "$AAPT2_MODE" = "qemu" ]; then
-    [ -x "$TAIXU_AAPT2_PATH" ] && echo "    [OK] QEMU AAPT2: $TAIXU_AAPT2_PATH" || { echo "    [MISS] QEMU AAPT2"; exit 1; }
-    [ -x "$AAPT2_X86_64_PATH" ] && is_x86_64_elf "$AAPT2_X86_64_PATH" || { echo "    [MISS] x86_64 AAPT2 payload: $AAPT2_X86_64_PATH"; exit 1; }
-    echo "    [CHECK] QEMU AAPT2 version..."
-    AAPT2_CHECK_LOG="/tmp/taixu-aapt2-check.log"
-    if ! "$TAIXU_AAPT2_PATH" version >"$AAPT2_CHECK_LOG" 2>&1; then
-        echo "    [MISS] QEMU 无法启动 x86_64 AAPT2（可能缺少 x86_64 loader/运行库）"
-        sed -n '1,8p' "$AAPT2_CHECK_LOG" 2>/dev/null || true
-        echo "    [INFO] 可手工执行: $TAIXU_AAPT2_PATH version"
-        rm -f "$AAPT2_CHECK_LOG"
-        exit 1
-    fi
-    rm -f "$AAPT2_CHECK_LOG"
-    echo "    [OK] QEMU AAPT2 可执行"
-else
-    [ -n "$TAIXU_AAPT2_PATH" ] && [ -x "$TAIXU_AAPT2_PATH" ] && echo "    [OK] ARM64 AAPT2: $TAIXU_AAPT2_PATH" || { echo "    [MISS] ARM64 AAPT2 未就位"; exit 1; }
-fi
+[ -n "$TAIXU_AAPT2_PATH" ] && [ -x "$TAIXU_AAPT2_PATH" ] && echo "    [OK] ARM64 AAPT2: $TAIXU_AAPT2_PATH" || { echo "    [MISS] ARM64 AAPT2 未就位"; exit 1; }
 [ -f /opt/gradle-$GRADLE_VER/lib/gradle-launcher-$GRADLE_VER.jar ] && echo "    [OK] Gradle $GRADLE_VER" || { echo "    [MISS] Gradle"; exit 1; }
 [ -f /root/.gradle/init.gradle ] && echo "    [OK] 阿里云镜像" || { echo "    [MISS] Gradle 镜像配置"; exit 1; }
 grep -Fq "export JAVA_HOME=\"$JAVA_HOME_RESOLVED\"" /etc/profile.d/taixu-android.sh && echo "    [OK] JAVA_HOME 持久化环境" || { echo "    [MISS] JAVA_HOME 持久化环境"; exit 1; }

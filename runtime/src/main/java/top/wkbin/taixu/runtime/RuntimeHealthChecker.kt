@@ -93,6 +93,7 @@ class RuntimeHealthChecker @Inject constructor(
             rootfsDir = pathManager.rootfsDir,
             workspaceDir = pathManager.workspaceDir,
             tmpDir = pathManager.tmpDir,
+            attachmentsDir = pathManager.attachmentsDir,
             command = command,
         ),
         timeoutMs = command.timeoutMs,

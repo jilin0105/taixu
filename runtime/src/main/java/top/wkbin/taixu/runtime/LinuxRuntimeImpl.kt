@@ -424,6 +424,7 @@ class LinuxRuntimeImpl @Inject constructor(
                 homeDir = pathManager.homeDir(safeDistro),
                 optDir = pathManager.taixuRootDir(safeDistro),
                 tmpDir = pathManager.tmpDir,
+                attachmentsDir = pathManager.attachmentsDir,
                 command = command,
                 mounts = mounts,
             ),
@@ -449,6 +450,7 @@ class LinuxRuntimeImpl @Inject constructor(
                         homeDir = pathManager.homeDir(safeDistro),
                         optDir = pathManager.taixuRootDir(safeDistro),
                         tmpDir = pathManager.tmpDir,
+                        attachmentsDir = pathManager.attachmentsDir,
                         config = config,
                         nativePty = true,
                         mounts = mounts,
@@ -466,6 +468,7 @@ class LinuxRuntimeImpl @Inject constructor(
                         homeDir = pathManager.homeDir(safeDistro),
                         optDir = pathManager.taixuRootDir(safeDistro),
                         tmpDir = pathManager.tmpDir,
+                        attachmentsDir = pathManager.attachmentsDir,
                         config = config,
                         ptyMarker = markerPath,
                         mounts = mounts,
@@ -511,6 +514,7 @@ class LinuxRuntimeImpl @Inject constructor(
                     homeDir = pathManager.homeDir(distroId),
                     optDir = pathManager.taixuRootDir(distroId),
                     tmpDir = pathManager.tmpDir,
+                    attachmentsDir = pathManager.attachmentsDir,
                     command = ShellCommand(
                         commandLine = "if test -s '$markerPath'; then " +
                             "stty -F \"\$(cat '$markerPath')\" cols $safeColumns rows $safeRows; " +
