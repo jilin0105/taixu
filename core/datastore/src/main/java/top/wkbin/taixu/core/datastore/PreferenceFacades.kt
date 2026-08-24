@@ -30,12 +30,18 @@ class RuntimePreferences @Inject constructor(private val store: SettingsDataStor
     val mountSharedStorageEnabled get() = store.mountSharedStorageEnabled
     val executionMode get() = store.executionMode
     val adbWirelessPort get() = store.adbWirelessPort
-    val environmentValues get() = store.environmentValues
+    suspend fun readLegacyEnvironmentVariables() = store.readLegacyEnvironmentVariables()
+    suspend fun clearLegacyEnvironmentVariables() = store.clearLegacyEnvironmentVariables()
     suspend fun setSelectedDistribution(value: String) = store.setSelectedDistribution(value)
     suspend fun setMirrorPolicy(value: String) = store.setMirrorPolicy(value)
     suspend fun setExecutionMode(value: top.wkbin.taixu.core.model.ExecutionMode) = store.setExecutionMode(value)
     suspend fun setAdbPairedOnce(value: Boolean) = store.setAdbPairedOnce(value)
 }
+
+data class LegacyEnvironmentVariable(
+    val metadata: top.wkbin.taixu.core.model.EnvironmentVariable,
+    val value: String,
+)
 
 @Singleton
 class AgentPreferences @Inject constructor(private val store: SettingsDataStore) {
@@ -55,7 +61,6 @@ class AgentPreferences @Inject constructor(private val store: SettingsDataStore)
     val maxConsecutiveFailures get() = store.maxConsecutiveFailures
     val providerModel get() = store.providerModel
     val environmentPrivacyMode get() = store.environmentPrivacyMode
-    val environmentValues get() = store.environmentValues
     suspend fun setThinkingExpanded(value: Boolean) = store.setThinkingExpanded(value)
     suspend fun removeModelApiKey(secretRef: String) = store.removeModelApiKey(secretRef)
 }

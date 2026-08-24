@@ -15,6 +15,8 @@ import top.wkbin.taixu.core.tools.AgentModelConnectionTester
 import top.wkbin.taixu.core.tools.ProviderEndpointPolicy
 import top.wkbin.taixu.core.model.ExecutionMode
 import top.wkbin.taixu.core.model.McpConnectionState
+import top.wkbin.taixu.core.model.RuntimeState
+import top.wkbin.taixu.runtime.LinuxEnvironmentManager
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -25,6 +27,9 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
@@ -37,6 +42,7 @@ class SettingsViewModel @Inject constructor(
     private val privilegeManager: PrivilegeManager,
     private val mcpManager: top.wkbin.taixu.harness.mcp.McpManager,
     private val linuxRuntime: top.wkbin.taixu.runtime.LinuxRuntime,
+    private val linuxEnvironmentManager: LinuxEnvironmentManager,
     private val appUpdateManager: top.wkbin.taixu.core.network.AppUpdateManager,
     private val subagentRepository: top.wkbin.taixu.core.database.AgentSubagentRepository,
     private val agentSkillRepository: AgentSkillRepository,
@@ -51,14 +57,28 @@ class SettingsViewModel @Inject constructor(
             agentSkillRepository.ensureInitialized()
             mcpServerRepository.ensureInitialized()
         }
+        viewModelScope.launch {
+            combine(linuxRuntime.state, linuxRuntime.activeDistroId) { state, distroId ->
+                (state is RuntimeState.Ready) to distroId
+            }
+                .distinctUntilChanged()
+                .collectLatest { (ready, distroId) ->
+                    if (ready) refreshEnvironmentVariables(distroId)
+                }
+        }
     }
 
     val installedDistros = linuxRuntime.installedDistros
     val activeDistroId = linuxRuntime.activeDistroId
     val runtimeState = linuxRuntime.state
 
-    val environmentVariables: StateFlow<List<top.wkbin.taixu.core.model.EnvironmentVariable>> = settingsDataStore.environmentVariables
-        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val environmentVariables = linuxEnvironmentManager.variables
+
+    private val _environmentLoading = MutableStateFlow(false)
+    val environmentLoading: StateFlow<Boolean> = _environmentLoading.asStateFlow()
+
+    private val _environmentError = MutableStateFlow<String?>(null)
+    val environmentError: StateFlow<String?> = _environmentError.asStateFlow()
 
     val environmentPrivacyMode: StateFlow<Boolean> = settingsDataStore.environmentPrivacyMode
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
@@ -68,15 +88,39 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun addEnvironmentVariable(key: String, value: String, note: String, onResult: (Boolean) -> Unit = {}) {
-        viewModelScope.launch { onResult(settingsDataStore.addEnvironmentVariable(key, value, note)) }
+        viewModelScope.launch {
+            _environmentLoading.value = true
+            val result = linuxEnvironmentManager.add(key, value, note)
+            finishEnvironmentOperation(result, onResult)
+        }
     }
 
     fun updateEnvironmentVariable(id: String, key: String, value: String?, note: String, onResult: (Boolean) -> Unit = {}) {
-        viewModelScope.launch { onResult(settingsDataStore.updateEnvironmentVariable(id, key, value, note)) }
+        viewModelScope.launch {
+            _environmentLoading.value = true
+            val result = linuxEnvironmentManager.update(id, key, value, note)
+            finishEnvironmentOperation(result, onResult)
+        }
     }
 
     fun deleteEnvironmentVariable(id: String) {
-        viewModelScope.launch { settingsDataStore.deleteEnvironmentVariable(id) }
+        viewModelScope.launch {
+            _environmentLoading.value = true
+            finishEnvironmentOperation(linuxEnvironmentManager.delete(id))
+        }
+    }
+
+    fun refreshEnvironmentVariables(distroId: String = linuxRuntime.activeDistroId.value) {
+        viewModelScope.launch {
+            _environmentLoading.value = true
+            finishEnvironmentOperation(linuxEnvironmentManager.refresh(distroId))
+        }
+    }
+
+    private fun finishEnvironmentOperation(result: Result<Unit>, onResult: (Boolean) -> Unit = {}) {
+        _environmentLoading.value = false
+        _environmentError.value = result.exceptionOrNull()?.message
+        onResult(result.isSuccess)
     }
 
     // ---- 终端外观与显示定制 ----

@@ -16,15 +16,6 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
-import java.util.UUID
 
 private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
@@ -54,95 +45,31 @@ class SettingsDataStore @Inject constructor(
     private val thinkingLanguageKey = stringPreferencesKey("thinking_language")
     private val customSystemPromptEnabledKey = booleanPreferencesKey("custom_system_prompt_enabled")
     private val customSystemPromptKey = stringPreferencesKey("custom_system_prompt")
-    private val environmentVariablesKey = stringPreferencesKey("environment_variables_json")
+    private val legacyEnvironmentVariablesKey = stringPreferencesKey("environment_variables_json")
     private val environmentPrivacyModeKey = booleanPreferencesKey("environment_privacy_mode")
     private val environmentJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
-    private val environmentKeyRegex = Regex("^[A-Z_][A-Z0-9_]*$")
-
-    private val settingsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val _environmentVariables = MutableStateFlow<List<top.wkbin.taixu.core.model.EnvironmentVariable>>(emptyList())
-    val environmentVariables: StateFlow<List<top.wkbin.taixu.core.model.EnvironmentVariable>> = _environmentVariables.asStateFlow()
-    private val _environmentValues = MutableStateFlow<Map<String, String>>(emptyMap())
-    val environmentValues: StateFlow<Map<String, String>> = _environmentValues.asStateFlow()
     val environmentPrivacyMode: Flow<Boolean> = context.settingsDataStore.data.map { it[environmentPrivacyModeKey] ?: true }
-
-    init {
-        settingsScope.launch {
-            context.settingsDataStore.data.collect { prefs ->
-                val encoded = prefs[environmentVariablesKey].orEmpty()
-                val records = if (encoded.isBlank()) emptyList() else runCatching {
-                    environmentJson.decodeFromString<List<StoredEnvironmentVariable>>(encoded)
-                }.getOrDefault(emptyList())
-                _environmentVariables.value = records.map { it.metadata }
-                _environmentValues.value = records.associate { it.metadata.key to (secretManager.decrypt(it.encryptedValue).orEmpty()) }
-            }
-        }
-    }
-
-    fun isValidEnvironmentKey(key: String): Boolean = environmentKeyRegex.matches(key.trim().uppercase())
 
     suspend fun setEnvironmentPrivacyMode(enabled: Boolean) {
         context.settingsDataStore.edit { it[environmentPrivacyModeKey] = enabled }
     }
 
-    suspend fun addEnvironmentVariable(key: String, value: String, note: String = ""): Boolean {
-        val normalized = key.trim().uppercase()
-        if (!isValidEnvironmentKey(normalized) || isReservedEnvironmentKey(normalized) || value.isEmpty()) return false
-        return updateEnvironmentRecords { records ->
-            if (records.any { it.metadata.key == normalized }) return@updateEnvironmentRecords null
-            records + StoredEnvironmentVariable(
-                metadata = top.wkbin.taixu.core.model.EnvironmentVariable(UUID.randomUUID().toString(), normalized, note.trim(), System.currentTimeMillis()),
-                encryptedValue = secretManager.encrypt(value),
+    /** Upgrade-only reader. Runtime deletes this Android-side copy after Linux persistence succeeds. */
+    suspend fun readLegacyEnvironmentVariables(): List<LegacyEnvironmentVariable> {
+        val encoded = context.settingsDataStore.data.map { it[legacyEnvironmentVariablesKey] }.first().orEmpty()
+        if (encoded.isBlank()) return emptyList()
+        return runCatching {
+            environmentJson.decodeFromString<List<StoredEnvironmentVariable>>(encoded)
+        }.getOrDefault(emptyList()).map { record ->
+            LegacyEnvironmentVariable(
+                metadata = record.metadata,
+                value = secretManager.decrypt(record.encryptedValue).orEmpty(),
             )
         }
     }
 
-    suspend fun updateEnvironmentVariable(id: String, key: String, value: String?, note: String = ""): Boolean {
-        val normalized = key.trim().uppercase()
-        if (!isValidEnvironmentKey(normalized) || isReservedEnvironmentKey(normalized)) return false
-        return updateEnvironmentRecords { records ->
-            val current = records.firstOrNull { it.metadata.id == id } ?: return@updateEnvironmentRecords null
-            if (records.any { it.metadata.id != id && it.metadata.key == normalized }) return@updateEnvironmentRecords null
-            records.map {
-                if (it.metadata.id != id) it else it.copy(
-                    metadata = it.metadata.copy(key = normalized, note = note.trim()),
-                    encryptedValue = if (value.isNullOrEmpty()) it.encryptedValue else secretManager.encrypt(value),
-                )
-            }
-        }
-    }
-
-    suspend fun deleteEnvironmentVariable(id: String): Boolean = updateEnvironmentRecords { records ->
-        if (records.none { it.metadata.id == id }) null else records.filterNot { it.metadata.id == id }
-    }
-
-    suspend fun readEnvironmentVariable(key: String): String? = _environmentValues.value[key.trim().uppercase()]
-
-    fun isReservedEnvironmentKey(key: String): Boolean {
-        val normalized = key.trim().uppercase()
-        return normalized in setOf(
-            "HOME", "PATH", "TERM", "PS1", "DEBIAN_FRONTEND", "CI", "NONINTERACTIVE",
-            "TAIXU_BRIDGE_URL", "TAIXU_BRIDGE_PORT", "ANDROID_BIN_PATH", "ANDROID_LIB_PATH",
-        ) || normalized.startsWith("TAIXU_") || normalized.startsWith("ANDROID_")
-    }
-
-    private suspend fun updateEnvironmentRecords(transform: (List<StoredEnvironmentVariable>) -> List<StoredEnvironmentVariable>?): Boolean {
-        var changed = false
-        var updatedRecords: List<StoredEnvironmentVariable>? = null
-        context.settingsDataStore.edit { prefs ->
-            val existing = prefs[environmentVariablesKey].orEmpty().let { encoded ->
-                if (encoded.isBlank()) emptyList() else runCatching { environmentJson.decodeFromString<List<StoredEnvironmentVariable>>(encoded) }.getOrDefault(emptyList())
-            }
-            val updated = transform(existing) ?: return@edit
-            prefs[environmentVariablesKey] = environmentJson.encodeToString(updated)
-            updatedRecords = updated
-            changed = true
-        }
-        updatedRecords?.let { records ->
-            _environmentVariables.value = records.map { it.metadata }
-            _environmentValues.value = records.associate { it.metadata.key to (secretManager.decrypt(it.encryptedValue).orEmpty()) }
-        }
-        return changed
+    suspend fun clearLegacyEnvironmentVariables() {
+        context.settingsDataStore.edit { it.remove(legacyEnvironmentVariablesKey) }
     }
 
     @kotlinx.serialization.Serializable

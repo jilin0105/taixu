@@ -9,6 +9,7 @@ import top.wkbin.taixu.core.network.DownloadEvent
 import top.wkbin.taixu.core.network.DownloadRequest
 import top.wkbin.taixu.core.network.FileDownloader
 import top.wkbin.taixu.runtime.LinuxRuntime
+import top.wkbin.taixu.runtime.LinuxEnvironmentManager
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import java.util.UUID
 import javax.inject.Inject
@@ -32,6 +33,7 @@ import kotlinx.serialization.json.jsonPrimitive
 class ToolExecutor @Inject constructor(
     private val fileAccess: WorkspaceFileAccess,
     private val linuxRuntime: LinuxRuntime,
+    private val linuxEnvironmentManager: LinuxEnvironmentManager,
     private val secretRedactor: SecretRedactor,
     private val fileDownloader: FileDownloader,
     private val approvalRepository: top.wkbin.taixu.core.database.AgentApprovalRepository? = null,
@@ -79,6 +81,7 @@ class ToolExecutor @Inject constructor(
             false to "工具执行异常：${throwable.message ?: throwable::class.simpleName}"
         }
         val (success, rawOutput) = outcome
+        linuxEnvironmentManager.refreshIfNeeded()
         return ToolResult(
             id = UUID.randomUUID().toString(),
             createdAt = now,
@@ -86,7 +89,7 @@ class ToolExecutor @Inject constructor(
             success = success,
             output = secretRedactor.redact(
                 value = truncateOutput(rawOutput),
-                secretValues = if (::settingsDataStore.isInitialized) settingsDataStore.environmentValues.value.values else emptyList(),
+                secretValues = linuxEnvironmentManager.values.value.values,
                 privacyMode = if (::settingsDataStore.isInitialized) runCatching { settingsDataStore.environmentPrivacyMode.first() }.getOrDefault(true) else true,
             ),
         )

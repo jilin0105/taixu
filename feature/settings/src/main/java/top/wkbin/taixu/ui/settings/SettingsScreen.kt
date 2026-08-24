@@ -494,6 +494,10 @@ fun EnvironmentVariableSettingsScreen(
 ) {
     val entries by viewModel.environmentVariables.collectAsStateWithLifecycle()
     val privacyMode by viewModel.environmentPrivacyMode.collectAsStateWithLifecycle()
+    val loading by viewModel.environmentLoading.collectAsStateWithLifecycle()
+    val error by viewModel.environmentError.collectAsStateWithLifecycle()
+    val activeDistroId by viewModel.activeDistroId.collectAsStateWithLifecycle()
+    val runtimeState by viewModel.runtimeState.collectAsStateWithLifecycle()
     var showEditor by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<top.wkbin.taixu.core.model.EnvironmentVariable?>(null) }
     var showDelete by remember { mutableStateOf<top.wkbin.taixu.core.model.EnvironmentVariable?>(null) }
@@ -520,7 +524,20 @@ fun EnvironmentVariableSettingsScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = { RuntimeTopBar("环境变量", onBack, actions = { IconButton(onClick = { editing = null; showEditor = true }) { RuntimeIcon(RuntimeIconName.Plus) } }) },
+        topBar = {
+            RuntimeTopBar(
+                "环境变量",
+                onBack,
+                actions = {
+                    IconButton(onClick = { viewModel.refreshEnvironmentVariables() }, enabled = !loading && runtimeState is top.wkbin.taixu.core.model.RuntimeState.Ready) {
+                        RuntimeIcon(RuntimeIconName.Refresh)
+                    }
+                    IconButton(onClick = { editing = null; showEditor = true }, enabled = !loading && runtimeState is top.wkbin.taixu.core.model.RuntimeState.Ready) {
+                        RuntimeIcon(RuntimeIconName.Plus)
+                    }
+                },
+            )
+        },
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
@@ -538,9 +555,31 @@ fun EnvironmentVariableSettingsScreen(
                 }
             }
             item {
-                Text("变量会在下一次命令或终端会话启动时生效。值使用 Android Keystore 加密保存。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "变量直接保存在 $activeDistroId 的 Linux /etc/profile.d 中，并在下一次命令或终端会话启动时生效。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-            if (entries.isEmpty()) {
+            error?.let { message ->
+                item {
+                    RuntimeCard(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            message,
+                            modifier = Modifier.padding(16.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+            if (loading && entries.isEmpty()) {
+                item {
+                    Row(Modifier.fillMaxWidth().padding(24.dp), horizontalArrangement = Arrangement.Center) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                    }
+                }
+            } else if (entries.isEmpty()) {
                 item { RuntimeCard(modifier = Modifier.fillMaxWidth()) { Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) { Text("暂无环境变量", style = MaterialTheme.typography.titleMedium); Text("点击右上角 + 添加", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } } }
             } else {
                 items(entries, key = { it.id }) { entry ->
