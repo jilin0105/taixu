@@ -658,6 +658,7 @@ private fun EnvironmentVariableEditor(
 fun SystemDevSettingsScreen(
     onBack: () -> Unit,
     onOpenDeveloper: () -> Unit,
+    onOpenCustomIteration: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val developer by viewModel.developerMode.collectAsStateWithLifecycle()
@@ -733,6 +734,23 @@ fun SystemDevSettingsScreen(
                             showPhantomProcessDialog = true
                             viewModel.refreshPhantomProcessLimit()
                         },
+                    )
+                }
+            }
+
+            item {
+                Text(
+                    text = "太墟自定义迭代与共建",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+                )
+                SettingsGroup {
+                    SettingsRow(
+                        icon = RuntimeIconName.Code,
+                        title = "自定义迭代（TaiXuDev）",
+                        subtitle = "在手机沙盒中调用 AI 开发太墟自身并云端构建 APK",
+                        onClick = onOpenCustomIteration,
                     )
                 }
             }
