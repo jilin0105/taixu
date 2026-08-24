@@ -428,6 +428,7 @@ class LinuxRuntimeImpl @Inject constructor(
                 command = command,
                 mounts = mounts,
             ),
+            environment = pathManager.hostProcessEnvironment(safeDistro),
             timeoutMs = command.timeoutMs,
             onOutput = command.onOutput,
         )
@@ -522,6 +523,7 @@ class LinuxRuntimeImpl @Inject constructor(
                         timeoutMs = 2_000L,
                     ),
                 ),
+                environment = pathManager.hostProcessEnvironment(distroId),
                 timeoutMs = 2_000L,
             )
         }

@@ -52,6 +52,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import top.wkbin.taixu.core.model.AppUpdateInfo
+import top.wkbin.taixu.runtime.service.RuntimeServiceController
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.navigation.TaiXuNavHost
@@ -65,14 +66,20 @@ class MainActivity : AppCompatActivity() {
     @javax.inject.Inject
     lateinit var appUpdateManager: top.wkbin.taixu.core.network.AppUpdateManager
 
+    @javax.inject.Inject
+    lateinit var runtimeServiceController: RuntimeServiceController
+
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { }
+    ) { granted ->
+        if (granted) runtimeServiceController.start()
+    }
 
     private var notificationPermissionCheckScheduled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        runtimeServiceController.start()
         enableEdgeToEdge()
         setContent {
             val themeMode by settingsDataStore.themeMode.collectAsStateWithLifecycle(initialValue = "system")

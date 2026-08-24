@@ -23,9 +23,12 @@ class ProotCommandBuilderTest {
         assertEquals(File("/data/data/app/bin/proot").absolutePath, args[0])
         assert(args.contains("--kill-on-exit"))
         assert(args.contains("--link2symlink"))
+        assert(args.contains("-L"))
         assert(args.contains("--sysvipc"))
         assert(args.contains("--kernel-release=6.17.0-TaiXu"))
         assert(args.contains("--change-id=0:0"))
+        val l2sBackingStore = File(File("/data/data/app/rootfs"), ".l2s").absolutePath
+        assertBinding(args, "$l2sBackingStore:$l2sBackingStore")
         assertBinding(args, "/dev")
         assertBinding(args, "/proc")
         assertBinding(args, "/sys")
@@ -76,6 +79,9 @@ class ProotCommandBuilderTest {
         assert(args.last().contains("export OPENAI_API_KEY='secret'"))
         assert(args.last().contains("/root/.local/bin:\$PATH"))
         assert(args.last().contains("tty > /opt/taixu/.pty-12345678"))
+        assert(args.contains("-L"))
+        val l2sBackingStore = File(File("/r"), ".l2s").absolutePath
+        assertBinding(args, "$l2sBackingStore:$l2sBackingStore")
     }
 
     @Test(expected = IllegalArgumentException::class)

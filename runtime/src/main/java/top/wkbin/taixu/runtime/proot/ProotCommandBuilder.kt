@@ -36,11 +36,13 @@ class ProotCommandBuilder private constructor(
         add(prootBinary.absolutePath)
         add("--kill-on-exit")
         add("--link2symlink")
+        add("-L")
         add("--sysvipc")
         add("--kernel-release=$GUEST_KERNEL_RELEASE")
         add("--change-id=0:0")
         add("-r")
         add(rootfsDir.absolutePath)
+        addLink2SymlinkBackingStoreBinding(rootfsDir)
         add("-b")
         add("/dev")
         add("-b")
@@ -90,11 +92,13 @@ class ProotCommandBuilder private constructor(
         add(prootBinary.absolutePath)
         add("--kill-on-exit")
         add("--link2symlink")
+        add("-L")
         add("--sysvipc")
         add("--kernel-release=$GUEST_KERNEL_RELEASE")
         add("--change-id=0:0")
         add("-r")
         add(rootfsDir.absolutePath)
+        addLink2SymlinkBackingStoreBinding(rootfsDir)
         add("-b")
         add("/dev")
         add("-b")
@@ -158,6 +162,18 @@ class ProotCommandBuilder private constructor(
 
     private fun shellQuote(value: String): String =
         "'${value.replace("'", "'\\\''")}'"
+
+    /**
+     * The Termux PRoot build stores emulated hard-link payloads under the host-side
+     * [RuntimePathManager] `PROOT_L2S_DIR`. Link proxies contain that absolute host
+     * path. Expose the same path inside the guest so dpkg can lchown/lstat a newly
+     * unpacked hard link instead of following a dangling proxy and reporting ENOENT.
+     */
+    private fun MutableList<String>.addLink2SymlinkBackingStoreBinding(rootfsDir: File) {
+        val backingStore = File(rootfsDir, LINK2SYMLINK_DIRECTORY).absolutePath
+        add("-b")
+        add("$backingStore:$backingStore")
+    }
 
     /** Android host paths used by the PRoot tracer and Android linker. */
     private fun MutableList<String>.addHostSystemBindings() {
@@ -235,6 +251,7 @@ class ProotCommandBuilder private constructor(
     private companion object {
         const val GUEST_SHELL = "/bin/sh"
         const val GUEST_KERNEL_RELEASE = "6.17.0-TaiXu"
+        const val LINK2SYMLINK_DIRECTORY = ".l2s"
         val PTY_MARKER = Regex("/opt/taixu/\\.pty-[A-Za-z0-9-]{8,64}")
         val ENVIRONMENT_KEY = Regex("[A-Za-z_][A-Za-z0-9_]*")
         const val SHARED_STORAGE_ROOT = "/storage/emulated/0"
