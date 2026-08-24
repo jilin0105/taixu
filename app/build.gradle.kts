@@ -5,8 +5,8 @@ import java.util.Properties
 import org.gradle.kotlin.dsl.configure
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
-val appVersionName = "0.4.0"
-val appVersionCode = 4
+val appVersionName = "0.4.1"
+val appVersionCode = 5
 
 plugins {
     alias(libs.plugins.android.application)
