@@ -2,9 +2,9 @@ package top.wkbin.taixu
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import top.wkbin.taixu.core.database.AiModelDao
+import top.wkbin.taixu.core.database.AiModelRepository
 import top.wkbin.taixu.core.database.AiModelEntity
-import top.wkbin.taixu.core.datastore.SettingsDataStore
+import top.wkbin.taixu.core.datastore.OnboardingPreferences
 import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.core.tools.ProviderRepository
 import top.wkbin.taixu.core.tools.AgentProviderCatalog
@@ -39,10 +39,10 @@ data class StarterPlugin(
 
 @HiltViewModel
 class OnboardingViewModel @Inject constructor(
-    private val settings: SettingsDataStore,
+    private val settings: OnboardingPreferences,
     private val linuxRuntime: LinuxRuntime,
     private val providerRepository: ProviderRepository,
-    private val modelDao: AiModelDao,
+    private val modelDao: AiModelRepository,
     private val providerCatalogRepository: AgentProviderCatalog,
     private val modelDiscovery: AgentModelDiscovery,
     private val toolManager: top.wkbin.taixu.core.tools.ToolManager,

@@ -2,7 +2,6 @@ package top.wkbin.taixu.core.common.logging
 
 import android.util.Log
 import android.content.Context
-import top.wkbin.taixu.core.security.SecretRedactor
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
@@ -15,7 +14,7 @@ import kotlinx.coroutines.launch
 @Singleton
 class AppLogger @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val secretRedactor: SecretRedactor,
+    private val secretRedactor: SensitiveDataRedactor,
 ) {
 
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

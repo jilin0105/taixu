@@ -194,6 +194,7 @@ val bundledProotLoader = layout.projectDirectory.file(
 
 tasks.configureEach {
     if (name == "preBuild") {
+        dependsOn(rootProject.tasks.named("architectureCheck"))
         doFirst {
             check(bundledProotLoader.asFile.isFile && bundledProotLoader.asFile.length() > 4096L) {
                 "Missing ARM64 PRoot loader. Run tools/prepare-proot-runtime.ps1 before building."

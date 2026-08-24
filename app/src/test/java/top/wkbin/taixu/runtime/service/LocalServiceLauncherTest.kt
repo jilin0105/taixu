@@ -84,6 +84,7 @@ class LocalServiceLauncherTest {
         override suspend fun switchActiveDistro(distroId: String): AppResult<Unit> = AppResult.Success(Unit)
         override suspend fun installDistro(request: RuntimeInstallRequest, onProgress: suspend (top.wkbin.taixu.runtime.DownloadProgress) -> Unit): AppResult<Unit> = AppResult.Success(Unit)
         override suspend fun uninstallDistro(distroId: String): AppResult<Unit> = AppResult.Success(Unit)
+        override suspend fun resetSandbox(distroId: String?): AppResult<Unit> = AppResult.Success(Unit)
 
         override suspend fun initialize(request: RuntimeInstallRequest): AppResult<Unit> = AppResult.Success(Unit)
         override suspend fun restoreInstalledState(): Boolean = false

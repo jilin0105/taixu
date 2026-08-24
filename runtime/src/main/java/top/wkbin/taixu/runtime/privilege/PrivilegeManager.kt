@@ -11,7 +11,7 @@ import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.common.result.AppError
 import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.common.result.ErrorCode
-import top.wkbin.taixu.core.datastore.SettingsDataStore
+import top.wkbin.taixu.core.datastore.RuntimePreferences
 import top.wkbin.taixu.core.model.ExecutionMode
 import top.wkbin.taixu.core.model.PrivilegeCheckResult
 import java.util.concurrent.TimeUnit
@@ -21,7 +21,7 @@ import javax.inject.Singleton
 @Singleton
 class PrivilegeManager @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val settingsDataStore: SettingsDataStore,
+    private val settingsDataStore: RuntimePreferences,
     private val logger: AppLogger,
 ) {
 

@@ -17,11 +17,11 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.wkbin.taixu.core.common.logging.AppLogger
-import top.wkbin.taixu.core.database.AiModelDao
+import top.wkbin.taixu.core.database.AiModelRepository
 import top.wkbin.taixu.core.database.AiModelEntity
 import top.wkbin.taixu.core.database.ToolEntity
 import top.wkbin.taixu.core.database.ToolSettingsRepository
-import top.wkbin.taixu.core.datastore.SettingsDataStore
+import top.wkbin.taixu.core.datastore.ToolPreferences
 import top.wkbin.taixu.core.model.ToolManifest
 import top.wkbin.taixu.core.tools.ProviderRepository
 import top.wkbin.taixu.core.tools.ToolManager
@@ -75,9 +75,9 @@ data class ToolDetailUiState(
 @HiltViewModel
 class ToolDetailViewModel @Inject constructor(
     private val toolManager: ToolManager,
-    private val settingsDataStore: SettingsDataStore,
+    private val settingsDataStore: ToolPreferences,
     private val providerRepository: ProviderRepository,
-    private val aiModelDao: AiModelDao,
+    private val aiModelDao: AiModelRepository,
     private val toolSettingsRepository: ToolSettingsRepository,
     private val linuxRuntime: top.wkbin.taixu.runtime.LinuxRuntime,
     private val logger: AppLogger,

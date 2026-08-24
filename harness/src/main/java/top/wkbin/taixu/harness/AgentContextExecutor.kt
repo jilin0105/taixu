@@ -1,6 +1,6 @@
 package top.wkbin.taixu.harness
 
-import top.wkbin.taixu.core.database.AgentContextDao
+import top.wkbin.taixu.core.database.AgentContextRepository
 import top.wkbin.taixu.core.database.AgentMemoryEntity
 import top.wkbin.taixu.core.database.AgentPlanEntity
 import top.wkbin.taixu.core.database.AgentScratchpadEntity
@@ -22,7 +22,7 @@ import kotlinx.serialization.json.jsonPrimitive
  */
 @Singleton
 class AgentContextExecutor @Inject constructor(
-    private val agentContextDao: AgentContextDao,
+    private val agentContextDao: AgentContextRepository,
     private val json: Json,
 ) {
     suspend fun executeMemory(args: JsonObject, sessionId: String, workspace: String): Pair<Boolean, String> {

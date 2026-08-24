@@ -2,7 +2,7 @@
 
 import android.content.ContextWrapper
 import android.content.pm.ApplicationInfo
-import top.wkbin.taixu.core.database.WorkspaceDao
+import top.wkbin.taixu.core.database.WorkspaceRepository
 import top.wkbin.taixu.core.database.WorkspaceEntity
 import top.wkbin.taixu.runtime.rootfs.RootfsValidator
 import java.io.File
@@ -30,10 +30,10 @@ class WorkspaceManagerTest {
     @Before
     fun setUp() {
         val root = temporaryFolder.newFolder("linux-runtime")
-        workspaceDir = File(root, "workspace").apply { mkdirs() }
         val validator = RootfsValidator(ElfInspector())
         val context = TestContext(root)
         pathManager = RuntimePathManager(context, validator)
+        workspaceDir = pathManager.workspaceDir.apply { mkdirs() }
         workspaceDao = FakeWorkspaceDao()
         manager = WorkspaceManager(pathManager, workspaceDao)
     }
@@ -186,7 +186,7 @@ class WorkspaceManagerTest {
         }
     }
 
-    private class FakeWorkspaceDao : WorkspaceDao {
+    private class FakeWorkspaceDao : WorkspaceRepository {
         private val list = mutableListOf<WorkspaceEntity>()
         private val flow = MutableStateFlow<List<WorkspaceEntity>>(emptyList())
 

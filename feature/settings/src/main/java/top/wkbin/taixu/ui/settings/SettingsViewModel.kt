@@ -3,7 +3,7 @@ package top.wkbin.taixu.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import top.wkbin.taixu.core.datastore.SettingsDataStore
-import top.wkbin.taixu.core.database.AiModelDao
+import top.wkbin.taixu.core.database.AiModelRepository
 import top.wkbin.taixu.core.database.AiModelEntity
 import top.wkbin.taixu.core.database.AgentSkillRepository
 import top.wkbin.taixu.core.database.McpServerRepository
@@ -30,7 +30,7 @@ import kotlinx.coroutines.flow.asStateFlow
 class SettingsViewModel @Inject constructor(
     private val settingsDataStore: SettingsDataStore,
     private val providerRepository: ProviderRepository,
-    private val aiModelDao: AiModelDao,
+    private val aiModelDao: AiModelRepository,
     private val modelDiscovery: AgentModelDiscovery,
     private val providerCatalogRepository: AgentProviderCatalog,
     private val connectionTester: AgentModelConnectionTester,

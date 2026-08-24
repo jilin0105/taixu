@@ -42,7 +42,6 @@ dependencies {
     implementation(libs.backdrop)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
-    implementation(project(":feature:terminal"))
     implementation(project(":core:database"))
     implementation(project(":core:datastore"))
     implementation(project(":runtime"))

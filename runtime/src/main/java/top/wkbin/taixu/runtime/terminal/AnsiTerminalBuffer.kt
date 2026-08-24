@@ -1,8 +1,5 @@
-package top.wkbin.taixu.ui.terminal
+package top.wkbin.taixu.runtime.terminal
 
-import androidx.compose.runtime.Immutable
-
-@Immutable
 data class TerminalCell(
     /** A complete Unicode code point (including supplementary-plane emoji). */
     val character: String,
@@ -18,10 +15,8 @@ data class TerminalCell(
     val width: Int = 1,
 )
 
-@Immutable
 data class TerminalLine(val cells: List<TerminalCell>)
 
-@Immutable
 data class TerminalCursor(
     val row: Int,
     val column: Int,

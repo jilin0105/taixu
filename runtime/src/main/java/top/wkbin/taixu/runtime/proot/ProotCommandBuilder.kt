@@ -8,10 +8,19 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class ProotCommandBuilder @Inject constructor(
+class ProotCommandBuilder private constructor(
     private val environmentResolver: EnvironmentResolver,
-    private val logger: AppLogger,
+    private val logWarning: (String) -> Unit,
 ) {
+
+    @Inject
+    constructor(
+        environmentResolver: EnvironmentResolver,
+        logger: AppLogger,
+    ) : this(environmentResolver, logger::w)
+
+    /** JVM tests do not need Android logging while validating pure argument construction. */
+    internal constructor(environmentResolver: EnvironmentResolver) : this(environmentResolver, {})
 
     fun build(
         prootBinary: File,
@@ -178,7 +187,7 @@ class ProotCommandBuilder @Inject constructor(
         }
         // 记录被跳过的绑定——这些缺失会导致沙箱内 Android 二进制无法执行（"无 linker"问题）
         if (skipped.isNotEmpty()) {
-            logger.w("HostSystemBindings: ${skipped.size} path(s) skipped (not exist/unreadable): $skipped")
+            logWarning("HostSystemBindings: ${skipped.size} path(s) skipped (not exist/unreadable): $skipped")
         }
     }
 

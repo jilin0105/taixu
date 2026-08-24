@@ -1,7 +1,7 @@
 ﻿package top.wkbin.taixu.runtime.samples
 
 import android.content.Context
-import top.wkbin.taixu.core.database.WorkspaceDao
+import top.wkbin.taixu.core.database.WorkspaceRepository
 import top.wkbin.taixu.core.database.WorkspaceEntity
 import java.io.File
 
@@ -14,7 +14,7 @@ import java.io.File
  */
 object WorkspaceSampleSeeder {
 
-    suspend fun ensureBuiltinSamples(context: Context, workspaceDir: File, workspaceDao: WorkspaceDao) {
+    suspend fun ensureBuiltinSamples(context: Context, workspaceDir: File, workspaceDao: WorkspaceRepository) {
         runCatching {
             workspaceDir.mkdirs()
             seedAndroidDemo(File(workspaceDir, "android-demo"), workspaceDao)
@@ -22,7 +22,7 @@ object WorkspaceSampleSeeder {
         }
     }
 
-    private suspend fun seedAndroidDemo(projectDir: File, workspaceDao: WorkspaceDao) {
+    private suspend fun seedAndroidDemo(projectDir: File, workspaceDao: WorkspaceRepository) {
         if (projectDir.exists() && projectDir.listFiles()?.isNotEmpty() == true) return
         projectDir.mkdirs()
 
@@ -260,7 +260,7 @@ object WorkspaceSampleSeeder {
         )
     }
 
-    private suspend fun seedFlutterDemo(context: Context, projectDir: File, workspaceDao: WorkspaceDao) {
+    private suspend fun seedFlutterDemo(context: Context, projectDir: File, workspaceDao: WorkspaceRepository) {
         if (projectDir.exists() && projectDir.listFiles()?.isNotEmpty() == true) return
         projectDir.mkdirs()
 

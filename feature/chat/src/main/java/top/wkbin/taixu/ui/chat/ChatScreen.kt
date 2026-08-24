@@ -153,6 +153,7 @@ private val ApprovalMode.label: String
 fun ChatScreen(
     onNavigate: (MainDestination) -> Unit,
     onOpenFile: ((projectName: String, relativePath: String) -> Unit)? = null,
+    terminalPane: (@Composable (project: String) -> Unit)? = null,
     viewModel: ChatViewModel = hiltViewModel(),
 ) {
     val messages by viewModel.messages.collectAsStateWithLifecycle()
@@ -369,7 +370,7 @@ fun ChatScreen(
                     .distinct()
             }
 
-            if (isDualPane) {
+            if (isDualPane && terminalPane != null) {
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
@@ -439,10 +440,7 @@ fun ChatScreen(
                                 RoundedCornerShape(14.dp),
                             ),
                     ) {
-                        top.wkbin.taixu.ui.terminal.TerminalScreen(
-                            onBack = {},
-                            project = workspace,
-                        )
+                        terminalPane(workspace)
                     }
                 }
             } else {

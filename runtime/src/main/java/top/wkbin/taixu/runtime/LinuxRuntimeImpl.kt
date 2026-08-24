@@ -47,7 +47,7 @@ class LinuxRuntimeImpl @Inject constructor(
     private val shellExecutor: ShellExecutor,
     private val healthChecker: RuntimeHealthChecker,
     private val processRegistry: ProcessRegistry,
-    private val settingsDataStore: top.wkbin.taixu.core.datastore.SettingsDataStore,
+    private val settingsDataStore: top.wkbin.taixu.core.datastore.RuntimePreferences,
     private val storageMountBindingRepository: top.wkbin.taixu.core.database.StorageMountBindingRepository,
     private val hostBridge: HostBridge,
     private val assetSynchronizer: top.wkbin.taixu.runtime.scripts.RuntimeAssetSynchronizer,

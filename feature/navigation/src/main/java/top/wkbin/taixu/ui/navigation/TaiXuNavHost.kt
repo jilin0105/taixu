@@ -128,6 +128,7 @@ fun TaiXuNavHost() {
                 ChatScreen(
                     viewModel = chatViewModel,
                     onNavigate = ::navigateMain,
+                    terminalPane = { project -> TerminalScreen(onBack = {}, project = project) },
                     onOpenFile = { projectName, relativePath ->
                         selectedMain = MainDestination.Workspace
                         workspaceStack.push(CodeEditorDestination(projectName, relativePath))

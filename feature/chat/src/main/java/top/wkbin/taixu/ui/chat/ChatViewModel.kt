@@ -4,15 +4,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import top.wkbin.taixu.core.model.McpConnectionState
 import top.wkbin.taixu.core.model.ApprovalMode
-import top.wkbin.taixu.core.database.AiModelDao
+import top.wkbin.taixu.core.database.AiModelRepository
 import top.wkbin.taixu.core.database.AiModelEntity
-import top.wkbin.taixu.core.database.HarnessSessionDao
+import top.wkbin.taixu.core.database.HarnessSessionRepository
 import top.wkbin.taixu.core.database.HarnessSessionEntity
 import top.wkbin.taixu.core.database.AgentSkillRepository
 import top.wkbin.taixu.core.database.McpServerRepository
 import top.wkbin.taixu.core.database.AgentApprovalRepository
 import top.wkbin.taixu.core.database.AgentApprovalRequestEntity
-import top.wkbin.taixu.core.datastore.SettingsDataStore
+import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.harness.HarnessLoop
 import top.wkbin.taixu.harness.HarnessMessage
 import top.wkbin.taixu.harness.mcp.McpManager
@@ -32,15 +32,15 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-import top.wkbin.taixu.ui.terminal.TerminalSessionManager
+import top.wkbin.taixu.runtime.terminal.TerminalSessionManager
 
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     private val harnessLoop: HarnessLoop,
-    private val sessionDao: HarnessSessionDao,
-    private val aiModelDao: AiModelDao,
+    private val sessionDao: HarnessSessionRepository,
+    private val aiModelDao: AiModelRepository,
     private val workspaceManager: WorkspaceManager,
-    private val settingsDataStore: SettingsDataStore,
+    private val settingsDataStore: AgentPreferences,
     private val linuxRuntime: top.wkbin.taixu.runtime.LinuxRuntime,
     private val terminalSessionManager: TerminalSessionManager,
     private val mcpManager: McpManager,

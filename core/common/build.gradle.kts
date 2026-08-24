@@ -20,7 +20,6 @@ kotlin {
 }
 
 dependencies {
-    implementation(project(":core:security"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)

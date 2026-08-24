@@ -10,9 +10,13 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import top.wkbin.taixu.core.datastore.SettingsDataStore
+import top.wkbin.taixu.core.datastore.TerminalPreferences
 import top.wkbin.taixu.runtime.DistributionCatalog
 import top.wkbin.taixu.runtime.WorkspaceManager
+import top.wkbin.taixu.runtime.terminal.TerminalCursor
+import top.wkbin.taixu.runtime.terminal.TerminalLine
+import top.wkbin.taixu.runtime.terminal.TerminalSessionHandle
+import top.wkbin.taixu.runtime.terminal.TerminalSessionManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.Flow
@@ -31,7 +35,7 @@ import kotlinx.coroutines.launch
 class TerminalViewModel @Inject constructor(
     private val terminalManager: TerminalSessionManager,
     private val workspaceManager: WorkspaceManager,
-    private val settingsDataStore: SettingsDataStore,
+    private val settingsDataStore: TerminalPreferences,
     private val linuxRuntime: top.wkbin.taixu.runtime.LinuxRuntime,
 ) : ViewModel() {
     private var initialized = false

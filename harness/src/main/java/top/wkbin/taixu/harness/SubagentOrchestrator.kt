@@ -1,7 +1,7 @@
 package top.wkbin.taixu.harness
 
-import top.wkbin.taixu.core.database.HarnessMessageDao
-import top.wkbin.taixu.core.database.HarnessSessionDao
+import top.wkbin.taixu.core.database.HarnessMessageRepository
+import top.wkbin.taixu.core.database.HarnessSessionRepository
 import top.wkbin.taixu.core.database.HarnessSessionEntity
 import top.wkbin.taixu.core.model.SubagentTaskSpec
 import top.wkbin.taixu.core.model.AgentSubagent
@@ -27,8 +27,8 @@ import kotlinx.serialization.json.jsonPrimitive
  */
 @Singleton
 class SubagentOrchestrator @Inject constructor(
-    private val sessionDao: HarnessSessionDao,
-    private val messageDao: HarnessMessageDao,
+    private val sessionDao: HarnessSessionRepository,
+    private val messageDao: HarnessMessageRepository,
     private val harnessLoopProvider: Provider<HarnessLoop>,
     private val subagentRepository: top.wkbin.taixu.core.database.AgentSubagentRepository,
 ) {

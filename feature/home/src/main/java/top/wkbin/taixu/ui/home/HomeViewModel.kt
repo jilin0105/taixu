@@ -21,11 +21,10 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.wkbin.taixu.core.common.logging.AppLogger
-import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.core.model.DoctorReport
 import top.wkbin.taixu.core.model.RepairProgress
 import top.wkbin.taixu.core.model.RuntimeState
-import top.wkbin.taixu.ui.terminal.TerminalSessionManager
+import top.wkbin.taixu.runtime.terminal.TerminalSessionManager
 import top.wkbin.taixu.runtime.DistributionCatalog
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.BackgroundTaskRegistry
@@ -54,7 +53,6 @@ data class SystemResourceMetrics(
 class HomeViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val linuxRuntime: LinuxRuntime,
-    private val settingsDataStore: SettingsDataStore,
     private val environmentDoctor: EnvironmentDoctor,
     private val environmentRepairer: EnvironmentRepairer,
     private val terminalSessionManager: TerminalSessionManager,

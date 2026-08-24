@@ -12,7 +12,7 @@ import top.wkbin.taixu.runtime.shell.ShellCommand
 import top.wkbin.taixu.runtime.shell.SessionConfig
 import top.wkbin.taixu.runtime.shell.ManagedProcess
 import top.wkbin.taixu.runtime.shell.ProcessType
-import top.wkbin.taixu.core.datastore.SettingsDataStore
+import top.wkbin.taixu.core.datastore.ToolPreferences
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -28,7 +28,7 @@ class OpenClawToolInstaller @Inject constructor(
     private val providerManager: ProviderManager,
     private val remoteScriptRunner: RemoteScriptRunner,
     private val toolCommandLinker: ToolCommandLinker,
-    private val settingsDataStore: SettingsDataStore,
+    private val settingsDataStore: ToolPreferences,
 ) : ToolRuntimeAdapter {
     override val toolId: String = "openclaw"
 

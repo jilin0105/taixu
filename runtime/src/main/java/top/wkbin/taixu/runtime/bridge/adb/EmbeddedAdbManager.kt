@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import top.wkbin.taixu.core.datastore.SettingsDataStore
+import top.wkbin.taixu.core.datastore.RuntimePreferences
 import java.io.File
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -35,7 +35,7 @@ import javax.inject.Singleton
 @Singleton
 class EmbeddedAdbManager @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val settingsDataStore: SettingsDataStore,
+    private val settingsDataStore: RuntimePreferences,
 ) {
     sealed interface ConnectionState {
         data object Disconnected : ConnectionState

@@ -59,7 +59,7 @@ import top.wkbin.taixu.ui.theme.TaiXuTheme
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     @javax.inject.Inject
-    lateinit var settingsDataStore: top.wkbin.taixu.core.datastore.SettingsDataStore
+    lateinit var settingsDataStore: top.wkbin.taixu.core.datastore.AppearancePreferences
 
     @javax.inject.Inject
     lateinit var appUpdateManager: top.wkbin.taixu.core.network.AppUpdateManager

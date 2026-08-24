@@ -14,7 +14,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.RemoteInput
 import top.wkbin.taixu.R
-import top.wkbin.taixu.core.database.HarnessSessionDao
+import top.wkbin.taixu.core.database.HarnessSessionRepository
 import top.wkbin.taixu.core.model.SessionRunState
 import top.wkbin.taixu.harness.HarnessLoop
 import dagger.hilt.android.AndroidEntryPoint
@@ -38,7 +38,7 @@ import kotlin.math.absoluteValue
 class AgentForegroundService : Service() {
 
     @Inject lateinit var harnessLoop: HarnessLoop
-    @Inject lateinit var sessionDao: HarnessSessionDao
+    @Inject lateinit var sessionDao: HarnessSessionRepository
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var collecting = false

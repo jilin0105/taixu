@@ -1,6 +1,6 @@
-package top.wkbin.taixu.ui.terminal
+package top.wkbin.taixu.runtime.terminal
 
-import top.wkbin.taixu.core.database.TerminalSessionDao
+import top.wkbin.taixu.core.database.TerminalSessionRepository
 import top.wkbin.taixu.core.database.TerminalSessionEntity
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.shell.LinuxSession
@@ -56,7 +56,7 @@ class TerminalSessionHandle internal constructor(
 @Singleton
 class TerminalSessionManager @Inject constructor(
     private val linuxRuntime: LinuxRuntime,
-    private val terminalSessionDao: TerminalSessionDao,
+    private val terminalSessionDao: TerminalSessionRepository,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 

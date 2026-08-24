@@ -3,6 +3,7 @@
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import top.wkbin.taixu.runtime.terminal.AnsiTerminalBuffer
 
 class AnsiTerminalBufferTest {
     @Test
@@ -12,7 +13,7 @@ class AnsiTerminalBufferTest {
         val screen = buffer.append("1mred\u001B[0m!")
 
         val line = screen.first()
-        assertEquals("hellored!", line.cells.joinToString("") { it.character.toString() })
+        assertEquals("hellored!", line.cells.joinToString("") { it.character })
         assertEquals(0xFFCC0000L, line.cells[5].foreground)
         assertEquals(null, line.cells.last().foreground)
     }
@@ -23,7 +24,7 @@ class AnsiTerminalBufferTest {
         buffer.append("hello")
         val screen = buffer.append("\u001B[1G\u001B[Kx")
 
-        assertEquals("x", screen.first().cells.joinToString("") { it.character.toString() })
+        assertEquals("x", screen.first().cells.joinToString("") { it.character })
     }
 
     @Test
@@ -32,7 +33,7 @@ class AnsiTerminalBufferTest {
         val screen = buffer.append("one\ntwo\nthree\nfour")
 
         assertTrue(screen.size <= 3)
-        assertEquals("four", screen.last().cells.joinToString("") { it.character.toString() })
+        assertEquals("four", screen.last().cells.joinToString("") { it.character })
     }
 
     @Test
@@ -40,7 +41,7 @@ class AnsiTerminalBufferTest {
         val buffer = AnsiTerminalBuffer(columns = 20, maxRows = 10)
         val screen = buffer.append("echo  ")
 
-        assertEquals("echo  ", screen.first().cells.joinToString("") { it.character.toString() })
+        assertEquals("echo  ", screen.first().cells.joinToString("") { it.character })
         assertEquals(6, buffer.cursor().column)
     }
 

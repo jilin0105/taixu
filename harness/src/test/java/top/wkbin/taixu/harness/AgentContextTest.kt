@@ -1,6 +1,6 @@
 package top.wkbin.taixu.harness
 
-import top.wkbin.taixu.core.database.AgentContextDao
+import top.wkbin.taixu.core.database.AgentContextRepository
 import top.wkbin.taixu.core.database.AgentMemoryEntity
 import top.wkbin.taixu.core.database.AgentPlanEntity
 import top.wkbin.taixu.core.database.AgentScratchpadEntity
@@ -118,7 +118,7 @@ class AgentContextTest {
     }
 }
 
-private class FakeAgentContextDao : AgentContextDao {
+private class FakeAgentContextDao : AgentContextRepository {
     private val memories = ConcurrentHashMap<String, AgentMemoryEntity>()
     private val plans = ConcurrentHashMap<String, AgentPlanEntity>()
     private val scratchpads = ConcurrentHashMap<String, AgentScratchpadEntity>()

@@ -8,7 +8,7 @@ import top.wkbin.taixu.core.common.files.SafeFileTree
 import top.wkbin.taixu.core.common.result.AppError
 import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.common.result.ErrorCode
-import top.wkbin.taixu.core.database.WorkspaceDao
+import top.wkbin.taixu.core.database.WorkspaceRepository
 import top.wkbin.taixu.core.database.WorkspaceEntity
 import java.io.File
 import javax.inject.Inject
@@ -100,10 +100,11 @@ data class WorkspaceFileItem(
 class WorkspaceManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val pathManager: RuntimePathManager,
-    private val workspaceDao: WorkspaceDao,
+    private val workspaceDao: WorkspaceRepository,
+    private val fileService: WorkspaceFileService,
 ) {
-    constructor(pathManager: RuntimePathManager, workspaceDao: WorkspaceDao) : this(
-        ContextWrapper(null), pathManager, workspaceDao,
+    constructor(pathManager: RuntimePathManager, workspaceDao: WorkspaceRepository) : this(
+        ContextWrapper(null), pathManager, workspaceDao, WorkspaceFileService(pathManager, workspaceDao),
     )
     fun observeProjects(): Flow<List<WorkspaceProject>> = workspaceDao.observeAll().map { entities ->
         val projectPaths = entities.mapNotNull { runCatching { File(it.path).canonicalPath }.getOrNull() }.toSet()
@@ -189,6 +190,9 @@ class WorkspaceManager @Inject constructor(
                 if (!existed) require(directory.mkdirs()) { "无法创建 Git 导入目录" }
             } else {
                 check((existed && directory.isDirectory) || (!existed && directory.mkdirs())) { "无法创建或访问关联目录" }
+                if (template != ProjectTemplate.EMPTY) {
+                    check(!existed || directory.listFiles().orEmpty().isEmpty()) { "模板目标目录必须为空" }
+                }
             }
             File(directory, UNLINKED_MARKER).delete()
 
@@ -259,191 +263,35 @@ class WorkspaceManager @Inject constructor(
 
     /** 列出项目指定相对路径下的所有文件与子目录（目录优先排序）。 */
     suspend fun listFiles(projectName: String, relativePath: String = ""): AppResult<List<WorkspaceFileItem>> =
-        withContext(Dispatchers.IO) {
-            try {
-                val directory = resolveInProject(projectName, relativePath)
-                val displayPath = displayPath(projectName, relativePath)
-                check(directory.isDirectory) { "不是目录：$displayPath" }
-                val projectRoot = getProjectRoot(projectName)
-                val items = directory.listFiles().orEmpty()
-                    .map { file ->
-                        val rel = file.toRelativeString(projectRoot).replace(File.separatorChar, '/')
-                        WorkspaceFileItem(
-                            name = file.name,
-                            relativePath = rel,
-                            isDirectory = file.isDirectory,
-                            sizeBytes = if (file.isFile) file.length() else 0L,
-                            lastModified = file.lastModified(),
-                            extension = if (file.isFile) file.extension.lowercase() else "",
-                        )
-                    }
-                    .sortedWith(
-                        compareBy<WorkspaceFileItem> { !it.isDirectory }
-                            .thenBy { it.name.lowercase() },
-                    )
-                AppResult.Success(items)
-            } catch (throwable: Throwable) {
-                AppResult.Failure(AppError(ErrorCode.IO, throwable.message ?: "读取文件列表失败", throwable))
-            }
-        }
+        fileService.listFiles(projectName, relativePath)
 
     /** 读取文件内容（UTF-8，限制单文件最大读取大小）。 */
     suspend fun readFile(projectName: String, relativePath: String): AppResult<String> =
-        withContext(Dispatchers.IO) {
-            try {
-                val file = resolveInProject(projectName, relativePath)
-                val displayPath = displayPath(projectName, relativePath)
-                check(file.isFile) { "不是文件：$displayPath" }
-                check(file.length() <= MAX_FILE_READ_BYTES) {
-                    "文件过大（${file.length()} 字节，上限 ${MAX_FILE_READ_BYTES / 1024 / 1024} MB）"
-                }
-                AppResult.Success(file.readText(Charsets.UTF_8))
-            } catch (throwable: Throwable) {
-                AppResult.Failure(AppError(ErrorCode.IO, throwable.message ?: "读取文件失败", throwable))
-            }
-        }
+        fileService.readFile(projectName, relativePath)
 
     /** 写入文件内容（原子临时文件替换）。 */
     suspend fun writeFile(projectName: String, relativePath: String, content: String): AppResult<Unit> =
-        withContext(Dispatchers.IO) {
-            try {
-                require(content.length <= MAX_FILE_WRITE_CHARS) {
-                    "内容过长（${content.length} 字符，上限 $MAX_FILE_WRITE_CHARS）"
-                }
-                val file = resolveInProject(projectName, relativePath, allowMissing = true)
-                if (file.exists() && file.isDirectory) {
-                    throw IllegalArgumentException("目标是目录：${displayPath(projectName, relativePath)}")
-                }
-                file.parentFile?.mkdirs()
-                val temporary = File(file.parentFile, ".${file.name}.tmp-${System.nanoTime()}")
-                try {
-                    temporary.writeText(content, Charsets.UTF_8)
-                    if (!temporary.renameTo(file)) {
-                        temporary.copyTo(file, overwrite = true)
-                        temporary.delete()
-                    }
-                } finally {
-                    temporary.delete()
-                }
-                AppResult.Success(Unit)
-            } catch (throwable: Throwable) {
-                AppResult.Failure(AppError(ErrorCode.IO, throwable.message ?: "保存文件失败", throwable))
-            }
-        }
+        fileService.writeFile(projectName, relativePath, content)
 
     /** 创建新文件（空文件）。 */
     suspend fun createFile(projectName: String, relativePath: String): AppResult<Unit> =
-        withContext(Dispatchers.IO) {
-            try {
-                val file = resolveInProject(projectName, relativePath, allowMissing = true)
-                check(!file.exists()) { "文件已存在：${file.name}" }
-                file.parentFile?.mkdirs()
-                check(file.createNewFile()) { "无法创建文件" }
-                AppResult.Success(Unit)
-            } catch (throwable: Throwable) {
-                AppResult.Failure(AppError(ErrorCode.IO, throwable.message ?: "创建文件失败", throwable))
-            }
-        }
+        fileService.createFile(projectName, relativePath)
 
     /** 创建新目录。 */
     suspend fun createDirectory(projectName: String, relativePath: String): AppResult<Unit> =
-        withContext(Dispatchers.IO) {
-            try {
-                val dir = resolveInProject(projectName, relativePath, allowMissing = true)
-                check(!dir.exists()) { "目录已存在：${dir.name}" }
-                check(dir.mkdirs()) { "无法创建目录" }
-                AppResult.Success(Unit)
-            } catch (throwable: Throwable) {
-                AppResult.Failure(AppError(ErrorCode.IO, throwable.message ?: "创建目录失败", throwable))
-            }
-        }
+        fileService.createDirectory(projectName, relativePath)
 
     /** 重命名文件或目录。 */
     suspend fun renameItem(projectName: String, oldRelativePath: String, newName: String): AppResult<Unit> =
-        withContext(Dispatchers.IO) {
-            try {
-                val safeNewName = newName.trim()
-                require(safeNewName.isNotBlank() && !safeNewName.contains('/') && !safeNewName.contains('\\')) {
-                    "新名称不合法"
-                }
-                val file = resolveInProject(projectName, oldRelativePath)
-                val target = File(file.parentFile, safeNewName)
-                check(!target.exists()) { "目标已存在：$safeNewName" }
-                check(file.renameTo(target)) { "重命名失败" }
-                AppResult.Success(Unit)
-            } catch (throwable: Throwable) {
-                AppResult.Failure(AppError(ErrorCode.IO, throwable.message ?: "重命名失败", throwable))
-            }
-        }
+        fileService.renameItem(projectName, oldRelativePath, newName)
 
     /** 删除文件或目录。 */
     suspend fun deleteItem(projectName: String, relativePath: String): AppResult<Unit> =
-        withContext(Dispatchers.IO) {
-            try {
-                val file = resolveInProject(projectName, relativePath)
-                val projectRoot = getProjectRoot(projectName)
-                check(file.canonicalFile != projectRoot.canonicalFile) {
-                    "不能通过此接口删除工作区根目录"
-                }
-                if (file.isDirectory) {
-                    SafeFileTree.delete(file)
-                } else {
-                    check(file.delete()) { "删除文件失败" }
-                }
-                AppResult.Success(Unit)
-            } catch (throwable: Throwable) {
-                AppResult.Failure(AppError(ErrorCode.IO, throwable.message ?: "删除失败", throwable))
-            }
-        }
-
-    private suspend fun getProjectRoot(projectName: String): File {
-        if (projectName == "sdcard") {
-            val sdcard = File("/storage/emulated/0")
-            if (sdcard.exists()) return sdcard
-        }
-        require(isValidProjectName(projectName)) { "项目名称无效：$projectName" }
-        val entity = workspaceDao.findByName(projectName) ?: error("项目不存在：$projectName")
-        val root = File(entity.path)
-        check(root.isDirectory) { "关联目录不存在：$projectName" }
-        return root
-    }
-
-    /**
-     * 安全解析项目内相对路径：
-     * - 过滤 `..` 与空段；
-     * - 校验最终 canonical path 位于项目根目录内部；
-     * - 防范跨工作区与系统越界。
-     */
-    private suspend fun resolveInProject(projectName: String, relativePath: String, allowMissing: Boolean = false): File {
-        val root = getProjectRoot(projectName)
-        val rootCanonical = root.canonicalFile
-        val trimmed = relativePath.trim().removePrefix("/workspace/$projectName").removePrefix("/sdcard").removePrefix("/")
-        val segments = trimmed.split('/', '\\').filter { it.isNotEmpty() && it != "." }
-        if (segments.any { it == ".." }) {
-            throw IllegalArgumentException("路径包含越界操作符 (..)")
-        }
-        var candidate = root
-        for (segment in segments) {
-            candidate = File(candidate, segment)
-        }
-        if (candidate == root) return root
-        val canonical = candidate.canonicalFile
-        if (!isInside(rootCanonical, canonical)) {
-            throw IllegalArgumentException("路径越界：$relativePath")
-        }
-        if (!allowMissing && !candidate.exists()) {
-            throw IllegalArgumentException("目标不存在：${displayPath(projectName, relativePath)}")
-        }
-        return candidate
-    }
+        fileService.deleteItem(projectName, relativePath)
 
     private fun isInside(root: File, candidate: File): Boolean =
         candidate.absolutePath == root.absolutePath ||
             candidate.absolutePath.startsWith(root.absolutePath + File.separator)
-
-    private suspend fun displayPath(projectName: String, relativePath: String): String =
-        if (projectName == "sdcard") "/sdcard/${relativePath.trimStart('/')}"
-        else "${linuxPathFor(getProjectRoot(projectName))}/${relativePath.trimStart('/')}"
 
     private fun projectFromEntity(entity: WorkspaceEntity): WorkspaceProject? {
         val directory = File(entity.path)

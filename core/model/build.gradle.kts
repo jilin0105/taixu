@@ -1,28 +1,18 @@
-﻿plugins {
-    alias(libs.plugins.android.library)
+plugins {
+    alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.serialization)
-    alias(libs.plugins.ksp)
-    alias(libs.plugins.hilt)
-}
-
-android {
-    namespace = "top.wkbin.taixu.core.model"
-    compileSdk = 37
-    defaultConfig { minSdk = 29 }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
 }
 
 kotlin {
+    jvmToolchain(17)
+    sourceSets {
+        main {
+            kotlin.srcDir("src/main/java")
+        }
+    }
     compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
 }
 
 dependencies {
     implementation(libs.kotlinx.serialization.json.jvm)
-    implementation(libs.androidx.core.ktx)
-    implementation(libs.hilt.android)
-    ksp(libs.hilt.compiler)
-    implementation(libs.kotlinx.coroutines.core.jvm)
 }

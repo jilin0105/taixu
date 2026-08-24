@@ -4,9 +4,7 @@ import android.content.Context
 import android.content.Intent
 import dagger.hilt.android.qualifiers.ApplicationContext
 import top.wkbin.taixu.core.common.logging.AppLogger
-import top.wkbin.taixu.core.database.HarnessMessageDao
-import top.wkbin.taixu.core.database.HarnessMessageEntity
-import top.wkbin.taixu.core.database.HarnessSessionDao
+import top.wkbin.taixu.core.database.HarnessSessionRepository
 import top.wkbin.taixu.core.database.HarnessSessionEntity
 import top.wkbin.taixu.core.model.SessionRunState
 import java.io.IOException
@@ -38,7 +36,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
-import top.wkbin.taixu.core.datastore.SettingsDataStore
+import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.core.database.AgentSkillRepository
 import top.wkbin.taixu.core.model.AgentSkill
 
@@ -52,11 +50,11 @@ class HarnessLoop @Inject constructor(
     @ApplicationContext private val context: Context,
     private val providerClient: ProviderClient,
     private val toolExecutor: ToolExecutor,
-    private val messageDao: HarnessMessageDao,
-    private val sessionDao: HarnessSessionDao,
-    private val toolDao: top.wkbin.taixu.core.database.ToolDao,
-    private val agentContextDao: top.wkbin.taixu.core.database.AgentContextDao,
-    private val settingsDataStore: SettingsDataStore,
+    private val messageStore: HarnessMessageStore,
+    private val sessionDao: HarnessSessionRepository,
+    private val toolRepository: top.wkbin.taixu.core.tools.ToolRepository,
+    private val agentContextDao: top.wkbin.taixu.core.database.AgentContextRepository,
+    private val settingsDataStore: AgentPreferences,
     private val fileAccess: WorkspaceFileAccess,
     private val json: Json,
     private val logger: AppLogger,
@@ -131,17 +129,8 @@ class HarnessLoop @Inject constructor(
         }
     }
 
-    private suspend fun readHistory(sessId: String): List<HarnessMessage> = withContext(Dispatchers.IO) {
-        runCatching {
-            messageDao.listForSession(sessId).mapNotNull { entity ->
-                runCatching {
-                    json.decodeFromString(HarnessMessage.serializer(), entity.payloadJson)
-                }.getOrNull()
-            }
-        }.onFailure { throwable ->
-            logger.e("Failed to load history for session $sessId: ${throwable.message}", throwable)
-        }.getOrDefault(emptyList())
-    }
+    private suspend fun readHistory(sessId: String): List<HarnessMessage> =
+        withContext(Dispatchers.IO) { messageStore.load(sessId) }
 
     private fun getOrCreatePendingFlow(sessId: String): MutableStateFlow<List<String>> {
         return _sessionPendingMessages.getOrPut(sessId) { MutableStateFlow(emptyList()) }
@@ -343,7 +332,7 @@ class HarnessLoop @Inject constructor(
                 if (sessId == _currentSessionId.value) {
                     _messages.value = toKeep
                 }
-                messageDao.deleteFromTimestamp(sessId, lastUserMessage.createdAt + 1)
+                messageStore.deleteFromTimestamp(sessId, lastUserMessage.createdAt + 1)
                 runLoopInternal(sessId, startedAt = now())
                 setSessionState(sessId, SessionRunState.COMPLETED)
             } catch (cancellation: CancellationException) {
@@ -394,7 +383,7 @@ class HarnessLoop @Inject constructor(
                 if (sessId == _currentSessionId.value) {
                     _messages.value = toKeep
                 }
-                messageDao.deleteFromTimestamp(sessId, targetMessage.createdAt)
+                messageStore.deleteFromTimestamp(sessId, targetMessage.createdAt)
                 runLoop(sessId, trimmed)
                 setSessionState(sessId, SessionRunState.COMPLETED)
             } catch (cancellation: CancellationException) {
@@ -444,7 +433,7 @@ class HarnessLoop @Inject constructor(
         if (sessId == _currentSessionId.value) {
             _messages.value = updated
         }
-        messageDao.deleteByIds(idsToDelete)
+        messageStore.deleteByIds(idsToDelete)
     }
 
     /**
@@ -1014,7 +1003,8 @@ class HarnessLoop @Inject constructor(
             }
         } else ""
 
-        val installedTools = runCatching { toolDao.getInstalledForDistro(distroId) }.getOrDefault(emptyList())
+        val installedTools = runCatching { toolRepository.getForDistro(distroId).filter { it.state == top.wkbin.taixu.core.model.ToolState.INSTALLED.name } }
+            .getOrDefault(emptyList())
         val installedToolsSection = if (installedTools.isNotEmpty()) {
             "\n\n## 当前 Linux 沙箱已就绪的开发套件与工具环境（已安装就绪，直接调用即可，切勿重复下载或重新安装）：\n" +
                 installedTools.joinToString("\n") { tool ->
@@ -1247,7 +1237,11 @@ class HarnessLoop @Inject constructor(
             val userIndices = msgs.indices.filter { msgs[it] is UserMessage }
             // 预算驱动的滑动窗口：从最近一轮往回累加 token，超出预算则更早的历史进入压缩态。
             val keepFromIndex = if (compactionEnabled) {
-                computeKeepFromIndex(msgs, budgetTokens, estimateTokens(systemPrompt))
+                ContextWindowPolicy.computeKeepFromIndex(
+                    msgs,
+                    budgetTokens,
+                    ContextWindowPolicy.estimateTokens(systemPrompt),
+                )
             } else {
                 0
             }
@@ -1285,7 +1279,7 @@ class HarnessLoop @Inject constructor(
                             val name = toolNames[message.toolCallId] ?: "工具"
                             val status = if (message.success) "成功" else "失败"
                             val content = if (isCollapsed(i) && message.output.length > 240) {
-                                compactToolOutput(message.output, message.success)
+                                ContextWindowPolicy.compactToolOutput(message.output, message.success)
                             } else {
                                 "【工具 $name 执行结果·$status】\n${message.output}"
                             }
@@ -1307,7 +1301,7 @@ class HarnessLoop @Inject constructor(
                     }
                     // 预算折叠态：早期 assistant 文本压缩为一行占位，避免撑爆上下文。
                     val text = if (isCollapsed(i) && message is AssistantText && message.text.length > 120) {
-                        foldMessageText("助手", message.text)
+                        ContextWindowPolicy.foldMessageText("助手", message.text)
                     } else {
                         (message as? AssistantText)?.text
                     }
@@ -1334,7 +1328,7 @@ class HarnessLoop @Inject constructor(
                     i = j
                 } else if (message is ToolResult) {
                     val content = if (isCollapsed(i) && message.output.length > 240) {
-                        compactToolOutput(message.output, message.success)
+                        ContextWindowPolicy.compactToolOutput(message.output, message.success)
                     } else {
                         message.output
                     }
@@ -1349,7 +1343,7 @@ class HarnessLoop @Inject constructor(
                 } else {
                     // 用户消息在早期历史中同样折叠，仅保留极简占位。
                     val folded = if (isCollapsed(i) && message is UserMessage && message.text.length > 120) {
-                        foldMessageText("用户", message.text)
+                        ContextWindowPolicy.foldMessageText("用户", message.text)
                     } else {
                         null
                     }
@@ -1365,110 +1359,13 @@ class HarnessLoop @Inject constructor(
         }
     }
 
-    private fun compactToolOutput(output: String, success: Boolean): String {
-        val lines = output.lines()
-        val summary = if (lines.size > 6) {
-            val head = lines.take(3).joinToString("\n")
-            val tail = lines.takeLast(2).joinToString("\n")
-            head + "\n... [历史工具输出已压缩，已略去 " + (lines.size - 5) + " 行日志] ...\n" + tail
-        } else {
-            output.take(180) + "... [已自动压缩]"
-        }
-        return "【历史执行结果·状态:" + (if (success) "成功" else "失败") + "】\n" + summary
-    }
-
-    /** 估算一段文本的 token 数（字符数 / 2.5 近似，无需引入分词依赖，足够做预算判断）。 */
-    private fun estimateTokens(text: String): Int = (text.length / 2.5).toInt()
-
-    /**
-     * 基于上下文预算计算「无损保留起点」索引：从最近一轮往回累加 token，
-     * 当累计逼近 budget 的 85% 时，更早的消息进入折叠/压缩态。
-     * 始终保留最近的完整一轮，避免把模型正在处理的关键上下文裁掉。
-     */
-    private fun computeKeepFromIndex(msgs: List<HarnessMessage>, budget: Int, systemTokens: Int): Int {
-        if (budget <= 0) return 0
-        val limit = (budget * 0.85).toInt() - systemTokens
-        if (limit <= 0) return 0
-        var used = 0
-        // 从末尾往前扫描；找到第一个累加未超预算的位置作为保留起点。
-        for (idx in msgs.indices.reversed()) {
-            val msg = msgs[idx]
-            val tokens = when (msg) {
-                is CapabilityEvent -> 0
-                is UserMessage -> estimateTokens(msg.text) + msg.imageUrls.size * 1000
-                is AssistantText -> estimateTokens(msg.text) + estimateTokens(msg.reasoning.orEmpty())
-                is ToolResult -> estimateTokens(msg.output)
-                is ToolCall -> estimateTokens(msg.args.toString()) + estimateTokens(msg.reasoning.orEmpty())
-            }
-            if (used + tokens > limit) {
-                // idx 这一条起往前的全部进入折叠态；保留 idx 之后的。
-                return (idx + 1).coerceIn(0, msgs.size)
-            }
-            used += tokens
-        }
-        return 0
-    }
-
-    /** 早期历史折叠占位：保留角色标识与极简信息，引导模型依赖近期上下文。 */
-    private fun foldMessageText(role: String, text: String): String =
-        "[早期历史已折叠·$role] ${text.take(80).replace('\n', ' ')}…（内容过长，已省略，请依据最近轮次继续）"
-
-    private fun sanitizeForStorage(message: HarnessMessage): HarnessMessage = when (message) {
-        is CapabilityEvent -> message
-        is ToolResult -> {
-            if (message.output.length > MAX_STORAGE_STRING_LENGTH) {
-                val head = message.output.take(STORAGE_KEEP_LENGTH)
-                val tail = message.output.takeLast(STORAGE_KEEP_LENGTH)
-                message.copy(
-                    output = "$head\n\n... [工具输出过长（共 ${message.output.length} 字符），已截断保存] ...\n\n$tail",
-                )
-            } else {
-                message
-            }
-        }
-        is AssistantText -> {
-            val text = if (message.text.length > MAX_STORAGE_STRING_LENGTH) {
-                message.text.take(MAX_STORAGE_STRING_LENGTH) + "\n... [文本过长已截断]"
-            } else {
-                message.text
-            }
-            val reasoning = if ((message.reasoning?.length ?: 0) > MAX_STORAGE_STRING_LENGTH) {
-                message.reasoning?.take(MAX_STORAGE_STRING_LENGTH) + "\n... [推理过程过长已截断]"
-            } else {
-                message.reasoning
-            }
-            message.copy(text = text, reasoning = reasoning)
-        }
-        is UserMessage -> {
-            if (message.text.length > MAX_STORAGE_STRING_LENGTH) {
-                message.copy(text = message.text.take(MAX_STORAGE_STRING_LENGTH) + "\n... [用户消息过长已截断]")
-            } else {
-                message
-            }
-        }
-        is ToolCall -> message
-    }
-
     private suspend fun append(sessId: String, message: HarnessMessage) {
         val liveFlow = getOrCreateLiveMessages(sessId)
         liveFlow.value = liveFlow.value + message
         if (sessId == _currentSessionId.value) {
             _messages.value = liveFlow.value
         }
-        val safeMessage = sanitizeForStorage(message)
-        runCatching {
-            messageDao.insert(
-                HarnessMessageEntity(
-                    id = safeMessage.id,
-                    sessionId = sessId,
-                    createdAt = safeMessage.createdAt,
-                    type = safeMessage::class.simpleName.orEmpty(),
-                    payloadJson = json.encodeToString(HarnessMessage.serializer(), safeMessage),
-                ),
-            )
-        }.onFailure { throwable ->
-            logger.e("Failed to insert message into DB for session $sessId: ${throwable.message}", throwable)
-        }
+        messageStore.insert(sessId, message)
     }
 
     private fun streamAssistant(sessId: String, id: String, createdAt: Long, text: String) {
@@ -1526,20 +1423,7 @@ class HarnessLoop @Inject constructor(
         if (sessId == _currentSessionId.value) {
             _messages.value = updated
         }
-        val safeMessage = sanitizeForStorage(message)
-        runCatching {
-            messageDao.insert(
-                HarnessMessageEntity(
-                    id = id,
-                    sessionId = sessId,
-                    createdAt = createdAt,
-                    type = safeMessage::class.simpleName.orEmpty(),
-                    payloadJson = json.encodeToString(HarnessMessage.serializer(), safeMessage),
-                ),
-            )
-        }.onFailure { throwable ->
-            logger.e("Failed to persist assistant message to DB: ${throwable.message}", throwable)
-        }
+        messageStore.insert(sessId, message)
     }
 
     private suspend fun touchSession(sessId: String) {
@@ -1716,8 +1600,6 @@ class HarnessLoop @Inject constructor(
         const val RETRY_BACKOFF_MS = 1_000L
         const val RETRY_BACKOFF_SEC = 2L
         const val MAX_STATUS_ARG_LENGTH = 60
-        const val MAX_STORAGE_STRING_LENGTH = 128 * 1024
-        const val STORAGE_KEEP_LENGTH = 60 * 1024
 
         val FALLBACK_SYSTEM_PROMPT = """
             你是太墟（TaiXu）内置的 Agent Harness——一个运行在 Android 私有 Linux 沙箱（Debian via PRoot）中的 AI 助手。你通过调用工具完成任务：读写用户工作区的文件、在 Linux 环境执行命令、安装软件、排查问题。

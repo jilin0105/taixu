@@ -1,9 +1,9 @@
 package top.wkbin.taixu.harness
 
 import top.wkbin.taixu.core.common.result.AppResult
-import top.wkbin.taixu.core.database.HarnessSessionDao
+import top.wkbin.taixu.core.database.HarnessSessionRepository
 import top.wkbin.taixu.core.security.SecretRedactor
-import top.wkbin.taixu.core.datastore.SettingsDataStore
+import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.core.model.ApprovalMode
 import top.wkbin.taixu.core.network.DownloadEvent
 import top.wkbin.taixu.core.network.DownloadRequest
@@ -35,13 +35,13 @@ class ToolExecutor @Inject constructor(
     private val secretRedactor: SecretRedactor,
     private val fileDownloader: FileDownloader,
     private val approvalRepository: top.wkbin.taixu.core.database.AgentApprovalRepository? = null,
-    private val sessionDao: HarnessSessionDao? = null,
+    private val sessionDao: HarnessSessionRepository? = null,
     private val subagentOrchestrator: SubagentOrchestrator? = null,
     private val mcpManager: top.wkbin.taixu.harness.mcp.McpManager? = null,
     private val contextExecutor: AgentContextExecutor? = null,
 ) {
     @Inject
-    lateinit var settingsDataStore: SettingsDataStore
+    lateinit var settingsDataStore: AgentPreferences
 
     suspend fun execute(
         toolCall: ToolCall,

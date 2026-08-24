@@ -1,6 +1,6 @@
 package top.wkbin.taixu.runtime
 
-import top.wkbin.taixu.core.datastore.SettingsDataStore
+import top.wkbin.taixu.core.datastore.RuntimePreferences
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -8,7 +8,7 @@ import javax.inject.Singleton
 @Singleton
 class EnvironmentResolver @Inject constructor() {
     @Inject
-    lateinit var settingsDataStore: SettingsDataStore
+    lateinit var settingsDataStore: RuntimePreferences
     fun runtimePath(): String = listOf(
         "/root/.local/bin",
         "/opt/taixu/bin",

@@ -1,7 +1,7 @@
 package top.wkbin.taixu.harness
 
-import top.wkbin.taixu.core.database.AiModelDao
-import top.wkbin.taixu.core.datastore.SettingsDataStore
+import top.wkbin.taixu.core.database.AiModelRepository
+import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.core.tools.ProviderRepository
 import java.io.IOException
 import java.time.ZonedDateTime
@@ -351,16 +351,16 @@ data class ChatResponseMessage(
 /**
  * 调用 LLM（OpenAI 兼容 chat/completions，支持 tools/tool_calls）。
  *
- * 模型配置优先取 [AiModelDao] 中激活的 [top.wkbin.taixu.core.database.AiModelEntity]，
+ * 模型配置优先取 [AiModelRepository] 中激活的 [top.wkbin.taixu.core.database.AiModelEntity]，
  * 未配置时回退到 [ProviderRepository]；API Key 始终从加密存储读取，绝不落库/落日志。
  */
 @Singleton
 class ProviderClient @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val providerRepository: ProviderRepository,
-    private val modelDao: AiModelDao,
+    private val modelDao: AiModelRepository,
     private val mcpManager: top.wkbin.taixu.harness.mcp.McpManager,
-    private val settingsDataStore: SettingsDataStore,
+    private val settingsDataStore: AgentPreferences,
     private val json: Json,
 ) {
     private val httpClient: OkHttpClient = okHttpClient.newBuilder()

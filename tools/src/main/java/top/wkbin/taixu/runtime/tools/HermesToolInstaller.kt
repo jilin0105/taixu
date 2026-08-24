@@ -1,6 +1,6 @@
 package top.wkbin.taixu.runtime.tools
 
-import top.wkbin.taixu.core.datastore.SettingsDataStore
+import top.wkbin.taixu.core.datastore.ToolPreferences
 import top.wkbin.taixu.core.model.RuntimeName
 import top.wkbin.taixu.core.model.RuntimeRequirement
 import top.wkbin.taixu.core.tools.DependencyManager
@@ -28,7 +28,7 @@ class HermesToolInstaller @Inject constructor(
     private val providerManager: ProviderManager,
     private val remoteScriptRunner: RemoteScriptRunner,
     private val toolCommandLinker: ToolCommandLinker,
-    private val settingsDataStore: SettingsDataStore,
+    private val settingsDataStore: ToolPreferences,
 ) : ToolRuntimeAdapter {
     override val toolId: String = "hermes-agent"
 
