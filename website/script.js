@@ -32,4 +32,30 @@ const observer = new IntersectionObserver((entries) => {
 }, { threshold: 0.12, rootMargin: '0px 0px -30px' });
 
 document.querySelectorAll('.reveal').forEach((element) => observer.observe(element));
+
+const themeTabs = document.querySelectorAll('[data-theme-tab]');
+const themePanels = document.querySelectorAll('[data-theme-panel]');
+themeTabs.forEach((tab) => tab.addEventListener('click', () => {
+  const selected = tab.dataset.themeTab;
+  themeTabs.forEach((item) => {
+    const active = item === tab;
+    item.classList.toggle('is-active', active);
+    item.setAttribute('aria-selected', String(active));
+  });
+  themePanels.forEach((panel) => {
+    const active = panel.dataset.themePanel === selected;
+    panel.classList.toggle('is-active', active);
+    panel.hidden = !active;
+    if (active) panel.querySelectorAll('.reveal').forEach((element) => element.classList.add('visible'));
+  });
+}));
+themeTabs.forEach((tab, index) => tab.addEventListener('keydown', (event) => {
+  if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+  event.preventDefault();
+  const direction = event.key === 'ArrowRight' ? 1 : -1;
+  const next = themeTabs[(index + direction + themeTabs.length) % themeTabs.length];
+  next.focus();
+  next.click();
+}));
+
 document.querySelector('[data-year]').textContent = new Date().getFullYear();
