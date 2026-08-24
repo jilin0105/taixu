@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f3f0e7">
+  <meta name="description" content="太墟 TaiXu：在 Android 无 Root 环境中运行 Linux、多智能体与原生终端的掌上创作空间。">
+  <meta property="og:title" content="太墟 TaiXu — 掌中归墟，万象可期">
+  <meta property="og:description" content="Android 无 Root Linux Runtime · Agent Harness · 原生 PTY · 工作区与工具生态">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="assets/taixu-logo.png">
+  <title>太墟 TaiXu — 掌中归墟，万象可期</title>
+  <link rel="icon" href="assets/taixu-logo.png">
+  <link rel="stylesheet" href="styles.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <header class="site-header" data-header>
+    <a class="brand" href="#top" aria-label="太墟首页">
+      <span class="brand-mark"><img src="assets/taixu-logo.png" alt=""></span>
+      <span class="brand-name">太墟</span>
+      <span class="brand-roman">TAIXU</span>
+    </a>
+
+    <button class="menu-toggle" type="button" aria-label="打开导航" aria-expanded="false" data-menu-toggle>
+      <span></span><span></span>
+    </button>
+
+    <nav class="site-nav" aria-label="主导航" data-nav>
+      <a href="#vision">理念</a>
+      <a href="#capabilities">能力</a>
+      <a href="#architecture">架构</a>
+      <a href="#start">开始</a>
+      <a class="nav-github" href="https://github.com/wkbin/taixu" target="_blank" rel="noreferrer">
+        GitHub <span aria-hidden="true">↗</span>
+      </a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="hero-orbit orbit-one" aria-hidden="true"></div>
+      <div class="hero-orbit orbit-two" aria-hidden="true"></div>
+      <div class="hero-copy reveal">
+        <div class="eyebrow"><span></span> Android 上的 Linux AI Runtime</div>
+        <h1>于方寸之间，<br><em>构筑你的计算世界。</em></h1>
+        <p class="hero-lead">太墟让完整 Linux、AI Agent、原生终端与工程工作区，在一台无需 Root 的 Android 设备中共同生长。</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="https://github.com/wkbin/taixu/releases" target="_blank" rel="noreferrer">
+            <span>获取最新版本</span><span aria-hidden="true">↗</span>
+          </a>
+          <a class="button button-quiet" href="https://github.com/wkbin/taixu#readme" target="_blank" rel="noreferrer">
+            阅读项目文档 <span aria-hidden="true">→</span>
+          </a>
+        </div>
+        <div class="hero-meta" aria-label="系统需求">
+          <span>v0.5.0</span><i></i><span>Android 10+</span><i></i><span>ARM64</span><i></i><span>开源</span>
+        </div>
+      </div>
+
+      <div class="hero-stage reveal" data-delay="1">
+        <div class="seal" aria-hidden="true"><span>太</span><span>墟</span></div>
+        <div class="phone-shell" aria-label="太墟应用界面概念预览">
+          <div class="phone-top"><span>9:41</span><span class="camera"></span><span>◒ 87%</span></div>
+          <div class="app-head">
+            <div><small>LINUX RUNTIME</small><strong>太墟</strong></div>
+            <div class="avatar">墟</div>
+          </div>
+          <div class="runtime-card">
+            <div class="runtime-label"><span class="pulse-dot"></span> 沙箱运行中</div>
+            <div class="runtime-title">Debian 12 <span>BOOKWORM</span></div>
+            <div class="runtime-stats">
+              <div><span>MEMORY</span><strong>1.8<small> GB</small></strong></div>
+              <div><span>STORAGE</span><strong>8.4<small> GB</small></strong></div>
+              <div><span>PROCESSES</span><strong>24</strong></div>
+            </div>
+            <div class="meter"><span></span></div>
+          </div>
+          <div class="workbench-title"><strong>工作台</strong><span>全部活动</span></div>
+          <div class="agent-card">
+            <div class="agent-icon">智</div>
+            <div><strong>Agent Harness</strong><p>正在分析项目结构并制定构建方案…</p></div>
+            <span class="agent-live">LIVE</span>
+          </div>
+          <div class="terminal-card">
+            <div class="terminal-bar"><span><i></i><i></i><i></i></span><b>taixu — bash</b></div>
+            <code><span class="muted">~/workspace</span> $ ./gradlew assembleDebug<br><span class="green">✓ BUILD SUCCESSFUL</span><br><span class="muted">~/workspace</span> $ <span class="cursor"></span></code>
+          </div>
+          <div class="phone-nav"><b>◈<small>概览</small></b><span>◇<small>智枢</small></span><span>⌁<small>终端</small></span><span>□<small>工作区</small></span></div>
+        </div>
+        <div class="stage-note note-agent"><b>01</b><span>Agent<br>自主执行</span></div>
+        <div class="stage-note note-linux"><b>02</b><span>Linux<br>完整用户态</span></div>
+        <div class="stage-caption">PRODUCT INTERFACE / CONCEPT VIEW</div>
+      </div>
+    </section>
+
+    <section class="manifesto section-pad" id="vision">
+      <div class="section-index reveal">01 / 理念</div>
+      <div class="manifesto-grid">
+        <h2 class="reveal">它不是终端的外壳，<br>而是一个<span>行动发生的场域。</span></h2>
+        <div class="manifesto-copy reveal" data-delay="1">
+          <p>模型在这里获得语言，工具获得双手，终端保存因果，工作区赋予记忆以位置。</p>
+          <p>太墟承认 Android 的边界，并在边界之内建立一套可运行、可观察、可持续演化的 Linux 世界。</p>
+          <blockquote>“掌中归墟，万象可期。”</blockquote>
+        </div>
+      </div>
+    </section>
+
+    <section class="capabilities section-pad" id="capabilities">
+      <div class="section-heading reveal">
+        <div><div class="section-index">02 / 核心能力</div><h2>一台设备，<br>一座完整工坊。</h2></div>
+        <p>从运行环境到智能体，从工具执行到工程构建，太墟将分散的能力编织成一条完整链路。</p>
+      </div>
+
+      <div class="feature-grid">
+        <article class="feature feature-wide reveal">
+          <div class="feature-number">壹</div>
+          <div class="feature-body">
+            <span class="feature-kicker">LINUX RUNTIME</span>
+            <h3>无 Root，衍化诸界</h3>
+            <p>基于 PRoot 运行完整 Linux 用户空间。多发行版安装、切换、更新与持久化，都在 Android 沙盒中有序发生。</p>
+            <div class="distro-row" aria-label="支持的发行版">
+              <span>DEBIAN</span><span>UBUNTU</span><span>ARCH</span><span>ALPINE</span><span>KALI</span><span>FEDORA</span>
+            </div>
+          </div>
+          <div class="cube-art" aria-hidden="true"><div class="cube-top"></div><div class="cube-left"></div><div class="cube-right"></div><span></span></div>
+        </article>
+
+        <article class="feature feature-dark reveal">
+          <div class="feature-number">贰</div>
+          <span class="feature-kicker">AGENT HARNESS</span>
+          <h3>让模型从回答，走向完成</h3>
+          <p>流式推理、工具调用、MCP 与子智能体协作汇成持续执行循环。</p>
+          <div class="loop-graphic" aria-hidden="true">
+            <span class="loop-core">AI</span><span>思考</span><span>行动</span><span>验证</span>
+          </div>
+        </article>
+
+        <article class="feature reveal">
+          <div class="feature-number">叁</div>
+          <span class="feature-kicker">NATIVE PTY</span>
+          <h3>真实终端，真实因果</h3>
+          <p>JNI forkpty、ANSI/VT100、多会话与动态 Resize。不是文本模拟，而是真实进程与控制终端。</p>
+          <div class="terminal-mini"><span>$ npm run build</span><br><b>Done in 4.2s.</b><i></i></div>
+        </article>
+
+        <article class="feature reveal">
+          <div class="feature-number">肆</div>
+          <span class="feature-kicker">WORKSPACE</span>
+          <h3>为项目建立坐标</h3>
+          <p>文件浏览、代码编辑、宿主存储映射，以及 Agent 与终端共享的工程上下文。</p>
+          <div class="file-tree" aria-hidden="true"><span>▾ taixu</span><span>　▾ app</span><span>　　◇ src/main</span><span>　▾ feature</span><span>　　◇ chat</span><span>　　◇ terminal</span></div>
+        </article>
+
+        <article class="feature feature-accent reveal">
+          <div class="feature-number">伍</div>
+          <span class="feature-kicker">TOOLS & SAFETY</span>
+          <h3>百工之器，知止而行</h3>
+          <p>工具安装事务、服务管理与高风险操作审批，让能力、状态和失败路径都清晰可见。</p>
+          <div class="approval"><span>高风险命令</span><b>等待你的确认</b><button type="button" tabindex="-1">允许一次</button></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="architecture section-pad" id="architecture">
+      <div class="section-index reveal">03 / 运行架构</div>
+      <div class="architecture-title reveal"><h2>意图进入太墟，<br><span>行动抵达系统。</span></h2><p>每一步都有上下文，每一次执行都有回声。未完成，便继续。</p></div>
+      <div class="flow reveal" data-delay="1">
+        <div class="flow-node"><small>01</small><strong>人的意图</strong><span>自然语言 / 指令</span></div>
+        <i>→</i>
+        <div class="flow-node"><small>02</small><strong>模型推理</strong><span>多 Provider / 本地模型</span></div>
+        <i>→</i>
+        <div class="flow-node flow-node-main"><small>03</small><strong>Harness</strong><span>规划 · 工具 · 子智能体</span></div>
+        <i>→</i>
+        <div class="flow-node"><small>04</small><strong>Linux / MCP</strong><span>执行与结果校验</span></div>
+      </div>
+      <div class="flow-return reveal"><span>↳</span> 结果回到上下文，驱动下一轮判断</div>
+    </section>
+
+    <section class="system-strip" aria-label="技术特点">
+      <div><span>PRoot</span><i>✦</i><span>Kotlin</span><i>✦</i><span>Compose</span><i>✦</i><span>Native PTY</span><i>✦</i><span>MCP</span><i>✦</i><span>OpenAI Compatible</span><i>✦</i></div>
+      <div aria-hidden="true"><span>PRoot</span><i>✦</i><span>Kotlin</span><i>✦</i><span>Compose</span><i>✦</i><span>Native PTY</span><i>✦</i><span>MCP</span><i>✦</i><span>OpenAI Compatible</span><i>✦</i></div>
+    </section>
+
+    <section class="start section-pad" id="start">
+      <div class="start-mark reveal"><img src="assets/taixu-logo.png" alt="太墟 Logo"></div>
+      <div class="start-copy reveal" data-delay="1">
+        <div class="section-index">04 / 从此处开始</div>
+        <h2>把一座 Linux 工坊，<br>装进你的口袋。</h2>
+        <p>太墟仍在快速演进。欢迎下载体验、阅读源码，或一同参与这个掌上计算世界的建造。</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="https://github.com/wkbin/taixu/releases" target="_blank" rel="noreferrer">前往 Releases <span>↗</span></a>
+          <a class="button button-outline" href="https://github.com/wkbin/taixu" target="_blank" rel="noreferrer">查看源代码 <span>↗</span></a>
+        </div>
+        <div class="requirements"><span>需要 Android 10 或更高版本</span><span>仅支持 ARM64-v8a</span></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="footer-brand"><strong>太墟</strong><span>TAIXU / LINUX AI RUNTIME</span></div>
+    <p>于太墟中立极，于方寸间创世。</p>
+    <div class="footer-links"><a href="https://github.com/wkbin/taixu">GitHub</a><a href="https://github.com/wkbin/taixu/issues">Issues</a><a href="https://github.com/wkbin/taixu/blob/main/README_EN.md">English README</a></div>
+    <small>© <span data-year></span> TaiXu Project. Open source on GitHub.</small>
+  </footer>
+</body>
+</html>
