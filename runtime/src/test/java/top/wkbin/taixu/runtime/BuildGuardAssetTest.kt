@@ -7,6 +7,8 @@ import org.junit.Test
 
 class BuildGuardAssetTest {
     private val assets = File("../app/src/main/assets")
+    private val offlineAndroidInstaller =
+        File("../assets/plugins/android-suite-offline/payload/scripts/install-android-suite.sh")
 
     @Test
     fun managedBuildEntriesHavePortableShebangs() {
@@ -43,5 +45,19 @@ class BuildGuardAssetTest {
         assertTrue(engine.contains("普通 ARM64 终端不能直接切换"))
         assertTrue(engine.contains("analyze"))
         assertTrue(engine.contains("TAIXU_OFFLINE"))
+    }
+
+    @Test
+    fun offlineAndroidInstallerDoesNotRequireSystemUnzip() {
+        val script = offlineAndroidInstaller.readText()
+        assertTrue(script.startsWith("#!/bin/sh\n"))
+        assertFalse(script.contains('\r'))
+        assertTrue(script.contains("extract_zip()"))
+        assertTrue(script.contains("\"${'$'}JDK_HOME/bin/jar\" xf \"${'$'}archive\""))
+        assertTrue(script.contains("extract_zip \"${'$'}ARCHIVES/gradle-${'$'}GRADLE_VERSION-bin.zip\""))
+        assertTrue(script.contains("extract_zip \"${'$'}ARCHIVES/platform-34-ext7_r03.zip\""))
+        assertTrue(script.contains("extract_zip \"${'$'}ARCHIVES/build-tools_r35_linux.zip\""))
+        assertTrue(script.contains("extract_zip \"${'$'}ARCHIVES/android-sdk-tools-static-aarch64.zip\""))
+        assertTrue(script.contains("extract_zip \"${'$'}ARCHIVES/ninja-linux-aarch64.zip\""))
     }
 }

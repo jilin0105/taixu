@@ -58,7 +58,7 @@ android-suite-offline/
 | CMake/Ninja | NDK 构建需要 | Flutter 原生插件常用 | 建议一并提供。 |
 | Flutter ARM64 SDK | 可选 | 必须 | 使用已精简的 Linux ARM64 Android-only Flutter 包；不包含 Web/iOS/桌面资源。 |
 
-如果要求“断网且全新 RootFS 也能安装”，还必须将 `adb`、CMake、Ninja、`sha256sum`、`tar`、`xz` 等运行工具一起提供，或者确认它们已经存在于 RootFS。不要在离线安装脚本里执行 `apt-get install`。
+如果要求“断网且全新 RootFS 也能安装”，还必须将 `adb`、CMake、Ninja、`sha256sum`、`tar`、`xz` 等运行工具一起提供，或者确认它们已经存在于 RootFS。不要在离线安装脚本里执行 `apt-get install`。ZIP 解压优先使用系统 `unzip`，没有 `unzip` 时自动回退到已部署 JDK 的 `jar xf`，因此不要求额外联网安装解压包。
 
 ## 2. 资源准备原则
 

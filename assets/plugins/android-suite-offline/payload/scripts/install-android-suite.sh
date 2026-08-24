@@ -33,11 +33,27 @@ mv "$JDK_SOURCE" "$JDK_HOME"
 rm -rf "$JDK_HOME.staging"
 "$JDK_HOME/bin/java" -version >/dev/null 2>&1
 
+# ZIP is not a required system package for this offline plugin. Prefer native
+# unzip when available; otherwise use the JDK jar tool installed above.
+extract_zip() {
+    archive="$1"
+    destination="$2"
+    mkdir -p "$destination"
+    if command -v unzip >/dev/null 2>&1; then
+        unzip -q -o "$archive" -d "$destination"
+    elif [ -x "$JDK_HOME/bin/jar" ]; then
+        (cd "$destination" && "$JDK_HOME/bin/jar" xf "$archive")
+    else
+        echo "missing ZIP extractor: unzip and JDK jar are unavailable" >&2
+        exit 6
+    fi
+}
+
 # Gradle.
 need "$ARCHIVES/gradle-8.14.2-bin.zip"
 rm -rf "/opt/gradle-$GRADLE_VERSION.staging"
 mkdir -p "/opt/gradle-$GRADLE_VERSION.staging"
-unzip -q "$ARCHIVES/gradle-$GRADLE_VERSION-bin.zip" -d "/opt/gradle-$GRADLE_VERSION.staging"
+extract_zip "$ARCHIVES/gradle-$GRADLE_VERSION-bin.zip" "/opt/gradle-$GRADLE_VERSION.staging"
 GRADLE_SOURCE=$(find "/opt/gradle-$GRADLE_VERSION.staging" -type f -name "gradle-launcher-$GRADLE_VERSION.jar" -print -quit | xargs -r dirname | xargs -r dirname)
 need "$GRADLE_SOURCE/bin/gradle"
 rm -rf "/opt/gradle-$GRADLE_VERSION"
@@ -48,7 +64,7 @@ rm -rf "/opt/gradle-$GRADLE_VERSION.staging"
 need "$ARCHIVES/platform-34-ext7_r03.zip"
 rm -rf /tmp/taixu-android-platform
 mkdir -p /tmp/taixu-android-platform
-unzip -q "$ARCHIVES/platform-34-ext7_r03.zip" -d /tmp/taixu-android-platform
+extract_zip "$ARCHIVES/platform-34-ext7_r03.zip" /tmp/taixu-android-platform
 PLATFORM_SOURCE=$(find /tmp/taixu-android-platform -type f -name android.jar -print -quit | xargs -r dirname)
 need "$PLATFORM_SOURCE/android.jar"
 rm -rf "$ANDROID_HOME/platforms/android-34"
@@ -60,7 +76,7 @@ rm -rf /tmp/taixu-android-platform
 need "$ARCHIVES/build-tools_r35_linux.zip"
 rm -rf /tmp/taixu-build-tools
 mkdir -p /tmp/taixu-build-tools
-unzip -q "$ARCHIVES/build-tools_r35_linux.zip" -d /tmp/taixu-build-tools
+extract_zip "$ARCHIVES/build-tools_r35_linux.zip" /tmp/taixu-build-tools
 BUILD_SOURCE=$(find /tmp/taixu-build-tools -type f -name source.properties -print -quit | xargs -r dirname)
 need "$BUILD_SOURCE/lib/d8.jar"
 rm -rf "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION"
@@ -81,7 +97,7 @@ find "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION" -type f |
 need "$ARCHIVES/android-sdk-tools-static-aarch64.zip"
 rm -rf /tmp/taixu-arm64-tools
 mkdir -p /tmp/taixu-arm64-tools
-unzip -q "$ARCHIVES/android-sdk-tools-static-aarch64.zip" -d /tmp/taixu-arm64-tools
+extract_zip "$ARCHIVES/android-sdk-tools-static-aarch64.zip" /tmp/taixu-arm64-tools
 AAPT2=$(find /tmp/taixu-arm64-tools -type f -name aapt2 -print -quit)
 need "$AAPT2"
 file "$AAPT2" 2>/dev/null | grep -Eiq 'aarch64|arm64' || {
@@ -122,7 +138,7 @@ ln -sfn "$TOOL_DIR/cmake/bin/cmake" "$TOOL_DIR/bin/cmake"
 rm -rf /tmp/taixu-cmake
 
 need "$ARCHIVES/ninja-linux-aarch64.zip"
-unzip -q -o "$ARCHIVES/ninja-linux-aarch64.zip" -d "$TOOL_DIR/bin"
+extract_zip "$ARCHIVES/ninja-linux-aarch64.zip" "$TOOL_DIR/bin"
 chmod +x "$TOOL_DIR/bin/ninja"
 
 # ADB from the Debian/Termux aarch64 package. Extract it without apt/network.
