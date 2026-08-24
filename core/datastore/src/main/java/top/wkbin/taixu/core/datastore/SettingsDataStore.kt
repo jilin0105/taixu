@@ -78,6 +78,7 @@ class SettingsDataStore @Inject constructor(
         val encryptedValue: String,
     )
 
+
     val thinkingLanguage: Flow<String> = context.settingsDataStore.data.map { preferences ->
         preferences[thinkingLanguageKey] ?: "zh"
     }
@@ -278,17 +279,44 @@ class SettingsDataStore @Inject constructor(
         ?.let(secretManager::decrypt)
 
     suspend fun setModelApiKey(secretRef: String, value: String) {
+        setModelApiKeys(secretRef, listOf(value))
+    }
+
+    /**
+     * 保存模型档案的 Key 池。整个列表作为一个加密载荷写入 DataStore，
+     * 明文 Key 不进入 Room；重复项和空项会在加密前移除。
+     */
+    suspend fun setModelApiKeys(secretRef: String, values: List<String>) {
         require(secretRef.matches(Regex("[a-zA-Z0-9_-]{8,80}"))) { "Invalid secret reference" }
         val key = stringPreferencesKey("model_api_key_$secretRef")
+        val normalized = values.map(String::trim).filter(String::isNotEmpty).distinct()
         context.settingsDataStore.edit {
-            if (value.isBlank()) it.remove(key) else it[key] = secretManager.encrypt(value.trim())
+            if (normalized.isEmpty()) {
+                it.remove(key)
+            } else {
+                it[key] = secretManager.encrypt(environmentJson.encodeToString(normalized))
+            }
         }
     }
 
     suspend fun readModelApiKey(secretRef: String): String? {
-        if (secretRef.isBlank()) return null
+        return readModelApiKeys(secretRef).firstOrNull()
+    }
+
+    /** 兼容旧版本直接加密单个 Key 的载荷，并在读取时统一返回 Key 池。 */
+    suspend fun readModelApiKeys(secretRef: String): List<String> {
+        if (secretRef.isBlank()) return emptyList()
         val key = stringPreferencesKey("model_api_key_$secretRef")
-        return context.settingsDataStore.data.map { it[key] }.first()?.let(secretManager::decrypt)
+        val plaintext = context.settingsDataStore.data.map { it[key] }.first()
+            ?.let(secretManager::decrypt)
+            ?.trim()
+            .orEmpty()
+        if (plaintext.isBlank()) return emptyList()
+        return runCatching { environmentJson.decodeFromString<List<String>>(plaintext) }
+            .getOrElse { listOf(plaintext) }
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .distinct()
     }
 
     suspend fun removeModelApiKey(secretRef: String) {

@@ -25,6 +25,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
+import top.wkbin.taixu.feature.chat.R
 import top.wkbin.taixu.harness.HarnessTool
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolResult
@@ -155,16 +157,14 @@ private fun WriteToolDiff(
 
     val lineCount = remember(content) { content.count { it == '\n' } + 1 }
     Text(
-        text = "写入全量文件（$lineCount 行，${content.length} 字符）",
+        text = stringResource(R.string.chat_full_file_write, lineCount, content.length),
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 
     // 内容预览（前 10 行）
-    val preview = remember(content) {
-        content.lines().take(10).joinToString("\n") +
-            if (lineCount > 10) "\n… (共 $lineCount 行)" else ""
-    }
+    val preview = content.lines().take(10).joinToString("\n") +
+        if (lineCount > 10) stringResource(R.string.chat_total_lines, lineCount) else ""
 
     Box(
         modifier = Modifier
@@ -202,7 +202,7 @@ private fun ReadToolDiff(
     result?.let { res ->
         if (res.success) {
             val preview = res.output.lines().take(8).joinToString("\n") +
-                if (res.output.lines().size > 8) "\n… (已读取 ${res.output.length} 字符)" else ""
+                if (res.output.lines().size > 8) stringResource(R.string.chat_characters_read, res.output.length) else ""
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -271,7 +271,7 @@ private fun BaseToolDiff(
                     .padding(10.dp),
             ) {
                 Text(
-                    text = output.take(2000) + if (output.length > 2000) "\n… (输出已截断)" else "",
+                    text = output.take(2000) + if (output.length > 2000) stringResource(R.string.chat_output_truncated) else "",
                     color = if (res.success) Color(0xFFDCE6F5) else Color(0xFFFF8896),
                     fontFamily = FontFamily.Monospace,
                     fontSize = 12.sp,
@@ -338,7 +338,7 @@ private fun FilePathHeader(
                 ) {
                     RuntimeIcon(RuntimeIconName.Code, Modifier.size(12.dp), tint = Color(0xFF7EE787))
                     Text(
-                        text = "编辑器打开",
+                        text = stringResource(R.string.chat_open_editor),
                         style = MaterialTheme.typography.labelSmall,
                         color = Color(0xFF7EE787),
                     )

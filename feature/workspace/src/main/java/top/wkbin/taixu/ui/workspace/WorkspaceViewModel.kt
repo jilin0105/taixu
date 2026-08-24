@@ -7,6 +7,9 @@ import top.wkbin.taixu.runtime.WorkspaceManager
 import top.wkbin.taixu.runtime.WorkspaceProject
 import top.wkbin.taixu.runtime.WorkspaceStorage
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import android.content.Context
+import top.wkbin.taixu.feature.workspace.R
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -19,6 +22,7 @@ import kotlinx.coroutines.launch
 
 @HiltViewModel
 class WorkspaceViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val workspaceManager: WorkspaceManager,
     private val buildCoordinator: WorkspaceBuildTaskCoordinator,
     private val toolManager: top.wkbin.taixu.core.tools.ToolManager,
@@ -108,10 +112,10 @@ class WorkspaceViewModel @Inject constructor(
                     }
                 }
                 refreshInstalledStatus()
-                _message.value = "开发套件组件已成功装配！"
+                _message.value = context.getString(R.string.workspace_suite_installed)
                 _activeBundleForSetup.value = null
             } catch (e: Exception) {
-                _message.value = "部署失败：${e.message}"
+                _message.value = context.getString(R.string.workspace_deploy_failed, e.message.orEmpty())
             } finally {
                 _isInstallingComponents.value = false
                 _suiteInstallProgress.value = null
@@ -225,7 +229,7 @@ class WorkspaceViewModel @Inject constructor(
         viewModelScope.launch {
             _busy.value = true
             val result = workspaceManager.createProject(name, storage, directoryPath, template, packageName, apkSource, exportApkToDownload, gitUrl)
-            _message.value = result.errorOrNull()?.message ?: "项目已创建，目录已关联"
+            _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_project_created)
             if (result.isSuccess) workspaceManager.listProjects()
             _busy.value = false
         }
@@ -254,7 +258,7 @@ class WorkspaceViewModel @Inject constructor(
         viewModelScope.launch {
             _busy.value = true
             val result = workspaceManager.deleteProject(name)
-            _message.value = result.errorOrNull()?.message ?: "项目已删除"
+            _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_project_deleted)
             if (result.isSuccess) workspaceManager.listProjects()
             _busy.value = false
         }
@@ -290,7 +294,7 @@ class WorkspaceViewModel @Inject constructor(
             if (result.isSuccess) {
                 _fileItems.value = result.getOrNull().orEmpty()
             } else {
-                _message.value = result.errorOrNull()?.message ?: "读取目录失败"
+                _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_read_directory_failed)
             }
             _loadingFiles.value = false
         }
@@ -305,10 +309,10 @@ class WorkspaceViewModel @Inject constructor(
             _busy.value = true
             val result = workspaceManager.createFile(proj, fullRelative)
             if (result.isSuccess) {
-                _message.value = "文件已创建：$trimmed"
+                _message.value = context.getString(R.string.workspace_file_created, trimmed)
                 refreshDirectory()
             } else {
-                _message.value = result.errorOrNull()?.message ?: "创建文件失败"
+                _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_create_file_failed)
             }
             _busy.value = false
         }
@@ -323,10 +327,10 @@ class WorkspaceViewModel @Inject constructor(
             _busy.value = true
             val result = workspaceManager.createDirectory(proj, fullRelative)
             if (result.isSuccess) {
-                _message.value = "目录已创建：$trimmed"
+                _message.value = context.getString(R.string.workspace_directory_created, trimmed)
                 refreshDirectory()
             } else {
-                _message.value = result.errorOrNull()?.message ?: "创建目录失败"
+                _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_create_directory_failed)
             }
             _busy.value = false
         }
@@ -340,10 +344,10 @@ class WorkspaceViewModel @Inject constructor(
             _busy.value = true
             val result = workspaceManager.renameItem(proj, oldRelativePath, trimmed)
             if (result.isSuccess) {
-                _message.value = "已重命名为：$trimmed"
+                _message.value = context.getString(R.string.workspace_renamed, trimmed)
                 refreshDirectory()
             } else {
-                _message.value = result.errorOrNull()?.message ?: "重命名失败"
+                _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_rename_failed)
             }
             _busy.value = false
         }
@@ -355,10 +359,10 @@ class WorkspaceViewModel @Inject constructor(
             _busy.value = true
             val result = workspaceManager.deleteItem(proj, relativePath)
             if (result.isSuccess) {
-                _message.value = "已删除"
+                _message.value = context.getString(R.string.workspace_deleted)
                 refreshDirectory()
             } else {
-                _message.value = result.errorOrNull()?.message ?: "删除失败"
+                _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_delete_failed)
             }
             _busy.value = false
         }
@@ -380,7 +384,7 @@ class WorkspaceViewModel @Inject constructor(
                 _fileContent.value = content
                 _isDirty.value = false
             } else {
-                _message.value = result.errorOrNull()?.message ?: "打开文件失败"
+                _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_open_file_failed)
             }
             _loadingFiles.value = false
         }
@@ -406,10 +410,10 @@ class WorkspaceViewModel @Inject constructor(
             if (result.isSuccess) {
                 originalContent = text
                 _isDirty.value = false
-                _message.value = "已保存文件"
+                _message.value = context.getString(R.string.workspace_file_saved)
                 onSuccess?.invoke()
             } else {
-                _message.value = result.errorOrNull()?.message ?: "保存失败"
+                _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_save_failed)
             }
             _isSaving.value = false
         }

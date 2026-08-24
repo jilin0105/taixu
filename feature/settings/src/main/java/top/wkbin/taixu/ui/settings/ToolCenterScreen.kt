@@ -47,7 +47,7 @@ import androidx.compose.material3.MaterialTheme
 import top.wkbin.taixu.ui.components.RuntimeOutlinedButton as OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import top.wkbin.taixu.ui.settings.LocalizedText as Text
 import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -775,9 +775,9 @@ private fun ToolBrandAvatar(
     val key = toolId.lowercase().trim()
     val (logoRes, emoji, brandColor) = when {
         key.contains("claude") || key.contains("anthropic") ->
-            Triple(top.wkbin.taixu.feature.components.R.drawable.ic_provider_anthropic, null, Color(0xFFD97757))
+            Triple(top.wkbin.taixu.feature.components.R.drawable.components_ic_provider_anthropic, null, Color(0xFFD97757))
         key.contains("codex") || key.contains("openai") ->
-            Triple(top.wkbin.taixu.feature.components.R.drawable.ic_provider_openai, null, Color(0xFF10A37F))
+            Triple(top.wkbin.taixu.feature.components.R.drawable.components_ic_provider_openai, null, Color(0xFF10A37F))
         key.contains("openclaw") ->
             Triple(null, "🦞", Color(0xFFFF4757))
         key.contains("hermes") ->
@@ -789,9 +789,9 @@ private fun ToolBrandAvatar(
         key.contains("hello") ->
             Triple(null, "🧪", Color(0xFF10B981))
         key.contains("deepseek") ->
-            Triple(top.wkbin.taixu.feature.components.R.drawable.ic_provider_deepseek, null, Color(0xFF4D6BFE))
+            Triple(top.wkbin.taixu.feature.components.R.drawable.components_ic_provider_deepseek, null, Color(0xFF4D6BFE))
         key.contains("ollama") ->
-            Triple(top.wkbin.taixu.feature.components.R.drawable.ic_provider_ollama, null, Color(0xFF334155))
+            Triple(top.wkbin.taixu.feature.components.R.drawable.components_ic_provider_ollama, null, Color(0xFF334155))
         else -> when (category) {
             "CODING_AGENT" -> Triple(null, "💻", Color(0xFF6366F1))
             "AI_AGENT" -> Triple(null, "🤖", Color(0xFF0EA5E9))

@@ -22,5 +22,7 @@ class ProviderRepository @Inject constructor(
     suspend fun readApiKey(): String? = settingsDataStore.readApiKey()
     suspend fun setModelApiKey(secretRef: String, value: String) = settingsDataStore.setModelApiKey(secretRef, value)
     suspend fun readModelApiKey(secretRef: String): String? = settingsDataStore.readModelApiKey(secretRef)
+    suspend fun setModelApiKeys(secretRef: String, values: List<String>) = settingsDataStore.setModelApiKeys(secretRef, values)
+    suspend fun readModelApiKeys(secretRef: String): List<String> = settingsDataStore.readModelApiKeys(secretRef)
     suspend fun removeModelApiKey(secretRef: String) = settingsDataStore.removeModelApiKey(secretRef)
 }

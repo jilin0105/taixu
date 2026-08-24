@@ -16,6 +16,21 @@ echo "==> [TaiXu Build Engine] 启动 Android 项目编译..."
 echo "==> [TaiXu Build] 项目路径: $PROJECT_PATH"
 echo "==> [TaiXu Build] 构建任务: $TASK"
 
+# Builds take a shared lock for their entire lifetime. Android toolchain setup
+# takes the exclusive side of the same lock, so immutable views cannot change
+# between preflight and a later AGP worker launch.
+TOOLCHAIN_LOCK_FILE="/opt/taixu/locks/android-toolchain.lock"
+mkdir -p /opt/taixu/locks
+command -v flock >/dev/null 2>&1 || {
+    echo "==> [TaiXu Build] ❌ 缺少 flock，拒绝在无工具链锁的情况下构建"
+    exit 1
+}
+exec 9>"$TOOLCHAIN_LOCK_FILE"
+flock -s -w 1800 9 || {
+    echo "==> [TaiXu Build] ❌ Android 工具链正在装配，等待超时"
+    exit 1
+}
+
 # 1. 加载插件装配期固化的环境变量
 if [ -f /etc/profile.d/taixu-android.sh ]; then
     . /etc/profile.d/taixu-android.sh
@@ -39,31 +54,7 @@ export ANDROID_SDK_ROOT="${ANDROID_HOME}"
 # android-core plugin installed the ARM64 tool bundle, pass the real aapt2
 # executable explicitly so AGP never tries to start the incompatible daemon.
 AAPT2_OVERRIDE="${TAIXU_AAPT2_PATH:-}"
-for native_aapt2 in \
-    "/opt/taixu/android-sdk-tools/aapt2" \
-    "/opt/taixu/android-sdk-tools/35.0.2/build-tools/aapt2" \
-    "/usr/local/bin/aapt2" \
-    "/usr/bin/aapt2"; do
-    if [ -x "$native_aapt2" ]; then
-        AAPT2_NATIVE_CANDIDATE="$native_aapt2"
-        break
-    fi
-done
-if [ -n "${AAPT2_NATIVE_CANDIDATE:-}" ]; then
-    AAPT2_OVERRIDE="$AAPT2_NATIVE_CANDIDATE"
-fi
-if [ -z "$AAPT2_OVERRIDE" ] || [ ! -x "$AAPT2_OVERRIDE" ]; then
-    for candidate in \
-        "/opt/taixu/android-sdk-tools/aapt2" \
-        "/opt/taixu/android-sdk-tools/35.0.2/build-tools/aapt2" \
-        "/usr/local/bin/aapt2" \
-        "/usr/bin/aapt2"; do
-        if [ -x "$candidate" ]; then
-            AAPT2_OVERRIDE="$candidate"
-            break
-        fi
-    done
-fi
+NDK_PATH="${TAIXU_NDK_PATH:-}"
 
 # 非登录 shell 可能没有继承插件写入的 profile；变量为空时从标准 JDK
 # 目录和 PATH 重新解析，避免环境变量漂移阻断构建。
@@ -108,27 +99,68 @@ echo "==> [TaiXu Build] Java 执行文件: $JAVA_EXEC"
 echo "==> [TaiXu Build] JAVA_HOME: $JAVA_HOME"
 echo "==> [TaiXu Build] ANDROID_HOME: $ANDROID_HOME"
 
-# AGP may invoke llvm-strip for native libraries. The official Android NDK
-# Linux package currently provides only a linux-x86_64 toolchain; on this
-# ARM64 PRoot host it fails before the project code is compiled. Report this
-# early so the error is not confused with Gradle file-system watching noise.
-HOST_ARCH="$(uname -m 2>/dev/null || echo unknown)"
-if [ "$HOST_ARCH" = "aarch64" ] || [ "$HOST_ARCH" = "arm64" ]; then
-    NDK_STRIP=""
-    for candidate in "$ANDROID_HOME"/ndk/*/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip; do
-        if [ -x "$candidate" ]; then
-            NDK_STRIP="$candidate"
-            break
-        fi
-    done
-    if [ -n "$NDK_STRIP" ]; then
-        echo "==> [TaiXu Build] 检测到 ARM64 主机与 x86_64 NDK llvm-strip: $NDK_STRIP"
-        echo "==> [TaiXu Build] 内置模板已配置 keepDebugSymbols；若是外部工程，请在 android.packagingOptions.jniLibs 中保留 *.so 符号"
-    fi
+# AGP 8.11.1 requires SDK Build Tools 35.0.0. Fail before Gradle starts slow
+# remote SDK probes, which hide the actionable error in restricted networks.
+REQUIRED_BUILD_TOOLS="35.0.0"
+if [ ! -f "$ANDROID_HOME/build-tools/$REQUIRED_BUILD_TOOLS/source.properties" ] || \
+   [ ! -f "$ANDROID_HOME/build-tools/$REQUIRED_BUILD_TOOLS/lib/d8.jar" ]; then
+    echo "==> [TaiXu Build] ❌ 缺少 Android Build-Tools $REQUIRED_BUILD_TOOLS"
+    echo "==> [TaiXu Build] 请在插件中心重新装配【Android 核心基础环境】后再构建"
+    exit 2
+fi
+case "$AAPT2_OVERRIDE" in
+    /opt/taixu/toolchains/android/sdk-tools/artifacts/*/build-tools/aapt2) ;;
+    *)
+        echo "==> [TaiXu Build] ❌ AAPT2 未指向不可变 ARM64 制品目录"
+        exit 2
+        ;;
+esac
+AAPT2_MACHINE=$(od -An -tu2 -j18 -N2 "$AAPT2_OVERRIDE" 2>/dev/null | tr -d '[:space:]')
+if [ "$AAPT2_MACHINE" != "183" ] || [ ! -x "$AAPT2_OVERRIDE" ] || \
+   ! "$AAPT2_OVERRIDE" version >/dev/null 2>&1; then
+    echo "==> [TaiXu Build] ❌ ARM64 AAPT2 未就位"
+    echo "==> [TaiXu Build] 请在插件中心重新装配【Android 核心基础环境】后再构建"
+    exit 2
 fi
 
-# 2. 绑定 SDK 到当前工程
-echo "sdk.dir=$ANDROID_HOME" > "$PROJECT_PATH/local.properties"
+NDK_STRIP="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+NDK_CLANG="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+if [ -z "$NDK_PATH" ] || [ ! -f "$NDK_PATH/source.properties" ] || \
+   [ ! -x "$NDK_STRIP" ] || [ ! -x "$NDK_CLANG" ]; then
+    echo "==> [TaiXu Build] ❌ 固定 ARM64 NDK 未就位，请重新装配 Android 核心基础环境"
+    exit 2
+fi
+STRIP_MACHINE=$(od -An -tu2 -j18 -N2 "$NDK_STRIP" 2>/dev/null | tr -d '[:space:]')
+CLANG_MACHINE=$(od -An -tu2 -j18 -N2 "$NDK_CLANG" 2>/dev/null | tr -d '[:space:]')
+if [ "$STRIP_MACHINE" != "183" ] || [ "$CLANG_MACHINE" != "183" ] || \
+   ! "$NDK_STRIP" --version >/dev/null 2>&1 || \
+   ! "$NDK_CLANG" --version >/dev/null 2>&1; then
+    echo "==> [TaiXu Build] ❌ NDK 主机工具不是可执行的 Linux AArch64 制品"
+    exit 126
+fi
+echo "==> [TaiXu Build] 固定 ARM64 NDK: $NDK_PATH"
+if ! grep -Fqx 'android.builder.sdkDownload=false' /root/.gradle/gradle.properties 2>/dev/null; then
+    echo "==> [TaiXu Build] ❌ Gradle SDK 自动下载未禁用，拒绝构建以防官方 x86_64 工具覆盖"
+    exit 2
+fi
+if [ ! -f /root/.gradle/init.d/taixu-android-ndk.gradle ] || \
+   ! grep -Fq "$NDK_PATH" /root/.gradle/init.d/taixu-android-ndk.gradle; then
+    echo "==> [TaiXu Build] ❌ 固定 NDK 路径注入缺失"
+    exit 2
+fi
+
+# 2. 绑定 SDK/NDK 到当前工程。保留用户的其他 local.properties 键。
+LOCAL_PROPERTIES="$PROJECT_PATH/local.properties"
+LOCAL_PROPERTIES_TMP="${LOCAL_PROPERTIES}.taixu.tmp"
+if [ -f "$LOCAL_PROPERTIES" ]; then
+    sed -e '/^[[:space:]]*sdk\.dir[[:space:]]*=/d' \
+        -e '/^[[:space:]]*ndk\.dir[[:space:]]*=/d' \
+        "$LOCAL_PROPERTIES" > "$LOCAL_PROPERTIES_TMP"
+else
+    : > "$LOCAL_PROPERTIES_TMP"
+fi
+printf 'sdk.dir=%s\nndk.dir=%s\n' "$ANDROID_HOME" "$NDK_PATH" >> "$LOCAL_PROPERTIES_TMP"
+mv -f "$LOCAL_PROPERTIES_TMP" "$LOCAL_PROPERTIES"
 echo "==> [TaiXu Build] 绑定 ANDROID_HOME: $ANDROID_HOME"
 
 # 3. SSL 信任库参数
@@ -148,12 +180,14 @@ export PATH="/opt/gradle-$GRADLE_VER/bin:${TAIXU_TOOL_DIR:-/opt/taixu/tools}/bin
 cd "$PROJECT_PATH"
 
 # 4. 调度 Gradle 构建
-EXTRA_ARGS="--console=plain --info --stacktrace --no-daemon -Dorg.gradle.native=false"
-if [ -n "$AAPT2_OVERRIDE" ] && [ -x "$AAPT2_OVERRIDE" ]; then
+EXTRA_ARGS="--console=plain --stacktrace --no-daemon -Dorg.gradle.native=false -Pandroid.builder.sdkDownload=false"
+if [ "$AAPT2_MACHINE" = "183" ] && [ -x "$AAPT2_OVERRIDE" ] && \
+   "$AAPT2_OVERRIDE" version >/dev/null 2>&1; then
     EXTRA_ARGS="$EXTRA_ARGS -Pandroid.aapt2FromMavenOverride=$AAPT2_OVERRIDE"
     echo "==> [TaiXu Build] ARM64 AAPT2: $AAPT2_OVERRIDE"
 else
-    echo "==> [TaiXu Build] 警告：未找到 ARM64 aapt2，将由 AGP 选择默认工具"
+    echo "==> [TaiXu Build] ❌ 固定 ARM64 AAPT2 在构建启动前失效"
+    exit 2
 fi
 JAVA_RUNTIME_OPTS="-Djava.security.egd=file:/dev/urandom"
 [ -n "$SSL_OPTS" ] && JAVA_RUNTIME_OPTS="$JAVA_RUNTIME_OPTS $SSL_OPTS"

@@ -8,6 +8,7 @@ plugins {
 
 android {
     namespace = "top.wkbin.taixu.feature.settings"
+    resourcePrefix = "settings_"
     compileSdk = 37
     defaultConfig { minSdk = 29 }
     buildFeatures { compose = true }
@@ -25,6 +26,7 @@ dependencies {
     implementation(project(":core:common"))
     implementation(project(":core:model"))
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.appcompat)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)

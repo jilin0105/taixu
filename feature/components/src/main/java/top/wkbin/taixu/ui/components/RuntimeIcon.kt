@@ -105,19 +105,19 @@ fun RuntimeIcon(
     tint: Color = Color.Unspecified,
 ) {
     val brandResId = when (name) {
-        RuntimeIconName.Android -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_android
-        RuntimeIconName.Flutter -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_flutter
-        RuntimeIconName.Debian -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_debian
-        RuntimeIconName.Ubuntu -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_ubuntu
-        RuntimeIconName.Arch -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_arch
-        RuntimeIconName.Kali -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_kali
-        RuntimeIconName.Fedora -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_fedora
-        RuntimeIconName.Alpine -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_alpine
-        RuntimeIconName.Void -> top.wkbin.taixu.feature.components.R.drawable.ic_logo_void
-        RuntimeIconName.NavDashboard -> top.wkbin.taixu.feature.components.R.drawable.ic_nav_dashboard
-        RuntimeIconName.NavMessage -> top.wkbin.taixu.feature.components.R.drawable.ic_nav_message
-        RuntimeIconName.NavRepository -> top.wkbin.taixu.feature.components.R.drawable.ic_nav_repository
-        RuntimeIconName.NavSettings -> top.wkbin.taixu.feature.components.R.drawable.ic_nav_settings
+        RuntimeIconName.Android -> top.wkbin.taixu.feature.components.R.drawable.components_ic_logo_android
+        RuntimeIconName.Flutter -> top.wkbin.taixu.feature.components.R.drawable.components_ic_logo_flutter
+        RuntimeIconName.Debian -> top.wkbin.taixu.feature.components.R.drawable.components_ic_logo_debian
+        RuntimeIconName.Ubuntu -> top.wkbin.taixu.feature.components.R.drawable.components_ic_logo_ubuntu
+        RuntimeIconName.Arch -> top.wkbin.taixu.feature.components.R.drawable.components_ic_logo_arch
+        RuntimeIconName.Kali -> top.wkbin.taixu.feature.components.R.drawable.components_ic_logo_kali
+        RuntimeIconName.Fedora -> top.wkbin.taixu.feature.components.R.drawable.components_ic_logo_fedora
+        RuntimeIconName.Alpine -> top.wkbin.taixu.feature.components.R.drawable.components_ic_logo_alpine
+        RuntimeIconName.Void -> top.wkbin.taixu.feature.components.R.drawable.components_ic_logo_void
+        RuntimeIconName.NavDashboard -> top.wkbin.taixu.feature.components.R.drawable.components_ic_nav_dashboard
+        RuntimeIconName.NavMessage -> top.wkbin.taixu.feature.components.R.drawable.components_ic_nav_message
+        RuntimeIconName.NavRepository -> top.wkbin.taixu.feature.components.R.drawable.components_ic_nav_repository
+        RuntimeIconName.NavSettings -> top.wkbin.taixu.feature.components.R.drawable.components_ic_nav_settings
         else -> null
     }
 

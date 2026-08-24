@@ -8,6 +8,7 @@ plugins {
 
 android {
     namespace = "top.wkbin.taixu.feature.home"
+    resourcePrefix = "home_"
     compileSdk = 37
     defaultConfig { minSdk = 29 }
     buildFeatures { compose = true }

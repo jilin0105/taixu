@@ -6,6 +6,17 @@ set -e
 
 echo "==> [TaiXu] 正在初始化 Flutter 跨端开发环境..."
 
+mkdir -p /opt/taixu/locks
+command -v flock >/dev/null 2>&1 || {
+    echo "!! [TaiXu] 缺少 flock，无法安全装配 Flutter 工具链"
+    exit 1
+}
+exec 9>/opt/taixu/locks/android-toolchain.lock
+flock -x -w 1800 9 || {
+    echo "!! [TaiXu] Android/Flutter 工具链正被构建任务使用，等待超时"
+    exit 1
+}
+
 # Flutter's artifact and pub mirrors avoid routing the large SDK cache through
 # GitHub/pub.dev when the Android suite is installed in mainland China.
 export PUB_HOSTED_URL="${PUB_HOSTED_URL:-https://pub.flutter-io.cn}"

@@ -7,6 +7,7 @@ plugins {
 
 android {
     namespace = "top.wkbin.taixu.core.datastore"
+    resourcePrefix = "datastore_"
     compileSdk = 37
     defaultConfig { minSdk = 29 }
     compileOptions {
@@ -29,4 +30,3 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core.jvm)
     implementation(libs.kotlinx.serialization.json.jvm)
 }
-

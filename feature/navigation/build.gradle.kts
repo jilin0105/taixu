@@ -6,6 +6,7 @@
 
 android {
     namespace = "top.wkbin.taixu.feature.navigation"
+    resourcePrefix = "navigation_"
     compileSdk = 37
     defaultConfig { minSdk = 29 }
     buildFeatures { compose = true }

@@ -34,6 +34,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
+import top.wkbin.taixu.feature.chat.R
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.ui.components.RuntimeIcon
@@ -55,19 +57,20 @@ fun SubagentCard(
     var expanded by remember { mutableStateOf(result != null) }
     val rotationState by animateFloatAsState(targetValue = if (expanded) 180f else 0f, label = "arrow_anim")
 
-    val tasks = remember(call.args) {
+    val defaultTaskName = stringResource(R.string.chat_subtask)
+    val tasks = remember(call.args, defaultTaskName) {
         val list = mutableListOf<Triple<String, String, String>>() // taskName, role, prompt
         val array = call.args["subagents"]?.jsonArray
         if (array != null) {
             for (elem in array) {
                 val obj = elem.jsonObject
-                val taskName = obj["taskName"]?.jsonPrimitive?.content ?: "子任务"
+                val taskName = obj["taskName"]?.jsonPrimitive?.content ?: defaultTaskName
                 val role = obj["role"]?.jsonPrimitive?.content ?: "assistant"
                 val prompt = obj["prompt"]?.jsonPrimitive?.content ?: ""
                 list.add(Triple(taskName, role, prompt))
             }
         } else {
-            val taskName = call.args["taskName"]?.jsonPrimitive?.content ?: "子任务"
+            val taskName = call.args["taskName"]?.jsonPrimitive?.content ?: defaultTaskName
             val role = call.args["role"]?.jsonPrimitive?.content ?: "assistant"
             val prompt = call.args["prompt"]?.jsonPrimitive?.content ?: ""
             if (prompt.isNotBlank()) list.add(Triple(taskName, role, prompt))
@@ -130,7 +133,7 @@ fun SubagentCard(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             Text(
-                                "子智能体协同派发",
+                                stringResource(R.string.chat_subagent_delegation),
                                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
@@ -141,7 +144,7 @@ fun SubagentCard(
                                 shape = RoundedCornerShape(4.dp),
                             ) {
                                 Text(
-                                    text = if (isFinished) (if (isSuccess) "已完成" else "执行中断") else "并行执行中",
+                                    text = stringResource(if (isFinished) (if (isSuccess) R.string.chat_completed else R.string.chat_interrupted) else R.string.chat_parallel_running),
                                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
                                     color = if (isFinished) (if (isSuccess) Color(0xFF10B981) else Color(0xFFEF4444)) else Color(0xFFF59E0B),
                                     modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
@@ -150,7 +153,7 @@ fun SubagentCard(
                         }
 
                         Text(
-                            "${tasks.size} 个子任务并发调度",
+                            stringResource(R.string.chat_subtask_count, tasks.size),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -218,7 +221,7 @@ fun SubagentCard(
                         ) {
                             Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(
-                                    "执行汇总与产出",
+                                    stringResource(R.string.chat_execution_summary),
                                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                     color = MaterialTheme.colorScheme.onSurface,
                                 )
@@ -231,7 +234,7 @@ fun SubagentCard(
                         }
                     } else {
                         Text(
-                            "子智能体正在沙箱中执行工具并分析结果，完成后将在此汇总展示…",
+                            stringResource(R.string.chat_subagent_running),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(vertical = 4.dp),

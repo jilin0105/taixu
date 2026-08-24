@@ -23,6 +23,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 import top.wkbin.taixu.core.tools.ProviderEndpointPolicy
@@ -91,6 +93,7 @@ class OnboardingViewModel @Inject constructor(
     val discoveringModels = _discoveringModels.asStateFlow()
     private val _modelDiscoveryError = MutableStateFlow<String?>(null)
     val modelDiscoveryError = _modelDiscoveryError.asStateFlow()
+    private var discoveryDebounceJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -123,10 +126,12 @@ class OnboardingViewModel @Inject constructor(
 
     fun setBaseUrl(url: String) {
         _baseUrl.value = url
+        scheduleModelDiscovery()
     }
 
     fun setApiKey(key: String) {
         _apiKey.value = key
+        scheduleModelDiscovery()
     }
 
     fun selectProvider(id: String) {
@@ -137,23 +142,39 @@ class OnboardingViewModel @Inject constructor(
         _discoveredModels.value = emptyList()
         _modelDiscoveryError.value = null
         if (preset.baseUrl.isNotBlank() && ProviderEndpointPolicy.isSafeBaseUrl(preset.baseUrl)) {
-            discoverModels()
+            scheduleModelDiscovery(delayMillis = 0)
+        }
+    }
+
+    private fun scheduleModelDiscovery(delayMillis: Long = 600) {
+        discoveryDebounceJob?.cancel()
+        val cleanUrl = ProviderEndpointPolicy.normalizeUrl(_baseUrl.value)
+        if (!ProviderEndpointPolicy.isSafeBaseUrl(cleanUrl)) return
+        discoveryDebounceJob = viewModelScope.launch {
+            delay(delayMillis)
+            discoveryDebounceJob = null
+            startModelDiscovery(cleanUrl)
         }
     }
 
     fun discoverModels() {
+        discoveryDebounceJob?.cancel()
+        discoveryDebounceJob = null
+        val cleanUrl = ProviderEndpointPolicy.normalizeUrl(_baseUrl.value)
+        if (!ProviderEndpointPolicy.isSafeBaseUrl(cleanUrl)) return
+        startModelDiscovery(cleanUrl)
+    }
+
+    private fun startModelDiscovery(cleanUrl: String) {
+        _discoveringModels.value = true
+        _modelDiscoveryError.value = null
+        _discoveredModels.value = emptyList()
         viewModelScope.launch {
-            val cleanUrl = ProviderEndpointPolicy.normalizeUrl(_baseUrl.value)
-            if (!ProviderEndpointPolicy.isSafeBaseUrl(cleanUrl)) return@launch
             val preset = providerCatalog.firstOrNull { it.name == _modelProvider.value } ?: providerCatalogRepository.find("custom")
-            _discoveringModels.value = true
-            _modelDiscoveryError.value = null
             runCatching { modelDiscovery.discover(preset, cleanUrl, _apiKey.value.ifBlank { null }) }
                 .onSuccess { models ->
                     _discoveredModels.value = models
-                    if ((_modelId.value.isBlank() || _modelId.value == preset.recommendedModels.firstOrNull()) && models.isNotEmpty()) {
-                        _modelId.value = models.first()
-                    }
+                    models.firstOrNull()?.let { _modelId.value = it }
                 }
                 .onFailure { _modelDiscoveryError.value = it.message ?: "刷新模型失败" }
             _discoveringModels.value = false

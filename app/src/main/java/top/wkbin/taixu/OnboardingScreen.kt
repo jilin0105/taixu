@@ -50,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.model.RuntimeState
@@ -63,12 +64,6 @@ import top.wkbin.taixu.ui.components.TaiXuBrandBadge
 private data class SetupOption(val id: String, val label: String)
 
 private val distributionOptions = DistributionCatalog.supported.map { SetupOption(it.id, it.displayWithVersion) }
-
-private val mirrorOptions = listOf(
-    SetupOption("auto", "自动择优线路 (Recommended)"),
-    SetupOption("official", "官方源 (Global CDN)"),
-    SetupOption("china", "国内镜像加速线路"),
-)
 
 /**
  * 太墟 · 启程配置向导 (Onboarding Wizard)
@@ -90,6 +85,11 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
     val mirror by viewModel.mirror.collectAsStateWithLifecycle()
     val state by viewModel.runtimeState.collectAsStateWithLifecycle()
     val installing = state is RuntimeState.Initializing
+    val mirrorOptions = listOf(
+        SetupOption("auto", stringResource(R.string.taixu_onboarding_mirror_auto)),
+        SetupOption("official", stringResource(R.string.taixu_onboarding_mirror_official)),
+        SetupOption("china", stringResource(R.string.taixu_onboarding_mirror_china)),
+    )
 
     LazyColumn(
         modifier = modifier,
@@ -98,13 +98,13 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
     ) {
         item {
             Intro(
-                title = "太墟 · 启程准备",
-                description = "正在为你准备纯用户空间 Linux PRoot 沙箱引擎与代码工作区。",
+                title = stringResource(R.string.taixu_onboarding_title),
+                description = stringResource(R.string.taixu_onboarding_description),
             )
         }
         item {
             SetupDropdown(
-                label = "Linux 发行版",
+                label = stringResource(R.string.taixu_onboarding_distribution),
                 selectedId = distribution,
                 options = distributionOptions,
                 enabled = !installing,
@@ -113,7 +113,7 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
         }
         item {
             SetupDropdown(
-                label = "镜像加速线路",
+                label = stringResource(R.string.taixu_onboarding_mirror),
                 selectedId = mirror,
                 options = mirrorOptions,
                 enabled = !installing,
@@ -171,7 +171,7 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
         (state as? RuntimeState.Error)?.let { error ->
             item {
                 Text(
-                    error.throwable.message ?: "初始化失败，请检查网络后重试",
+                    error.throwable.message ?: stringResource(R.string.taixu_onboarding_initialization_failed),
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodyMedium,
                 )
@@ -189,7 +189,11 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
                 ),
             ) {
                 Text(
-                    if (state is RuntimeState.Error) "重试下载与就绪" else if (installing) "正在准备环境…" else "一键初始化沙箱",
+                    stringResource(
+                        if (state is RuntimeState.Error) R.string.taixu_onboarding_retry
+                        else if (installing) R.string.taixu_onboarding_preparing
+                        else R.string.taixu_onboarding_initialize,
+                    ),
                     fontWeight = FontWeight.Bold,
                 )
             }
@@ -200,7 +204,7 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
                     onClick = viewModel::retryReady,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("已装过环境？点此重试就绪（不重新下载）", color = MaterialTheme.colorScheme.primary)
+                    Text(stringResource(R.string.taixu_onboarding_recheck), color = MaterialTheme.colorScheme.primary)
                 }
             }
         }
@@ -233,9 +237,9 @@ private fun ModelSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) {
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 ProviderBadge(providerIdOrName = selectedProvider.id, size = 52.dp)
-                Text("连接 AI 大模型", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold))
+                Text(stringResource(R.string.taixu_onboarding_connect_model), style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold))
                 Text(
-                    "配置你所喜爱的模型服务商与 API Key，开启智能结对编程。",
+                    stringResource(R.string.taixu_onboarding_connect_model_description),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -255,7 +259,7 @@ private fun ModelSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) {
                 value = baseUrl,
                 onValueChange = viewModel::setBaseUrl,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Base URL（接口地址）") },
+                label = { Text(stringResource(R.string.taixu_onboarding_base_url)) },
                 placeholder = { Text("https://api.openai.com/v1") },
                 trailingIcon = {
                     IconButton(
@@ -277,7 +281,7 @@ private fun ModelSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) {
                 value = apiKey,
                 onValueChange = viewModel::setApiKey,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("API Key（可选）") },
+                label = { Text(stringResource(R.string.taixu_onboarding_api_key)) },
                 placeholder = { Text("sk-...") },
                 visualTransformation = PasswordVisualTransformation(),
                 singleLine = true,
@@ -285,9 +289,9 @@ private fun ModelSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) {
         }
         item {
             SetupDropdown(
-                "模型选择 / 推荐预设",
+                stringResource(R.string.taixu_onboarding_model_selection),
                 model,
-                (discovered + selectedProvider.recommendedModels).distinct().map { SetupOption(it, it) }.ifEmpty { listOf(SetupOption(model, model.ifBlank { "请先刷新或手动填写" })) },
+                (discovered + selectedProvider.recommendedModels).distinct().map { SetupOption(it, it) }.ifEmpty { listOf(SetupOption(model, model.ifBlank { stringResource(R.string.taixu_onboarding_model_empty) })) },
                 true,
                 viewModel::setModelId,
             )
@@ -297,7 +301,7 @@ private fun ModelSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) {
                 value = model,
                 onValueChange = viewModel::setModelId,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("模型 ID（可手动输入）") },
+                label = { Text(stringResource(R.string.taixu_onboarding_model_id)) },
                 placeholder = { Text("gpt-4o / deepseek-chat") },
                 singleLine = true,
             )
@@ -305,7 +309,7 @@ private fun ModelSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) {
         discoveryError?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextButton(onClick = viewModel::skipModel, modifier = Modifier.weight(1f)) { Text("稍后配置") }
+                TextButton(onClick = viewModel::skipModel, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.taixu_onboarding_later)) }
                 Button(
                     onClick = viewModel::saveModelAndFinish,
                     enabled = model.isNotBlank(),
@@ -313,7 +317,7 @@ private fun ModelSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) {
                     shape = RoundedCornerShape(10.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary),
                 ) {
-                    Text("进入太墟", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.taixu_onboarding_enter))
                 }
             }
         }
@@ -356,7 +360,7 @@ private fun SetupProviderDropdown(
             onValueChange = {},
             readOnly = true,
             enabled = enabled,
-            label = { Text("服务商预设") },
+            label = { Text(stringResource(R.string.taixu_onboarding_provider_preset)) },
             leadingIcon = {
                 ProviderBadge(
                     providerIdOrName = selectedProvider.id,

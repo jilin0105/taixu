@@ -140,6 +140,7 @@ import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
 import top.wkbin.taixu.feature.components.R
+import androidx.compose.ui.res.stringResource
 import top.wkbin.taixu.ui.theme.LocalLiquidGlassBackdrop
 import top.wkbin.taixu.ui.theme.LocalLiquidGlassSurfaceBackdrop
 import kotlin.time.Duration.Companion.milliseconds
@@ -148,11 +149,11 @@ import kotlin.time.Duration.Companion.milliseconds
  * 太墟 (TaiXu) 四大核心中枢导航定义：
  * 太墟（开辟画布）· 智枢（AI 结对）· 工坊（工作区）· 乾坤（设置与模型）
  */
-enum class MainDestination(val label: String, val subtitle: String, val icon: RuntimeIconName) {
-    Home("太墟", "Genesis", RuntimeIconName.NavDashboard),
-    Agent("智枢", "AI Agent", RuntimeIconName.NavMessage),
-    Workspace("工坊", "Workspace", RuntimeIconName.NavRepository),
-    Settings("乾坤", "Settings", RuntimeIconName.NavSettings),
+enum class MainDestination(val labelRes: Int, val subtitle: String, val icon: RuntimeIconName) {
+    Home(R.string.components_nav_home, "Genesis", RuntimeIconName.NavDashboard),
+    Agent(R.string.components_nav_agent, "AI Agent", RuntimeIconName.NavMessage),
+    Workspace(R.string.components_nav_workspace, "Workspace", RuntimeIconName.NavRepository),
+    Settings(R.string.components_nav_settings, "Settings", RuntimeIconName.NavSettings),
 }
 
 /**
@@ -214,7 +215,7 @@ private fun StandardBottomBar(
                 icon = { RuntimeIcon(destination.icon, Modifier.size(24.dp)) },
                 label = {
                     Text(
-                        text = destination.label,
+                        text = stringResource(destination.labelRes),
                         style = MaterialTheme.typography.labelMedium.copy(
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                         ),
@@ -424,7 +425,7 @@ private fun LiquidGlassBottomBar(
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         RuntimeIcon(destination.icon, Modifier.size(22.dp), tint = baseContentColor)
-                        Text(destination.label, color = baseContentColor, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                        Text(stringResource(destination.labelRes), color = baseContentColor, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1)
                     }
                 }
         }
@@ -613,7 +614,7 @@ fun RuntimeTopBar(
         },
         navigationIcon = {
             if (onBack != null) {
-                RuntimeIconButton(onClick = onBack, contentDescription = "返回") {
+                RuntimeIconButton(onClick = onBack, contentDescription = stringResource(R.string.components_back)) {
                     RuntimeIcon(RuntimeIconName.Back, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface)
                 }
             }
@@ -667,8 +668,8 @@ fun TaiXuBrandBadge(size: Dp = 38.dp) {
         contentAlignment = Alignment.Center,
     ) {
         Image(
-            painter = painterResource(R.drawable.taixu_logo),
-            contentDescription = "太墟 Logo",
+            painter = painterResource(R.drawable.components_taixu_logo),
+            contentDescription = stringResource(R.string.components_taixu_logo),
             modifier = Modifier.size(size * 0.80f),
             contentScale = ContentScale.Fit,
         )

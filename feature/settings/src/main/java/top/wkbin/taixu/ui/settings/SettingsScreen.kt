@@ -3,10 +3,13 @@ package top.wkbin.taixu.ui.settings
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 
 import android.content.Context
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings as AndroidSettings
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -50,9 +53,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import top.wkbin.taixu.ui.components.RuntimeSwitch as Switch
 import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.Text
+import top.wkbin.taixu.ui.settings.LocalizedText as Text
 import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,10 +64,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -71,10 +80,13 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import top.wkbin.taixu.core.database.AiModelEntity
 import top.wkbin.taixu.core.model.ExecutionMode
 import top.wkbin.taixu.core.tools.AgentProviderDefinition
 import top.wkbin.taixu.core.tools.ProviderEndpointPolicy
+import top.wkbin.taixu.runtime.privilege.PhantomProcessLimitState
+import top.wkbin.taixu.runtime.privilege.PhantomProcessLimitStatus
 import top.wkbin.taixu.ui.components.IconTile
 import top.wkbin.taixu.ui.components.MainDestination
 import top.wkbin.taixu.ui.components.RuntimeBottomBar
@@ -86,6 +98,14 @@ import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
 import top.wkbin.taixu.ui.components.SectionHeader
 import top.wkbin.taixu.ui.theme.LocalLiquidGlassBackdrop
+
+/** 密钥按圆点显示，但保留换行，便于可靠输入一行一个 Key。 */
+private object MultiLinePasswordVisualTransformation : VisualTransformation {
+    override fun filter(text: AnnotatedString): TransformedText = TransformedText(
+        AnnotatedString(text.text.map { if (it == '\n') '\n' else '•' }.joinToString("")),
+        OffsetMapping.Identity,
+    )
+}
 
 /**
  * 太墟 · 乾坤配置 (TaiXu Settings & Models)
@@ -305,6 +325,7 @@ private fun SettingsCategoryCard(
 fun AgentEcoSettingsScreen(
     onBack: () -> Unit,
     onOpenModelProfiles: () -> Unit,
+    onOpenLocalLlm: () -> Unit,
     onOpenToolCenter: () -> Unit,
     onOpenAgentSettings: () -> Unit,
     onOpenMcpSettings: () -> Unit,
@@ -336,6 +357,13 @@ fun AgentEcoSettingsScreen(
                         subtitle = "配置 OpenAI / DeepSeek / Claude / 本地大模型密钥与端点",
                         value = if (models.isEmpty()) "未配置" else "${models.size} 个模型",
                         onClick = onOpenModelProfiles,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(
+                        icon = RuntimeIconName.Cpu,
+                        title = "本地 LLM",
+                        subtitle = "导入或下载 GGUF，在 ARM64 设备端通过 llama.cpp 离线推理",
+                        onClick = onOpenLocalLlm,
                     )
                 }
             }
@@ -633,15 +661,35 @@ fun SystemDevSettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val developer by viewModel.developerMode.collectAsStateWithLifecycle()
+    val phantomStatus by viewModel.phantomProcessStatus.collectAsStateWithLifecycle()
+    val phantomBusy by viewModel.phantomProcessBusy.collectAsStateWithLifecycle()
+    val phantomMessage by viewModel.phantomProcessMessage.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
     var showBatteryDialog by remember { mutableStateOf(false) }
+    var showPhantomProcessDialog by remember { mutableStateOf(false) }
     var batteryExempted by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
+
+    LaunchedEffect(Unit) { viewModel.refreshPhantomProcessLimit() }
 
     if (showBatteryDialog) {
         BatteryOptimizationDialog(
             exempted = batteryExempted,
             onRefresh = { batteryExempted = isIgnoringBatteryOptimizations(context) },
             onDismiss = { showBatteryDialog = false },
+        )
+    }
+    if (showPhantomProcessDialog) {
+        PhantomProcessLimitDialog(
+            status = phantomStatus,
+            busy = phantomBusy,
+            message = phantomMessage,
+            adbCommand = viewModel.phantomProcessAdbCommand,
+            onRefresh = viewModel::refreshPhantomProcessLimit,
+            onRemove = viewModel::removePhantomProcessLimit,
+            onDismiss = {
+                viewModel.clearPhantomProcessMessage()
+                showPhantomProcessDialog = false
+            },
         )
     }
 
@@ -668,6 +716,23 @@ fun SystemDevSettingsScreen(
                         subtitle = "豁免系统电池限制，防止 Agent 息屏被冻结",
                         value = if (batteryExempted) "已豁免" else "未豁免",
                         onClick = { showBatteryDialog = true },
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(
+                        icon = RuntimeIconName.Speed,
+                        title = "Android 12 子进程限制",
+                        subtitle = "解除 Phantom Process 最多 32 个的后台限制",
+                        value = when {
+                            phantomBusy && phantomStatus == null -> "检测中"
+                            phantomStatus?.state == PhantomProcessLimitState.REMOVED -> "已解除"
+                            phantomStatus?.state == PhantomProcessLimitState.ACTIVE -> "未解除"
+                            phantomStatus?.state == PhantomProcessLimitState.UNSUPPORTED -> "无需处理"
+                            else -> "待检测"
+                        },
+                        onClick = {
+                            showPhantomProcessDialog = true
+                            viewModel.refreshPhantomProcessLimit()
+                        },
                     )
                 }
             }
@@ -761,7 +826,7 @@ fun ModelEditorScreen(
             result = testResult,
             discover = { provider, url, key -> viewModel.discoverModels(provider, url, key) },
             test = viewModel::testConnection,
-            save = { name, provider, model, url, key, temperature, maxTokens, topP, reasoningMode, reasoningEffort, toolCallMode, contextTokens, customHeaders, pureChatMode, visionEnabled ->
+            save = { name, provider, model, url, key, rpmLimit, temperature, maxTokens, topP, reasoningMode, reasoningEffort, toolCallMode, contextTokens, customHeaders, pureChatMode, visionEnabled ->
                 viewModel.saveModel(
                     id = modelId,
                     name = name,
@@ -769,6 +834,7 @@ fun ModelEditorScreen(
                     model = model,
                     baseUrl = url,
                     apiKey = key,
+                    requestsPerMinutePerKey = rpmLimit,
                     temperature = temperature,
                     maxTokens = maxTokens,
                     topP = topP,
@@ -1129,6 +1195,162 @@ private fun BatteryOptimizationDialog(
     )
 }
 
+@Composable
+private fun PhantomProcessLimitDialog(
+    status: PhantomProcessLimitStatus?,
+    busy: Boolean,
+    message: String?,
+    adbCommand: String,
+    onRefresh: () -> Unit,
+    onRemove: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { onRefresh() }
+
+    val state = status?.state
+    val statusText = when (state) {
+        PhantomProcessLimitState.REMOVED -> "已解除限制"
+        PhantomProcessLimitState.ACTIVE -> "限制仍生效"
+        PhantomProcessLimitState.UNSUPPORTED -> "当前系统无需处理"
+        PhantomProcessLimitState.UNAVAILABLE -> "暂时无法检测"
+        null -> if (busy) "正在检测" else "尚未检测"
+    }
+    val healthy = state == PhantomProcessLimitState.REMOVED || state == PhantomProcessLimitState.UNSUPPORTED
+    val statusContainer = if (healthy) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer
+    val statusContent = if (healthy) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer
+
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                RuntimeIcon(RuntimeIconName.Speed, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary)
+                Text("Android 12 子进程限制", fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Surface(shape = RoundedCornerShape(6.dp), color = statusContainer) {
+                        Text(
+                            statusText,
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = statusContent,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        )
+                    }
+                    IconButton(onClick = onRefresh, enabled = !busy) {
+                        RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                Text(
+                    status?.details ?: "读取系统实际配置，确认幽灵进程限制是否仍在生效。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                if (state == PhantomProcessLimitState.REMOVED || state == PhantomProcessLimitState.ACTIVE) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            Text(
+                                "最大幽灵进程数：${status.maxPhantomProcesses ?: "系统默认（通常为 32）"}",
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                            Text(
+                                "幽灵进程监控：${when (status.monitoringEnabled) { true -> "开启"; false -> "关闭"; null -> "系统默认（开启）" }}",
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    }
+                }
+
+                Text(
+                    "Android 12+ 会监控应用派生的子进程，超过系统上限后可能终止 PRoot、编译器或 Agent 任务。这里解除的是子进程限制，不是 Java/Kotlin 线程数。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                Button(
+                    onClick = onRemove,
+                    enabled = !busy && state != PhantomProcessLimitState.REMOVED && state != PhantomProcessLimitState.UNSUPPORTED,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                ) {
+                    if (busy) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("正在处理")
+                    } else {
+                        Text("使用 Shizuku / Root 一键解除")
+                    }
+                }
+
+                Text(
+                    "也可以在已连接手机的电脑终端执行：",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            adbCommand,
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                clipboard?.setPrimaryClip(ClipData.newPlainText("Android 12 子进程限制命令", adbCommand))
+                                Toast.makeText(context, "命令已复制", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                        ) {
+                            RuntimeIcon(RuntimeIconName.Copy, Modifier.size(15.dp))
+                            Spacer(Modifier.width(7.dp))
+                            Text("复制命令")
+                        }
+                    }
+                }
+
+                if (!message.isNullOrBlank()) {
+                    Text(
+                        message,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (state == PhantomProcessLimitState.REMOVED) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        },
+    )
+}
+
 private fun isIgnoringBatteryOptimizations(context: Context): Boolean =
     context.getSystemService(PowerManager::class.java)
         ?.isIgnoringBatteryOptimizations(context.packageName) == true
@@ -1456,11 +1678,19 @@ private fun ModelsPage(
                             }
                         }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(model.provider, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                        Text("•", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(model.model, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    val modelSummary = buildList {
+                        add(model.provider)
+                        add(model.model)
+                        if (model.apiKeyCount > 0) add("${model.apiKeyCount} Key")
+                        if (model.requestsPerMinutePerKey > 0) add("${model.requestsPerMinutePerKey} RPM/Key")
+                    }.joinToString(" • ")
+                    Text(
+                        modelSummary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Text(
                         model.baseUrl,
                         maxLines = 1,
@@ -1611,7 +1841,7 @@ private fun ModelEditor(
     result: String?,
     discover: (String, String, String) -> Unit,
     test: (String, String, String) -> Unit,
-    save: (String, String, String, String, String, Float?, Int?, Float?, String?, String?, String?, Int?, String, Boolean, Boolean) -> Unit,
+    save: (String, String, String, String, String, Int, Float?, Int?, Float?, String?, String?, String?, Int?, String, Boolean, Boolean) -> Unit,
 ) {
     var providerId by remember(existing?.id) {
         mutableStateOf(providers.firstOrNull { it.name == existing?.provider }?.id ?: providers.first().id)
@@ -1623,6 +1853,12 @@ private fun ModelEditor(
     var model by remember(existing?.id) { mutableStateOf(existing?.model ?: provider.recommendedModels.firstOrNull().orEmpty()) }
     var url by remember(existing?.id) { mutableStateOf(existing?.baseUrl ?: provider.baseUrl) }
     var key by remember(existing?.id) { mutableStateOf("") }
+    var autoDiscoverEnabled by remember(existing?.id) { mutableStateOf(false) }
+    var selectFirstDiscoveredModel by remember(existing?.id) { mutableStateOf(false) }
+    var advancedExpanded by remember(existing?.id) { mutableStateOf(false) }
+    var rpmLimitText by remember(existing?.id) {
+        mutableStateOf(existing?.requestsPerMinutePerKey?.takeIf { it > 0 }?.toString().orEmpty())
+    }
 
     // 推理与上下文参数
     var temperatureText by remember(existing?.id) { mutableStateOf(existing?.temperature?.toString().orEmpty()) }
@@ -1649,6 +1885,26 @@ private fun ModelEditor(
 
     // 自定义请求头
     var customHeaders by remember(existing?.id) { mutableStateOf(existing?.customHeaders.orEmpty()) }
+
+    LaunchedEffect(providerId, url, key, autoDiscoverEnabled) {
+        if (!autoDiscoverEnabled) return@LaunchedEffect
+        delay(600)
+        if (ProviderEndpointPolicy.isSafeBaseUrl(url)) {
+            discover(providerId, url, key)
+            selectFirstDiscoveredModel = true
+        }
+    }
+
+    LaunchedEffect(discovered, selectFirstDiscoveredModel) {
+        if (selectFirstDiscoveredModel && discovered.isNotEmpty()) {
+            model = discovered.first()
+            selectFirstDiscoveredModel = false
+        }
+    }
+
+    LaunchedEffect(error) {
+        if (error != null) selectFirstDiscoveredModel = false
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -1704,10 +1960,8 @@ private fun ModelEditor(
                                 providerId = option.id
                                 url = option.baseUrl
                                 model = option.recommendedModels.firstOrNull().orEmpty()
+                                autoDiscoverEnabled = true
                                 providerMenu = false
-                                if (option.baseUrl.isNotBlank() && ProviderEndpointPolicy.isSafeBaseUrl(option.baseUrl)) {
-                                    discover(option.id, option.baseUrl, key)
-                                }
                             },
                         )
                     }
@@ -1733,16 +1987,17 @@ private fun ModelEditor(
                 value = url,
                 onValueChange = {
                     url = it
-                    if (ProviderEndpointPolicy.isSafeBaseUrl(it)) {
-                        discover(providerId, it, key)
-                    }
+                    autoDiscoverEnabled = true
                 },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Base URL（接口地址）") },
                 placeholder = { Text("https://api.openai.com/v1") },
                 trailingIcon = {
                     IconButton(
-                        onClick = { discover(providerId, url, key) },
+                        onClick = {
+                            discover(providerId, url, key)
+                            selectFirstDiscoveredModel = true
+                        },
                         enabled = !discovering && url.isNotBlank(),
                     ) {
                         if (discovering) {
@@ -1756,17 +2011,29 @@ private fun ModelEditor(
             )
         }
 
-        // API Key
+        // API Key 池
         item {
-            OutlinedTextField(
-                value = key,
-                onValueChange = { key = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("API Key（可选）") },
-                placeholder = { Text("sk-...") },
-                visualTransformation = PasswordVisualTransformation(),
-                singleLine = true,
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                OutlinedTextField(
+                    value = key,
+                    onValueChange = { key = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("API Key 池（每行一个）") },
+                    placeholder = { Text("sk-key-1\nsk-key-2") },
+                    visualTransformation = MultiLinePasswordVisualTransformation,
+                    minLines = 3,
+                    maxLines = 6,
+                )
+                Text(
+                    text = if ((existing?.apiKeyCount ?: 0) > 0) {
+                        "已安全保存 ${existing?.apiKeyCount} 个 Key；留空将保留原 Key 池"
+                    } else {
+                        "同一接口地址的多个 Key 将按请求自动轮询并在 429 时切换"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
 
         // 模型 ID
@@ -1797,6 +2064,57 @@ private fun ModelEditor(
                         )
                     }
                 }
+            }
+        }
+
+        item {
+            RuntimeCard(
+                modifier = Modifier.fillMaxWidth(),
+                borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+                onClick = { advancedExpanded = !advancedExpanded },
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "高级设置",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                        )
+                        Text(
+                            "采样、上下文、推理、工具与请求头",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    RuntimeIcon(
+                        name = RuntimeIconName.ChevronDown,
+                        modifier = Modifier.size(20.dp).rotate(if (advancedExpanded) 180f else 0f),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        if (advancedExpanded) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                OutlinedTextField(
+                    value = rpmLimitText,
+                    onValueChange = { rpmLimitText = it.filter(Char::isDigit) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("单 Key 每分钟请求上限") },
+                    placeholder = { Text("8") },
+                    singleLine = true,
+                )
+                Text(
+                    text = "0 或留空表示不限制；达到上限时优先轮换其他 Key",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
 
@@ -1994,11 +2312,18 @@ private fun ModelEditor(
                 }
             }
         }
+        }
 
         // 测试与刷新按钮
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { discover(providerId, url, key) }, enabled = !discovering) {
+                OutlinedButton(
+                    onClick = {
+                        discover(providerId, url, key)
+                        selectFirstDiscoveredModel = true
+                    },
+                    enabled = !discovering,
+                ) {
                     Text(if (discovering) "刷新中…" else "刷新在线模型")
                 }
                 OutlinedButton(onClick = { test(url, model, key) }, enabled = !testing) {
@@ -2021,11 +2346,13 @@ private fun ModelEditor(
             val parsedMaxTokens = maxTokensText.trim().toIntOrNull()
             val parsedContextTokens = contextTokensText.trim().toIntOrNull()
             val parsedTopP = topPText.trim().toFloatOrNull()
+            val parsedRpmLimit = rpmLimitText.trim().toIntOrNull() ?: 0
             val invalid = buildList {
                 if (temperatureText.isNotBlank() && (parsedTemperature == null || parsedTemperature !in 0f..2f)) add("Temperature 需为 0.0 ~ 2.0 的数字")
                 if (maxTokensText.isNotBlank() && (parsedMaxTokens == null || parsedMaxTokens <= 0)) add("Max Tokens 需为正整数")
                 if (contextTokensText.isNotBlank() && (parsedContextTokens == null || parsedContextTokens <= 0)) add("上下文 Token 需为正整数")
                 if (topPText.isNotBlank() && (parsedTopP == null || parsedTopP !in 0f..1f)) add("Top P 需为 0.0 ~ 1.0 的数字")
+                if (rpmLimitText.isNotBlank() && rpmLimitText.toIntOrNull() == null) add("单 Key RPM 需为非负整数")
             }.joinToString("；").ifBlank { null }
             invalid?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             Button(
@@ -2036,6 +2363,7 @@ private fun ModelEditor(
                         model,
                         url,
                         key,
+                        parsedRpmLimit,
                         parsedTemperature,
                         parsedMaxTokens,
                         parsedTopP,

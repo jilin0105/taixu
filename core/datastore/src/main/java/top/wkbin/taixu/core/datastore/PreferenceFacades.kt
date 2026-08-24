@@ -73,6 +73,8 @@ class OnboardingPreferences @Inject constructor(private val store: SettingsDataS
     suspend fun setSelectedDistribution(value: String) = store.setSelectedDistribution(value)
     suspend fun setMirrorPolicy(value: String) = store.setMirrorPolicy(value)
     suspend fun setModelApiKey(secretRef: String, value: String) = store.setModelApiKey(secretRef, value)
+    suspend fun setModelApiKeys(secretRef: String, values: List<String>) = store.setModelApiKeys(secretRef, values)
+    suspend fun readModelApiKeys(secretRef: String): List<String> = store.readModelApiKeys(secretRef)
     suspend fun setOnboardingCompleted(value: Boolean) = store.setOnboardingCompleted(value)
 }
 

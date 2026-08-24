@@ -36,6 +36,7 @@ import top.wkbin.taixu.ui.home.HomeScreen
 import top.wkbin.taixu.ui.settings.AgentSettingsScreen
 import top.wkbin.taixu.ui.settings.ModelEditorScreen
 import top.wkbin.taixu.ui.settings.ModelProfilesScreen
+import top.wkbin.taixu.ui.settings.LocalLlmScreen
 import top.wkbin.taixu.ui.settings.SettingsScreen
 import top.wkbin.taixu.ui.settings.SettingsViewModel
 import top.wkbin.taixu.ui.settings.ToolDetailScreen
@@ -67,6 +68,7 @@ sealed interface AppDestination : NavKey
 @Serializable data object StorageMountSettingsDestination : AppDestination
 @Serializable data object EnvironmentVariableSettingsDestination : AppDestination
 @Serializable data object ModelProfilesDestination : AppDestination
+@Serializable data object LocalLlmDestination : AppDestination
 @Serializable data class ModelEditorDestination(val modelId: String? = null) : AppDestination
 @Serializable data object DeveloperDestination : AppDestination
 @Serializable data class TerminalDestination(val toolId: String = "", val project: String = "") : AppDestination
@@ -184,6 +186,7 @@ fun TaiXuNavHost() {
                 top.wkbin.taixu.ui.settings.AgentEcoSettingsScreen(
                     onBack = ::popBack,
                     onOpenModelProfiles = { settingsStack.push(ModelProfilesDestination) },
+                    onOpenLocalLlm = { settingsStack.push(LocalLlmDestination) },
                     onOpenToolCenter = { settingsStack.push(ToolCenterDestination) },
                     onOpenAgentSettings = { settingsStack.push(AgentSettingsDestination) },
                     onOpenMcpSettings = { settingsStack.push(McpSettingsDestination) },
@@ -272,6 +275,12 @@ fun TaiXuNavHost() {
                     onCreate = { settingsStack.push(ModelEditorDestination()) },
                     onEdit = { modelId -> settingsStack.push(ModelEditorDestination(modelId)) },
                     viewModel = settingsViewModel,
+                )
+            }
+            entry<LocalLlmDestination> {
+                LocalLlmScreen(
+                    onBack = ::popBack,
+                    onOpenEngine = { settingsStack.push(ToolDetailDestination("llama-cpp")) },
                 )
             }
             entry<ModelEditorDestination> { destination ->

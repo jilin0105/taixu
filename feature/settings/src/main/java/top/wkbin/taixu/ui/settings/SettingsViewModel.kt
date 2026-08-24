@@ -17,6 +17,7 @@ import top.wkbin.taixu.core.model.ExecutionMode
 import top.wkbin.taixu.core.model.McpConnectionState
 import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.runtime.LinuxEnvironmentManager
+import top.wkbin.taixu.runtime.privilege.PhantomProcessLimitStatus
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -300,6 +301,51 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    private val _phantomProcessStatus = MutableStateFlow<PhantomProcessLimitStatus?>(null)
+    val phantomProcessStatus: StateFlow<PhantomProcessLimitStatus?> = _phantomProcessStatus.asStateFlow()
+
+    private val _phantomProcessBusy = MutableStateFlow(false)
+    val phantomProcessBusy: StateFlow<Boolean> = _phantomProcessBusy.asStateFlow()
+
+    private val _phantomProcessMessage = MutableStateFlow<String?>(null)
+    val phantomProcessMessage: StateFlow<String?> = _phantomProcessMessage.asStateFlow()
+
+    val phantomProcessAdbCommand: String = PrivilegeManager.PHANTOM_PROCESS_ADB_COMMAND
+
+    fun refreshPhantomProcessLimit() {
+        if (_phantomProcessBusy.value) return
+        viewModelScope.launch {
+            _phantomProcessBusy.value = true
+            try {
+                _phantomProcessStatus.value = privilegeManager.checkPhantomProcessLimit()
+            } finally {
+                _phantomProcessBusy.value = false
+            }
+        }
+    }
+
+    fun removePhantomProcessLimit() {
+        if (_phantomProcessBusy.value) return
+        viewModelScope.launch {
+            _phantomProcessBusy.value = true
+            try {
+                val result = privilegeManager.removePhantomProcessLimit()
+                _phantomProcessMessage.value = if (result.success) {
+                    "解除命令执行成功，已重新读取系统状态。"
+                } else {
+                    result.stderr.ifBlank { "解除失败（退出码 ${result.exitCode}）" }
+                }
+                _phantomProcessStatus.value = privilegeManager.checkPhantomProcessLimit()
+            } finally {
+                _phantomProcessBusy.value = false
+            }
+        }
+    }
+
+    fun clearPhantomProcessMessage() {
+        _phantomProcessMessage.value = null
+    }
+
     val providerCatalog = providerCatalogRepository.providers
 
     val models: StateFlow<List<AiModelEntity>> = aiModelDao.observeAll()
@@ -545,13 +591,15 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun discoverModels(providerId: String, baseUrl: String, apiKey: String = "") {
+        val cleanUrl = ProviderEndpointPolicy.normalizeUrl(baseUrl)
+        if (!ProviderEndpointPolicy.isSafeBaseUrl(cleanUrl)) return
+        _discoveringModels.value = true
+        _modelDiscoveryError.value = null
+        _discoveredModels.value = emptyList()
         viewModelScope.launch {
-            val cleanUrl = ProviderEndpointPolicy.normalizeUrl(baseUrl)
-            if (!ProviderEndpointPolicy.isSafeBaseUrl(cleanUrl)) return@launch
-            _discoveringModels.value = true
-            _modelDiscoveryError.value = null
             val provider = providerCatalogRepository.find(providerId)
-            runCatching { modelDiscovery.discover(provider, cleanUrl, apiKey.ifBlank { providerRepository.readApiKey() }) }
+            val discoveryKey = parseApiKeys(apiKey).firstOrNull() ?: providerRepository.readApiKey()
+            runCatching { modelDiscovery.discover(provider, cleanUrl, discoveryKey) }
                 .onSuccess { models ->
                     _discoveredModels.value = models
                     if (models.isEmpty()) _modelDiscoveryError.value = "端点未返回可用的 Agent 模型"
@@ -570,7 +618,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             _testingConnection.value = true
             _connectionResult.value = null
-            runCatching { connectionTester.test(baseUrl, model, apiKey.ifBlank { null }) }
+            runCatching { connectionTester.test(baseUrl, model, parseApiKeys(apiKey).firstOrNull()) }
                 .onSuccess { _connectionResult.value = "连接成功" }
                 .onFailure { _connectionResult.value = it.message ?: "连接失败" }
             _testingConnection.value = false
@@ -598,6 +646,7 @@ class SettingsViewModel @Inject constructor(
         model: String,
         baseUrl: String,
         apiKey: String,
+        requestsPerMinutePerKey: Int = 0,
         temperature: Float? = null,
         maxTokens: Int? = null,
         topP: Float? = null,
@@ -614,6 +663,8 @@ class SettingsViewModel @Inject constructor(
             val old: AiModelEntity? = if (id == null) null else aiModelDao.findById(id)
             val modelId = id ?: java.util.UUID.randomUUID().toString()
             val secretRef = old?.secretRef?.takeIf { it.isNotBlank() } ?: "model_${modelId.replace("-", "")}"
+            val submittedKeys = parseApiKeys(apiKey)
+            val existingKeys = old?.let { providerRepository.readModelApiKeys(secretRef) }.orEmpty()
             if (existing.none { it.isActive } || old?.isActive == true) aiModelDao.clearActive()
             aiModelDao.upsert(
                 AiModelEntity(
@@ -635,11 +686,20 @@ class SettingsViewModel @Inject constructor(
                     customHeaders = customHeaders.trim(),
                     pureChatMode = pureChatMode,
                     visionEnabled = visionEnabled,
+                    apiKeyCount = submittedKeys.ifEmpty { existingKeys }.size,
+                    requestsPerMinutePerKey = requestsPerMinutePerKey.coerceAtLeast(0),
                 ),
             )
-            if (apiKey.isNotBlank()) providerRepository.setModelApiKey(secretRef, apiKey)
+            if (submittedKeys.isNotEmpty()) providerRepository.setModelApiKeys(secretRef, submittedKeys)
         }
     }
+
+    private fun parseApiKeys(raw: String): List<String> = raw
+        .lineSequence()
+        .map(String::trim)
+        .filter(String::isNotEmpty)
+        .distinct()
+        .toList()
 
     fun setActiveModel(id: String) {
         viewModelScope.launch {

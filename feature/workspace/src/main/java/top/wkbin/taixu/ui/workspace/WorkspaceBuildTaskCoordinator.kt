@@ -1,6 +1,9 @@
 package top.wkbin.taixu.ui.workspace
 
 import javax.inject.Inject
+import dagger.hilt.android.qualifiers.ApplicationContext
+import android.content.Context
+import top.wkbin.taixu.feature.workspace.R
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -25,6 +28,7 @@ data class WorkspaceBuildTaskState(
 /** Keeps a workspace build alive while the workspace destination is recreated. */
 @Singleton
 class WorkspaceBuildTaskCoordinator @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val runner: WorkspaceBuildRunner,
     private val notifier: ToolNotificationNotifier,
     private val backgroundTaskRegistry: BackgroundTaskRegistry,
@@ -37,7 +41,7 @@ class WorkspaceBuildTaskCoordinator @Inject constructor(
     @Synchronized
     fun start(project: WorkspaceProject): Boolean {
         if (job?.isActive == true || _state.value?.progress?.isRunning == true) return false
-        val initial = BuildRunProgress(step = "准备编译环境...")
+        val initial = BuildRunProgress(step = context.getString(R.string.workspace_prepare_build))
         _state.value = WorkspaceBuildTaskState(project, initial)
         backgroundTaskRegistry.start(BUILD_TASK_ID)
         notifier.showBuildProgress(project.name, initial.step)
@@ -51,7 +55,7 @@ class WorkspaceBuildTaskCoordinator @Inject constructor(
                         if (progress.isSuccess == true) {
                             notifier.showBuildSuccess(project.name, progress.apkPath)
                         } else {
-                            notifier.showBuildFailed(project.name, progress.message ?: "未知错误")
+                            notifier.showBuildFailed(project.name, progress.message ?: context.getString(R.string.workspace_unknown_error))
                         }
                     }
                 }
@@ -59,13 +63,13 @@ class WorkspaceBuildTaskCoordinator @Inject constructor(
                 throw cancelled
             } catch (error: Exception) {
                 val failed = BuildRunProgress(
-                    step = "构建异常中断",
+                    step = context.getString(R.string.workspace_build_interrupted),
                     isRunning = false,
                     isSuccess = false,
-                    message = error.message ?: "构建过程遇到异常",
+                    message = error.message ?: context.getString(R.string.workspace_build_exception),
                 )
                 _state.value = WorkspaceBuildTaskState(project, failed)
-                notifier.showBuildFailed(project.name, failed.message ?: "未知异常")
+                notifier.showBuildFailed(project.name, failed.message ?: context.getString(R.string.workspace_unknown_exception))
             } finally {
                 backgroundTaskRegistry.finish(BUILD_TASK_ID)
                 job = null
@@ -80,14 +84,14 @@ class WorkspaceBuildTaskCoordinator @Inject constructor(
         job?.cancel()
         job = null
         val stopped = BuildRunProgress(
-            step = "已手动停止编译",
+            step = context.getString(R.string.workspace_build_stopped),
             isRunning = false,
             isSuccess = false,
-            message = "编译任务已被用户手动终止",
+            message = context.getString(R.string.workspace_build_stopped_message),
             logOutput = current.progress.logOutput,
         )
         _state.value = current.copy(progress = stopped)
-        notifier.showBuildFailed(current.project.name, stopped.message ?: "编译已停止")
+        notifier.showBuildFailed(current.project.name, stopped.message ?: context.getString(R.string.workspace_build_stopped_short))
     }
 
     fun dismiss() {

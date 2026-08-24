@@ -11,13 +11,15 @@ GRADLE_VER="8.14.2"
 GRADLE_SHA256="7197a12f450794931532469d4ff21a59ea2c1cd59a3ec3f89c035c3c420a6999"
 PLATFORM_ZIP="platform-34-ext7_r03.zip"
 PLATFORM_SHA1="1f2e9478d6a7601425ceaa553311dc43191f103d"
-BUILD_TOOLS_ZIP="build-tools_r34-linux.zip"
-BUILD_TOOLS_SHA1="d6d58e0c6925a9e4d9a541e84cd1f405c2f9d2a9"
+BUILD_TOOLS_VERSION="35.0.0"
+BUILD_TOOLS_ZIP="build-tools_r35_linux.zip"
+BUILD_TOOLS_SHA1="2cfaa0bbb2336e9ec18ed3ecea84fa2e2af607bc"
 # lzhiyong/android-sdk-tools provides statically linked ARM64 host tools.  The
 # Google SDK build-tools archive is still used for Java tools (d8/r8), while
 # these binaries replace the x86_64 host executables.
 ARM64_TOOLS_VERSION="35.0.2"
 ARM64_TOOLS_SHA256="DB1CEA2C4454D5F9C5A802646B2D1CF560B4EE7BADBE23E51AB8E1881BB50FC2"
+ARM64_TOOLS_ARTIFACT_ID="db1cea2c4454d5f9c5a802646b2d1cf560b4ee7badbe23e51ab8e1881bb50fc2"
 ARM64_TOOLS_URL="https://github.com/lzhiyong/android-sdk-tools/releases/download/${ARM64_TOOLS_VERSION}/android-sdk-tools-static-aarch64.zip"
 ARM64_TOOLS_URLS="
 https://ghfast.top/${ARM64_TOOLS_URL}
@@ -26,8 +28,21 @@ https://gh.llkk.cc/${ARM64_TOOLS_URL}
 https://gh-proxy.com/${ARM64_TOOLS_URL}
 ${ARM64_TOOLS_URL}
 "
-ARM64_TOOLS_DIR="/opt/taixu/android-sdk-tools/${ARM64_TOOLS_VERSION}"
+ARM64_TOOLS_DIR="/opt/taixu/toolchains/android/sdk-tools/artifacts/${ARM64_TOOLS_ARTIFACT_ID}"
 AAPT2_STABLE_PATH="/opt/taixu/android-sdk-tools/aapt2"
+TOOLCHAIN_LOCK_FILE="/opt/taixu/locks/android-toolchain.lock"
+
+mkdir -p /opt/taixu/locks
+command -v flock >/dev/null 2>&1 || {
+    echo "!! [TaiXu] 缺少 flock，无法安全装配 Android 工具链"
+    exit 1
+}
+exec 9>"$TOOLCHAIN_LOCK_FILE"
+flock -x -w 1800 9 || {
+    echo "!! [TaiXu] Android 工具链正被构建任务使用，等待超时"
+    exit 1
+}
+export TAIXU_TOOLCHAIN_LOCK_HELD=1
 
 # Remove the obsolete x86_64 AAPT2 wrapper and payload from upgraded sandboxes.
 rm -rf /opt/taixu/android-sdk-tools/qemu 2>/dev/null || true
@@ -35,40 +50,6 @@ rm -rf /opt/taixu/android-sdk-tools/qemu 2>/dev/null || true
 echo "==> [TaiXu] 正在初始化 Android 核心基础环境 (插件装配期一次性部署)..."
 
 mkdir -p /opt /usr/local/bin /usr/bin ${TAIXU_TOOL_DIR:-/opt/taixu/tools}/bin /tmp 2>/dev/null || true
-
-# AGP strips Flutter/Android native libraries during packaging. The Android SDK
-# NDK archive only ships a linux-x86_64 llvm-strip, which cannot execute inside
-# our ARM64 PRoot. Prefer the distro's native LLVM package and expose one stable
-# ARM64 binary for the build scripts to wire into each installed NDK.
-find_native_llvm_strip() {
-    for candidate in /usr/bin/llvm-strip /usr/bin/llvm-strip-* /usr/lib/llvm-*/bin/llvm-strip; do
-        [ -x "$candidate" ] || continue
-        resolved="$(readlink -f "$candidate" 2>/dev/null || true)"
-        [ -n "$resolved" ] && [ -x "$resolved" ] || continue
-        case "$resolved" in /opt/taixu/android-sdk-tools/llvm/*) continue ;; esac
-        "$resolved" --version >/dev/null 2>&1 || continue
-        echo "$resolved"
-        return 0
-    done
-    return 1
-}
-
-LLVM_STRIP_PATH="$(find_native_llvm_strip || true)"
-if [ -z "$LLVM_STRIP_PATH" ]; then
-    echo "==> [TaiXu] 正在部署 ARM64 LLVM strip 工具..."
-    (DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null 2>&1 && \
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends llvm >/dev/null 2>&1) || true
-    LLVM_STRIP_PATH="$(find_native_llvm_strip || true)"
-fi
-if [ -n "$LLVM_STRIP_PATH" ] && [ -x "$LLVM_STRIP_PATH" ]; then
-    mkdir -p /opt/taixu/android-sdk-tools/llvm
-    ln -sf "$LLVM_STRIP_PATH" /opt/taixu/android-sdk-tools/llvm/llvm-strip
-    export TAIXU_LLVM_STRIP_PATH=/opt/taixu/android-sdk-tools/llvm/llvm-strip
-    echo "==> [TaiXu] ARM64 llvm-strip: $LLVM_STRIP_PATH"
-else
-    echo "!! [TaiXu] 未找到 ARM64 llvm-strip"
-    exit 1
-fi
 
 # ------------------------------------------------------------------------------
 # 步骤 1：定位 JDK 目录
@@ -247,9 +228,9 @@ cp -f "$SDK_HOME/licenses/"* /root/.android/licenses/ 2>/dev/null || true
 
 # 安装官方 Build-Tools 的 Java 工具（d8/r8/lib），再覆盖其中无法在 ARM64
 # rootfs 运行的 x86_64 原生工具。这样 AGP 不会在构建阶段再次联网补组件。
-BUILD_TOOLS_DIR="$SDK_HOME/build-tools/34.0.0"
+BUILD_TOOLS_DIR="$SDK_HOME/build-tools/$BUILD_TOOLS_VERSION"
 if [ ! -f "$BUILD_TOOLS_DIR/lib/d8.jar" ]; then
-    echo "==> [TaiXu] 正在部署 Android Build-Tools 34 (d8/r8)..."
+    echo "==> [TaiXu] 正在部署 Android Build-Tools $BUILD_TOOLS_VERSION (Java d8/r8)..."
     rm -rf /tmp/"$BUILD_TOOLS_ZIP" /tmp/android-build-tools-staging 2>/dev/null || true
     (curl -fsSL -m 300 "https://mirrors.cloud.tencent.com/AndroidSDK/$BUILD_TOOLS_ZIP" -o /tmp/"$BUILD_TOOLS_ZIP" 2>/dev/null || \
      curl -fsSL -m 300 "https://dl.google.com/android/repository/$BUILD_TOOLS_ZIP" -o /tmp/"$BUILD_TOOLS_ZIP" 2>/dev/null || true)
@@ -271,10 +252,10 @@ if [ ! -f "$BUILD_TOOLS_DIR/lib/d8.jar" ]; then
 fi
 mkdir -p "$BUILD_TOOLS_DIR"
 if [ ! -f "$BUILD_TOOLS_DIR/source.properties" ]; then
-    cat > "$BUILD_TOOLS_DIR/source.properties" << 'EOF'
-Pkg.Desc=Android SDK Build-Tools 34
-Pkg.Revision=34.0.0
-Pkg.Path=build-tools;34.0.0
+    cat > "$BUILD_TOOLS_DIR/source.properties" << EOF
+Pkg.Desc=Android SDK Build-Tools 35
+Pkg.Revision=$BUILD_TOOLS_VERSION
+Pkg.Path=build-tools;$BUILD_TOOLS_VERSION
 EOF
 fi
 for tool in aapt aapt2 aidl zipalign apksigner; do
@@ -287,7 +268,12 @@ done
 # ------------------------------------------------------------------------------
 # ARM64 native SDK tools (aapt2 is the important one for AGP)
 # ------------------------------------------------------------------------------
-if [ ! -x "$ARM64_TOOLS_DIR/build-tools/aapt2" ]; then
+if [ ! -x "$ARM64_TOOLS_DIR/build-tools/aapt2" ] || \
+   ! "$ARM64_TOOLS_DIR/build-tools/aapt2" version >/dev/null 2>&1; then
+    if [ -e "$ARM64_TOOLS_DIR" ]; then
+        echo "!! [TaiXu] ARM64 SDK Tools 不可变制品发生完整性漂移，拒绝原位替换: $ARM64_TOOLS_DIR"
+        exit 1
+    fi
     echo "==> [TaiXu] 正在部署第三方 ARM64 Android SDK 工具 (aapt2/aidl/zipalign)..."
     ARM64_ARCHIVE="/tmp/android-sdk-tools-static-aarch64-${ARM64_TOOLS_VERSION}.zip"
     ARM64_STAGING="/tmp/android-sdk-tools-aarch64-staging"
@@ -307,24 +293,38 @@ if [ ! -x "$ARM64_TOOLS_DIR/build-tools/aapt2" ]; then
             fi
         fi
     done
-    [ "$ARM64_DOWNLOADED" -eq 1 ] || echo "!! [TaiXu] 第三方 ARM64 SDK 工具包下载失败，无法提供 ARM64 AAPT2"
+    [ "$ARM64_DOWNLOADED" -eq 1 ] || {
+        echo "!! [TaiXu] 第三方 ARM64 SDK 工具包下载失败，无法提供 ARM64 AAPT2"
+        exit 1
+    }
     if [ -f "$ARM64_ARCHIVE" ]; then
         mkdir -p "$ARM64_STAGING"
         if unzip -qo "$ARM64_ARCHIVE" -d "$ARM64_STAGING" 2>/dev/null; then
             # jar extraction does not preserve Unix executable bits; validate
             # presence first, then restore permissions after moving.
             if [ -f "$ARM64_STAGING/build-tools/aapt2" ]; then
-                rm -rf "$ARM64_TOOLS_DIR"
+                chmod 755 "$ARM64_STAGING/build-tools"/* 2>/dev/null || true
+                AAPT2_MACHINE=$(od -An -tu2 -j18 -N2 "$ARM64_STAGING/build-tools/aapt2" 2>/dev/null | tr -d '[:space:]')
+                [ "$AAPT2_MACHINE" = "183" ] || {
+                    echo "!! [TaiXu] ARM64 AAPT2 ELF 架构校验失败: e_machine=$AAPT2_MACHINE"
+                    rm -rf "$ARM64_STAGING"
+                    exit 1
+                }
+                "$ARM64_STAGING/build-tools/aapt2" version >/dev/null 2>&1 || {
+                    echo "!! [TaiXu] ARM64 AAPT2 无法在当前 RootFS 启动"
+                    rm -rf "$ARM64_STAGING"
+                    exit 1
+                }
                 mkdir -p "$(dirname "$ARM64_TOOLS_DIR")"
                 mv "$ARM64_STAGING" "$ARM64_TOOLS_DIR"
-                chmod 755 "$ARM64_TOOLS_DIR/build-tools"/* 2>/dev/null || true
             else
                 echo "!! [TaiXu] ARM64 SDK 工具包缺少 build-tools/aapt2，忽略该包"
                 rm -rf "$ARM64_STAGING"
             fi
         else
-            echo "!! [TaiXu] ARM64 SDK 工具包解压失败，回退系统工具"
+            echo "!! [TaiXu] ARM64 SDK 工具包解压失败"
             rm -rf "$ARM64_STAGING"
+            exit 1
         fi
         rm -f "$ARM64_ARCHIVE"
     fi
@@ -332,7 +332,8 @@ fi
 
 # Put the ARM64 tools first in PATH.  Keep the SDK directory's Java tools and
 # metadata intact; only native host executables are replaced.
-if [ -x "$ARM64_TOOLS_DIR/build-tools/aapt2" ]; then
+if [ -x "$ARM64_TOOLS_DIR/build-tools/aapt2" ] && \
+   "$ARM64_TOOLS_DIR/build-tools/aapt2" version >/dev/null 2>&1; then
     for tool in aapt aapt2 aidl zipalign; do
         if [ -x "$ARM64_TOOLS_DIR/build-tools/$tool" ]; then
             ln -sf "$ARM64_TOOLS_DIR/build-tools/$tool" "$BUILD_TOOLS_DIR/$tool"
@@ -342,15 +343,33 @@ if [ -x "$ARM64_TOOLS_DIR/build-tools/aapt2" ]; then
     done
     mkdir -p "$(dirname "$AAPT2_STABLE_PATH")"
     ln -sf "$ARM64_TOOLS_DIR/build-tools/aapt2" "$AAPT2_STABLE_PATH"
-    export TAIXU_AAPT2_PATH="$AAPT2_STABLE_PATH"
+    # Formal builds use the immutable digest path. The stable link remains only
+    # for old projects and interactive terminal compatibility.
+    LEGACY_ARM64_TOOLS_DIR="/opt/taixu/android-sdk-tools/${ARM64_TOOLS_VERSION}"
+    if [ -e "$LEGACY_ARM64_TOOLS_DIR" ] && [ ! -L "$LEGACY_ARM64_TOOLS_DIR" ]; then
+        mv "$LEGACY_ARM64_TOOLS_DIR" "${LEGACY_ARM64_TOOLS_DIR}.legacy.$(date +%s)"
+    fi
+    ln -sfn "$ARM64_TOOLS_DIR" "$LEGACY_ARM64_TOOLS_DIR"
+    export TAIXU_AAPT2_PATH="$ARM64_TOOLS_DIR/build-tools/aapt2"
 else
     export TAIXU_AAPT2_PATH=""
 fi
 
-# Migrate projects generated by older releases to the ARM64-native stable path.
+# Install the pinned Linux AArch64 NDK while the same exclusive toolchain lock
+# is held. This prevents AGP from observing a half-installed SDK/NDK view.
+/bin/sh /opt/taixu/scripts/setup_termux_ndk.sh
+. /opt/taixu/toolchains/android/ndk/taixu-ndk.env
+
+# Remove only TaiXu's legacy project-level AAPT2 overrides. Formal injection is
+# now user-scoped and points at the immutable digest path, so projects cannot
+# pin themselves back to a replaceable compatibility symlink.
 if [ -d /workspace ]; then
     find /workspace -type f -name gradle.properties -exec sed -i \
-        's#/opt/taixu/android-sdk-tools/qemu/aapt2#/opt/taixu/android-sdk-tools/aapt2#g' {} \; \
+        '\#^[[:space:]]*android\.aapt2FromMavenOverride[[:space:]]*=[[:space:]]*/opt/taixu/android-sdk-tools/#d' {} \; \
+        2>/dev/null || true
+    find /workspace -type f \( -name build.gradle -o -name build.gradle.kts \) -exec sed -i \
+        -e 's/buildToolsVersion = "34\.0\.0"/buildToolsVersion = "35.0.0"/g' \
+        -e 's/buildToolsVersion "34\.0\.0"/buildToolsVersion "35.0.0"/g' {} \; \
         2>/dev/null || true
 fi
 
@@ -421,6 +440,31 @@ gradle.beforeSettings { settings ->
 }
 EOF
 
+# AGP normally resolves aapt2 from Maven and the Linux artifact is x86_64.
+# Persist the native ARM64 override at Gradle user scope so plain `gradle` and
+# project wrapper invocations are protected too, not only TaiXu's build scripts.
+# Replace only the managed key and preserve every other user property.
+GRADLE_PROPERTIES=/root/.gradle/gradle.properties
+GRADLE_PROPERTIES_TMP="${GRADLE_PROPERTIES}.taixu.tmp"
+if [ -n "$TAIXU_AAPT2_PATH" ] && [ -x "$TAIXU_AAPT2_PATH" ] && \
+   "$TAIXU_AAPT2_PATH" version >/dev/null 2>&1; then
+    if [ -f "$GRADLE_PROPERTIES" ]; then
+        sed \
+            -e '/^[[:space:]]*android\.aapt2FromMavenOverride[[:space:]]*=/d' \
+            -e '/^[[:space:]]*android\.builder\.sdkDownload[[:space:]]*=/d' \
+            "$GRADLE_PROPERTIES" > "$GRADLE_PROPERTIES_TMP"
+    else
+        : > "$GRADLE_PROPERTIES_TMP"
+    fi
+    printf '\n# TaiXu: immutable ARM64 toolchain; never auto-download host binaries.\nandroid.aapt2FromMavenOverride=%s\nandroid.builder.sdkDownload=false\n' \
+        "$TAIXU_AAPT2_PATH" >> "$GRADLE_PROPERTIES_TMP"
+    mv -f "$GRADLE_PROPERTIES_TMP" "$GRADLE_PROPERTIES"
+    echo "==> [TaiXu] Gradle 全局 AAPT2 覆盖: $TAIXU_AAPT2_PATH"
+else
+    echo "!! [TaiXu] AAPT2 无法启动，未写入 Gradle 全局覆盖"
+    exit 1
+fi
+
 # ------------------------------------------------------------------------------
 # 步骤 8：持久化核心环境变量（全局生效）
 # ------------------------------------------------------------------------------
@@ -431,6 +475,11 @@ export ANDROID_HOME="$SDK_HOME"
 export ANDROID_SDK_ROOT="$SDK_HOME"
 export GRADLE_HOME="/opt/gradle-$GRADLE_VER"
 export TAIXU_AAPT2_PATH="${TAIXU_AAPT2_PATH:-}"
+export TAIXU_NDK_PATH="$TAIXU_NDK_PATH"
+export TAIXU_NDK_VERSION="$TAIXU_NDK_VERSION"
+export TAIXU_NDK_SHA256="$TAIXU_NDK_SHA256"
+export ANDROID_NDK_HOME="$TAIXU_NDK_PATH"
+export ANDROID_NDK_ROOT="$TAIXU_NDK_PATH"
 export TAIXU_LLVM_STRIP_PATH="$TAIXU_LLVM_STRIP_PATH"
 export PATH="\$JAVA_HOME/bin:\$GRADLE_HOME/bin:\$PATH"
 # PRoot sandbox: use non-blocking entropy
@@ -443,6 +492,11 @@ ANDROID_HOME=$SDK_HOME
 ANDROID_SDK_ROOT=$SDK_HOME
 GRADLE_HOME=/opt/gradle-$GRADLE_VER
 TAIXU_AAPT2_PATH=$TAIXU_AAPT2_PATH
+TAIXU_NDK_PATH=$TAIXU_NDK_PATH
+TAIXU_NDK_VERSION=$TAIXU_NDK_VERSION
+TAIXU_NDK_SHA256=$TAIXU_NDK_SHA256
+ANDROID_NDK_HOME=$TAIXU_NDK_PATH
+ANDROID_NDK_ROOT=$TAIXU_NDK_PATH
 TAIXU_LLVM_STRIP_PATH=$TAIXU_LLVM_STRIP_PATH
 PATH=$JAVA_HOME_RESOLVED/bin:/opt/gradle-$GRADLE_VER/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 _JAVA_OPTIONS=-Djava.security.egd=file:/dev/urandom
@@ -465,11 +519,16 @@ echo "==> [TaiXu] 装配自检:"
 [ -s "$SECURITY_DIR/cacerts" ] && "$JAVA_HOME_RESOLVED/bin/keytool" -list -keystore "$SECURITY_DIR/cacerts" -storetype PKCS12 -storepass changeit >/dev/null 2>&1 && echo "    [OK] Java cacerts (PKCS12)" || { echo "    [MISS] Java cacerts"; exit 1; }
 [ -f "$SDK_HOME/platforms/android-34/android.jar" ] && echo "    [OK] Android Platform 34" || { echo "    [MISS] Android 平台包"; exit 1; }
 [ -s "$SDK_HOME/licenses/android-sdk-license" ] && echo "    [OK] Android SDK licenses" || { echo "    [MISS] Android SDK licenses"; exit 1; }
-[ -f "$BUILD_TOOLS_DIR/source.properties" ] && [ -f "$BUILD_TOOLS_DIR/lib/d8.jar" ] && echo "    [OK] Build-Tools 34 (d8/r8 + metadata)" || { echo "    [MISS] Build-Tools 34"; exit 1; }
-[ -x "$TAIXU_LLVM_STRIP_PATH" ] && "$TAIXU_LLVM_STRIP_PATH" --version >/dev/null 2>&1 && echo "    [OK] ARM64 llvm-strip" || { echo "    [MISS] ARM64 llvm-strip"; exit 1; }
-[ -n "$TAIXU_AAPT2_PATH" ] && [ -x "$TAIXU_AAPT2_PATH" ] && echo "    [OK] ARM64 AAPT2: $TAIXU_AAPT2_PATH" || { echo "    [MISS] ARM64 AAPT2 未就位"; exit 1; }
+[ -f "$BUILD_TOOLS_DIR/source.properties" ] && [ -f "$BUILD_TOOLS_DIR/lib/d8.jar" ] && echo "    [OK] Build-Tools $BUILD_TOOLS_VERSION (Java d8/r8 + ARM64 native tools)" || { echo "    [MISS] Build-Tools $BUILD_TOOLS_VERSION"; exit 1; }
+[ -f "$TAIXU_NDK_PATH/source.properties" ] && [ -x "$TAIXU_NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ] && echo "    [OK] lzhiyong ARM64 NDK $TAIXU_NDK_VERSION" || { echo "    [MISS] 固定 ARM64 NDK"; exit 1; }
+[ -x "$TAIXU_LLVM_STRIP_PATH" ] && "$TAIXU_LLVM_STRIP_PATH" --version >/dev/null 2>&1 && echo "    [OK] NDK ARM64 llvm-strip" || { echo "    [MISS] NDK ARM64 llvm-strip"; exit 1; }
+AAPT2_MACHINE=$(od -An -tu2 -j18 -N2 "$TAIXU_AAPT2_PATH" 2>/dev/null | tr -d '[:space:]')
+[ "$AAPT2_MACHINE" = "183" ] && [ -x "$TAIXU_AAPT2_PATH" ] && "$TAIXU_AAPT2_PATH" version >/dev/null 2>&1 && echo "    [OK] ARM64 AAPT2: $TAIXU_AAPT2_PATH" || { echo "    [MISS] ARM64 AAPT2 未就位、架构错误或无法启动"; exit 1; }
 [ -f /opt/gradle-$GRADLE_VER/lib/gradle-launcher-$GRADLE_VER.jar ] && echo "    [OK] Gradle $GRADLE_VER" || { echo "    [MISS] Gradle"; exit 1; }
 [ -f /root/.gradle/init.gradle ] && echo "    [OK] 阿里云镜像" || { echo "    [MISS] Gradle 镜像配置"; exit 1; }
+grep -Fqx "android.aapt2FromMavenOverride=$TAIXU_AAPT2_PATH" /root/.gradle/gradle.properties && echo "    [OK] Gradle 全局 AAPT2 覆盖" || { echo "    [MISS] Gradle 全局 AAPT2 覆盖"; exit 1; }
+grep -Fqx "android.builder.sdkDownload=false" /root/.gradle/gradle.properties && echo "    [OK] Gradle SDK 自动下载已禁用" || { echo "    [MISS] Gradle SDK 自动下载禁用策略"; exit 1; }
+[ -f /root/.gradle/init.d/taixu-android-ndk.gradle ] && grep -Fq "$TAIXU_NDK_PATH" /root/.gradle/init.d/taixu-android-ndk.gradle && echo "    [OK] Gradle 固定 NDK 路径注入" || { echo "    [MISS] Gradle NDK 路径注入"; exit 1; }
 grep -Fq "export JAVA_HOME=\"$JAVA_HOME_RESOLVED\"" /etc/profile.d/taixu-android.sh && echo "    [OK] JAVA_HOME 持久化环境" || { echo "    [MISS] JAVA_HOME 持久化环境"; exit 1; }
 
 SSL_PROBE="/tmp/TaiXuSslProbe.java"

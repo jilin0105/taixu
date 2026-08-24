@@ -56,6 +56,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import top.wkbin.taixu.feature.workspace.R
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.PlatformTextStyle
@@ -152,7 +154,7 @@ fun CodeEditorScreen(
     val copyAll = {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText(fileName, fileContent))
-        Toast.makeText(context, "已复制全部代码", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, context.getString(R.string.workspace_code_copied), Toast.LENGTH_SHORT).show()
     }
 
     Scaffold(
@@ -339,8 +341,8 @@ fun CodeEditorScreen(
     if (showUnsavedDialog) {
         RuntimeAlertDialog(
             onDismissRequest = { showUnsavedDialog = false },
-            title = { Text("未保存修改") },
-            text = { Text("当前文件有未保存的更改，是否在退出前保存？") },
+            title = { Text(stringResource(R.string.workspace_unsaved_title)) },
+            text = { Text(stringResource(R.string.workspace_unsaved_message)) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -350,7 +352,7 @@ fun CodeEditorScreen(
                             onBack()
                         })
                     },
-                ) { Text("保存并退出") }
+                ) { Text(stringResource(R.string.workspace_save_and_exit)) }
             },
             dismissButton = {
                 TextButton(
@@ -359,7 +361,7 @@ fun CodeEditorScreen(
                         viewModel.closeFile()
                         onBack()
                     },
-                ) { Text("放弃更改", color = MaterialTheme.colorScheme.error) }
+                ) { Text(stringResource(R.string.workspace_discard_changes), color = MaterialTheme.colorScheme.error) }
             },
         )
     }
@@ -401,7 +403,7 @@ private fun EditorStatusBar(
 
             // 行数与字数
             Text(
-                text = "$lineCount 行  $charCount 字符",
+                text = stringResource(R.string.workspace_editor_stats, lineCount, charCount),
                 style = MaterialTheme.typography.labelSmall,
                 color = EditorGutterText,
                 fontFamily = FontFamily.Monospace,
@@ -416,7 +418,7 @@ private fun EditorStatusBar(
                 modifier = Modifier.clickable(onClick = onToggleWrap),
             ) {
                 Text(
-                    text = if (wordWrap) "自动换行: 开" else "自动换行: 关",
+                    text = stringResource(if (wordWrap) R.string.workspace_word_wrap_on else R.string.workspace_word_wrap_off),
                     style = MaterialTheme.typography.labelSmall,
                     color = if (wordWrap) EditorAccent else EditorGutterText,
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
@@ -425,7 +427,7 @@ private fun EditorStatusBar(
 
             // 保存状态
             Text(
-                text = if (isDirty) "未保存" else "已保存",
+                text = stringResource(if (isDirty) R.string.workspace_unsaved else R.string.workspace_saved),
                 style = MaterialTheme.typography.labelSmall,
                 color = if (isDirty) EditorWarning else EditorAccent,
             )

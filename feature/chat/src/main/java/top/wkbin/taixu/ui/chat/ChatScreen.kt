@@ -93,6 +93,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
+import top.wkbin.taixu.feature.chat.R
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
@@ -137,11 +139,11 @@ private val DotSuccess = Color(0xFF2E7D32)
 private val DotFailed = Color(0xFFBA1A1A)
 private val AgentBottomBarHeight = 78.dp
 
-private val ApprovalMode.label: String
+private val ApprovalMode.labelRes: Int
     get() = when (this) {
-        ApprovalMode.REQUEST -> "请求批准"
-        ApprovalMode.ASSISTED -> "帮我批准"
-        ApprovalMode.FULL_ACCESS -> "完全访问"
+        ApprovalMode.REQUEST -> R.string.chat_approval_request
+        ApprovalMode.ASSISTED -> R.string.chat_approval_assisted
+        ApprovalMode.FULL_ACCESS -> R.string.chat_approval_full_access
     }
 
 /**
@@ -275,8 +277,8 @@ fun ChatScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             RuntimeTopBar(
-                title = "智枢",
-                statusText = "${if (workspace.isNotBlank()) workspace else "默认工作区"} · $distroDisplayName",
+                title = stringResource(R.string.chat_title),
+                statusText = stringResource(R.string.chat_status, if (workspace.isNotBlank()) workspace else stringResource(R.string.chat_default_workspace), distroDisplayName),
             ) {
                 // 模型快速切换胶囊
                 Surface(
@@ -291,7 +293,7 @@ fun ChatScreen(
                     ) {
                         Box(Modifier.size(6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
                         Text(
-                            text = activeModel?.name ?: "未选模型",
+                            text = activeModel?.name ?: stringResource(R.string.chat_no_model_selected),
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                             color = MaterialTheme.colorScheme.onSecondaryContainer,
                             maxLines = 1,
@@ -312,7 +314,7 @@ fun ChatScreen(
                         ) {
                             RuntimeIcon(RuntimeIconName.Shield, Modifier.size(14.dp), MaterialTheme.colorScheme.onTertiaryContainer)
                             Text(
-                                text = currentApprovalMode.label,
+                                text = stringResource(currentApprovalMode.labelRes),
                                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                                 color = MaterialTheme.colorScheme.onTertiaryContainer,
                                 maxLines = 1,
@@ -324,14 +326,14 @@ fun ChatScreen(
                         onDismissRequest = { showApprovalModes = false },
                     ) {
                         listOf(
-                            ApprovalMode.REQUEST to "所有写入、命令和外部工具调用先询问",
-                            ApprovalMode.ASSISTED to "常规开发自动执行，高风险操作询问",
-                            ApprovalMode.FULL_ACCESS to "直接执行工具，不弹出审批",
+                            ApprovalMode.REQUEST to stringResource(R.string.chat_approval_request_description),
+                            ApprovalMode.ASSISTED to stringResource(R.string.chat_approval_assisted_description),
+                            ApprovalMode.FULL_ACCESS to stringResource(R.string.chat_approval_full_access_description),
                         ).forEach { (mode, description) ->
                             DropdownMenuItem(
                                 text = {
                                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Text(mode.label, fontWeight = FontWeight.SemiBold)
+                                        Text(stringResource(mode.labelRes), fontWeight = FontWeight.SemiBold)
                                         Text(description, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 },
@@ -685,18 +687,18 @@ private fun ChatPaneContent(
                 if (trimmedInput.isNotBlank()) {
                     append(trimmedInput)
                 } else if (nonImageFiles.isNotEmpty()) {
-                    append("请分析并处理以下附带的文件：")
+                    append(context.getString(R.string.chat_attachment_files_prompt))
                 } else if (imageBase64List.isNotEmpty()) {
-                    append("请分析附带的图片：")
+                    append(context.getString(R.string.chat_attachment_images_prompt))
                 }
                 if (attachments.isNotEmpty()) {
-                    append("\n\n[附件：已复制并挂载到 Linux 沙箱]\n")
+                    append(context.getString(R.string.chat_attachment_mount_header))
                     attachments.forEachIndexed { i, att ->
                         val guestPath = att.guestFilePath ?: "/attachments/${att.name}"
-                        val kind = if (att.isImage) "图片" else "文件"
-                        append("${i + 1}. [$kind] ${att.name} (${AttachmentHelper.formatFileSize(att.sizeBytes)}) -> Linux 沙箱绝对路径: $guestPath\n")
+                        val kind = context.getString(if (att.isImage) R.string.chat_attachment_image else R.string.chat_attachment_file)
+                        append(context.getString(R.string.chat_attachment_line, i + 1, kind, att.name, AttachmentHelper.formatFileSize(att.sizeBytes), guestPath))
                     }
-                    append("需要通过工具访问时，请使用 base 在上述绝对路径读取；不要使用 Android content:// URI 或宿主机路径。")
+                    append(context.getString(R.string.chat_attachment_access_hint))
                 }
             }
             onSend(fullMessage, imageBase64List)
@@ -791,9 +793,10 @@ private fun ChatPaneContent(
                             delay(500)
                         }
                     }
+                    val thinkingLabel = status ?: stringResource(R.string.chat_thinking)
                     ThinkingIndicator(
                         status = buildString {
-                            append(status ?: "思考中…")
+                            append(thinkingLabel)
                             if (roundElapsed > 0) {
                                 append(" · ")
                                 append(formatDuration(roundElapsed))
@@ -825,7 +828,7 @@ private fun ChatPaneContent(
                         modifier = Modifier.weight(1f),
                     )
                     TextButton(onClick = onClearError) {
-                        Text("关闭", color = MaterialTheme.colorScheme.onErrorContainer)
+                        Text(stringResource(R.string.chat_close), color = MaterialTheme.colorScheme.onErrorContainer)
                     }
                 }
             }
@@ -865,7 +868,7 @@ private fun ChatPaneContent(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Text(
-                                "排队 ${index + 1}：",
+                                stringResource(R.string.chat_queue_item, index + 1),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.primary,
                             )
@@ -967,7 +970,7 @@ private fun ChatPaneContent(
                 ) {
                     if (input.isEmpty()) {
                         Text(
-                            text = if (running) "正在执行… 输入可排队" else "输入指令… 支持 @ 挂载专精能力与多模态附件",
+                            text = stringResource(if (running) R.string.chat_input_running else R.string.chat_input_hint),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
                             maxLines = 1,
@@ -1213,7 +1216,7 @@ private fun ContextUsageButton(usage: ContextUsage) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Text("上下文用量", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.chat_context_usage), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                     Text(
                         "${formatContextTokens(usage.usedTokens)} / ${formatContextTokens(usage.limitTokens)}",
                         style = MaterialTheme.typography.labelMedium,
@@ -1226,12 +1229,11 @@ private fun ContextUsageButton(usage: ContextUsage) {
                     color = tint,
                     trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                 )
-                ContextUsageRow("系统提示词", usage.systemTokens)
-                ContextUsageRow("工具", usage.toolTokens)
-                ContextUsageRow("对话消息", usage.conversationTokens)
+                ContextUsageRow(stringResource(R.string.chat_system_prompt), usage.systemTokens)
+                ContextUsageRow(stringResource(R.string.chat_tools), usage.toolTokens)
+                ContextUsageRow(stringResource(R.string.chat_conversation_messages), usage.conversationTokens)
                 Text(
-                    if (ratio >= 1f) "已超过预算，下一次请求会自动压缩历史"
-                    else "估算值 · 发送前仍由 Harness 最终计算",
+                    stringResource(if (ratio >= 1f) R.string.chat_context_over_budget else R.string.chat_context_estimate),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1263,24 +1265,23 @@ private fun EmptyChatGuidance(
     workspaceProject: WorkspaceProject? = null,
     onSelectCommand: (SlashCommandItem) -> Unit,
 ) {
-    val quickCommands = remember(workspaceProject?.projectType) {
-        when (workspaceProject?.projectType) {
+    val context = LocalContext.current
+    val quickCommands = when (workspaceProject?.projectType) {
             top.wkbin.taixu.runtime.ProjectType.ANDROID -> listOf(
-                SlashCommandItem("/android-check", "检查 Android 工程", "检查 Gradle、Manifest、包名和当前构建环境", "请检查当前 Android 工程结构、Gradle 配置、Manifest、包名和构建环境；发现问题直接编辑文件修复并验证。", RuntimeIconName.Check),
-                SlashCommandItem("/android-build-install", "编译并安装到手机", "构建 Debug APK，导出并调起手机安装器", "请构建当前 Android 工程，成功后将 APK 导出到手机并调起安装器；优先使用当前工作区的构建脚本和 taixu-host install-apk。", RuntimeIconName.Play),
-                SlashCommandItem("/android-debug", "排查 Android 构建", "定位 Gradle、Kotlin、AAPT2 或安装问题", "请读取最近一次 Android 构建日志，定位真实错误并直接编辑脚本或工程文件修复，然后重新验证。", RuntimeIconName.Alert),
+                SlashCommandItem("/android-check", stringResource(R.string.chat_android_check), stringResource(R.string.chat_android_check_description), stringResource(R.string.chat_android_check_prompt), RuntimeIconName.Check),
+                SlashCommandItem("/android-build-install", stringResource(R.string.chat_android_build), stringResource(R.string.chat_android_build_description), stringResource(R.string.chat_android_build_prompt), RuntimeIconName.Play),
+                SlashCommandItem("/android-debug", stringResource(R.string.chat_android_debug), stringResource(R.string.chat_android_debug_description), stringResource(R.string.chat_android_debug_prompt), RuntimeIconName.Alert),
             )
             top.wkbin.taixu.runtime.ProjectType.FLUTTER -> listOf(
-                SlashCommandItem("/flutter-check", "检查 Flutter 工程", "检查 pubspec、Dart 入口和 Android 宿主配置", "请检查当前 Flutter 工程的 pubspec.yaml、Dart 入口和 Android Gradle 配置，发现问题直接修复并验证。", RuntimeIconName.Check),
-                SlashCommandItem("/flutter-build-install", "编译并安装 Flutter", "拉取依赖、构建 APK 并调起安装器", "请执行 Flutter 依赖检查和 Debug APK 构建，成功后将 APK 导出到手机并调起 taixu-host install-apk。", RuntimeIconName.Play),
-                SlashCommandItem("/flutter-debug", "排查 Flutter 构建", "定位依赖、Gradle 或 AAPT2 错误", "请读取 Flutter 最近一次构建错误，定位依赖、Gradle 或 AAPT2 根因，直接修改工程并重新验证。", RuntimeIconName.Alert),
+                SlashCommandItem("/flutter-check", stringResource(R.string.chat_flutter_check), stringResource(R.string.chat_flutter_check_description), stringResource(R.string.chat_flutter_check_prompt), RuntimeIconName.Check),
+                SlashCommandItem("/flutter-build-install", stringResource(R.string.chat_flutter_build), stringResource(R.string.chat_flutter_build_description), stringResource(R.string.chat_flutter_build_prompt), RuntimeIconName.Play),
+                SlashCommandItem("/flutter-debug", stringResource(R.string.chat_flutter_debug), stringResource(R.string.chat_flutter_debug_description), stringResource(R.string.chat_flutter_debug_prompt), RuntimeIconName.Alert),
             )
             top.wkbin.taixu.runtime.ProjectType.REVERSE -> listOf(
-                SlashCommandItem("/reverse-analyze", "分析 APK 工程", "读取清单、DEX、资源和加固特征", "请读取当前逆向工程的 apk-info.properties 和 REVERSE.md，使用 jadx/apktool 分析 APK 并汇报关键发现。", RuntimeIconName.Search),
-                SlashCommandItem("/reverse-decode", "解包并反编译", "执行 JADX 或 apktool 解包流程", "请对当前工程内的原始 APK 执行安全解包和反编译，保留原始文件并把产物写入新的输出目录。", RuntimeIconName.Code),
+                SlashCommandItem("/reverse-analyze", stringResource(R.string.chat_reverse_analyze), stringResource(R.string.chat_reverse_analyze_description), stringResource(R.string.chat_reverse_analyze_prompt), RuntimeIconName.Search),
+                SlashCommandItem("/reverse-decode", stringResource(R.string.chat_reverse_decode), stringResource(R.string.chat_reverse_decode_description), stringResource(R.string.chat_reverse_decode_prompt), RuntimeIconName.Code),
             )
-            else -> SlashCommands.presetCommands.take(4)
-        }
+            else -> SlashCommands.presetCommands(context).take(4)
     }
     Column(
         modifier = Modifier
@@ -1289,12 +1290,12 @@ private fun EmptyChatGuidance(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Text(
-            "太墟智枢可以为你编写代码、读写 Linux 工作区文件、执行 Shell 命令或排查系统故障。",
+            stringResource(R.string.chat_agent_intro),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
-            "快捷开始：",
+            stringResource(R.string.chat_quick_start),
             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
             color = MaterialTheme.colorScheme.primary,
         )
@@ -1399,12 +1400,12 @@ private fun MentionPopup(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    "🧠 快捷挂载专精技能与 MCP 插件",
+                    stringResource(R.string.chat_capability_mount),
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Text(
-                    "本轮定向调用",
+                    stringResource(R.string.chat_enabled_for_request),
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                 )
@@ -1461,7 +1462,7 @@ private fun MentionPopup(
                                     shape = RoundedCornerShape(4.dp),
                                 ) {
                                     Text(
-                                        if (isSkill) "⚡ 技能" else "🔌 MCP",
+                                        if (isSkill) stringResource(R.string.chat_skill_badge) else "🔌 MCP",
                                         modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
                                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Medium),
                                         color = tagColor,
@@ -1495,8 +1496,8 @@ private fun UserBubble(
 
     val copyText = {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("用户指令", message.text))
-        Toast.makeText(context, "已复制指令", Toast.LENGTH_SHORT).show()
+        clipboard.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.chat_user_request_clipboard), message.text))
+        Toast.makeText(context, context.getString(R.string.chat_request_copied), Toast.LENGTH_SHORT).show()
     }
 
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
@@ -1552,7 +1553,7 @@ private fun UserBubble(
                         onDismissRequest = { showMenu = false },
                     ) {
                         DropdownMenuItem(
-                            text = { Text("复制") },
+                            text = { Text(stringResource(R.string.chat_copy)) },
                             leadingIcon = { RuntimeIcon(RuntimeIconName.Copy, Modifier.size(16.dp)) },
                             onClick = {
                                 showMenu = false
@@ -1560,7 +1561,7 @@ private fun UserBubble(
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text("编辑并重发") },
+                            text = { Text(stringResource(R.string.chat_edit_resend)) },
                             leadingIcon = { RuntimeIcon(RuntimeIconName.Edit, Modifier.size(16.dp)) },
                             onClick = {
                                 showMenu = false
@@ -1568,7 +1569,7 @@ private fun UserBubble(
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text("删除", color = MaterialTheme.colorScheme.error) },
+                            text = { Text(stringResource(R.string.chat_delete), color = MaterialTheme.colorScheme.error) },
                             leadingIcon = {
                                 RuntimeIcon(
                                     RuntimeIconName.Trash,
@@ -1618,7 +1619,7 @@ private fun ImageThumbnail(
 
     AsyncImage(
         model = request,
-        contentDescription = "用户上传图片",
+        contentDescription = stringResource(R.string.chat_user_image),
         contentScale = ContentScale.Crop,
         modifier = Modifier
             .size(width = 130.dp, height = 130.dp)
@@ -1643,8 +1644,8 @@ private fun AssistantBubble(
 
     val copyAll = {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("AI 回复", message.text))
-        Toast.makeText(context, "已复制回复内容", Toast.LENGTH_SHORT).show()
+        clipboard.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.chat_ai_response_clipboard), message.text))
+        Toast.makeText(context, context.getString(R.string.chat_response_copied), Toast.LENGTH_SHORT).show()
     }
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1687,7 +1688,7 @@ private fun AssistantBubble(
             ) {
                 message.totalMs?.let {
                     Text(
-                        "用时 ${formatDuration(it)}",
+                        stringResource(R.string.chat_elapsed, formatDuration(it)),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontFamily = FontFamily.Monospace,
@@ -1781,7 +1782,7 @@ private fun TaskPlanCard(
                 }
 
                 Text(
-                    text = "执行计划拆解",
+                    text = stringResource(R.string.chat_plan),
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onSurface,
                 )
@@ -1794,7 +1795,7 @@ private fun TaskPlanCard(
                     shape = RoundedCornerShape(6.dp),
                 ) {
                     Text(
-                        text = "$completedCount / ${steps.size} 完成",
+                        text = stringResource(R.string.chat_plan_completed, completedCount, steps.size),
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
@@ -1917,8 +1918,8 @@ private fun ThinkingBlock(
 
     val copyToClipboard = {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("思考过程", reasoning))
-        Toast.makeText(context, "思考内容已复制", Toast.LENGTH_SHORT).show()
+        clipboard.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.chat_reasoning_clipboard), reasoning))
+        Toast.makeText(context, context.getString(R.string.chat_reasoning_copied), Toast.LENGTH_SHORT).show()
     }
 
     Column(
@@ -1959,7 +1960,7 @@ private fun ThinkingBlock(
             }
 
             Text(
-                if (live) "深度推理中…" else "推理思考过程",
+                stringResource(if (live) R.string.chat_deep_reasoning else R.string.chat_reasoning_process),
                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -2095,7 +2096,7 @@ private fun ToolCard(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.size(7.dp).clip(CircleShape).background(dotColor))
                 Text(
-                    if (call.tool == HarnessTool.MCP) "调用工具" else toolName(call.tool, call.rawToolName),
+                    if (call.tool == HarnessTool.MCP) stringResource(R.string.chat_call_tool) else toolName(call.tool, call.rawToolName),
                     style = MaterialTheme.typography.labelLarge.copy(
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.SemiBold,
@@ -2149,9 +2150,11 @@ private fun ToolCard(
                 }
             }
 
+            val downloadingPrefix = stringResource(R.string.chat_downloading_prefix)
+            val verifyingDownload = stringResource(R.string.chat_verifying_download)
             val downloadStatus = liveStatus?.takeIf {
                 call.tool == HarnessTool.DOWNLOAD && result == null && running &&
-                    (it.startsWith("下载中：") || it.startsWith("正在校验下载文件"))
+                    (it.startsWith(downloadingPrefix) || it.startsWith(verifyingDownload))
             }
             if (downloadStatus != null) {
                 Text(
@@ -2214,7 +2217,7 @@ private fun ApprovalRequestCard(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 RuntimeIcon(RuntimeIconName.Shield, Modifier.size(18.dp), riskColor)
-                Text("需要你的批准", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
+                Text(stringResource(R.string.chat_approval_required), style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
                 Surface(color = riskColor.copy(alpha = 0.12f), shape = RoundedCornerShape(4.dp)) {
                     Text(
                         request.riskLevel.uppercase(),
@@ -2227,8 +2230,8 @@ private fun ApprovalRequestCard(
             Text(request.summary, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace))
             Text(request.reason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = onReject, modifier = Modifier.weight(1f)) { Text("拒绝") }
-                Button(onClick = onApprove, modifier = Modifier.weight(1f)) { Text("批准并继续") }
+                OutlinedButton(onClick = onReject, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.chat_reject)) }
+                Button(onClick = onApprove, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.chat_approve_continue)) }
             }
         }
     }
@@ -2243,19 +2246,19 @@ private fun EditAndResendDialog(
     var text by remember(originalText) { mutableStateOf(originalText) }
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("编辑并重发", fontWeight = FontWeight.Bold) },
+        title = { Text(stringResource(R.string.chat_edit_resend), fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
-                    label = { Text("用户指令") },
+                    label = { Text(stringResource(R.string.chat_user_request_clipboard)) },
                     minLines = 2,
                     maxLines = 6,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    "重发将移除该消息之后的所有会话记录，并以此指令重新生成回答。",
+                    stringResource(R.string.chat_resend_description),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -2265,10 +2268,10 @@ private fun EditAndResendDialog(
             TextButton(
                 onClick = { onConfirm(text) },
                 enabled = text.isNotBlank(),
-            ) { Text("确认发送", color = MaterialTheme.colorScheme.primary) }
+            ) { Text(stringResource(R.string.chat_send), color = MaterialTheme.colorScheme.primary) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.chat_cancel)) }
         },
     )
 }
@@ -2295,14 +2298,14 @@ private fun SessionsDialog(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     RuntimeIcon(RuntimeIconName.List, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-                    Text("智枢会话管理", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.chat_session_manager), fontWeight = FontWeight.Bold)
                 }
                 Surface(
                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
                     shape = RoundedCornerShape(6.dp),
                 ) {
                     Text(
-                        "${sessions.size} 个会话",
+                        stringResource(R.string.chat_session_count, sessions.size),
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
@@ -2330,7 +2333,7 @@ private fun SessionsDialog(
                         ) {
                             RuntimeIcon(RuntimeIconName.Alert, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
                             Text(
-                                "当前为最后一条会话，删除后将自动重置并开启全新会话",
+                                stringResource(R.string.chat_last_session_hint),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -2347,11 +2350,11 @@ private fun SessionsDialog(
                         val runState = sessionRunStates[session.id] ?: top.wkbin.taixu.core.model.SessionRunState.IDLE
 
                         val (dotColor, stateLabel) = when (runState) {
-                            top.wkbin.taixu.core.model.SessionRunState.RUNNING -> Color(0xFFF59E0B) to "进行中"
-                            top.wkbin.taixu.core.model.SessionRunState.WAITING_APPROVAL -> Color(0xFF8B5CF6) to "待批准"
-                            top.wkbin.taixu.core.model.SessionRunState.FAILED -> Color(0xFFEF4444) to "失败"
-                            top.wkbin.taixu.core.model.SessionRunState.COMPLETED -> Color(0xFF10B981) to "完成"
-                            top.wkbin.taixu.core.model.SessionRunState.IDLE -> Color(0xFF10B981) to "就绪"
+                            top.wkbin.taixu.core.model.SessionRunState.RUNNING -> Color(0xFFF59E0B) to stringResource(R.string.chat_state_running)
+                            top.wkbin.taixu.core.model.SessionRunState.WAITING_APPROVAL -> Color(0xFF8B5CF6) to stringResource(R.string.chat_state_approval)
+                            top.wkbin.taixu.core.model.SessionRunState.FAILED -> Color(0xFFEF4444) to stringResource(R.string.chat_state_failed)
+                            top.wkbin.taixu.core.model.SessionRunState.COMPLETED -> Color(0xFF10B981) to stringResource(R.string.chat_state_completed)
+                            top.wkbin.taixu.core.model.SessionRunState.IDLE -> Color(0xFF10B981) to stringResource(R.string.chat_state_ready)
                         }
 
                         Surface(
@@ -2402,7 +2405,7 @@ private fun SessionsDialog(
                                                 shape = RoundedCornerShape(4.dp),
                                             ) {
                                                 Text(
-                                                    "当前",
+                                                    stringResource(R.string.chat_current),
                                                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                                                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
@@ -2442,7 +2445,7 @@ private fun SessionsDialog(
                                             }
                                         } else {
                                             Text(
-                                                "独立沙箱",
+                                                stringResource(R.string.chat_isolated_sandbox),
                                                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
@@ -2465,12 +2468,12 @@ private fun SessionsDialog(
             Button(onClick = onNew, shape = RoundedCornerShape(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     RuntimeIcon(RuntimeIconName.Plus, Modifier.size(16.dp), MaterialTheme.colorScheme.onPrimary)
-                    Text("新建会话")
+                    Text(stringResource(R.string.chat_new_session))
                 }
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("关闭") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.chat_close)) }
         },
     )
 
@@ -2495,18 +2498,18 @@ private fun RenameSessionDialog(
     var title by remember(currentTitle) { mutableStateOf(currentTitle) }
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("重命名会话", fontWeight = FontWeight.Bold) },
+        title = { Text(stringResource(R.string.chat_rename_session), fontWeight = FontWeight.Bold) },
         text = {
             OutlinedTextField(
                 value = title,
                 onValueChange = { title = it },
-                label = { Text("标题") },
+                label = { Text(stringResource(R.string.chat_title_label)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
         },
-        confirmButton = { TextButton(onClick = { onRename(title) }) { Text("保存", color = MaterialTheme.colorScheme.primary) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        confirmButton = { TextButton(onClick = { onRename(title) }) { Text(stringResource(R.string.chat_save), color = MaterialTheme.colorScheme.primary) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.chat_cancel)) } },
     )
 }
 
@@ -2530,7 +2533,7 @@ private fun ModelDialog(
     }
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("选择模型", fontWeight = FontWeight.Bold) },
+        title = { Text(stringResource(R.string.chat_select_model), fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 models.forEach { model ->
@@ -2568,15 +2571,15 @@ private fun ModelDialog(
                     }
                 }
                 if (models.isEmpty()) {
-                    Text("还没有模型。添加一个后将用于 Agent 对话。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.chat_no_models), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = { showAdd = true }) { Text("添加模型", color = MaterialTheme.colorScheme.primary) }
+            TextButton(onClick = { showAdd = true }) { Text(stringResource(R.string.chat_add_model), color = MaterialTheme.colorScheme.primary) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("关闭") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.chat_close)) }
         },
     )
 }
@@ -2587,25 +2590,26 @@ private fun AddModelDialog(
     onAdd: (String, String, String, String) -> Unit,
 ) {
     var name by remember { mutableStateOf("") }
-    var provider by remember { mutableStateOf("自定义 OpenAI 兼容接口") }
+    val defaultProvider = stringResource(R.string.chat_custom_provider)
+    var provider by remember { mutableStateOf(defaultProvider) }
     var model by remember { mutableStateOf("") }
     var baseUrl by remember { mutableStateOf("") }
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("添加模型", fontWeight = FontWeight.Bold) },
+        title = { Text(stringResource(R.string.chat_add_model), fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("名称（可选）") }, singleLine = true)
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text(stringResource(R.string.chat_optional_name)) }, singleLine = true)
                 OutlinedTextField(value = provider, onValueChange = { provider = it }, label = { Text("Provider") }, singleLine = true)
-                OutlinedTextField(value = baseUrl, onValueChange = { baseUrl = it }, label = { Text("Base URL（可选）") }, placeholder = { Text("https://api.openai.com/v1") }, singleLine = true)
-                OutlinedTextField(value = model, onValueChange = { model = it }, label = { Text("模型 ID") }, placeholder = { Text("deepseek-chat / gpt-4o") }, singleLine = true)
+                OutlinedTextField(value = baseUrl, onValueChange = { baseUrl = it }, label = { Text(stringResource(R.string.chat_optional_base_url)) }, placeholder = { Text("https://api.openai.com/v1") }, singleLine = true)
+                OutlinedTextField(value = model, onValueChange = { model = it }, label = { Text(stringResource(R.string.chat_model_id)) }, placeholder = { Text("deepseek-chat / gpt-4o") }, singleLine = true)
             }
         },
         confirmButton = {
-            TextButton(onClick = { onAdd(name, provider, model, baseUrl) }, enabled = model.isNotBlank()) { Text("确认添加", color = MaterialTheme.colorScheme.primary) }
+            TextButton(onClick = { onAdd(name, provider, model, baseUrl) }, enabled = model.isNotBlank()) { Text(stringResource(R.string.chat_confirm_add), color = MaterialTheme.colorScheme.primary) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.chat_cancel)) }
         },
     )
 }
@@ -2616,18 +2620,25 @@ private fun NewSessionDialog(
     onDismiss: () -> Unit,
     onCreate: (title: String, workspace: String, projectType: top.wkbin.taixu.runtime.ProjectType) -> Unit,
 ) {
-    var title by remember { mutableStateOf("新会话") }
+    val defaultTitle = stringResource(R.string.chat_new_session)
+    var title by remember { mutableStateOf(defaultTitle) }
     var selected by remember { mutableStateOf("") }
     var selectedType by remember { mutableStateOf(top.wkbin.taixu.runtime.ProjectType.GENERAL) }
     var typeMenuExpanded by remember { mutableStateOf(false) }
-    val quickTags = listOf("新会话", "Bug排查", "特性开发", "环境配置", "代码重构")
+    val quickTags = listOf(
+        defaultTitle,
+        stringResource(R.string.chat_quick_bug),
+        stringResource(R.string.chat_quick_feature),
+        stringResource(R.string.chat_quick_environment),
+        stringResource(R.string.chat_quick_refactor),
+    )
 
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 RuntimeIcon(RuntimeIconName.Plus, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-                Text("新建智枢会话", fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.chat_new_agent_session), fontWeight = FontWeight.Bold)
             }
         },
         text = {
@@ -2637,11 +2648,11 @@ private fun NewSessionDialog(
                     .heightIn(max = 420.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text("会话标题：", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.chat_session_title), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    placeholder = { Text("输入会话名称…") },
+                    placeholder = { Text(stringResource(R.string.chat_session_name_hint)) },
                     singleLine = true,
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.fillMaxWidth(),
@@ -2677,7 +2688,7 @@ private fun NewSessionDialog(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                 Text(
-                    "关联工作区工程（Agent 工具将默认在该目录执行）：",
+                    stringResource(R.string.chat_link_workspace),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -2687,7 +2698,7 @@ private fun NewSessionDialog(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     item {
-                        WorkspaceOption("不关联工作区（纯对话与全局 Linux）", "/root", selected == "", onSelect = {
+                        WorkspaceOption(stringResource(R.string.chat_no_workspace), "/root", selected == "", onSelect = {
                             selected = ""
                             selectedType = top.wkbin.taixu.runtime.ProjectType.GENERAL
                         })
@@ -2706,9 +2717,9 @@ private fun NewSessionDialog(
                 // repository to be assigned to a different specialist Agent.
                 Text(
                     if (selectedProject == null || selectedProject.projectType == top.wkbin.taixu.runtime.ProjectType.GENERAL) {
-                        "Agent 工程类型（需要手动选择）"
+                        stringResource(R.string.chat_project_type_manual)
                     } else {
-                        "Agent 工程类型（已自动识别，可修改）"
+                        stringResource(R.string.chat_project_type_detected)
                     },
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
@@ -2728,7 +2739,7 @@ private fun NewSessionDialog(
                                 selectedType.displayName,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
-                            Text("选择", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                            Text(stringResource(R.string.chat_select), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
                         }
                     }
                     DropdownMenu(expanded = typeMenuExpanded, onDismissRequest = { typeMenuExpanded = false }) {
@@ -2747,14 +2758,14 @@ private fun NewSessionDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onCreate(title.ifBlank { "新会话" }, selected, selectedType) },
+                onClick = { onCreate(title.ifBlank { defaultTitle }, selected, selectedType) },
                 shape = RoundedCornerShape(8.dp),
             ) {
-                Text("创建并开启会话")
+                Text(stringResource(R.string.chat_create_session))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.chat_cancel)) }
         },
     )
 }
@@ -2830,7 +2841,7 @@ private fun toolName(tool: HarnessTool, rawToolName: String? = null): String {
 private fun toolArgsSummary(call: ToolCall): String {
     val entries = call.args.toMap().entries.take(3)
         .joinToString(", ") { (key, value) -> "$key=${value.toString().take(40)}" }
-    return entries.ifBlank { "(无参数)" }
+    return entries
 }
 
 private fun formatDuration(ms: Long): String {
@@ -2878,12 +2889,12 @@ private fun SkillsAndMcpSheet(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "会话能力与工具关联",
+                        text = stringResource(R.string.chat_capabilities),
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        text = "实时选择当前会话大模型挂载的专业技能与 MCP 工具",
+                        text = stringResource(R.string.chat_capabilities_description),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -2893,7 +2904,7 @@ private fun SkillsAndMcpSheet(
                     shape = RoundedCornerShape(12.dp),
                 ) {
                     Text(
-                        text = "已启用 ${activeSkillsCount + activeMcpCount}",
+                        text = stringResource(R.string.chat_capabilities_enabled, activeSkillsCount + activeMcpCount),
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
@@ -2913,7 +2924,7 @@ private fun SkillsAndMcpSheet(
                     onClick = { selectedTab = 0 },
                     text = {
                         Text(
-                            "专精技能 (${activeSkillsCount}/${allSkills.size})",
+                            stringResource(R.string.chat_skills_count, activeSkillsCount, allSkills.size),
                             style = MaterialTheme.typography.labelMedium.copy(
                                 fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Normal,
                             ),
@@ -2925,7 +2936,7 @@ private fun SkillsAndMcpSheet(
                     onClick = { selectedTab = 1 },
                     text = {
                         Text(
-                            "MCP 插件 (${activeMcpCount}/${mcpServers.size})",
+                            stringResource(R.string.chat_mcp_count, activeMcpCount, mcpServers.size),
                             style = MaterialTheme.typography.labelMedium.copy(
                                 fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
                             ),
@@ -2950,7 +2961,7 @@ private fun SkillsAndMcpSheet(
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                "暂无可用的专精技能",
+                                stringResource(R.string.chat_no_skills),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -3040,7 +3051,7 @@ private fun SkillsAndMcpSheet(
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                "暂无已配置的 MCP 插件服务\n可在设置中心添加 STDIO 或 SSE 插件",
+                                stringResource(R.string.chat_no_mcp),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -3166,7 +3177,7 @@ private fun SkillsAndMcpSheet(
                             tint = MaterialTheme.colorScheme.primary,
                         )
                         Text(
-                            text = "管理全部智能体专精技能与 MCP 服务…",
+                            text = stringResource(R.string.chat_manage_capabilities),
                             style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                             color = MaterialTheme.colorScheme.primary,
                         )
@@ -3193,10 +3204,10 @@ private fun ReasoningEffortSlider(
     onClose: () -> Unit,
 ) {
     val levels = listOf(
-        Triple("关闭思考", "极速秒回，无思维链输出", "disabled" to null),
-        Triple("低推理强度", "轻量思考，快速响应日常任务", "enabled" to "low"),
-        Triple("中推理强度", "均衡推理，兼顾速度与深度", "enabled" to "medium"),
-        Triple("高推理强度", "极致深度，复杂架构与逆向分析", "enabled" to "high"),
+        Triple(stringResource(R.string.chat_reasoning_disabled), stringResource(R.string.chat_reasoning_disabled_description), "disabled" to null),
+        Triple(stringResource(R.string.chat_reasoning_low), stringResource(R.string.chat_reasoning_low_description), "enabled" to "low"),
+        Triple(stringResource(R.string.chat_reasoning_medium), stringResource(R.string.chat_reasoning_medium_description), "enabled" to "medium"),
+        Triple(stringResource(R.string.chat_reasoning_high), stringResource(R.string.chat_reasoning_high_description), "enabled" to "high"),
     )
 
     val currentIndex = when {
@@ -3314,10 +3325,10 @@ private fun ReasoningEffortSlider(
                         ) {
                             Text(
                                 text = when (index) {
-                                    0 -> "关闭"
-                                    1 -> "轻度"
-                                    2 -> "中度"
-                                    3 -> "深度"
+                                    0 -> stringResource(R.string.chat_depth_off)
+                                    1 -> stringResource(R.string.chat_depth_light)
+                                    2 -> stringResource(R.string.chat_depth_medium)
+                                    3 -> stringResource(R.string.chat_depth_deep)
                                     else -> ""
                                 },
                                 style = MaterialTheme.typography.labelSmall.copy(

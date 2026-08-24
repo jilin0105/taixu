@@ -28,7 +28,7 @@ class RuntimeForegroundService : Service() {
         super.onCreate()
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "Linux Runtime", NotificationManager.IMPORTANCE_LOW),
+            NotificationChannel(CHANNEL_ID, getString(R.string.taixu_runtime_notification_channel), NotificationManager.IMPORTANCE_LOW),
         )
     }
 
@@ -54,15 +54,15 @@ class RuntimeForegroundService : Service() {
     }
 
     private fun notification(): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-        .setSmallIcon(R.drawable.logo)
-        .setContentTitle("Linux Runtime 正在运行")
-        .setContentText("后台工具和本地服务保持可用")
+        .setSmallIcon(R.drawable.taixu_logo)
+        .setContentTitle(getString(R.string.taixu_runtime_running))
+        .setContentText(getString(R.string.taixu_runtime_background_available))
         .setOngoing(true)
         .setCategory(NotificationCompat.CATEGORY_SERVICE)
         .addAction(
             NotificationCompat.Action(
-                R.drawable.logo,
-                "停止",
+                R.drawable.taixu_logo,
+                getString(R.string.taixu_notification_stop),
                 PendingIntent.getService(
                     this,
                     1002,

@@ -7,6 +7,7 @@ plugins {
 
 android {
     namespace = "top.wkbin.taixu.core.network"
+    resourcePrefix = "network_"
     compileSdk = 37
     defaultConfig { minSdk = 29 }
     compileOptions {

@@ -330,6 +330,7 @@ class ToolManager @Inject constructor(
                             "apt-get" in step -> "正在安装 Android/开发套件系统依赖..."
                             "gradle" in step -> "正在部署并链接 Gradle 8.14.2 自动化构建环境..."
                             "setup_android_core" in step -> "正在部署 Android SDK 平台包与 Gradle 构建环境 (国内镜像加速)..."
+                            "termux_ndk" in step -> "正在下载、校验并原子装配 Linux AArch64 NDK..."
                             "jadx" in step -> "正在部署 JADX-CLI 源码反编译工具包..."
                             "android" in step -> "正在配置 Android SDK 官方开发工具链..."
                             "flutter" in step -> "正在拉取并配置 Flutter SDK 跨端开发环境..."
@@ -964,7 +965,7 @@ class ToolManager @Inject constructor(
         const val DEFAULT_STEP_TIMEOUT_MS = 10 * 60_000L
 
         /** 重型下载型脚本 (Android SDK 平台包 / Gradle / Flutter SDK / JADX) 的超时，与 GenericRecipeInstaller 对齐 */
-        const val HEAVY_SETUP_STEP_TIMEOUT_MS = 20 * 60_000L
+        const val HEAVY_SETUP_STEP_TIMEOUT_MS = 45 * 60_000L
         const val FLUTTER_DOWNLOAD_LOG_INTERVAL_MS = 2_000L
         const val MAX_BUNDLE_LOG_CHARS = 120 * 1024
         const val MAX_BUNDLE_LINE_CHARS = 8 * 1024

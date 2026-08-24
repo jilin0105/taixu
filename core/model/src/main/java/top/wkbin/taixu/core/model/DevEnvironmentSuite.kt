@@ -43,25 +43,25 @@ object BuiltinPluginBundles {
         PluginBundle(
             id = "android-suite",
             name = "Android & 移动全栈开发套件",
-            summary = "Gradle 8.9+、AAPT/ADB 与可选 Flutter、NDK、逆向审计",
-            description = "集成 OpenJDK 17、Gradle 8.9+、AAPT、ADB 与可选的 Flutter 跨端 SDK、C/C++ NDK 原生编译和 JADX/APKTool 逆向代码审计工具链。",
+            summary = "Gradle 8.14、ARM64 AAPT2/NDK 与可选 Flutter、逆向审计",
+            description = "集成 OpenJDK 17、Gradle 8.14.2、固定摘要的 ARM64 AAPT2 与 lzhiyong/termux-ndk，并提供可选 Flutter、C/C++ 和 JADX/APKTool 工具链。构建期禁止自动下载官方 x86_64 主机工具。",
             iconName = "Android",
             category = "移动开发",
             components = listOf(
                 PluginComponent(
                     id = "android-core",
                     name = "Android 核心基础环境",
-                    description = "OpenJDK 17、真实 Android 34 平台包 (android.jar)、Gradle 8.9、AAPT、ADB、apksigner 与阿里云 Maven 全局镜像加速，全部在装配期一次性就位",
+                    description = "OpenJDK 17、Android 34、Build Tools 35、Gradle 8.14.2、不可变 ARM64 AAPT2、lzhiyong NDK r29、ADB 与国内 Maven 镜像，全部在装配期一次性就位",
                     isRequired = true,
                     // aapt/zipalign/apksigner come from the downloaded Google
                     // Build-Tools archive. Installing Ubuntu's similarly named
                     // packages pulls GUI/D-Bus/OpenJDK 21 dependencies that
                     // are unnecessary and fragile inside PRoot.
-                    aptPackages = listOf("openjdk-17-jdk-headless", "ca-certificates-java", "adb", "curl", "ca-certificates"),
+                    aptPackages = listOf("openjdk-17-jdk-headless", "ca-certificates-java", "adb", "curl", "ca-certificates", "util-linux"),
                     postInstallSteps = listOf(
                         "/bin/sh /opt/taixu/scripts/setup_android_core.sh",
                     ),
-                    checkCommand = ". /etc/profile.d/taixu-android.sh 2>/dev/null || true; test -x \"${'$'}JAVA_HOME/bin/java\" && test -s \"${'$'}JAVA_HOME/conf/security/java.security\" && test -f \"${'$'}JAVA_HOME/conf/security/policy/unlimited/default_local.policy\" && test -s \"${'$'}JAVA_HOME/lib/security/cacerts\" && test -f /opt/android-sdk/platforms/android-34/android.jar && test -s /opt/android-sdk/licenses/android-sdk-license && test -f /opt/android-sdk/build-tools/34.0.0/source.properties && test -f /opt/android-sdk/build-tools/34.0.0/lib/d8.jar && (test -f /opt/gradle-8.14.2/lib/gradle-launcher-8.9.jar || command -v gradle) && test -x \"${'$'}{TAIXU_AAPT2_PATH:-/opt/taixu/android-sdk-tools/aapt2}\" && \"${'$'}{TAIXU_AAPT2_PATH:-/opt/taixu/android-sdk-tools/aapt2}\" version >/dev/null 2>&1",
+                    checkCommand = ". /etc/profile.d/taixu-android.sh 2>/dev/null || true; test -x \"${'$'}JAVA_HOME/bin/java\" && test -s \"${'$'}JAVA_HOME/conf/security/java.security\" && test -f \"${'$'}JAVA_HOME/conf/security/policy/unlimited/default_local.policy\" && test -s \"${'$'}JAVA_HOME/lib/security/cacerts\" && test -f /opt/android-sdk/platforms/android-34/android.jar && test -s /opt/android-sdk/licenses/android-sdk-license && test -f /opt/android-sdk/build-tools/35.0.0/source.properties && test -f /opt/android-sdk/build-tools/35.0.0/lib/d8.jar && test -f /opt/gradle-8.14.2/lib/gradle-launcher-8.14.2.jar && test -x \"${'$'}TAIXU_AAPT2_PATH\" && \"${'$'}TAIXU_AAPT2_PATH\" version >/dev/null 2>&1 && test -f \"${'$'}TAIXU_NDK_PATH/source.properties\" && test -x \"${'$'}TAIXU_NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip\" && \"${'$'}TAIXU_NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip\" --version >/dev/null 2>&1 && grep -Fqx \"android.aapt2FromMavenOverride=${'$'}TAIXU_AAPT2_PATH\" /root/.gradle/gradle.properties && grep -Fqx \"android.builder.sdkDownload=false\" /root/.gradle/gradle.properties && grep -Fq \"${'$'}TAIXU_NDK_PATH\" /root/.gradle/init.d/taixu-android-ndk.gradle",
                 ),
                 PluginComponent(
                     id = "flutter",
@@ -75,15 +75,18 @@ object BuiltinPluginBundles {
                     postInstallSteps = listOf(
                         "/bin/sh /opt/taixu/scripts/setup_flutter.sh",
                     ),
-                    checkCommand = "(command -v flutter || test -f /opt/flutter/bin/flutter) && test -f /opt/android-sdk/platforms/android-34/android.jar && test -f /opt/android-sdk/build-tools/34.0.0/aapt2",
+                    checkCommand = ". /etc/profile.d/taixu-android.sh 2>/dev/null || true; (command -v flutter || test -f /opt/flutter/bin/flutter) && test -f /opt/android-sdk/platforms/android-34/android.jar && test -f /opt/android-sdk/build-tools/35.0.0/lib/d8.jar && test -x \"${'$'}TAIXU_AAPT2_PATH\" && test -x \"${'$'}TAIXU_NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip\"",
                 ),
                 PluginComponent(
                     id = "android-ndk",
                     name = "C/C++ & NDK 原生构建链",
-                    description = "CMake、Ninja、GCC/G++、Clang 与本地高性能底层 C/C++ 交叉编译套件",
+                    description = "lzhiyong/termux-ndk r29 Linux AArch64 工具链，以及 CMake、Ninja、GCC/G++、Clang 等原生构建辅助工具",
                     isRequired = false,
-                    aptPackages = listOf("cmake", "ninja-build", "gcc", "g++", "clang", "make", "pkg-config"),
-                    checkCommand = "command -v cmake && (command -v gcc || command -v clang)",
+                    aptPackages = listOf("cmake", "ninja-build", "gcc", "g++", "clang", "make", "pkg-config", "util-linux"),
+                    postInstallSteps = listOf(
+                        "/bin/sh /opt/taixu/scripts/setup_termux_ndk.sh",
+                    ),
+                    checkCommand = ". /etc/profile.d/taixu-android.sh 2>/dev/null || . /opt/taixu/toolchains/android/ndk/taixu-ndk.env 2>/dev/null || true; command -v cmake && test -f \"${'$'}TAIXU_NDK_PATH/source.properties\" && test -x \"${'$'}TAIXU_NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/clang\" && test -x \"${'$'}TAIXU_NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip\" && \"${'$'}TAIXU_NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip\" --version >/dev/null 2>&1",
                 ),
                 PluginComponent(
                     id = "android-re",

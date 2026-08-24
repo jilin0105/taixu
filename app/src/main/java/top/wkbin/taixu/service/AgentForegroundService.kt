@@ -50,7 +50,7 @@ class AgentForegroundService : Service() {
         runCatching {
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Agent 执行", NotificationManager.IMPORTANCE_LOW),
+                NotificationChannel(CHANNEL_ID, getString(R.string.taixu_agent_notification_channel), NotificationManager.IMPORTANCE_LOW),
             )
         }.onFailure { Log.w(TAG, "创建通知渠道失败", it) }
     }
@@ -69,7 +69,7 @@ class AgentForegroundService : Service() {
                 return START_NOT_STICKY
             }
             else -> {
-                safeStartForeground(PRIMARY_NOTIFICATION_ID, placeholderNotification("智能体中枢就绪"))
+                safeStartForeground(PRIMARY_NOTIFICATION_ID, placeholderNotification(getString(R.string.taixu_agent_ready)))
                 acquireProcessLock()
                 if (!collecting) {
                     collecting = true
@@ -86,8 +86,8 @@ class AgentForegroundService : Service() {
                                 runningEntries.forEach { (sessionId, _) ->
                                     activeNotifSessionIds.add(sessionId)
                                     val notifId = sessionNotificationId(sessionId)
-                                    val sessionTitle = sessionDao.findById(sessionId)?.title ?: "智枢智能体"
-                                    val statusText = statuses[sessionId]?.takeIf { it.isNotBlank() } ?: STATUS_THINKING
+                                    val sessionTitle = sessionDao.findById(sessionId)?.title ?: getString(R.string.taixu_agent_default_title)
+                                    val statusText = statuses[sessionId]?.takeIf { it.isNotBlank() } ?: getString(R.string.taixu_agent_thinking)
                                     val notif = sessionNotification(sessionId, sessionTitle, statusText)
                                     safeNotify(notifId, notif)
                                 }
@@ -96,7 +96,7 @@ class AgentForegroundService : Service() {
                                 activeNotifSessionIds.clear()
                                 previouslyRunning.forEach { sessionId ->
                                     val notifId = sessionNotificationId(sessionId)
-                                    val sessionTitle = sessionDao.findById(sessionId)?.title ?: "智枢智能体"
+                                    val sessionTitle = sessionDao.findById(sessionId)?.title ?: getString(R.string.taixu_agent_default_title)
                                     safeNotify(notifId, completedNotification(sessionId, sessionTitle))
                                 }
                                 releaseProcessLock()
@@ -142,9 +142,9 @@ class AgentForegroundService : Service() {
 
     private fun placeholderNotification(status: String): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.logo)
+            .setSmallIcon(R.drawable.taixu_logo)
             .setContentTitle(status)
-            .setContentText("太墟 Agent 后台运行中")
+            .setContentText(getString(R.string.taixu_agent_background_running))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
@@ -161,16 +161,16 @@ class AgentForegroundService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.logo)
+            .setSmallIcon(R.drawable.taixu_logo)
             .setContentTitle("【$title】$status")
-            .setContentText("智能体后台运行中 · 进程锁已开启")
+            .setContentText(getString(R.string.taixu_agent_background_locked))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .addAction(
                 NotificationCompat.Action(
-                    R.drawable.logo,
-                    "停止",
+                    R.drawable.taixu_logo,
+                    getString(R.string.taixu_notification_stop),
                     stopPending,
                 ),
             )
@@ -190,17 +190,17 @@ class AgentForegroundService : Service() {
                 .putExtra(EXTRA_SESSION_ID, sessionId),
             flags,
         )
-        val remoteInput = RemoteInput.Builder(KEY_REPLY).setLabel("回复给 $title").build()
+        val remoteInput = RemoteInput.Builder(KEY_REPLY).setLabel(getString(R.string.taixu_notification_reply_to, title)).build()
         val replyAction = NotificationCompat.Action.Builder(
-            R.drawable.logo,
-            "回复",
+            R.drawable.taixu_logo,
+            getString(R.string.taixu_notification_reply),
             replyPending,
         ).addRemoteInput(remoteInput).build()
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.logo)
-            .setContentTitle("【$title】任务已完成")
-            .setContentText("点下方回复，交代下一步任务")
+            .setSmallIcon(R.drawable.taixu_logo)
+            .setContentTitle(getString(R.string.taixu_agent_task_completed, title))
+            .setContentText(getString(R.string.taixu_agent_next_task_hint))
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .addAction(replyAction)
@@ -231,7 +231,6 @@ class AgentForegroundService : Service() {
         private const val CHANNEL_ID = "agent-execution"
         private const val PRIMARY_NOTIFICATION_ID = 2001
         private const val TAG = "AgentForegroundService"
-        private const val STATUS_THINKING = "Agent 正在思考…"
         private const val WAKE_LOCK_TAG = "taixu:agent-execution"
         private const val LOCK_TIMEOUT_MS = 4 * 60 * 60 * 1000L
 

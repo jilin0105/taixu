@@ -7,6 +7,7 @@ plugins {
 
 android {
     namespace = "top.wkbin.taixu.runtime"
+    resourcePrefix = "runtime_"
     compileSdk = 37
 
     defaultConfig {

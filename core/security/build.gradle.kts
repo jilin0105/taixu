@@ -7,6 +7,7 @@
 
 android {
     namespace = "top.wkbin.taixu.core.security"
+    resourcePrefix = "security_"
     compileSdk = 37
     defaultConfig { minSdk = 29 }
     compileOptions {

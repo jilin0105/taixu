@@ -7,6 +7,7 @@
 
 android {
     namespace = "top.wkbin.taixu.core.database"
+    resourcePrefix = "database_"
     compileSdk = 37
     defaultConfig { minSdk = 29 }
     compileOptions {

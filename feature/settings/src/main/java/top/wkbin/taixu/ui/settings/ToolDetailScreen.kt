@@ -35,7 +35,7 @@ import top.wkbin.taixu.ui.components.RuntimeOutlinedButton as OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import top.wkbin.taixu.ui.components.RuntimeSwitch as Switch
-import androidx.compose.material3.Text
+import top.wkbin.taixu.ui.settings.LocalizedText as Text
 import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -280,9 +280,9 @@ private fun DetailToolAvatar(
     val key = toolId.lowercase().trim()
     val (logoRes, emoji, brandColor) = when {
         key.contains("claude") || key.contains("anthropic") ->
-            Triple(top.wkbin.taixu.feature.components.R.drawable.ic_provider_anthropic, null, Color(0xFFD97757))
+            Triple(top.wkbin.taixu.feature.components.R.drawable.components_ic_provider_anthropic, null, Color(0xFFD97757))
         key.contains("codex") || key.contains("openai") ->
-            Triple(top.wkbin.taixu.feature.components.R.drawable.ic_provider_openai, null, Color(0xFF10A37F))
+            Triple(top.wkbin.taixu.feature.components.R.drawable.components_ic_provider_openai, null, Color(0xFF10A37F))
         key.contains("openclaw") ->
             Triple(null, "🦞", Color(0xFFFF4757))
         key.contains("hermes") ->

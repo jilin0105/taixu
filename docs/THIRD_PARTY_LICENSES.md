@@ -9,6 +9,8 @@
 | `libandroid-shmem.so` / `libtalloc.so` | PRoot 动态库依赖 | 与 PRoot 构建匹配的 Termux 包 | 不能只因为文件是 `.so` 就假定可自由再分发；发布前核对上游包的许可证文本 |
 | `zstd-jni` | Android ARM64 `.tar.zst` 解压 | Maven Central，`1.5.5-4` AAR | 按上游 zstd-jni 的许可证和 NOTICE 分发 |
 | Node.js ARM64 Runtime | OpenClaw 需要的 Node 22 fallback | Node.js 官方 `v22.22.3` Linux ARM64 tar.xz，SHA-256 固定在 `RuntimeBinaryInstaller` | Node.js 官方许可证/NOTICE；在线下载，不内置 APK；发布前保留对应版权和源码获取信息 |
+| lzhiyong Android SDK Tools | ARM64 `aapt`、`aapt2`、`aidl`、`zipalign` | `35.0.2` 静态 AArch64 归档，URL 与 SHA-256 固定在 `setup_android_core.sh` | 在线下载、不内置 APK；发布前核对上游 Apache/AOSP LICENSE、NOTICE 与再分发要求 |
+| lzhiyong/termux-ndk | 沙箱内 Android/Flutter 项目的 Linux AArch64 NDK 主机工具链 | r29 / NDK `29.0.14206865`，`android-ndk-r29-aarch64.tar.xz`，SHA-256 固定在 `setup_termux_ndk.sh` | 在线下载、不内置 APK；上游基于 AOSP LLVM/NDK，发布前随固定版本核对 LICENSE、NOTICE、源码与修改说明 |
 | OkHttp | HTTPS 下载与 Registry 请求 | Maven Central，`4.12.0` | Apache License 2.0；发布包应包含 Apache 版权与 NOTICE 要求的文本 |
 | AndroidX / Jetpack Compose Material 3 | Android UI 与系统集成 | Google Maven，版本见 `gradle/libs.versions.toml` | 按各 AndroidX/Jetpack 组件的许可证与 NOTICE 要求分发 |
 | Ktor Client | HTTP 客户端（Agent 流式）与下载 | Maven Central，版本见 `gradle/libs.versions.toml` | Apache License 2.0 |

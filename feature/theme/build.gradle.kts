@@ -5,6 +5,7 @@
 
 android {
     namespace = "top.wkbin.taixu.feature.theme"
+    resourcePrefix = "theme_"
     compileSdk = 37
     defaultConfig { minSdk = 29 }
     buildFeatures { compose = true }

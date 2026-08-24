@@ -35,6 +35,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.stringResource
+import top.wkbin.taixu.feature.chat.R
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
@@ -140,14 +142,14 @@ private fun parseMarkdownBlocks(md: String): List<MdBlock> {
                 blocks.add(
                     MdRemoteMedia(
                         url = match.groupValues[2],
-                        description = match.groupValues[1].ifBlank { "网络图片" },
+                        description = match.groupValues[1],
                     ),
                 )
                 i++
             }
             standaloneWebUrlRegex.matches(line.trim()) -> {
                 val url = trimUrlPunctuation(line.trim())
-                blocks.add(MdRemoteMedia(url = url, description = "网络内容"))
+                blocks.add(MdRemoteMedia(url = url, description = ""))
                 i++
             }
             headingRegex.matches(line.trim()) -> {
@@ -321,7 +323,7 @@ private fun RemoteMediaBlock(block: MdRemoteMedia) {
     val uriHandler = LocalUriHandler.current
     val openSource = {
         runCatching { uriHandler.openUri(block.url) }
-            .onFailure { Toast.makeText(context, "无法打开该链接", Toast.LENGTH_SHORT).show() }
+            .onFailure { Toast.makeText(context, context.getString(R.string.chat_open_link_failed), Toast.LENGTH_SHORT).show() }
         Unit
     }
     val shape = RoundedCornerShape(12.dp)
@@ -340,7 +342,7 @@ private fun RemoteMediaBlock(block: MdRemoteMedia) {
                         .crossfade(true)
                         .build()
                 },
-                contentDescription = block.description,
+                contentDescription = block.description.ifBlank { stringResource(R.string.chat_web_content) },
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -370,7 +372,7 @@ private fun RemoteMediaBlock(block: MdRemoteMedia) {
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "图片加载失败，点击下方链接打开原地址",
+                            stringResource(R.string.chat_image_load_failed),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -409,8 +411,8 @@ private fun CodeBlock(block: MdCodeBlock) {
     val context = LocalContext.current
     val copyCode = {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("代码片段", block.code))
-        Toast.makeText(context, "已复制代码", Toast.LENGTH_SHORT).show()
+        clipboard.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.chat_code_clipboard_label), block.code))
+        Toast.makeText(context, context.getString(R.string.chat_code_copied), Toast.LENGTH_SHORT).show()
     }
 
     val highlightedText = remember(block.code, block.language) {
@@ -456,7 +458,7 @@ private fun CodeBlock(block: MdCodeBlock) {
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
-                            text = "复制",
+                            text = stringResource(R.string.chat_copy),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

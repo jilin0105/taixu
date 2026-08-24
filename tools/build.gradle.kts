@@ -7,6 +7,7 @@
 
 android {
     namespace = "top.wkbin.taixu.tools"
+    resourcePrefix = "tools_"
     compileSdk = 37
 
     defaultConfig {

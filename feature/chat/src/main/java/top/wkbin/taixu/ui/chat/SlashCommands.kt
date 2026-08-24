@@ -1,6 +1,8 @@
 package top.wkbin.taixu.ui.chat
 
 import top.wkbin.taixu.ui.components.RuntimeIconName
+import android.content.Context
+import top.wkbin.taixu.feature.chat.R
 
 data class SlashCommandItem(
     val command: String,
@@ -11,59 +13,95 @@ data class SlashCommandItem(
 )
 
 object SlashCommands {
-    val presetCommands = listOf(
-        SlashCommandItem(
+    private data class Preset(
+        val command: String,
+        val labelRes: Int,
+        val descriptionRes: Int,
+        val template: String,
+        val icon: RuntimeIconName,
+    )
+
+    private val presets = listOf(
+        Preset(
             command = "/run",
-            label = "运行代码",
-            description = "执行当前工作区的入口代码（如 python main.py / npm start）",
+            labelRes = R.string.chat_command_run,
+            descriptionRes = R.string.chat_command_run_description,
             template = "/run ",
             icon = RuntimeIconName.Play,
         ),
-        SlashCommandItem(
+        Preset(
             command = "/install",
-            label = "安装依赖",
-            description = "在 Debian 沙箱中安装系统或语言依赖（apt / pip / npm）",
+            labelRes = R.string.chat_command_install,
+            descriptionRes = R.string.chat_command_install_description,
             template = "/install ",
             icon = RuntimeIconName.Package,
         ),
-        SlashCommandItem(
+        Preset(
             command = "/init",
-            label = "初始化项目",
-            description = "创建新的项目骨架模板（Python, Node.js, C/C++, HTML）",
+            labelRes = R.string.chat_command_init,
+            descriptionRes = R.string.chat_command_init_description,
             template = "/init ",
             icon = RuntimeIconName.Plus,
         ),
-        SlashCommandItem(
+        Preset(
             command = "/git",
-            label = "Git 操作",
-            description = "查看状态、提交或拉取版本控制仓库",
+            labelRes = R.string.chat_command_git,
+            descriptionRes = R.string.chat_command_git_description,
             template = "/git status",
             icon = RuntimeIconName.Code,
         ),
-        SlashCommandItem(
+        Preset(
             command = "/test",
-            label = "运行测试",
-            description = "执行单元测试与代码验证",
+            labelRes = R.string.chat_command_test,
+            descriptionRes = R.string.chat_command_test_description,
             template = "/test ",
             icon = RuntimeIconName.Check,
         ),
-        SlashCommandItem(
+        Preset(
             command = "/clear",
-            label = "清空上下文",
-            description = "开启全新会话轮次，避免历史上下文过长",
+            labelRes = R.string.chat_command_clear,
+            descriptionRes = R.string.chat_command_clear_description,
             template = "/clear",
             icon = RuntimeIconName.Trash,
         ),
-        SlashCommandItem(
+        Preset(
             command = "/help",
-            label = "环境与帮助",
-            description = "查看当前 Linux PRoot 沙箱环境与 Agent 工具说明",
+            labelRes = R.string.chat_command_help,
+            descriptionRes = R.string.chat_command_help_description,
             template = "/help",
             icon = RuntimeIconName.Alert,
         ),
     )
 
-    fun filterCommands(query: String, activeSkills: List<top.wkbin.taixu.core.model.AgentSkill> = emptyList()): List<SlashCommandItem> {
+    /** Resource-independent command metadata for filtering and JVM tests. */
+    val presetCommands: List<SlashCommandItem> = presets.map { preset ->
+        SlashCommandItem(preset.command, "", "", preset.template, preset.icon)
+    }
+
+    fun presetCommands(context: Context): List<SlashCommandItem> = presets.map { preset ->
+        SlashCommandItem(
+            command = preset.command,
+            label = context.getString(preset.labelRes),
+            description = context.getString(preset.descriptionRes),
+            template = preset.template,
+            icon = preset.icon,
+        )
+    }
+
+    fun filterCommands(
+        query: String,
+        activeSkills: List<top.wkbin.taixu.core.model.AgentSkill> = emptyList(),
+    ): List<SlashCommandItem> = filterCommands(presetCommands, query, activeSkills)
+
+    fun filterCommands(context: Context, query: String, activeSkills: List<top.wkbin.taixu.core.model.AgentSkill> = emptyList()): List<SlashCommandItem> {
+        return filterCommands(presetCommands(context), query, activeSkills)
+    }
+
+    private fun filterCommands(
+        presetItems: List<SlashCommandItem>,
+        query: String,
+        activeSkills: List<top.wkbin.taixu.core.model.AgentSkill>,
+    ): List<SlashCommandItem> {
         val skillItems = activeSkills.mapNotNull { skill ->
             val cmd = skill.triggerCommand ?: return@mapNotNull null
             SlashCommandItem(
@@ -74,7 +112,7 @@ object SlashCommands {
                 icon = RuntimeIconName.Code,
             )
         }
-        val all = (skillItems + presetCommands).distinctBy { it.command }
+        val all = (skillItems + presetItems).distinctBy { it.command }
         val q = query.trim().removePrefix("/").lowercase()
         if (q.isEmpty()) return all
         return all.filter {

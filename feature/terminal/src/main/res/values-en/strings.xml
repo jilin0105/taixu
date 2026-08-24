@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="terminal_error_workspace_start">Unable to start the workspace terminal</string>
+    <string name="terminal_error_start">Unable to start the terminal</string>
+    <string name="terminal_error_create_session">Failed to create session</string>
+    <string name="terminal_error_close_session">Failed to close session</string>
+    <string name="terminal_clipboard_label">Terminal output</string>
+    <string name="terminal_copied">Terminal output copied</string>
+    <string name="terminal_project_title">Matrix · %1$s</string>
+    <string name="terminal_console_title">TaiXu · Matrix console</string>
+    <string name="terminal_copy">Copy</string>
+    <string name="terminal_paste">Paste</string>
+    <string name="terminal_starting">Starting the TaiXu Linux environment…</string>
+    <string name="terminal_reset_complete">Terminal reset and restarted</string>
+    <string name="terminal_default_label">Terminal %1$d</string>
+    <string name="terminal_quick_main">Main terminal</string>
+    <string name="terminal_quick_build">Background build</string>
+    <string name="terminal_quick_service">Service debugging</string>
+    <string name="terminal_quick_git">Git operations</string>
+    <string name="terminal_quick_python">Python environment</string>
+    <string name="terminal_new_session">New terminal session</string>
+    <string name="terminal_target_distribution">Target Linux distribution:</string>
+    <string name="terminal_label">Terminal label:</string>
+    <string name="terminal_label_hint">For example: Background build / Git operations</string>
+    <string name="terminal_initial_cwd">Initial working directory (CWD):</string>
+    <string name="terminal_root_directory">System root directory (/root)</string>
+    <string name="terminal_create">Create terminal</string>
+    <string name="terminal_cancel">Cancel</string>
+    <string name="terminal_sessions">Matrix terminal sessions</string>
+    <string name="terminal_active_sessions">%1$d active sessions</string>
+    <string name="terminal_only_session_hint">This is the only active terminal. Use the reset icon on the right to restart it.</string>
+    <string name="terminal_current">Current</string>
+    <string name="terminal_new">New terminal</string>
+    <string name="terminal_close">Close</string>
+</resources>

@@ -7,6 +7,7 @@
 
 android {
     namespace = "top.wkbin.taixu.core.common"
+    resourcePrefix = "common_"
     compileSdk = 37
     defaultConfig { minSdk = 29 }
     compileOptions {

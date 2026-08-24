@@ -58,6 +58,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
+import top.wkbin.taixu.feature.home.R
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.model.DoctorItem
@@ -102,7 +104,7 @@ fun HomeScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             RuntimeTopBar(
-                title = "太墟 · 运行仪表盘",
+                title = stringResource(R.string.home_dashboard_title),
                 statusText = "${metrics.linuxDistro} · ${metrics.cpuArch}",
                 actions = {
                     IconButton(onClick = {
@@ -161,7 +163,7 @@ fun HomeScreen(
 
             // 3. 核心指标看板 (Live Resource Metrics Grid)
             Text(
-                text = "系统资源监控",
+                text = stringResource(R.string.home_system_resources),
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                 color = MaterialTheme.colorScheme.onBackground,
             )
@@ -173,12 +175,12 @@ fun HomeScreen(
                 // 内存指标
                 ResourceMetricCard(
                     modifier = Modifier.weight(1f),
-                    title = "运行内存 (RAM)",
+                    title = stringResource(R.string.home_memory),
                     primaryValue = "${metrics.memoryUsedMb} MB",
-                    secondaryValue = "总量 ${metrics.memoryTotalMb} MB",
+                    secondaryValue = stringResource(R.string.home_memory_total, metrics.memoryTotalMb),
                     progress = (metrics.memoryUsagePercent / 100f).coerceIn(0f, 1f),
-                    progressText = "已占用 ${metrics.memoryUsagePercent}%",
-                    extraInfo = "App 堆: ${metrics.appHeapUsedMb} MB",
+                    progressText = stringResource(R.string.home_memory_used, metrics.memoryUsagePercent),
+                    extraInfo = stringResource(R.string.home_app_heap, metrics.appHeapUsedMb),
                     accentColor = MaterialTheme.colorScheme.primary,
                     icon = RuntimeIconName.Cpu,
                 )
@@ -186,12 +188,12 @@ fun HomeScreen(
                 // 存储指标
                 ResourceMetricCard(
                     modifier = Modifier.weight(1f),
-                    title = "沙箱存储 (Disk)",
+                    title = stringResource(R.string.home_storage),
                     primaryValue = "${metrics.storageUsedGb} GB",
-                    secondaryValue = "总空间 ${metrics.storageTotalGb} GB",
+                    secondaryValue = stringResource(R.string.home_storage_total, metrics.storageTotalGb),
                     progress = (metrics.storageUsagePercent / 100f).coerceIn(0f, 1f),
-                    progressText = "已使用 ${metrics.storageUsagePercent}%",
-                    extraInfo = "Rootfs 状态正常",
+                    progressText = stringResource(R.string.home_storage_used, metrics.storageUsagePercent),
+                    extraInfo = stringResource(R.string.home_rootfs_healthy),
                     accentColor = MaterialTheme.colorScheme.secondary,
                     icon = RuntimeIconName.Storage,
                 )
@@ -275,18 +277,18 @@ private fun EnvironmentDoctorCard(
                     }
                     Column(Modifier.weight(1f)) {
                         Text(
-                            text = "环境体检与自愈中心",
+                            text = stringResource(R.string.home_doctor_title),
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         Text(
                             text = when {
-                                isRepairing -> "正在执行环境自愈与加速..."
-                                isChecking -> "正在全面体检沙箱环境..."
-                                report == null -> if (runtimeReady) "沙箱就绪 · 点击体检" else "等待沙箱就绪"
-                                report.isAllHealthy -> "全功能开发就绪 · 体验最佳"
-                                report.needsFix -> "${report.warningCount + report.errorCount} 项待就绪 · 点击展开"
-                                else -> "体检完成"
+                                isRepairing -> stringResource(R.string.home_doctor_repairing)
+                                isChecking -> stringResource(R.string.home_doctor_checking)
+                                report == null -> stringResource(if (runtimeReady) R.string.home_doctor_ready else R.string.home_waiting_sandbox)
+                                report.isAllHealthy -> stringResource(R.string.home_development_ready)
+                                report.needsFix -> stringResource(R.string.home_doctor_pending, report.warningCount + report.errorCount)
+                                else -> stringResource(R.string.home_doctor_complete)
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = if (report?.needsFix == true && !isCardExpanded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -354,7 +356,7 @@ private fun EnvironmentDoctorCard(
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
-                                        text = "[步骤 ${repairProgress.stepIndex}/${repairProgress.totalSteps}] ${repairProgress.stepTitle}",
+                                        text = stringResource(R.string.home_repair_step, repairProgress.stepIndex, repairProgress.totalSteps, repairProgress.stepTitle),
                                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                                         color = MaterialTheme.colorScheme.onSurface,
                                         modifier = Modifier.weight(1f),
@@ -390,7 +392,7 @@ private fun EnvironmentDoctorCard(
                                         contentPadding = PaddingValues(horizontal = 4.dp),
                                     ) {
                                         Text(
-                                            text = if (showLogs) "收起执行日志" else "查看实时日志 (${repairProgress.logs.size})",
+                                            text = if (showLogs) stringResource(R.string.home_hide_logs) else stringResource(R.string.home_view_live_logs, repairProgress.logs.size),
                                             style = MaterialTheme.typography.labelSmall,
                                         )
                                     }
@@ -399,7 +401,7 @@ private fun EnvironmentDoctorCard(
                                         onClick = onCancelRepair,
                                         contentPadding = PaddingValues(horizontal = 4.dp),
                                     ) {
-                                        Text("取消修复", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                                        Text(stringResource(R.string.home_cancel_repair), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
                                     }
                                 }
 
@@ -448,7 +450,7 @@ private fun EnvironmentDoctorCard(
                                     modifier = Modifier.align(Alignment.CenterHorizontally),
                                 ) {
                                     Text(
-                                        text = if (expandedDetails) "收起体检详情" else "查看全部 ${report.items.size} 项体检指标",
+                                        text = if (expandedDetails) stringResource(R.string.home_hide_details) else stringResource(R.string.home_view_checks, report.items.size),
                                         style = MaterialTheme.typography.labelSmall,
                                     )
                                 }
@@ -468,7 +470,7 @@ private fun EnvironmentDoctorCard(
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Text(
-                                    text = "一键自愈修复",
+                                    text = stringResource(R.string.home_repair),
                                     fontWeight = FontWeight.SemiBold,
                                 )
                             }
@@ -488,7 +490,7 @@ private fun EnvironmentDoctorCard(
                                     tint = Color(0xFF2E7D32),
                                 )
                                 Text(
-                                    text = "环境配置完善，已满足 Claude Code / OpenClaw 等 AI 工具运行要求",
+                                    text = stringResource(R.string.home_environment_ready_description),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = Color(0xFF2E7D32),
                                 )
@@ -496,7 +498,7 @@ private fun EnvironmentDoctorCard(
                         }
                     } else if (!runtimeReady) {
                         Text(
-                            text = "请先初始化并启动沙箱，太墟将自动体检 DNS、国内镜像加速源与核心开发工具链。",
+                            text = stringResource(R.string.home_initialize_description),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -640,10 +642,10 @@ private fun RuntimeEngineStatusCard(
                     Column {
                         Text(
                             text = when {
-                                ready -> "Linux 沙箱引擎 · 已就绪"
-                                error -> "沙箱引擎异常"
-                                initializing != null -> "正在初始化沙箱环境..."
-                                else -> "沙箱环境未初始化"
+                                ready -> stringResource(R.string.home_runtime_ready)
+                                error -> stringResource(R.string.home_runtime_error)
+                                initializing != null -> stringResource(R.string.home_runtime_initializing)
+                                else -> stringResource(R.string.home_runtime_uninitialized)
                             },
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                             color = MaterialTheme.colorScheme.onSurface,
@@ -679,7 +681,7 @@ private fun RuntimeEngineStatusCard(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        text = "切换系统:",
+                        text = stringResource(R.string.home_switch_system),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier
@@ -715,7 +717,7 @@ private fun RuntimeEngineStatusCard(
                             ) {
                                 RuntimeIcon(distroIconFor(d.id), Modifier.size(13.dp))
                                 Text(
-                                    text = if (isSelected && switchingDistro) "切换中…" else d.displayName,
+                                    text = if (isSelected && switchingDistro) stringResource(R.string.home_switching) else d.displayName,
                                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal),
                                     color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -752,7 +754,7 @@ private fun RuntimeEngineStatusCard(
                             onClick = onCancel,
                             modifier = Modifier.padding(start = 8.dp),
                         ) {
-                            Text("取消", style = MaterialTheme.typography.labelSmall)
+                            Text(stringResource(R.string.home_cancel), style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
@@ -760,7 +762,7 @@ private fun RuntimeEngineStatusCard(
 
             if (state is RuntimeState.Error) {
                 NoticeBanner(
-                    text = state.throwable.message ?: "沙箱引擎发生错误",
+                    text = state.throwable.message ?: stringResource(R.string.home_runtime_error_fallback),
                     isError = true,
                 )
             }
@@ -781,7 +783,7 @@ private fun RuntimeEngineStatusCard(
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(Modifier.width(8.dp))
-                        Text("进入控制台", fontWeight = FontWeight.SemiBold)
+                        Text(stringResource(R.string.home_open_console), fontWeight = FontWeight.SemiBold)
                     }
                 } else if (initializing == null) {
                     RuntimeButton(
@@ -794,7 +796,7 @@ private fun RuntimeEngineStatusCard(
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(Modifier.width(8.dp))
-                        Text(if (error) "重试初始化" else "立即初始化沙箱", fontWeight = FontWeight.SemiBold)
+                        Text(stringResource(if (error) R.string.home_retry_initialization else R.string.home_initialize_now), fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -875,7 +877,7 @@ private fun ResourceMetricCard(
             )
 
             Text(
-                text = if (progress >= 0.9f) "$extraInfo · 建议清理" else extraInfo,
+                text = if (progress >= 0.9f) stringResource(R.string.home_cleanup_recommended, extraInfo) else extraInfo,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -926,12 +928,12 @@ private fun ActiveTasksStatusCard(
 
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
-                        text = "${metrics.activeProcessCount} 个活跃后台进程",
+                        text = stringResource(R.string.home_active_processes, metrics.activeProcessCount),
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        text = "持续运行: ${metrics.uptimeFormatted} · 包含终端与伴侣服务",
+                        text = stringResource(R.string.home_uptime, metrics.uptimeFormatted),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -945,7 +947,7 @@ private fun ActiveTasksStatusCard(
                 tonal = true,
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
             ) {
-                Text("查看", style = MaterialTheme.typography.labelSmall)
+                Text(stringResource(R.string.home_view), style = MaterialTheme.typography.labelSmall)
             }
         }
     }
@@ -966,15 +968,15 @@ private fun SystemSpecsCard(metrics: SystemResourceMetrics) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                text = "环境与规格详情",
+                text = stringResource(R.string.home_environment_details),
                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                 color = MaterialTheme.colorScheme.onSurface,
             )
 
-            SpecRow(label = "CPU 架构体系", value = metrics.cpuArch)
-            SpecRow(label = "宿主系统版本", value = metrics.hostAndroidVersion)
-            SpecRow(label = "沙箱运行引擎", value = metrics.engineVersion)
-            SpecRow(label = "Guest OS 发行版", value = metrics.linuxDistro)
+            SpecRow(label = stringResource(R.string.home_cpu_architecture), value = metrics.cpuArch)
+            SpecRow(label = stringResource(R.string.home_host_os), value = metrics.hostAndroidVersion)
+            SpecRow(label = stringResource(R.string.home_runtime_engine), value = metrics.engineVersion)
+            SpecRow(label = stringResource(R.string.home_guest_os), value = metrics.linuxDistro)
         }
     }
 }

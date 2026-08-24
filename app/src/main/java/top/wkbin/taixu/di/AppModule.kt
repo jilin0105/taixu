@@ -3,6 +3,7 @@ package top.wkbin.taixu.di
 import android.content.Context
 import androidx.room.Room
 import top.wkbin.taixu.core.database.AppDatabase
+import top.wkbin.taixu.core.database.MIGRATION_27_28
 import top.wkbin.taixu.core.database.ToolDao
 import top.wkbin.taixu.core.database.InstallLogDao
 import top.wkbin.taixu.core.database.InstallTaskDao
@@ -63,8 +64,8 @@ object AppModule {
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase {
-        // 未发布阶段：不做任何历史数据迁移，schema 变更直接破坏性重建数据库。
         return Room.databaseBuilder(context, AppDatabase::class.java, "taixu.db")
+            .addMigrations(MIGRATION_27_28)
             .fallbackToDestructiveMigration()
             .build()
     }

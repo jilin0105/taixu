@@ -12,6 +12,18 @@ GRADLE_VER="8.14.2"
 echo "==> [TaiXu Build Engine] 启动 Flutter 项目跨端编译..."
 echo "==> [TaiXu Build] 项目路径: $PROJECT_PATH"
 
+TOOLCHAIN_LOCK_FILE="/opt/taixu/locks/android-toolchain.lock"
+mkdir -p /opt/taixu/locks
+command -v flock >/dev/null 2>&1 || {
+    echo "==> [TaiXu Build] ❌ 缺少 flock，拒绝在无工具链锁的情况下构建"
+    exit 1
+}
+exec 9>"$TOOLCHAIN_LOCK_FILE"
+flock -s -w 1800 9 || {
+    echo "==> [TaiXu Build] ❌ Android/Flutter 工具链正在装配，等待超时"
+    exit 1
+}
+
 # 1. 注入 Flutter 与 Gradle PATH (优先加载插件装配期固化的环境变量)
 if [ -f /etc/profile.d/taixu-android.sh ]; then
     . /etc/profile.d/taixu-android.sh
@@ -22,40 +34,26 @@ export ANDROID_SDK_ROOT="$ANDROID_HOME"
 export PUB_HOSTED_URL="https://pub.flutter-io.cn"
 export FLUTTER_STORAGE_BASE_URL="https://storage.flutter-io.cn"
 export PUB_CACHE="${PUB_CACHE:-/opt/taixu/cache/flutter-pub}"
-
-# Wire the native ARM64 llvm-strip into every installed NDK. AGP derives the
-# executable path from the NDK host tag (linux-x86_64), even on ARM64; a small
-# shell shim at that path lets it invoke the real ARM64 LLVM binary.
-LLVM_STRIP="${TAIXU_LLVM_STRIP_PATH:-/opt/taixu/android-sdk-tools/llvm/llvm-strip}"
-if [ ! -x "$LLVM_STRIP" ]; then
-    LLVM_STRIP="$(command -v llvm-strip 2>/dev/null || true)"
-fi
-if [ -z "$LLVM_STRIP" ] || [ ! -x "$LLVM_STRIP" ]; then
-    echo "==> [TaiXu Build] 正在补装 ARM64 llvm-strip..."
-    (DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null 2>&1 && \
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends llvm >/dev/null 2>&1) || true
-    LLVM_STRIP="$(command -v llvm-strip 2>/dev/null || true)"
-fi
-if [ -z "$LLVM_STRIP" ] || [ ! -x "$LLVM_STRIP" ]; then
-    echo "==> [TaiXu Build] ❌ 未找到可执行的 ARM64 llvm-strip，拒绝生成带完整调试符号的超大 APK"
+NDK_PATH="${TAIXU_NDK_PATH:-}"
+LLVM_STRIP="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+NDK_CLANG="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+if [ -z "$NDK_PATH" ] || [ ! -f "$NDK_PATH/source.properties" ] || \
+   [ ! -x "$LLVM_STRIP" ] || [ ! -x "$NDK_CLANG" ]; then
+    echo "==> [TaiXu Build] ❌ 固定 ARM64 NDK 未就位，请重新装配 Android 核心基础环境"
     exit 126
 fi
-LLVM_STRIP="$(readlink -f "$LLVM_STRIP" 2>/dev/null || echo "$LLVM_STRIP")"
-mkdir -p /opt/taixu/android-sdk-tools/llvm
-ln -sf "$LLVM_STRIP" /opt/taixu/android-sdk-tools/llvm/llvm-strip
-LLVM_STRIP=/opt/taixu/android-sdk-tools/llvm/llvm-strip
-for ndk_dir in "$ANDROID_HOME"/ndk/*; do
-    [ -d "$ndk_dir" ] || continue
-    ndk_strip_dir="$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin"
-    mkdir -p "$ndk_strip_dir"
-    ndk_strip="$ndk_strip_dir/llvm-strip"
-    if [ ! -x "$ndk_strip" ] || [ "$(readlink "$ndk_strip" 2>/dev/null || true)" != "$LLVM_STRIP" ]; then
-        rm -f "$ndk_strip"
-        ln -sf "$LLVM_STRIP" "$ndk_strip"
-    fi
-done
+STRIP_MACHINE=$(od -An -tu2 -j18 -N2 "$LLVM_STRIP" 2>/dev/null | tr -d '[:space:]')
+CLANG_MACHINE=$(od -An -tu2 -j18 -N2 "$NDK_CLANG" 2>/dev/null | tr -d '[:space:]')
+if [ "$STRIP_MACHINE" != "183" ] || [ "$CLANG_MACHINE" != "183" ] || \
+   ! "$LLVM_STRIP" --version >/dev/null 2>&1 || \
+   ! "$NDK_CLANG" --version >/dev/null 2>&1; then
+    echo "==> [TaiXu Build] ❌ NDK 主机工具不是可执行的 Linux AArch64 制品"
+    exit 126
+fi
+export ANDROID_NDK_HOME="$NDK_PATH"
+export ANDROID_NDK_ROOT="$NDK_PATH"
 export TAIXU_LLVM_STRIP_PATH="$LLVM_STRIP"
-echo "==> [TaiXu Build] 使用 ARM64 llvm-strip: $LLVM_STRIP"
+echo "==> [TaiXu Build] 固定 ARM64 NDK: $NDK_PATH"
 
 # 2. 自愈软链接
 if [ -d /opt/flutter/bin ] && [ ! -f /usr/local/bin/flutter ]; then
@@ -77,8 +75,8 @@ if [ ! -f "${ANDROID_HOME}/platforms/android-34/android.jar" ]; then
     echo "==> [TaiXu Build] ❌ 缺少 Android SDK Platform 34，请同时安装 Android 核心基础环境"
     exit 126
 fi
-if [ ! -x "${ANDROID_HOME}/build-tools/34.0.0/aapt2" ]; then
-    echo "==> [TaiXu Build] ❌ 缺少 Android Build-Tools 34，请重新装配 Android 核心基础环境"
+if [ ! -f "${ANDROID_HOME}/build-tools/35.0.0/lib/d8.jar" ]; then
+    echo "==> [TaiXu Build] ❌ 缺少 Android Build-Tools 35.0.0，请重新装配 Android 核心基础环境"
     exit 126
 fi
 
@@ -115,27 +113,45 @@ fi
 
 mkdir -p "$PUB_CACHE" android
 if [ -f /opt/flutter/bin/flutter ]; then
-    printf 'sdk.dir=%s\nflutter.sdk=/opt/flutter\n' "$ANDROID_HOME" > android/local.properties
+    LOCAL_PROPERTIES=android/local.properties
+    LOCAL_PROPERTIES_TMP="${LOCAL_PROPERTIES}.taixu.tmp"
+    if [ -f "$LOCAL_PROPERTIES" ]; then
+        sed -e '/^[[:space:]]*sdk\.dir[[:space:]]*=/d' \
+            -e '/^[[:space:]]*ndk\.dir[[:space:]]*=/d' \
+            -e '/^[[:space:]]*flutter\.sdk[[:space:]]*=/d' \
+            "$LOCAL_PROPERTIES" > "$LOCAL_PROPERTIES_TMP"
+    else
+        : > "$LOCAL_PROPERTIES_TMP"
+    fi
+    printf 'sdk.dir=%s\nndk.dir=%s\nflutter.sdk=/opt/flutter\n' "$ANDROID_HOME" "$NDK_PATH" >> "$LOCAL_PROPERTIES_TMP"
+    mv -f "$LOCAL_PROPERTIES_TMP" "$LOCAL_PROPERTIES"
 fi
 AAPT2_PATH="${TAIXU_AAPT2_PATH:-}"
-if [ -z "$AAPT2_PATH" ] || [ ! -x "$AAPT2_PATH" ]; then
-    for candidate in \
-        "/opt/taixu/android-sdk-tools/aapt2" \
-        "/opt/taixu/android-sdk-tools/35.0.2/build-tools/aapt2" \
-        "/usr/local/bin/aapt2" \
-        "/usr/bin/aapt2"; do
-        if [ -x "$candidate" ]; then
-            AAPT2_PATH="$candidate"
-            break
-        fi
-    done
-    if [ -n "$AAPT2_PATH" ] && [ -x "$AAPT2_PATH" ]; then
-        export ORG_GRADLE_PROJECT_android_aapt2FromMavenOverride="$AAPT2_PATH"
-        echo "==> [TaiXu Build] 使用 ARM64 原生 AAPT2: $AAPT2_PATH"
-    fi
-elif [ -x "$AAPT2_PATH" ]; then
+case "$AAPT2_PATH" in
+    /opt/taixu/toolchains/android/sdk-tools/artifacts/*/build-tools/aapt2) ;;
+    *)
+        echo "==> [TaiXu Build] ❌ AAPT2 未指向不可变 ARM64 制品目录"
+        exit 126
+        ;;
+esac
+AAPT2_MACHINE=$(od -An -tu2 -j18 -N2 "$AAPT2_PATH" 2>/dev/null | tr -d '[:space:]')
+if [ "$AAPT2_MACHINE" = "183" ] && [ -x "$AAPT2_PATH" ] && \
+   "$AAPT2_PATH" version >/dev/null 2>&1; then
     export ORG_GRADLE_PROJECT_android_aapt2FromMavenOverride="$AAPT2_PATH"
     echo "==> [TaiXu Build] 使用 ARM64 原生 AAPT2: $AAPT2_PATH"
+else
+    echo "==> [TaiXu Build] ❌ 固定 ARM64 AAPT2 在构建启动前失效"
+    exit 126
+fi
+
+if ! grep -Fqx 'android.builder.sdkDownload=false' /root/.gradle/gradle.properties 2>/dev/null; then
+    echo "==> [TaiXu Build] ❌ Gradle SDK 自动下载未禁用，拒绝构建以防官方 x86_64 工具覆盖"
+    exit 126
+fi
+if [ ! -f /root/.gradle/init.d/taixu-android-ndk.gradle ] || \
+   ! grep -Fq "$NDK_PATH" /root/.gradle/init.d/taixu-android-ndk.gradle; then
+    echo "==> [TaiXu Build] ❌ 固定 NDK 路径注入缺失"
+    exit 126
 fi
 
 export GRADLE_OPTS="${GRADLE_OPTS:-} -Dorg.gradle.jvmargs=-Xmx1024m"

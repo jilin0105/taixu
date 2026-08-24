@@ -8,6 +8,7 @@ plugins {
 
 android {
     namespace = "top.wkbin.taixu.feature.terminal"
+    resourcePrefix = "terminal_"
     compileSdk = 37
     defaultConfig { minSdk = 29 }
     buildFeatures { compose = true }

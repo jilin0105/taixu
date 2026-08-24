@@ -77,6 +77,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
+import top.wkbin.taixu.feature.terminal.R
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -169,8 +171,8 @@ fun TerminalScreen(
         }
         if (text.isNotBlank()) {
             (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-                .setPrimaryClip(ClipData.newPlainText("终端输出", text))
-            Toast.makeText(context, "已复制终端内容", Toast.LENGTH_SHORT).show()
+                .setPrimaryClip(ClipData.newPlainText(context.getString(R.string.terminal_clipboard_label), text))
+            Toast.makeText(context, context.getString(R.string.terminal_copied), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -275,7 +277,7 @@ fun TerminalScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             RuntimeTopBar(
-                title = if (project.isNotBlank()) "矩阵 · $project" else "太墟 · 矩阵控制台",
+                title = if (project.isNotBlank()) stringResource(R.string.terminal_project_title, project) else stringResource(R.string.terminal_console_title),
                 onBack = navigateBack,
                 statusText = "$distributionName · PRoot",
             ) {
@@ -329,7 +331,7 @@ fun TerminalScreen(
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
-                                "复制",
+                                stringResource(R.string.terminal_copy),
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(4.dp))
                                     .clickable(onClick = copyScreen)
@@ -338,7 +340,7 @@ fun TerminalScreen(
                                 color = termTextDefault.copy(alpha = 0.6f),
                             )
                             Text(
-                                "粘贴",
+                                stringResource(R.string.terminal_paste),
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(4.dp))
                                     .clickable(onClick = pasteToTerminal)
@@ -392,7 +394,7 @@ fun TerminalScreen(
                                 fontFamily = FontFamily.Monospace,
                             )
                             screen.isEmpty() || screen.all { it.cells.isEmpty() } -> Text(
-                                "启动太墟 Linux 环境中…",
+                                stringResource(R.string.terminal_starting),
                                 Modifier.padding(12.dp),
                                 color = TermDimText,
                                 fontFamily = FontFamily.Monospace,
@@ -524,7 +526,7 @@ fun TerminalScreen(
             onClose = { id ->
                 viewModel.closeSession(id)
                 if (handles.size == 1) {
-                    Toast.makeText(context, "已重置并重启终端", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, context.getString(R.string.terminal_reset_complete), Toast.LENGTH_SHORT).show()
                 }
             },
         )
@@ -552,17 +554,24 @@ private fun CreateTerminalDialog(
     onDismiss: () -> Unit,
     onCreate: (label: String, workingDirectory: String, distroId: String?) -> Unit,
 ) {
-    var label by remember { mutableStateOf("终端 $nextSessionIndex") }
+    val defaultLabel = stringResource(R.string.terminal_default_label, nextSessionIndex)
+    var label by remember(nextSessionIndex) { mutableStateOf(defaultLabel) }
     var selectedDir by remember { mutableStateOf("/root") }
     var selectedDistroId by remember { mutableStateOf(installedDistros.firstOrNull { it.isActive }?.id ?: installedDistros.firstOrNull()?.id ?: "ubuntu") }
-    val quickLabels = listOf("主终端", "后台构建", "服务调试", "Git运维", "Python环境")
+    val quickLabels = listOf(
+        stringResource(R.string.terminal_quick_main),
+        stringResource(R.string.terminal_quick_build),
+        stringResource(R.string.terminal_quick_service),
+        stringResource(R.string.terminal_quick_git),
+        stringResource(R.string.terminal_quick_python),
+    )
 
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 RuntimeIcon(RuntimeIconName.Terminal, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-                Text("新建终端会话", fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.terminal_new_session), fontWeight = FontWeight.Bold)
             }
         },
         text = {
@@ -573,7 +582,7 @@ private fun CreateTerminalDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 if (installedDistros.size > 1) {
-                    Text("目标 Linux 发行版：", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.terminal_target_distribution), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -602,11 +611,11 @@ private fun CreateTerminalDialog(
                     androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 }
 
-                Text("终端标签名称：", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.terminal_label), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                 androidx.compose.material3.OutlinedTextField(
                     value = label,
                     onValueChange = { label = it },
-                    placeholder = { Text("例如：后台构建 / Git 运维") },
+                    placeholder = { Text(stringResource(R.string.terminal_label_hint)) },
                     singleLine = true,
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.fillMaxWidth(),
@@ -641,7 +650,7 @@ private fun CreateTerminalDialog(
 
                 androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-                Text("初始工作目录 (CWD)：", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.terminal_initial_cwd), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
 
                 LazyColumn(
                     modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
@@ -649,7 +658,7 @@ private fun CreateTerminalDialog(
                 ) {
                     item {
                         TerminalDirOption(
-                            name = "系统根主目录 (/root)",
+                            name = stringResource(R.string.terminal_root_directory),
                             path = "/root",
                             selected = selectedDir == "/root",
                             onSelect = { selectedDir = "/root" },
@@ -669,14 +678,14 @@ private fun CreateTerminalDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onCreate(label.ifBlank { "终端 $nextSessionIndex" }, selectedDir, selectedDistroId) },
+                onClick = { onCreate(label.ifBlank { defaultLabel }, selectedDir, selectedDistroId) },
                 shape = RoundedCornerShape(8.dp),
             ) {
-                Text("创建终端")
+                Text(stringResource(R.string.terminal_create))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.terminal_cancel)) }
         },
     )
 }
@@ -736,14 +745,14 @@ private fun SessionListDialog(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     RuntimeIcon(RuntimeIconName.Terminal, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-                    Text("矩阵终端会话", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.terminal_sessions), fontWeight = FontWeight.Bold)
                 }
                 Surface(
                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
                     shape = RoundedCornerShape(6.dp),
                 ) {
                     Text(
-                        "${handles.size} 个活动会话",
+                        stringResource(R.string.terminal_active_sessions, handles.size),
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
@@ -771,7 +780,7 @@ private fun SessionListDialog(
                         ) {
                             RuntimeIcon(RuntimeIconName.Alert, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
                             Text(
-                                "当前为唯一活动终端，点击右侧重置图标将重启该会话",
+                                stringResource(R.string.terminal_only_session_hint),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -834,7 +843,7 @@ private fun SessionListDialog(
                                                 shape = RoundedCornerShape(4.dp),
                                             ) {
                                                 Text(
-                                                    "当前",
+                                                    stringResource(R.string.terminal_current),
                                                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                                                     color = Color(0xFF00F0FF),
                                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
@@ -873,12 +882,12 @@ private fun SessionListDialog(
             Button(onClick = onCreate, shape = RoundedCornerShape(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     RuntimeIcon(RuntimeIconName.Plus, Modifier.size(16.dp), MaterialTheme.colorScheme.onPrimary)
-                    Text("新建终端")
+                    Text(stringResource(R.string.terminal_new))
                 }
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("关闭") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.terminal_close)) }
         },
     )
 }

@@ -7,7 +7,7 @@ plugins {
 android {
     namespace "{{packageName}}"
     compileSdk 34
-    buildToolsVersion "34.0.0"
+    buildToolsVersion "35.0.0"
 
     defaultConfig {
         applicationId "{{packageName}}"
@@ -27,13 +27,6 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
-    // Flutter 引擎走 prefab + CMake 原生构建；默认 CMake 3.22.1 只有 linux-x86_64
-    // 二进制，在 ARM64 PRoot 里跑不起来。3.31.0 起提供 Linux-aarch64 二进制。
-    externalNativeBuild {
-        cmake {
-            version "3.31.0"
-        }
-    }
 }
 
 flutter { source "../.." }

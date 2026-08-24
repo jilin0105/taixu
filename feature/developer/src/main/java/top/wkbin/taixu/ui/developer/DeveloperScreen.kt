@@ -23,7 +23,7 @@ import top.wkbin.taixu.ui.components.RuntimeOutlinedButton as OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import top.wkbin.taixu.ui.components.RuntimeSwitch as Switch
-import androidx.compose.material3.Text
+import top.wkbin.taixu.ui.developer.LocalizedText as Text
 import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue

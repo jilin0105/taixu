@@ -18,6 +18,9 @@ import top.wkbin.taixu.runtime.terminal.TerminalLine
 import top.wkbin.taixu.runtime.terminal.TerminalSessionHandle
 import top.wkbin.taixu.runtime.terminal.TerminalSessionManager
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import android.content.Context
+import top.wkbin.taixu.feature.terminal.R
 import javax.inject.Inject
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,6 +36,7 @@ import kotlinx.coroutines.launch
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class TerminalViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val terminalManager: TerminalSessionManager,
     private val workspaceManager: WorkspaceManager,
     private val settingsDataStore: TerminalPreferences,
@@ -112,11 +116,11 @@ class TerminalViewModel @Inject constructor(
                 val workingDirectory = runCatching { workspaceManager.linuxWorkingDirectory(project) }.getOrNull() ?: "/root"
                 runCatching {
                     terminalManager.openOrSwitchToProject(project, workingDirectory)
-                }.onFailure { _error.value = it.message ?: "无法启动工作区终端" }
+                }.onFailure { _error.value = it.message ?: context.getString(R.string.terminal_error_workspace_start) }
             } else {
                 runCatching {
                     terminalManager.ensureActive("/root")
-                }.onFailure { _error.value = it.message ?: "无法启动终端" }
+                }.onFailure { _error.value = it.message ?: context.getString(R.string.terminal_error_start) }
             }
         }
     }
@@ -203,7 +207,7 @@ class TerminalViewModel @Inject constructor(
                     workingDirectory = workingDirectory.trim().ifBlank { "/root" },
                     distributionId = targetDistro,
                 )
-            }.onFailure { _error.value = it.message ?: "新建会话失败" }
+            }.onFailure { _error.value = it.message ?: context.getString(R.string.terminal_error_create_session) }
         }
     }
 
@@ -212,7 +216,7 @@ class TerminalViewModel @Inject constructor(
     fun closeSession(id: String) {
         viewModelScope.launch {
             runCatching { terminalManager.closeSession(id) }
-                .onFailure { _error.value = it.message ?: "关闭会话失败" }
+                .onFailure { _error.value = it.message ?: context.getString(R.string.terminal_error_close_session) }
         }
     }
 

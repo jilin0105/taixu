@@ -232,6 +232,10 @@ data class ModelConfig(
     val model: String,
     val baseUrl: String,
     val apiKey: String?,
+    /** 同一接口地址下参与轮询的 Key 池；为空时兼容使用 [apiKey]。 */
+    val apiKeys: List<String> = emptyList(),
+    /** 单 Key 每分钟请求上限；0 表示不限。 */
+    val requestsPerMinutePerKey: Int = 0,
     /** 接入协议：OPENAI 兼容或 Anthropic Messages API。 */
     val protocol: ApiProtocol = ApiProtocol.OPENAI,
     /** 推理参数（null = 服务端默认）。 */
@@ -363,6 +367,7 @@ class ProviderClient @Inject constructor(
     private val settingsDataStore: AgentPreferences,
     private val json: Json,
 ) {
+    private val apiKeyScheduler = ApiKeyScheduler()
     private val httpClient: OkHttpClient = okHttpClient.newBuilder()
         .callTimeout(CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         .readTimeout(READ_TIMEOUT_MS, TimeUnit.MILLISECONDS)
@@ -450,10 +455,13 @@ class ProviderClient @Inject constructor(
         }
     }
 
-    suspend fun chat(model: ModelConfig, messages: List<ApiMessage>): ChatResult = when (model.protocol) {
-        ApiProtocol.ANTHROPIC -> AnthropicApi(httpClient, json).chat(model, messages)
-        ApiProtocol.OPENAI -> ChatApi(httpClient, json).chat(model, messages)
-    }
+    suspend fun chat(model: ModelConfig, messages: List<ApiMessage>): ChatResult =
+        executeWithRotatedApiKey(model, apiKeyScheduler) { selected ->
+            when (selected.protocol) {
+                ApiProtocol.ANTHROPIC -> AnthropicApi(httpClient, json).chat(selected, messages)
+                ApiProtocol.OPENAI -> ChatApi(httpClient, json).chat(selected, messages)
+            }
+        }
 
     /** 流式调用：内容增量通过 [onDelta] 实时回调，推理增量通过 [onReasoning] 实时回调。 */
     suspend fun chatStream(
@@ -461,9 +469,11 @@ class ProviderClient @Inject constructor(
         messages: List<ApiMessage>,
         onReasoning: (String) -> Unit = {},
         onDelta: (String) -> Unit,
-    ): ChatResult = when (model.protocol) {
-        ApiProtocol.ANTHROPIC -> AnthropicApi(httpClient, json).chatStream(model, messages, onReasoning, onDelta)
-        ApiProtocol.OPENAI -> ChatApi(httpClient, json).chatStream(model, messages, onReasoning, onDelta)
+    ): ChatResult = executeWithRotatedApiKey(model, apiKeyScheduler) { selected ->
+        when (selected.protocol) {
+            ApiProtocol.ANTHROPIC -> AnthropicApi(httpClient, json).chatStream(selected, messages, onReasoning, onDelta)
+            ApiProtocol.OPENAI -> ChatApi(httpClient, json).chatStream(selected, messages, onReasoning, onDelta)
+        }
     }
 
     companion object {
@@ -476,14 +486,17 @@ class ProviderClient @Inject constructor(
             providerRepository: top.wkbin.taixu.core.tools.ProviderRepository,
         ): ModelConfig {
             val baseUrl = this.baseUrl.ifBlank { DEFAULT_BASE_URL }
+            val modelKeys = providerRepository.readModelApiKeys(secretRef)
+            val fallbackKey = providerRepository.readApiKey().orEmpty().ifBlank { null }
+            val effectiveKeys = modelKeys.ifEmpty { listOfNotNull(fallbackKey) }
             return ModelConfig(
                 name = name,
                 provider = provider,
                 model = model,
                 baseUrl = baseUrl,
-                apiKey = providerRepository.readModelApiKey(secretRef).orEmpty()
-                    .ifBlank { providerRepository.readApiKey().orEmpty() }
-                    .ifBlank { null },
+                apiKey = effectiveKeys.firstOrNull(),
+                apiKeys = effectiveKeys,
+                requestsPerMinutePerKey = requestsPerMinutePerKey.coerceAtLeast(0),
                 protocol = inferProtocol(baseUrl, provider),
                 temperature = temperature,
                 maxTokens = maxTokens,

@@ -7,6 +7,7 @@ plugins {
 
 android {
     namespace = "top.wkbin.taixu.harness"
+    resourcePrefix = "harness_"
     compileSdk = 37
 
     defaultConfig {

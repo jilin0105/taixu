@@ -8,6 +8,7 @@
 
 android {
     namespace = "top.wkbin.taixu.feature.developer"
+    resourcePrefix = "developer_"
     compileSdk = 37
     defaultConfig { minSdk = 29 }
     buildFeatures { compose = true }

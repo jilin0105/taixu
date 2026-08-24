@@ -71,13 +71,14 @@ This file tracks known issues and environment notes for the TaiXu Android projec
 - 装配内容（`setup_android_core.sh`，幂等可重入，断点续装）：
   - 真实 Android 34 平台包：`platform-34-ext7_r03.zip`（android.jar + core-for-system-modules.jar，~60MB）从腾讯云镜像 `mirrors.cloud.tencent.com/AndroidSDK/` 下载（官方源兜底），SHA-1 固定校验，安装到 `/opt/android-sdk/platforms/android-34/`；
   - Gradle 8.9 官方独立包：腾讯云 → 华为云双镜像，SHA-256 固定校验（`d725d707...cab`）；
-  - 全套 6 种 SDK licenses 预接受 + build-tools 34.0.0 骨架与 ARM64 原生工具软链（aapt/zipalign/apksigner/aidl 来自 Debian apt）；
+  - 全套 SDK licenses 预接受 + Build Tools 35.0.0 的官方 Java 工具/元数据；宿主原生程序使用固定 SHA-256 的 lzhiyong ARM64 35.0.2 aapt/aapt2/aidl/zipalign；
+  - `lzhiyong/termux-ndk` r29（NDK `29.0.14206865`）Linux AArch64 静态工具链，固定 SHA-256 后安装到 `/opt/taixu/toolchains/android/ndk/artifacts/<digest>/ndk`；AGP 通过本地 Gradle init policy 的 `android.ndkPath` 使用该不可变路径；
   - 全局阿里云 Maven 镜像 `/root/.gradle/init.gradle`（beforeSettings 注入，覆盖所有项目）；
   - 持久化环境变量 `/etc/profile.d/taixu-android.sh`（JAVA_HOME/ANDROID_HOME/GRADLE_HOME/PATH），`/root/.bashrc` 自动 source；
   - JAVA_HOME 推导、java/gradle 全局软链、cacerts 注入。
 - `build_android.sh` 重构为纯执行器：加载 profile 环境 → 前置校验（缺 java.jar/gradle 快速失败并指引插件中心）→ 写 local.properties → 多级 Gradle 调度。`android init` 脚手架直接预置阿里云镜像（替代旧版构建期 sed 自愈注入）。
 - ToolManager 批量装配对重型下载脚本（setup_android_core.sh / setup_flutter.sh / setup_jadx.sh / setup_pnpm.sh）超时从 180s 放宽到 20 分钟（与 GenericRecipeInstaller 对齐）；apt 聚合安装整批失败时降级 `--ignore-missing`，避免个别发行版缺包（如 apksigner）导致全部装不上。
-- Android 核心套件使用 ARM64 原生 AAPT2，并通过稳定路径 `/opt/taixu/android-sdk-tools/aapt2` 传给 AGP 的 `android.aapt2FromMavenOverride`；不再随 APK 内置 QEMU。AAPT2 启动失败时重新装配 Android 核心环境并检查该稳定软链。
+- Android 核心套件把 AAPT2 和 NDK 安装到带 SHA-256 的不可变制品目录，正式构建只注入规范制品路径；`/opt/taixu/android-sdk-tools/aapt2` 与 `/opt/android-sdk/ndk/<version>` 仅是旧项目兼容视图。`/root/.gradle/gradle.properties` 固定 `android.aapt2FromMavenOverride` 并设置 `android.builder.sdkDownload=false`，`/root/.gradle/init.d/taixu-android-ndk.gradle` 固定 `android.ndkPath`，阻止 AGP 在构建中补装官方 x86_64 主机工具。内置构建与工具链装配还通过 `/opt/taixu/locks/android-toolchain.lock` 共享/排他互斥。
 - 注意：插件中心的组件就绪探针已升级为校验真实 SDK（java + aapt + android.jar + gradle launcher jar），老沙箱升级 App 后探针会显示未就绪，重新装配一次即可（幂等，已下载组件会跳过）。
 
 ---

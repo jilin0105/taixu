@@ -69,6 +69,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.res.stringResource
+import top.wkbin.taixu.feature.workspace.R
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -276,8 +278,8 @@ fun WorkspaceScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             RuntimeTopBar(
-                title = "工坊 · 空间",
-                statusText = "${projects.size} 个活动工程",
+                title = stringResource(R.string.workspace_title),
+                statusText = stringResource(R.string.workspace_active_projects, projects.size),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onOpenToolCenter, enabled = !busy) {
@@ -330,12 +332,12 @@ fun WorkspaceScreen(
                         )
                         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(
-                                text = "正在后台编译: $activeBuildingProjectName",
+                                text = stringResource(R.string.workspace_building_project, activeBuildingProjectName.orEmpty()),
                                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                             )
                             Text(
-                                text = buildProgress?.step ?: "正在执行构建任务...",
+                                text = buildProgress?.step ?: stringResource(R.string.workspace_building),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
                                 maxLines = 1,
@@ -343,7 +345,7 @@ fun WorkspaceScreen(
                             )
                         }
                         TextButton(onClick = { viewModel.showBuildDialog() }) {
-                            Text("查看日志", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            Text(stringResource(R.string.workspace_view_logs), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                         }
                     }
                     }
@@ -366,7 +368,7 @@ fun WorkspaceScreen(
                         )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = if (progress.isSuccess == true) "构建完成：已就绪" else "构建失败",
+                                text = stringResource(if (progress.isSuccess == true) R.string.workspace_build_ready else R.string.workspace_build_failed),
                                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                                 color = if (progress.isSuccess == true) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onErrorContainer,
                             )
@@ -383,11 +385,11 @@ fun WorkspaceScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             if (progress.isSuccess == true && progress.apkPath != null) {
                                 TextButton(onClick = { viewModel.launchInstaller(progress.apkPath!!) }) {
-                                    Text("安装", fontWeight = FontWeight.Bold)
+                                    Text(stringResource(R.string.workspace_install), fontWeight = FontWeight.Bold)
                                 }
                             }
                             TextButton(onClick = { viewModel.showBuildDialog() }) {
-                                Text("详情")
+                                Text(stringResource(R.string.workspace_details))
                             }
                             IconButton(onClick = { viewModel.dismissBuildProgress() }, modifier = Modifier.size(28.dp)) {
                                 RuntimeIcon(RuntimeIconName.Close, Modifier.size(14.dp))
@@ -427,12 +429,12 @@ fun WorkspaceScreen(
 
                     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
-                            text = "宿主共享存储 (/sdcard)",
+                            text = stringResource(R.string.workspace_shared_storage),
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         Text(
-                            text = "已挂载 Android Download 与共享目录，零拷贝直达",
+                            text = stringResource(R.string.workspace_shared_storage_description),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -449,8 +451,8 @@ fun WorkspaceScreen(
 
             item {
                 SectionHeader(
-                    title = "工坊隔离工程",
-                    subtitle = "位于 Linux 沙箱 /workspace 目录下，与 Agent 实时互通",
+                    title = stringResource(R.string.workspace_projects_section),
+                    subtitle = stringResource(R.string.workspace_projects_description),
                 )
             }
 
@@ -466,8 +468,8 @@ fun WorkspaceScreen(
                 item {
                     EmptyPanel(
                         icon = RuntimeIconName.Workspace,
-                        title = "还没有工坊工程",
-                        description = "点击右上角 ➕ 选择 Android / Flutter / APK 逆向模板或自定义创建工程",
+                        title = stringResource(R.string.workspace_no_projects),
+                        description = stringResource(R.string.workspace_no_projects_description),
                         modifier = Modifier.padding(top = 24.dp),
                     )
                 }
@@ -513,7 +515,7 @@ fun WorkspaceScreen(
                     if (progress.isRunning) {
                         RuntimeCircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     }
-                    Text(if (progress.isRunning) "正在构建到手机..." else (if (progress.isSuccess == true) "运行就绪" else "运行失败"), fontWeight = FontWeight.Bold)
+                    Text(stringResource(if (progress.isRunning) R.string.workspace_building_device else if (progress.isSuccess == true) R.string.workspace_run_ready else R.string.workspace_run_failed), fontWeight = FontWeight.Bold)
                 }
             },
             text = {
@@ -544,7 +546,7 @@ fun WorkspaceScreen(
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 RuntimeIcon(if (showStepAnalysis) RuntimeIconName.ArrowUp else RuntimeIconName.ChevronDown, Modifier.size(14.dp))
-                                Text(if (showStepAnalysis) "收起构建耗时分析" else "📊 构建耗时分析", style = MaterialTheme.typography.labelMedium)
+                                Text(stringResource(if (showStepAnalysis) R.string.workspace_hide_timing else R.string.workspace_timing), style = MaterialTheme.typography.labelMedium)
                             }
                         }
 
@@ -606,7 +608,7 @@ fun WorkspaceScreen(
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                         ) {
                                             Text(
-                                                text = "总计",
+                                                text = stringResource(R.string.workspace_total),
                                                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                                 color = MaterialTheme.colorScheme.onSurface,
                                             )
@@ -640,7 +642,7 @@ fun WorkspaceScreen(
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     RuntimeIcon(if (showBuildLog) RuntimeIconName.ArrowUp else RuntimeIconName.ChevronDown, Modifier.size(14.dp))
-                                    Text(if (showBuildLog) "收起构建日志" else "查看构建日志", style = MaterialTheme.typography.labelMedium)
+                                    Text(stringResource(if (showBuildLog) R.string.workspace_hide_build_log else R.string.workspace_view_build_log), style = MaterialTheme.typography.labelMedium)
                                 }
                             }
 
@@ -654,7 +656,7 @@ fun WorkspaceScreen(
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                                         RuntimeIcon(RuntimeIconName.Copy, Modifier.size(12.dp))
-                                        Text("复制日志", style = MaterialTheme.typography.labelSmall)
+                                        Text(stringResource(R.string.workspace_copy_log), style = MaterialTheme.typography.labelSmall)
                                     }
                                 }
                             }
@@ -663,7 +665,7 @@ fun WorkspaceScreen(
                         if (showBuildLog) {
                             if (progress.logOutput.isBlank()) {
                                 Text(
-                                    text = if (progress.isRunning) "构建日志正在接收..." else "暂无可用构建日志",
+                                    text = stringResource(if (progress.isRunning) R.string.workspace_build_log_receiving else R.string.workspace_no_build_log),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -688,29 +690,29 @@ fun WorkspaceScreen(
                             val packageLogs = categorized.filter { it.first == 2 }.map { it.second }
                             val otherLogs = categorized.filter { it.first == 3 }.map { it.second }
 
-                            data class Category(val emoji: String, val name: String, val logs: List<String>, val collapsed: Boolean)
+                            data class Category(val type: Int, val emoji: String, val name: String, val logs: List<String>)
                             val categories = listOf(
-                                Category("📥", "拉取依赖", depsLogs, collapsedDeps),
-                                Category("🔨", "编译源码", compileLogs, collapsedCompile),
-                                Category("📦", "打包安装", packageLogs, collapsedPackage),
-                                Category("📋", "其他", otherLogs, collapsedOther),
+                                Category(0, "📥", stringResource(R.string.workspace_log_dependencies), depsLogs),
+                                Category(1, "🔨", stringResource(R.string.workspace_log_compile), compileLogs),
+                                Category(2, "📦", stringResource(R.string.workspace_log_package), packageLogs),
+                                Category(3, "📋", stringResource(R.string.workspace_log_other), otherLogs),
                             )
 
                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 categories.forEach { cat ->
                                     if (cat.logs.isNotEmpty()) {
-                                        val isCollapsed = when (cat.name) {
-                                            "拉取依赖" -> collapsedDeps
-                                            "编译源码" -> collapsedCompile
-                                            "打包安装" -> collapsedPackage
+                                        val isCollapsed = when (cat.type) {
+                                            0 -> collapsedDeps
+                                            1 -> collapsedCompile
+                                            2 -> collapsedPackage
                                             else -> collapsedOther
                                         }
                                         TextButton(
                                             onClick = {
-                                                when (cat.name) {
-                                                    "拉取依赖" -> collapsedDeps = !collapsedDeps
-                                                    "编译源码" -> collapsedCompile = !collapsedCompile
-                                                    "打包安装" -> collapsedPackage = !collapsedPackage
+                                                when (cat.type) {
+                                                    0 -> collapsedDeps = !collapsedDeps
+                                                    1 -> collapsedCompile = !collapsedCompile
+                                                    2 -> collapsedPackage = !collapsedPackage
                                                     else -> collapsedOther = !collapsedOther
                                                 }
                                             },
@@ -726,7 +728,7 @@ fun WorkspaceScreen(
                                                     RuntimeIcon(if (isCollapsed) RuntimeIconName.ChevronRight else RuntimeIconName.ArrowUp, Modifier.size(12.dp))
                                                     Text("${cat.emoji} ${cat.name}", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
                                                 }
-                                                Text("${cat.logs.size} 条", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text(stringResource(R.string.workspace_log_count, cat.logs.size), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
                                         }
                                         if (!isCollapsed) {
@@ -750,7 +752,7 @@ fun WorkspaceScreen(
                                                     }
                                                     if (cat.logs.size > 200) {
                                                         Text(
-                                                            text = "... 仅显示最近 200 条，共 ${cat.logs.size} 条",
+                                                            text = stringResource(R.string.workspace_log_truncated, cat.logs.size),
                                                             style = MaterialTheme.typography.labelSmall,
                                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                         )
@@ -778,7 +780,7 @@ fun WorkspaceScreen(
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     RuntimeIcon(RuntimeIconName.Package, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onPrimary)
-                                    Text("前往插件中心准备环境")
+                                    Text(stringResource(R.string.workspace_prepare_environment))
                                 }
                             }
                         }
@@ -788,21 +790,21 @@ fun WorkspaceScreen(
                             Button(onClick = { viewModel.launchInstaller(path) }) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     RuntimeIcon(RuntimeIconName.Download, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onPrimary)
-                                    Text("调起安装")
+                                    Text(stringResource(R.string.workspace_launch_install))
                                 }
                             }
                         }
                         TextButton(onClick = { viewModel.dismissBuildProgress() }) {
-                            Text("完成")
+                            Text(stringResource(R.string.workspace_done))
                         }
                     }
                 } else {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(onClick = { viewModel.cancelBuild() }) {
-                            Text("停止编译", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.workspace_stop_build), color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                         }
                         TextButton(onClick = { viewModel.hideBuildDialog() }) {
-                            Text("后台运行", fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.workspace_background), fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -810,7 +812,7 @@ fun WorkspaceScreen(
             dismissButton = {
                 if (progress.isRunning) {
                     TextButton(onClick = { viewModel.hideBuildDialog() }) {
-                        Text("收起")
+                        Text(stringResource(R.string.workspace_collapse))
                     }
                 }
             },
@@ -829,13 +831,13 @@ fun WorkspaceScreen(
                 apkSource = null
                 exportApkToDownload = false
             },
-            title = { Text("新建工坊工程", fontWeight = FontWeight.Bold) },
+            title = { Text(stringResource(R.string.workspace_new_project), fontWeight = FontWeight.Bold) },
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text("选择工程模板", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.workspace_choose_template), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     // 模板选择 Chips（FlowRow 自动换行，避免挤压）
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
@@ -844,9 +846,9 @@ fun WorkspaceScreen(
                         listOf(
                             top.wkbin.taixu.runtime.ProjectTemplate.ANDROID_COMPOSE to ("Android" to RuntimeIconName.Android),
                             top.wkbin.taixu.runtime.ProjectTemplate.FLUTTER to ("Flutter" to RuntimeIconName.Flutter),
-                            top.wkbin.taixu.runtime.ProjectTemplate.APK_REVERSE to ("APK 逆向" to RuntimeIconName.Reverse),
-                            top.wkbin.taixu.runtime.ProjectTemplate.GIT_IMPORT to ("Git 导入" to RuntimeIconName.Github),
-                            top.wkbin.taixu.runtime.ProjectTemplate.EMPTY to ("空工程" to RuntimeIconName.Code),
+                            top.wkbin.taixu.runtime.ProjectTemplate.APK_REVERSE to (stringResource(R.string.workspace_template_reverse) to RuntimeIconName.Reverse),
+                            top.wkbin.taixu.runtime.ProjectTemplate.GIT_IMPORT to (stringResource(R.string.workspace_template_git) to RuntimeIconName.Github),
+                            top.wkbin.taixu.runtime.ProjectTemplate.EMPTY to (stringResource(R.string.workspace_template_empty) to RuntimeIconName.Code),
                         ).forEach { (tmpl, pair) ->
                             val (label, icon) = pair
                             FilterChip(
@@ -871,7 +873,7 @@ fun WorkspaceScreen(
                                 packageName = "com.example.${it.lowercase().filter { c -> c.isLetterOrDigit() }}"
                             }
                         },
-                        label = { Text("工程名称 (Name)") },
+                        label = { Text(stringResource(R.string.workspace_project_name)) },
                         placeholder = { Text("MyApplication / demo-app") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -883,7 +885,7 @@ fun WorkspaceScreen(
                         OutlinedTextField(
                             value = packageName,
                             onValueChange = { packageName = it },
-                            label = { Text("应用包名 (Package Name)") },
+                            label = { Text(stringResource(R.string.workspace_package_name)) },
                             placeholder = { Text("com.example.myapp") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
@@ -893,7 +895,7 @@ fun WorkspaceScreen(
                     // ============ APK 逆向模板：选择安装包来源 ============
                     if (selectedTemplate == top.wkbin.taixu.runtime.ProjectTemplate.APK_REVERSE) {
                         Text(
-                            "选择安装包来源",
+                            stringResource(R.string.workspace_choose_apk_source),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -907,7 +909,7 @@ fun WorkspaceScreen(
                             ) {
                                 RuntimeIcon(RuntimeIconName.Package, Modifier.size(16.dp))
                                 Spacer(Modifier.size(6.dp))
-                                Text("从本地应用提取", style = MaterialTheme.typography.labelMedium)
+                                Text(stringResource(R.string.workspace_extract_installed), style = MaterialTheme.typography.labelMedium)
                             }
                             OutlinedButton(
                                 onClick = {
@@ -922,11 +924,11 @@ fun WorkspaceScreen(
                             ) {
                                 RuntimeIcon(RuntimeIconName.Folder, Modifier.size(16.dp))
                                 Spacer(Modifier.size(6.dp))
-                                Text("文件管理器选 APK", style = MaterialTheme.typography.labelMedium)
+                                Text(stringResource(R.string.workspace_choose_apk_file), style = MaterialTheme.typography.labelMedium)
                             }
                         }
                         Text(
-                            "从本地应用提取：无需 Root，直接拷贝应用安装包到工程并解包；文件管理器方式支持任意位置 .apk。",
+                            stringResource(R.string.workspace_apk_source_description),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -964,9 +966,9 @@ fun WorkspaceScreen(
                                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                     Text(
                                         text = when {
-                                            reverseToolReady -> "逆向工具链已就绪：apktool / jadx"
-                                            runtimeReady -> "逆向工具链未装配：jadx / apktool 暂不可用"
-                                            else -> "Linux 沙箱未初始化，暂无法检测工具链"
+                                            reverseToolReady -> stringResource(R.string.workspace_reverse_ready)
+                                            runtimeReady -> stringResource(R.string.workspace_reverse_missing)
+                                            else -> stringResource(R.string.workspace_runtime_uninitialized)
                                         },
                                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
                                         color = when {
@@ -977,9 +979,9 @@ fun WorkspaceScreen(
                                     )
                                     Text(
                                         text = when {
-                                            reverseToolReady -> "解包产物已就绪，可直接在终端/Agent 深度反编译"
-                                            runtimeReady -> "解包产物已就绪；深度反编译需装配「Android 逆向分析与代码审计」子组件"
-                                            else -> "APK 提取与解包不依赖沙箱，可正常创建；初始化后工具链将可用"
+                                            reverseToolReady -> stringResource(R.string.workspace_reverse_output_ready)
+                                            runtimeReady -> stringResource(R.string.workspace_reverse_component_needed)
+                                            else -> stringResource(R.string.workspace_apk_creation_available)
                                         },
                                         style = MaterialTheme.typography.labelSmall,
                                         color = when {
@@ -994,7 +996,7 @@ fun WorkspaceScreen(
                                         showCreate = false
                                         onOpenToolCenter()
                                     }) {
-                                        Text("去装配", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                                        Text(stringResource(R.string.workspace_install_components), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
                                     }
                                 }
                             }
@@ -1020,8 +1022,8 @@ fun WorkspaceScreen(
                                         )
                                         Text(
                                             text = when (source) {
-                                                is ApkImportSource.FromInstalledApp -> "已安装应用 · 导入后自动解包"
-                                                is ApkImportSource.FromFileUri -> "APK 文件 · 导入后自动解包"
+                                                is ApkImportSource.FromInstalledApp -> stringResource(R.string.workspace_installed_app_source)
+                                                is ApkImportSource.FromFileUri -> stringResource(R.string.workspace_apk_file_source)
                                             },
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1049,11 +1051,11 @@ fun WorkspaceScreen(
                             )
                             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(
-                                    "同时导出 APK 到手机 Download 目录",
+                                    stringResource(R.string.workspace_export_apk),
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
                                 Text(
-                                    "便于用宿主侧工具（MT 管理器等）直接打开；需已授予全部文件访问权限",
+                                    stringResource(R.string.workspace_export_apk_description),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -1065,9 +1067,9 @@ fun WorkspaceScreen(
                         OutlinedTextField(
                             value = gitUrl,
                             onValueChange = { gitUrl = it },
-                            label = { Text("Git 仓库地址") },
+                            label = { Text(stringResource(R.string.workspace_git_url)) },
                             placeholder = { Text("https://github.com/user/project.git") },
-                            supportingText = { Text("导入到目标目录后以仓库内容为准，不会生成模板文件") },
+                            supportingText = { Text(stringResource(R.string.workspace_git_import_description)) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -1077,23 +1079,23 @@ fun WorkspaceScreen(
                         FilterChip(
                             selected = projectStorage == WorkspaceStorage.INTERNAL,
                             onClick = { projectStorage = WorkspaceStorage.INTERNAL; directoryPath = "" },
-                            label = { Text("内部空间") },
+                            label = { Text(stringResource(R.string.workspace_internal_storage)) },
                             modifier = Modifier.weight(1f),
                         )
                         FilterChip(
                             selected = projectStorage == WorkspaceStorage.SHARED,
                             onClick = { projectStorage = WorkspaceStorage.SHARED; directoryPath = "" },
-                            label = { Text("共享空间") },
+                            label = { Text(stringResource(R.string.workspace_shared_space)) },
                             modifier = Modifier.weight(1f),
                         )
                     }
                     if (projectStorage == WorkspaceStorage.INTERNAL) {
                         val nameForPath = projectName.trim().ifBlank { "my-app" }
                         val commonDirectories = listOf(
-                            "" to "工程专属目录  /workspace/$nameForPath",
-                            "projects/$nameForPath" to "项目集合  /workspace/projects/$nameForPath",
-                            "repos/$nameForPath" to "代码仓库  /workspace/repos/$nameForPath",
-                            "work/$nameForPath" to "工作目录  /workspace/work/$nameForPath",
+                            "" to stringResource(R.string.workspace_location_project, nameForPath),
+                            "projects/$nameForPath" to stringResource(R.string.workspace_location_projects, nameForPath),
+                            "repos/$nameForPath" to stringResource(R.string.workspace_location_repos, nameForPath),
+                            "work/$nameForPath" to stringResource(R.string.workspace_location_work, nameForPath),
                         )
                         ExposedDropdownMenuBox(
                             expanded = internalDirectoryMenuExpanded,
@@ -1105,9 +1107,9 @@ fun WorkspaceScreen(
                                     directoryPath = it
                                     internalDirectoryMenuExpanded = true
                                 },
-                                label = { Text("关联目录（可输入或选择）") },
-                                placeholder = { Text("留空则使用工程名") },
-                                supportingText = { Text("仅填写 /workspace 后的相对路径") },
+                                label = { Text(stringResource(R.string.workspace_linked_directory)) },
+                                placeholder = { Text(stringResource(R.string.workspace_directory_default)) },
+                                supportingText = { Text(stringResource(R.string.workspace_directory_relative_hint)) },
                                 trailingIcon = {
                                     ExposedDropdownMenuDefaults.TrailingIcon(internalDirectoryMenuExpanded)
                                 },
@@ -1136,9 +1138,9 @@ fun WorkspaceScreen(
                         OutlinedTextField(
                             value = directoryPath,
                             onValueChange = { directoryPath = it },
-                            label = { Text("关联目录") },
+                            label = { Text(stringResource(R.string.workspace_link_directory)) },
                             placeholder = { Text("Download/my-app") },
-                            supportingText = { Text("可关联现有目录；目录不存在时自动创建") },
+                            supportingText = { Text(stringResource(R.string.workspace_link_directory_description)) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -1149,7 +1151,7 @@ fun WorkspaceScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
-                            TextButton(onClick = { directoryPicker.launch(null) }) { Text("选择共享目录") }
+                            TextButton(onClick = { directoryPicker.launch(null) }) { Text(stringResource(R.string.workspace_choose_shared_directory)) }
                             if (!sharedAccessGranted) {
                                 TextButton(
                                     onClick = {
@@ -1164,13 +1166,13 @@ fun WorkspaceScreen(
                                             legacyStoragePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                                         }
                                     },
-                                ) { Text("授权共享空间") }
+                                ) { Text(stringResource(R.string.workspace_authorize_shared_space)) }
                             }
                         }
                     }
                     val path = directoryPath.trim().ifBlank { projectName.trim() }
                     if (path.isNotBlank()) Text(
-                        "沙箱路径：${if (projectStorage == WorkspaceStorage.INTERNAL) "/workspace" else "/sdcard"}/${path.trimStart('/')}",
+                        stringResource(R.string.workspace_sandbox_path, if (projectStorage == WorkspaceStorage.INTERNAL) "/workspace" else "/sdcard", path.trimStart('/')),
                         style = MaterialTheme.typography.labelSmall,
                         fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.primary,
@@ -1194,7 +1196,7 @@ fun WorkspaceScreen(
                         (projectStorage != WorkspaceStorage.SHARED || sharedAccessGranted) &&
                         (selectedTemplate != top.wkbin.taixu.runtime.ProjectTemplate.APK_REVERSE || apkSource != null) &&
                         (selectedTemplate != top.wkbin.taixu.runtime.ProjectTemplate.GIT_IMPORT || gitUrl.isNotBlank()),
-                ) { Text("确认创建", color = MaterialTheme.colorScheme.primary) }
+                ) { Text(stringResource(R.string.workspace_create), color = MaterialTheme.colorScheme.primary) }
             },
             dismissButton = {
                 TextButton(onClick = {
@@ -1206,7 +1208,7 @@ fun WorkspaceScreen(
                     projectStorage = WorkspaceStorage.INTERNAL
                     apkSource = null
                     exportApkToDownload = false
-                }) { Text("取消") }
+                }) { Text(stringResource(R.string.workspace_cancel)) }
             },
         )
     }
@@ -1225,19 +1227,19 @@ fun WorkspaceScreen(
     deleteTarget?.let { project ->
         RuntimeAlertDialog(
             onDismissRequest = { deleteTarget = null },
-            title = { Text("删除工程 ${project.name}？", fontWeight = FontWeight.Bold) },
+            title = { Text(stringResource(R.string.workspace_delete_project_title, project.name), fontWeight = FontWeight.Bold) },
             text = {
                 Text(
-                    if (project.ownsDirectory) "将永久移除 ${project.linuxPath} 目录及其全部代码文件，此操作不可撤销。"
-                    else "只移除工程关联，不会删除关联目录中的原文件。",
+                    if (project.ownsDirectory) stringResource(R.string.workspace_delete_owned_project, project.linuxPath)
+                    else stringResource(R.string.workspace_unlink_project),
                 )
             },
             confirmButton = {
                 TextButton(
                     onClick = { deleteTarget = null; viewModel.delete(project.name) },
-                ) { Text("确认删除", color = MaterialTheme.colorScheme.error) }
+                ) { Text(stringResource(R.string.workspace_confirm_delete), color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text(stringResource(R.string.workspace_cancel)) } },
         )
     }
 }
@@ -1302,7 +1304,7 @@ private fun ProjectCard(
                             shape = RoundedCornerShape(4.dp),
                         ) {
                             Text(
-                                text = if (isBuilding) "🔨 正在后台编译" else project.projectType.displayName,
+                                text = if (isBuilding) stringResource(R.string.workspace_building_badge) else project.projectType.displayName,
                                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
                                 color = if (isBuilding) MaterialTheme.colorScheme.primary else typeBadgeColor,
                                 modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
@@ -1334,7 +1336,7 @@ private fun ProjectCard(
                         onDismissRequest = { moreExpanded = false },
                     ) {
                         DropdownMenuItem(
-                            text = { Text("打开专属终端") },
+                            text = { Text(stringResource(R.string.workspace_open_terminal)) },
                             leadingIcon = {
                                 RuntimeIcon(RuntimeIconName.Terminal, Modifier.size(17.dp))
                             },
@@ -1344,7 +1346,7 @@ private fun ProjectCard(
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text("删除工程", color = MaterialTheme.colorScheme.error) },
+                            text = { Text(stringResource(R.string.workspace_delete_project), color = MaterialTheme.colorScheme.error) },
                             leadingIcon = {
                                 RuntimeIcon(RuntimeIconName.Trash, Modifier.size(17.dp), MaterialTheme.colorScheme.error)
                             },
@@ -1391,10 +1393,10 @@ private fun ProjectCard(
                                     strokeWidth = 2.dp,
                                     color = MaterialTheme.colorScheme.primary,
                                 )
-                                Text("编译中...", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
+                                Text(stringResource(R.string.workspace_compiling), style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
                             } else {
                                 RuntimeIcon(RuntimeIconName.Play, Modifier.size(14.dp), tint = typeBadgeColor)
-                                Text("运行到手机", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold), color = typeBadgeColor)
+                                Text(stringResource(R.string.workspace_run_on_device), style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold), color = typeBadgeColor)
                             }
                         }
                     }
@@ -1409,7 +1411,7 @@ private fun ProjectCard(
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             RuntimeIcon(RuntimeIconName.Terminal, Modifier.size(15.dp), MaterialTheme.colorScheme.primary)
-                            Text("终端", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            Text(stringResource(R.string.workspace_terminal), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         }
                     }
                 }
@@ -1454,17 +1456,17 @@ private fun AppPickerDialog(
     }
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("选择已安装应用", fontWeight = FontWeight.Bold) },
+        title = { Text(stringResource(R.string.workspace_choose_installed_app), fontWeight = FontWeight.Bold) },
         text = {
             if (apps.isEmpty()) {
                 Text(
-                    "无法获取应用列表（可能未授予包可见性权限）",
+                    stringResource(R.string.workspace_apps_unavailable),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
                 Text(
-                    "选择后将从系统安装目录提取该应用的 APK 到工程并自动解包。",
+                    stringResource(R.string.workspace_choose_app_description),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1521,6 +1523,6 @@ private fun AppPickerDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.workspace_cancel)) } },
     )
 }

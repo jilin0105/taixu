@@ -2,6 +2,8 @@ package top.wkbin.taixu.runtime.privilege
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
+import android.provider.Settings
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -204,38 +206,76 @@ class PrivilegeManager @Inject constructor(
     private fun applyPrivilegeOptimizations(mode: ExecutionMode) {
         when (mode) {
             ExecutionMode.ROOT -> {
-                runCatching {
-                    ProcessBuilder("su", "-c", "/system/bin/device_config put activity_manager max_phantom_processes 2147483647").start().waitFor(3, TimeUnit.SECONDS)
-                }
+                runCatching { executeViaRoot(PHANTOM_PROCESS_REMOVE_COMMAND) }
+                    .onSuccess { result ->
+                        if (!result.success) logger.w("通过 Root 解除幽灵进程限制失败: ${result.stderr}")
+                    }
+                    .onFailure {
+                        logger.w("通过 Root 解除幽灵进程限制失败", it)
+                    }
             }
             ExecutionMode.SHIZUKU -> {
-                runCatching {
-                    // 使用 Shizuku 官方 API 远程进程以 ADB 特权执行命令
-                    val newProcessMethod = Shizuku::class.java.getDeclaredMethod(
-                        "newProcess",
-                        Array<String>::class.java,
-                        Array<String>::class.java,
-                        String::class.java,
-                    )
-                    newProcessMethod.isAccessible = true
-                    val process = newProcessMethod.invoke(
-                        null,
-                        arrayOf("/system/bin/device_config", "put", "activity_manager", "max_phantom_processes", "2147483647"),
-                        null,
-                        null,
-                    ) as Process
-                    process.waitFor(3, TimeUnit.SECONDS)
-                }.onFailure {
-                    logger.w("通过 Shizuku 调整 max_phantom_processes 失败", it)
-                }
+                runCatching { executeViaShizuku(PHANTOM_PROCESS_REMOVE_COMMAND) }
+                    .onSuccess { result ->
+                        if (!result.success) logger.w("通过 Shizuku 解除幽灵进程限制失败: ${result.stderr}")
+                    }
+                    .onFailure {
+                        logger.w("通过 Shizuku 解除幽灵进程限制失败", it)
+                    }
             }
             ExecutionMode.ADB -> {
                 runCatching {
-                    ProcessBuilder("sh", "-c", "/system/bin/device_config put activity_manager max_phantom_processes 2147483647 2>/dev/null || true").start().waitFor(2, TimeUnit.SECONDS)
+                    ProcessBuilder("sh", "-c", PHANTOM_PROCESS_REMOVE_COMMAND).start().waitFor(3, TimeUnit.SECONDS)
                 }
             }
             ExecutionMode.PROOT -> Unit
         }
+    }
+
+    /**
+     * 读取 Android 幽灵进程监控的实际系统值，而不是依赖应用内的“已执行”标记。
+     * Android 12 引入该限制；不同系统版本/厂商可能采用数量上限或监控开关中的任一项。
+     */
+    suspend fun checkPhantomProcessLimit(): PhantomProcessLimitStatus = withContext(Dispatchers.IO) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            return@withContext PhantomProcessLimitStatus(
+                state = PhantomProcessLimitState.UNSUPPORTED,
+                details = "Android 12 以下系统没有幽灵进程 32 个上限。",
+            )
+        }
+
+        // 先走应用进程可读的系统 API。这样即使用户通过电脑 ADB 执行命令、当前使用 PRoot，
+        // 只要 ROM 允许读取对应配置，页面仍能自行识别已经解除的状态。
+        val directMonitoring = runCatching {
+            Settings.Global.getString(context.contentResolver, "settings_enable_monitor_phantom_procs")
+        }.getOrNull()
+        val directStatus = if (directMonitoring != null) {
+            parsePhantomProcessLimit("max=\nmonitor=$directMonitoring\n")
+        } else {
+            null
+        }
+        if (directStatus?.state == PhantomProcessLimitState.REMOVED) {
+            return@withContext directStatus
+        }
+
+        val result = executeShellCommand(PHANTOM_PROCESS_QUERY_COMMAND)
+        if (!result.success) {
+            if (directStatus != null) return@withContext directStatus
+            return@withContext PhantomProcessLimitStatus(
+                state = PhantomProcessLimitState.UNAVAILABLE,
+                details = result.stderr.ifBlank { "需要先启用并授权 Shizuku 或 Root 才能读取系统状态。" },
+            )
+        }
+
+        parsePhantomProcessLimit(result.stdout)
+    }
+
+    /** 使用当前 Shizuku/Root 宿主权限解除 Android 12+ 幽灵进程限制。 */
+    suspend fun removePhantomProcessLimit(): ShellExecResult = withContext(Dispatchers.IO) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            return@withContext ShellExecResult(true, 0, "", "")
+        }
+        executeShellCommand(PHANTOM_PROCESS_REMOVE_COMMAND)
     }
 
     // ============================ HostBridge 支持 ============================
@@ -359,6 +399,77 @@ class PrivilegeManager @Inject constructor(
             logger.e("Root shell execution failed", e)
             ShellExecResult(false, -1, "", "Root 执行失败: ${e.message}")
         }
+    }
+
+    companion object {
+        /** 可在电脑终端直接执行，适用于未使用 Shizuku/Root 的设备。 */
+        const val PHANTOM_PROCESS_ADB_COMMAND =
+            "adb shell device_config put activity_manager max_phantom_processes 2147483647\n" +
+                "adb shell settings put global settings_enable_monitor_phantom_procs false"
+
+        private const val PHANTOM_PROCESS_REMOVE_COMMAND =
+            "/system/bin/device_config put activity_manager max_phantom_processes 2147483647; MAX_EXIT=\$?; " +
+                "/system/bin/settings put global settings_enable_monitor_phantom_procs false; MONITOR_EXIT=\$?; " +
+                "if [ \"\$MAX_EXIT\" -eq 0 ] || [ \"\$MONITOR_EXIT\" -eq 0 ]; then exit 0; else exit 1; fi"
+
+        private const val PHANTOM_PROCESS_QUERY_COMMAND =
+            "MAX=\$(/system/bin/device_config get activity_manager max_phantom_processes 2>/dev/null); " +
+                "MONITOR=\$(/system/bin/settings get global settings_enable_monitor_phantom_procs 2>/dev/null); " +
+                "printf 'max=%s\\nmonitor=%s\\n' \"\$MAX\" \"\$MONITOR\""
+    }
+}
+
+enum class PhantomProcessLimitState {
+    REMOVED,
+    ACTIVE,
+    UNAVAILABLE,
+    UNSUPPORTED,
+}
+
+data class PhantomProcessLimitStatus(
+    val state: PhantomProcessLimitState,
+    val maxPhantomProcesses: Long? = null,
+    val monitoringEnabled: Boolean? = null,
+    val details: String,
+)
+
+internal fun parsePhantomProcessLimit(output: String): PhantomProcessLimitStatus {
+    val values = output.lineSequence()
+        .mapNotNull { line ->
+            val separator = line.indexOf('=')
+            if (separator <= 0) null else line.substring(0, separator).trim() to line.substring(separator + 1).trim()
+        }
+        .toMap()
+    val max = values["max"]?.takeUnless { it.isBlank() || it.equals("null", true) }?.toLongOrNull()
+    val monitoring = values["monitor"]
+        ?.takeUnless { it.isBlank() || it.equals("null", true) }
+        ?.let { raw ->
+            when (raw.lowercase()) {
+                "1", "true" -> true
+                "0", "false" -> false
+                else -> null
+            }
+        }
+    val removed = max == Long.MAX_VALUE || (max != null && max >= Int.MAX_VALUE) || monitoring == false
+
+    return if (removed) {
+        PhantomProcessLimitStatus(
+            state = PhantomProcessLimitState.REMOVED,
+            maxPhantomProcesses = max,
+            monitoringEnabled = monitoring,
+            details = "已解除 Android 幽灵进程限制。",
+        )
+    } else {
+        PhantomProcessLimitStatus(
+            state = PhantomProcessLimitState.ACTIVE,
+            maxPhantomProcesses = max,
+            monitoringEnabled = monitoring,
+            details = if (max == null && monitoring == null) {
+                "仍使用系统默认限制（通常最多 32 个幽灵进程）。"
+            } else {
+                "系统仍在限制幽灵进程。"
+            },
+        )
     }
 }
 

@@ -46,6 +46,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.res.stringResource
+import top.wkbin.taixu.feature.workspace.R
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -118,7 +120,7 @@ fun WorkspaceExplorerScreen(
                             onDismissRequest = { showCreateMenu = false },
                         ) {
                             DropdownMenuItem(
-                                text = { Text("新建文件") },
+                                text = { Text(stringResource(R.string.workspace_new_file)) },
                                 leadingIcon = { RuntimeIcon(RuntimeIconName.File, Modifier.size(18.dp)) },
                                 onClick = {
                                     showCreateMenu = false
@@ -127,7 +129,7 @@ fun WorkspaceExplorerScreen(
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("新建文件夹") },
+                                text = { Text(stringResource(R.string.workspace_new_folder)) },
                                 leadingIcon = { RuntimeIcon(RuntimeIconName.Folder, Modifier.size(18.dp)) },
                                 onClick = {
                                     showCreateMenu = false
@@ -184,8 +186,8 @@ fun WorkspaceExplorerScreen(
             } else if (fileItems.isEmpty()) {
                 EmptyPanel(
                     icon = RuntimeIconName.Folder,
-                    title = "目录为空",
-                    description = "点击右上角 ➕ 新建文件或子目录",
+                    title = stringResource(R.string.workspace_empty_directory),
+                    description = stringResource(R.string.workspace_empty_directory_hint),
                     modifier = Modifier.padding(24.dp),
                 )
             } else {
@@ -229,13 +231,13 @@ fun WorkspaceExplorerScreen(
     if (showCreateFileDialog) {
         RuntimeAlertDialog(
             onDismissRequest = { showCreateFileDialog = false },
-            title = { Text("新建文件", fontWeight = FontWeight.Bold) },
+            title = { Text(stringResource(R.string.workspace_new_file), fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = newFileName,
                         onValueChange = { newFileName = it },
-                        label = { Text("文件名") },
+                        label = { Text(stringResource(R.string.workspace_file_name)) },
                         placeholder = { Text("main.py / app.js / config.json") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -249,9 +251,9 @@ fun WorkspaceExplorerScreen(
                         showCreateFileDialog = false
                     },
                     enabled = newFileName.isNotBlank() && !busy,
-                ) { Text("确认创建", color = MaterialTheme.colorScheme.primary) }
+                ) { Text(stringResource(R.string.workspace_create), color = MaterialTheme.colorScheme.primary) }
             },
-            dismissButton = { TextButton(onClick = { showCreateFileDialog = false }) { Text("取消") } },
+            dismissButton = { TextButton(onClick = { showCreateFileDialog = false }) { Text(stringResource(R.string.workspace_cancel)) } },
         )
     }
 
@@ -259,12 +261,12 @@ fun WorkspaceExplorerScreen(
     if (showCreateFolderDialog) {
         RuntimeAlertDialog(
             onDismissRequest = { showCreateFolderDialog = false },
-            title = { Text("新建文件夹", fontWeight = FontWeight.Bold) },
+            title = { Text(stringResource(R.string.workspace_new_folder), fontWeight = FontWeight.Bold) },
             text = {
                 OutlinedTextField(
                     value = newFolderName,
                     onValueChange = { newFolderName = it },
-                    label = { Text("文件夹名称") },
+                    label = { Text(stringResource(R.string.workspace_folder_name)) },
                     placeholder = { Text("src / models / tests") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -277,9 +279,9 @@ fun WorkspaceExplorerScreen(
                         showCreateFolderDialog = false
                     },
                     enabled = newFolderName.isNotBlank() && !busy,
-                ) { Text("确认创建", color = MaterialTheme.colorScheme.primary) }
+                ) { Text(stringResource(R.string.workspace_create), color = MaterialTheme.colorScheme.primary) }
             },
-            dismissButton = { TextButton(onClick = { showCreateFolderDialog = false }) { Text("取消") } },
+            dismissButton = { TextButton(onClick = { showCreateFolderDialog = false }) { Text(stringResource(R.string.workspace_cancel)) } },
         )
     }
 
@@ -287,12 +289,12 @@ fun WorkspaceExplorerScreen(
     renameTarget?.let { target ->
         RuntimeAlertDialog(
             onDismissRequest = { renameTarget = null },
-            title = { Text("重命名 ${target.name}", fontWeight = FontWeight.Bold) },
+            title = { Text(stringResource(R.string.workspace_rename_title, target.name), fontWeight = FontWeight.Bold) },
             text = {
                 OutlinedTextField(
                     value = renameInput,
                     onValueChange = { renameInput = it },
-                    label = { Text("新名称") },
+                    label = { Text(stringResource(R.string.workspace_new_name)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -304,9 +306,9 @@ fun WorkspaceExplorerScreen(
                         renameTarget = null
                     },
                     enabled = renameInput.isNotBlank() && renameInput != target.name && !busy,
-                ) { Text("保存", color = MaterialTheme.colorScheme.primary) }
+                ) { Text(stringResource(R.string.workspace_save), color = MaterialTheme.colorScheme.primary) }
             },
-            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("取消") } },
+            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text(stringResource(R.string.workspace_cancel)) } },
         )
     }
 
@@ -314,11 +316,10 @@ fun WorkspaceExplorerScreen(
     deleteTarget?.let { target ->
         RuntimeAlertDialog(
             onDismissRequest = { deleteTarget = null },
-            title = { Text("删除 ${target.name}？", fontWeight = FontWeight.Bold) },
+            title = { Text(stringResource(R.string.workspace_delete_title, target.name), fontWeight = FontWeight.Bold) },
             text = {
                 Text(
-                    if (target.isDirectory) "文件夹及其中的所有内容都将被永久移除。"
-                    else "该文件将被永久删除，无法撤销。",
+                    stringResource(if (target.isDirectory) R.string.workspace_delete_folder_message else R.string.workspace_delete_file_message),
                 )
             },
             confirmButton = {
@@ -328,9 +329,9 @@ fun WorkspaceExplorerScreen(
                         deleteTarget = null
                     },
                     enabled = !busy,
-                ) { Text("确认删除", color = MaterialTheme.colorScheme.error) }
+                ) { Text(stringResource(R.string.workspace_confirm_delete), color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text(stringResource(R.string.workspace_cancel)) } },
         )
     }
 }
@@ -433,7 +434,7 @@ private fun ParentDirectoryRow(onClick: () -> Unit) {
             tint = MaterialTheme.colorScheme.primary,
         )
         Text(
-            text = ".. (返回上一级)",
+            text = stringResource(R.string.workspace_parent_directory),
             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
             color = MaterialTheme.colorScheme.primary,
         )
@@ -564,7 +565,7 @@ private fun FileItemRow(
                 onDismissRequest = { showMenu = false },
             ) {
                 DropdownMenuItem(
-                    text = { Text("重命名") },
+                    text = { Text(stringResource(R.string.workspace_rename)) },
                     leadingIcon = { RuntimeIcon(RuntimeIconName.Edit, Modifier.size(16.dp)) },
                     onClick = {
                         showMenu = false
@@ -572,7 +573,7 @@ private fun FileItemRow(
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text("删除", color = MaterialTheme.colorScheme.error) },
+                    text = { Text(stringResource(R.string.workspace_delete), color = MaterialTheme.colorScheme.error) },
                     leadingIcon = {
                         RuntimeIcon(
                             RuntimeIconName.Trash,

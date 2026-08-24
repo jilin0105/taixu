@@ -19,6 +19,9 @@ import top.wkbin.taixu.harness.mcp.McpManager
 import top.wkbin.taixu.runtime.WorkspaceManager
 import top.wkbin.taixu.runtime.WorkspaceProject
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import android.content.Context
+import top.wkbin.taixu.feature.chat.R
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -36,6 +39,7 @@ import top.wkbin.taixu.runtime.terminal.TerminalSessionManager
 
 @HiltViewModel
 class ChatViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val harnessLoop: HarnessLoop,
     private val sessionDao: HarnessSessionRepository,
     private val aiModelDao: AiModelRepository,
@@ -189,7 +193,7 @@ class ChatViewModel @Inject constructor(
 
     /** 斜杠指令建议列表（当输入以 / 开头时实时过滤展示，自动合并已激活的专精技能）。 */
     val matchingCommands: StateFlow<List<SlashCommandItem>> = kotlinx.coroutines.flow.combine(_input, agentSkillRepository.activeSkills) { text, skills ->
-        if (text.startsWith("/")) SlashCommands.filterCommands(text, skills)
+        if (text.startsWith("/")) SlashCommands.filterCommands(context, text, skills)
         else emptyList()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -210,7 +214,7 @@ class ChatViewModel @Inject constructor(
                 id = skill.id,
                 name = skill.name,
                 description = skill.description,
-                category = "专精技能",
+                category = context.getString(R.string.chat_skill_category),
                 type = MentionType.SKILL,
                 icon = top.wkbin.taixu.ui.components.RuntimeIconName.Brain,
             )
@@ -219,8 +223,8 @@ class ChatViewModel @Inject constructor(
             MentionItem(
                 id = mcp.id,
                 name = mcp.name,
-                description = "MCP 工具服务 (${mcp.transportType})",
-                category = "MCP 插件",
+                description = context.getString(R.string.chat_mcp_service_description, mcp.transportType),
+                category = context.getString(R.string.chat_mcp_category),
                 type = MentionType.MCP_SERVER,
                 icon = top.wkbin.taixu.ui.components.RuntimeIconName.Cpu,
             )
@@ -250,7 +254,7 @@ class ChatViewModel @Inject constructor(
                 id = skill.id,
                 name = skill.name,
                 description = skill.description,
-                category = "专精技能",
+                category = context.getString(R.string.chat_skill_category),
                 type = MentionType.SKILL,
                 icon = top.wkbin.taixu.ui.components.RuntimeIconName.Brain,
             )
@@ -265,7 +269,7 @@ class ChatViewModel @Inject constructor(
                 id = mcp.id,
                 name = mcp.name,
                 description = mcp.description,
-                category = "MCP 插件",
+                category = context.getString(R.string.chat_mcp_category),
                 type = MentionType.MCP_SERVER,
                 icon = top.wkbin.taixu.ui.components.RuntimeIconName.Cpu,
             )
@@ -284,7 +288,7 @@ class ChatViewModel @Inject constructor(
             if (latest != null) {
                 harnessLoop.loadSession(latest.id)
             } else {
-                harnessLoop.newSession("新会话")
+                harnessLoop.newSession(context.getString(R.string.chat_new_session))
             }
             _initializing.value = false
         }
@@ -296,7 +300,7 @@ class ChatViewModel @Inject constructor(
 
     fun applySlashCommand(command: SlashCommandItem) {
         if (command.command == "/clear") {
-            createSession("新会话")
+            createSession(context.getString(R.string.chat_new_session))
             _input.value = ""
         } else {
             _input.value = command.template
@@ -375,9 +379,9 @@ class ChatViewModel @Inject constructor(
     fun clearError() = harnessLoop.clearError()
 
     /** 新建会话（支持自定义标题并关联工作区）。 */
-    fun createSession(title: String = "新会话", workspace: String = "", projectType: String = "") {
+    fun createSession(title: String = "", workspace: String = "", projectType: String = "") {
         viewModelScope.launch {
-            harnessLoop.newSession(title.trim().ifBlank { "新会话" }, workspace, projectType)
+            harnessLoop.newSession(title.trim().ifBlank { context.getString(R.string.chat_new_session) }, workspace, projectType)
         }
     }
 

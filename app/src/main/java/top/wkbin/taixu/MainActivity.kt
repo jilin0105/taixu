@@ -8,7 +8,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -44,6 +44,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -57,7 +58,7 @@ import top.wkbin.taixu.ui.navigation.TaiXuNavHost
 import top.wkbin.taixu.ui.theme.TaiXuTheme
 
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
     @javax.inject.Inject
     lateinit var settingsDataStore: top.wkbin.taixu.core.datastore.AppearancePreferences
 
@@ -132,7 +133,7 @@ class MainActivity : ComponentActivity() {
                                     modifier = Modifier.size(24.dp),
                                     tint = MaterialTheme.colorScheme.primary,
                                 )
-                                Text("发现新版本 v${info.latestVersion}", fontWeight = FontWeight.Bold)
+                                Text(stringResource(R.string.taixu_update_available, info.latestVersion), fontWeight = FontWeight.Bold)
                             }
                         },
                         text = {
@@ -145,7 +146,7 @@ class MainActivity : ComponentActivity() {
                                     shape = RoundedCornerShape(8.dp),
                                 ) {
                                     Text(
-                                        text = "当前版本: v${info.currentVersion}  ➔  最新版本: v${info.latestVersion}",
+                                        text = stringResource(R.string.taixu_update_versions, info.currentVersion, info.latestVersion),
                                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
                                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -166,7 +167,7 @@ class MainActivity : ComponentActivity() {
                                 }
                                 if (isDownloading) {
                                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        Text("正在下载更新包...", style = MaterialTheme.typography.labelMedium)
+                                        Text(stringResource(R.string.taixu_update_downloading_package), style = MaterialTheme.typography.labelMedium)
                                         if (downloadProgress != null) {
                                             LinearProgressIndicator(
                                                 progress = { downloadProgress ?: 0f },
@@ -202,7 +203,7 @@ class MainActivity : ComponentActivity() {
                                     },
                                     enabled = !isDownloading,
                                 ) {
-                                    Text(if (isDownloading) "正在下载…" else "立即更新")
+                                    Text(stringResource(if (isDownloading) R.string.taixu_downloading else R.string.taixu_update_now))
                                 }
                             } else {
                                 Button(
@@ -213,7 +214,7 @@ class MainActivity : ComponentActivity() {
                                         updateInfo = null
                                     },
                                 ) {
-                                    Text("前往 GitHub")
+                                    Text(stringResource(R.string.taixu_open_github))
                                 }
                             }
                         },
@@ -222,7 +223,7 @@ class MainActivity : ComponentActivity() {
                                 onClick = { updateInfo = null },
                                 enabled = !isDownloading,
                             ) {
-                                Text("稍后再说")
+                                Text(stringResource(R.string.taixu_later))
                             }
                         },
                     )

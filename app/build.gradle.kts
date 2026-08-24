@@ -18,6 +18,7 @@ plugins {
 
 extensions.configure<ApplicationExtension> {
     namespace = "top.wkbin.taixu"
+    resourcePrefix = "taixu_"
     compileSdk = 37
     ndkVersion = "30.0.15729638"
 
@@ -148,6 +149,7 @@ dependencies {
     implementation(project(":feature:theme"))
 
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.appcompat)
     implementation(libs.androidx.activity.compose)
 
     implementation(platform(libs.androidx.compose.bom))

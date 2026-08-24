@@ -27,7 +27,7 @@ import androidx.room.RoomDatabase
         AgentApprovalRequestEntity::class,
         AgentApprovalSettingsEntity::class,
     ],
-    version = 27,
+    version = 28,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {

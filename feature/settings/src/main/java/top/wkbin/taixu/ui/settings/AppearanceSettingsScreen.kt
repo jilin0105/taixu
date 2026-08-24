@@ -47,6 +47,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.os.LocaleListCompat
+import top.wkbin.taixu.feature.settings.R
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -75,6 +80,9 @@ fun AppearanceSettingsScreen(
     val appFontScale by viewModel.appFontScale.collectAsStateWithLifecycle()
     val backgroundUri by viewModel.chengmingBackgroundUri.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    LocalConfiguration.current // Recompose after AppCompat applies a locale change.
+    val requestedLocales = AppCompatDelegate.getApplicationLocales()
+    val appLanguage = if (requestedLocales.isEmpty) "system" else requestedLocales[0]?.language.orEmpty()
     var terminalFontSizeSlider by remember { mutableFloatStateOf(terminalFontSize.toFloat()) }
     var pageScaleSlider by remember { mutableFloatStateOf(appFontScale) }
     LaunchedEffect(terminalFontSize) {
@@ -96,7 +104,7 @@ fun AppearanceSettingsScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = { RuntimeTopBar("外观与终端", onBack) },
+        topBar = { RuntimeTopBar(stringResource(R.string.settings_appearance_title), onBack) },
     ) { padding ->
         LazyColumn(
             modifier = Modifier
@@ -108,7 +116,7 @@ fun AppearanceSettingsScreen(
             // 1. 终端实时效果预览卡片
             item {
                 Text(
-                    text = "终端实时效果预览",
+                    text = stringResource(R.string.settings_terminal_preview),
                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
@@ -122,7 +130,7 @@ fun AppearanceSettingsScreen(
             // 2. 终端外观与控制台偏好
             item {
                 Text(
-                    text = "终端外观与控制台",
+                    text = stringResource(R.string.settings_terminal_appearance),
                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
@@ -131,7 +139,7 @@ fun AppearanceSettingsScreen(
                     // 终端配色方案
                     Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
-                            text = "终端配色方案",
+                            text = stringResource(R.string.settings_terminal_color_scheme),
                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                             color = MaterialTheme.colorScheme.onSurface,
                         )
@@ -140,7 +148,7 @@ fun AppearanceSettingsScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             TerminalThemeChip(
-                                title = "曜石黑",
+                                title = stringResource(R.string.settings_terminal_theme_obsidian),
                                 bg = Color(0xFF0F1117),
                                 text = Color(0xFFE2E2E9),
                                 selected = terminalColorScheme == "obsidian",
@@ -148,7 +156,7 @@ fun AppearanceSettingsScreen(
                                 modifier = Modifier.weight(1f),
                             )
                             TerminalThemeChip(
-                                title = "黑客绿",
+                                title = stringResource(R.string.settings_terminal_theme_matrix),
                                 bg = Color(0xFF0A0F0D),
                                 text = Color(0xFF10B981),
                                 selected = terminalColorScheme == "matrix",
@@ -156,7 +164,7 @@ fun AppearanceSettingsScreen(
                                 modifier = Modifier.weight(1f),
                             )
                             TerminalThemeChip(
-                                title = "复古琥珀",
+                                title = stringResource(R.string.settings_terminal_theme_amber),
                                 bg = Color(0xFF140F0A),
                                 text = Color(0xFFF59E0B),
                                 selected = terminalColorScheme == "amber",
@@ -164,7 +172,7 @@ fun AppearanceSettingsScreen(
                                 modifier = Modifier.weight(1f),
                             )
                             TerminalThemeChip(
-                                title = "深海极光",
+                                title = stringResource(R.string.settings_terminal_theme_aurora),
                                 bg = Color(0xFF0D1424),
                                 text = Color(0xFF38BDF8),
                                 selected = terminalColorScheme == "aurora",
@@ -184,7 +192,7 @@ fun AppearanceSettingsScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                text = "终端字体大小",
+                                text = stringResource(R.string.settings_terminal_font_size),
                                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
@@ -226,8 +234,8 @@ fun AppearanceSettingsScreen(
                     // 终端触觉震动反馈
                     ToggleRow(
                         icon = RuntimeIconName.Vibrate,
-                        title = "终端触觉按键反馈",
-                        subtitle = "点击辅助按键条与回车时产生微弱触觉震动",
+                        title = stringResource(R.string.settings_terminal_haptics),
+                        subtitle = stringResource(R.string.settings_terminal_haptics_description),
                         checked = terminalHapticsEnabled,
                         change = viewModel::setTerminalHapticsEnabled,
                     )
@@ -237,23 +245,23 @@ fun AppearanceSettingsScreen(
             // 3. 应用视觉与主题
             item {
                 Text(
-                    text = "主题风格",
+                    text = stringResource(R.string.settings_theme_style),
                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
                 )
                 SettingsGroup {
                     ThemeOptionRow(
-                        title = "玄同 · Xuantong",
-                        subtitle = "默认主题：源自《老子》「万物同归于玄」，曜石夜空与温润素白",
+                        title = stringResource(R.string.settings_theme_xuantong),
+                        subtitle = stringResource(R.string.settings_theme_xuantong_description),
                         accentColor = androidx.compose.ui.graphics.Color(0xFF4259C3),
                         selected = themeStyle == "xuantong",
                         onClick = { viewModel.setThemeStyle("xuantong") },
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     ThemeOptionRow(
-                        title = "澄明 · Chengming",
-                        subtitle = "液态玻璃：毛玻璃折射 + 流光 Aurora，通透清澈",
+                        title = stringResource(R.string.settings_theme_chengming),
+                        subtitle = stringResource(R.string.settings_theme_chengming_description),
                         accentColor = androidx.compose.ui.graphics.Color(0xFF6E7CE0),
                         selected = themeStyle == "chengming",
                         onClick = { viewModel.setThemeStyle("chengming") },
@@ -263,7 +271,7 @@ fun AppearanceSettingsScreen(
 
             item {
                 Text(
-                    text = "澄明背景",
+                    text = stringResource(R.string.settings_chengming_background),
                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
@@ -274,18 +282,18 @@ fun AppearanceSettingsScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         Text(
-                            text = if (backgroundUri == null) "无背景（默认）" else "使用用户图片作为玻璃折射源",
+                            text = stringResource(if (backgroundUri == null) R.string.settings_background_none else R.string.settings_background_custom),
                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                         )
                         backgroundUri?.let { uri -> ChengmingBackgroundPreview(uri) }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(
                                 onClick = { backgroundPicker.launch(arrayOf("image/*")) },
-                            ) { Text(if (backgroundUri == null) "上传图片" else "更换图片") }
+                            ) { Text(stringResource(if (backgroundUri == null) R.string.settings_background_upload else R.string.settings_background_change)) }
                             if (backgroundUri != null) {
                                 TextButton(
                                     onClick = { viewModel.setChengmingBackgroundUri(null) },
-                                ) { Text("移除背景") }
+                                ) { Text(stringResource(R.string.settings_background_remove)) }
                             }
                         }
                     }
@@ -295,29 +303,29 @@ fun AppearanceSettingsScreen(
             // 3.5 深浅色模式
             item {
                 Text(
-                    text = "深浅色模式",
+                    text = stringResource(R.string.settings_color_mode),
                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
                 )
                 SettingsGroup {
                     ThemeOptionRow(
-                        title = "跟随系统 (Auto)",
-                        subtitle = "随 Android 设备深浅色自动无缝切换",
+                        title = stringResource(R.string.settings_color_system),
+                        subtitle = stringResource(R.string.settings_color_system_description),
                         selected = themeMode == "system",
                         onClick = { viewModel.setThemeMode("system") },
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     ThemeOptionRow(
-                        title = "素白浅色 (Light)",
-                        subtitle = "明澈素雅，适合日间光线明亮环境",
+                        title = stringResource(R.string.settings_color_light),
+                        subtitle = stringResource(R.string.settings_color_light_description),
                         selected = themeMode == "light",
                         onClick = { viewModel.setThemeMode("light") },
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     ThemeOptionRow(
-                        title = "深邃曜石 (Dark)",
-                        subtitle = "Material 3 曜石天鹅绒暗色，沉浸专注",
+                        title = stringResource(R.string.settings_color_dark),
+                        subtitle = stringResource(R.string.settings_color_dark_description),
                         selected = themeMode == "dark",
                         onClick = { viewModel.setThemeMode("dark") },
                     )
@@ -327,7 +335,39 @@ fun AppearanceSettingsScreen(
             // 4. 页面缩放
             item {
                 Text(
-                    text = "页面缩放",
+                    text = stringResource(R.string.settings_language_title),
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+                )
+                SettingsGroup {
+                    ThemeOptionRow(
+                        title = stringResource(R.string.settings_language_system),
+                        subtitle = stringResource(R.string.settings_language_system_description),
+                        selected = appLanguage == "system",
+                        onClick = { AppCompatDelegate.setApplicationLocales(LocaleListCompat.getEmptyLocaleList()) },
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    ThemeOptionRow(
+                        title = stringResource(R.string.settings_language_chinese),
+                        subtitle = stringResource(R.string.settings_language_chinese_description),
+                        selected = appLanguage == "zh",
+                        onClick = { AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("zh-CN")) },
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    ThemeOptionRow(
+                        title = stringResource(R.string.settings_language_english),
+                        subtitle = stringResource(R.string.settings_language_english_description),
+                        selected = appLanguage == "en",
+                        onClick = { AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("en")) },
+                    )
+                }
+            }
+
+            // 5. 页面缩放
+            item {
+                Text(
+                    text = stringResource(R.string.settings_interface_scale),
                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
@@ -340,7 +380,7 @@ fun AppearanceSettingsScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                text = "缩放比例",
+                                text = stringResource(R.string.settings_scale),
                                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
@@ -441,7 +481,7 @@ private fun TerminalPreviewCard(
                 color = textColor.copy(alpha = 0.9f),
             )
             Text(
-                text = "taixu@debian:~$ echo \"太墟沙箱运行正常 🚀\"",
+                text = stringResource(R.string.settings_terminal_preview_command),
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = FontFamily.Monospace,
                     fontSize = fontSizeSp.sp,
@@ -450,7 +490,7 @@ private fun TerminalPreviewCard(
                 color = accentColor,
             )
             Text(
-                text = "太墟沙箱运行正常 🚀",
+                text = stringResource(R.string.settings_terminal_preview_output),
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = FontFamily.Monospace,
                     fontSize = fontSizeSp.sp,
@@ -472,7 +512,7 @@ private fun ChengmingBackgroundPreview(uri: String) {
     if (bitmap != null) {
         Image(
             bitmap = bitmap.asImageBitmap(),
-            contentDescription = "澄明背景预览",
+            contentDescription = stringResource(R.string.settings_background_preview),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(124.dp)
