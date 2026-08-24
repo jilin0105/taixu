@@ -146,6 +146,7 @@ dependencies {
     implementation(project(":feature:chat"))
     implementation(project(":feature:workspace"))
     implementation(project(":feature:navigation"))
+    implementation(project(":feature:custom_iteration"))
     implementation(project(":feature:theme"))
 
     implementation(libs.androidx.core.ktx)

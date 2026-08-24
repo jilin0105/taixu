@@ -40,6 +40,7 @@ import top.wkbin.taixu.ui.settings.LocalLlmScreen
 import top.wkbin.taixu.ui.settings.SettingsScreen
 import top.wkbin.taixu.ui.settings.SettingsViewModel
 import top.wkbin.taixu.ui.settings.ToolDetailScreen
+import top.wkbin.taixu.ui.iteration.CustomIterationScreen
 import top.wkbin.taixu.ui.terminal.TerminalScreen
 import top.wkbin.taixu.ui.workspace.CodeEditorScreen
 import top.wkbin.taixu.ui.workspace.WorkspaceExplorerScreen
@@ -71,6 +72,7 @@ sealed interface AppDestination : NavKey
 @Serializable data object LocalLlmDestination : AppDestination
 @Serializable data class ModelEditorDestination(val modelId: String? = null) : AppDestination
 @Serializable data object DeveloperDestination : AppDestination
+@Serializable data object CustomIterationDestination : AppDestination
 @Serializable data class TerminalDestination(val toolId: String = "", val project: String = "") : AppDestination
 
 /**
@@ -206,6 +208,7 @@ fun TaiXuNavHost() {
                 top.wkbin.taixu.ui.settings.SystemDevSettingsScreen(
                     onBack = ::popBack,
                     onOpenDeveloper = { settingsStack.push(DeveloperDestination) },
+                    onOpenCustomIteration = { settingsStack.push(CustomIterationDestination) },
                     viewModel = settingsViewModel,
                 )
             }
@@ -293,6 +296,15 @@ fun TaiXuNavHost() {
             }
             entry<DeveloperDestination> {
                 DeveloperScreen(onBack = ::popBack)
+            }
+            entry<CustomIterationDestination> {
+                CustomIterationScreen(
+                    onBack = ::popBack,
+                    onNavigateToChat = { prompt ->
+                        pendingHealingTask = HealingTask("🚀 自定义迭代", prompt)
+                        selectedMain = MainDestination.Agent
+                    },
+                )
             }
             entry<TerminalDestination> { destination ->
                 TerminalScreen(onBack = ::popBack, project = destination.project)
