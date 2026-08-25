@@ -103,6 +103,80 @@ fi
 
 cd "$PROJECT_PATH"
 
+# ==============================================================================
+# 构建工具版本临时对齐（构建后自动恢复，不修改工具链本身）
+#
+# 1. NDK：Flutter Gradle 插件默认注入 ndkVersion（如 27.0.12077973），可能与
+#    太墟实际安装的 NDK（如 29.0.14206865）不一致，AGP 抛 CXX1100。
+# 2. CMake：Flutter 硬编码要求 CMake 3.22.1，太墟环境可能装了更新版本，
+#    AGP 抛 CXX1300。
+#
+# 处理方式：临时修改项目 android/app/build.gradle 注入实际版本，构建结束后
+# 通过 trap EXIT 自动恢复原文件。不修改 NDK/CMake 本身，不影响 Android 项目。
+# ==============================================================================
+TAIXU_GRADLE_ALIGN_BAK=""
+taixu_align_build_versions() {
+    app_gradle="android/app/build.gradle"
+    [ -f "$app_gradle" ] || return 0
+    modified=0
+    backup_once() {
+        if [ $modified -eq 0 ]; then
+            TAIXU_GRADLE_ALIGN_BAK="${app_gradle}.taixu-align.bak"
+            cp "$app_gradle" "$TAIXU_GRADLE_ALIGN_BAK"
+            modified=1
+        fi
+    }
+
+    # --- NDK 版本对齐 ---
+    ndk_home="${ANDROID_NDK_HOME:-/opt/taixu/toolchains/android/ndk}"
+    if [ -f "$ndk_home/source.properties" ]; then
+        actual_ndk=$(sed -n 's/^[[:space:]]*Pkg\.Revision[[:space:]]*=[[:space:]]*//p' "$ndk_home/source.properties" | head -n1 | tr -d '[:space:]')
+        if [ -n "$actual_ndk" ]; then
+            declared_ndk=$(grep -oE 'ndkVersion[[:space:]]*["'"'"'][^"'"'"']*["'"'"']' "$app_gradle" | head -1 | grep -oE '["'"'"'][^"'"'"']*["'"'"']' | tr -d "\"'")
+            if [ -z "$declared_ndk" ] || [ "$declared_ndk" != "$actual_ndk" ]; then
+                echo "==> [TaiXu Build] NDK 版本对齐：项目声明=${declared_ndk:-<Flutter默认>}, 实际=$actual_ndk"
+                backup_once
+                sed -i "s/^\([[:space:]]*android[[:space:]]*{\)/\1\n    ndkVersion \"$actual_ndk\"/" "$app_gradle"
+                if grep -q "ndkVersion \"$actual_ndk\"" "$app_gradle"; then
+                    echo "==> [TaiXu Build] ✅ 已注入 ndkVersion=$actual_ndk"
+                else
+                    echo "==> [TaiXu Build] ⚠️ ndkVersion 注入失败"
+                fi
+            fi
+        else
+            echo "==> [TaiXu Build] ⚠️ 无法读取 NDK 版本，跳过 NDK 对齐"
+        fi
+    fi
+
+    # --- CMake 版本对齐 ---
+    # Flutter/AGP 默认要求 CMake 3.22.1，太墟环境可能装了更新版本。
+    # 必须在 android {} 配置块内设置 externalNativeBuild.cmake.version，
+    # afterEvaluate 阶段再设会被 AGP 拒绝（"It is too late to set version"）。
+    if command -v cmake >/dev/null 2>&1; then
+        actual_cmake=$(cmake --version 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+        flutter_cmake="3.22.1"
+        if [ -n "$actual_cmake" ] && [ "$actual_cmake" != "$flutter_cmake" ]; then
+            echo "==> [TaiXu Build] CMake 版本对齐：Flutter 要求=$flutter_cmake, 实际=$actual_cmake"
+            backup_once
+            # 在 android { 块内注入 externalNativeBuild.cmake.version
+            sed -i "s/^\([[:space:]]*android[[:space:]]*{\)/\1\n    externalNativeBuild {\n        cmake {\n            version \"$actual_cmake\"\n        }\n    }/" "$app_gradle"
+            if grep -q "version \"$actual_cmake\"" "$app_gradle"; then
+                echo "==> [TaiXu Build] ✅ 已注入 externalNativeBuild.cmake.version=$actual_cmake"
+            else
+                echo "==> [TaiXu Build] ⚠️ CMake 版本注入失败"
+            fi
+        fi
+    fi
+}
+taixu_restore_gradle() {
+    if [ -n "$TAIXU_GRADLE_ALIGN_BAK" ] && [ -f "$TAIXU_GRADLE_ALIGN_BAK" ]; then
+        mv "$TAIXU_GRADLE_ALIGN_BAK" "android/app/build.gradle"
+        echo "==> [TaiXu Build] 已恢复 android/app/build.gradle（版本对齐临时修改已撤销）"
+    fi
+}
+trap taixu_restore_gradle EXIT
+taixu_align_build_versions
+
 if ! command -v flutter >/dev/null 2>&1; then
     echo "==> [TaiXu Build] ❌ 未找到 Flutter SDK，请安装 Flutter 跨平台开发套件"
     exit 127
@@ -331,8 +405,11 @@ gradle.beforeSettings { settings ->
 EOF
 
 echo "==> [TaiXu Build] 正在执行 Flutter 打包编译 (flutter build $TARGET)..."
+# 注意：不能用 exec，否则 trap EXIT 不会触发，NDK 版本对齐的临时修改无法恢复。
 if [ "${TAIXU_OFFLINE:-0}" = "1" ]; then
-    exec flutter build $TARGET --offline --verbose
+    flutter build $TARGET --offline --verbose
 else
-    exec flutter build $TARGET --verbose
+    flutter build $TARGET --verbose
 fi
+build_exit=$?
+exit $build_exit

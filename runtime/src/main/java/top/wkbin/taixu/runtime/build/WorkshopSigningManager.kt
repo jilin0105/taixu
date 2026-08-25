@@ -53,6 +53,9 @@ class WorkshopSigningManager @Inject constructor(
     private fun sandboxKeystoreDir(distroId: String): File =
         File(pathManager.taixuRootDir(distroId), "keystores")
 
+    /** keytool 在沙箱内可访问的密钥库路径（必须使用沙箱内路径，而非宿主绝对路径）。 */
+    private fun sandboxKeystorePath(fileName: String): String = "/opt/taixu/keystores/$fileName"
+
     private suspend fun javaHome(): String =
         preferences.javaPath.first().ifBlank { "/opt/taixu/toolchains/android/jdk" }
 
@@ -84,7 +87,7 @@ class WorkshopSigningManager @Inject constructor(
         }
         val command = buildCreateKeystoreCommand(
             javaHome = javaHome(),
-            keystorePath = sandboxFile.absolutePath,
+            keystorePath = sandboxKeystorePath(fileName),
             alias = safeAlias,
             storePassword = storePassword,
             keyPassword = keyPassword.ifBlank { storePassword },
@@ -161,7 +164,7 @@ class WorkshopSigningManager @Inject constructor(
         val verify = linuxRuntime.execute(
             ShellCommand(
                 commandLine = "'${javaHome()}/bin/keytool' -list" +
-                    " -keystore '${sandboxFile.absolutePath}'" +
+                    " -keystore '${sandboxKeystorePath(fileName)}'" +
                     " -storepass '${storePassword.replace('\'', ' ')}'",
                 timeoutMs = 60_000L,
             ),

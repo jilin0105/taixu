@@ -524,6 +524,9 @@ class WorkspaceManager @Inject constructor(
                     targetSdk = 34
                     versionCode = 1
                     versionName = "1.0.0"
+                    ndk {
+                        abiFilters += "arm64-v8a"
+                    }
                 }
 
                 compileOptions {
