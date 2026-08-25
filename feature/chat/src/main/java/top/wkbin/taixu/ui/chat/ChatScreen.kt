@@ -1180,6 +1180,7 @@ private fun ChatPaneContent(
 private fun ContextUsageButton(usage: ContextUsage) {
     var expanded by remember { mutableStateOf(false) }
     val ratio = usage.usedTokens.toFloat() / usage.limitTokens.coerceAtLeast(1)
+    val displayPercent = (ratio * 100).roundToInt().coerceIn(0, 100)
     val tint = when {
         ratio >= 0.9f -> MaterialTheme.colorScheme.error
         ratio >= 0.7f -> Color(0xFFB25E00)
@@ -1197,7 +1198,7 @@ private fun ContextUsageButton(usage: ContextUsage) {
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = "${(ratio * 100).roundToInt().coerceAtLeast(0)}%",
+                    text = "$displayPercent%",
                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
                     color = tint,
                 )
@@ -2835,6 +2836,8 @@ private fun toolName(tool: HarnessTool, rawToolName: String? = null): String {
         HarnessTool.MEMORY -> "memory"
         HarnessTool.PLAN -> "plan"
         HarnessTool.SCRATCHPAD -> "scratchpad"
+        HarnessTool.HISTORY_SEARCH -> "history.search"
+        HarnessTool.HISTORY_READ -> "history.read"
         HarnessTool.SUBAGENT -> "invoke_subagent"
         HarnessTool.MCP -> "mcp"
     }

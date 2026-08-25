@@ -17,7 +17,9 @@ data class ApprovalDecision(
 class ApprovalPolicyEngine {
     fun decide(mode: ApprovalMode, tool: HarnessTool, args: JsonObject, workspace: String): ApprovalDecision {
         if (mode == ApprovalMode.FULL_ACCESS) return ApprovalDecision(false)
-        if (tool == HarnessTool.READ || tool == HarnessTool.MEMORY || tool == HarnessTool.PLAN || tool == HarnessTool.SCRATCHPAD) {
+        if (tool == HarnessTool.READ || tool == HarnessTool.MEMORY || tool == HarnessTool.PLAN ||
+            tool == HarnessTool.SCRATCHPAD || tool == HarnessTool.HISTORY_SEARCH || tool == HarnessTool.HISTORY_READ
+        ) {
             return ApprovalDecision(false)
         }
         if (tool == HarnessTool.SUBAGENT) return ApprovalDecision(false)
@@ -55,7 +57,8 @@ class ApprovalPolicyEngine {
             }
             HarnessTool.DOWNLOAD -> ApprovalDecision(true, "high", "下载会访问外部网络并写入工作区文件。", summary)
             HarnessTool.MCP -> ApprovalDecision(true, "high", "MCP 工具可能访问外部服务或产生工作区之外的副作用。", summary)
-            HarnessTool.READ, HarnessTool.MEMORY, HarnessTool.PLAN, HarnessTool.SCRATCHPAD, HarnessTool.SUBAGENT -> ApprovalDecision(false)
+            HarnessTool.READ, HarnessTool.MEMORY, HarnessTool.PLAN, HarnessTool.SCRATCHPAD,
+            HarnessTool.HISTORY_SEARCH, HarnessTool.HISTORY_READ, HarnessTool.SUBAGENT -> ApprovalDecision(false)
         }
     }
 

@@ -58,6 +58,8 @@ data class PendingMessage(
 /** Agent 单次运行的结构化结果，外层据此设置会话状态，避免内部失败被误标为 COMPLETED。 */
 private sealed interface RunResult {
     data object Completed : RunResult
+    data object WaitingApproval : RunResult
+    data object Cancelled : RunResult
     data class Failed(val message: String) : RunResult
 }
 
@@ -546,6 +548,8 @@ class HarnessLoop @Inject constructor(
         try {
             when (val result = block()) {
                 RunResult.Completed -> setSessionState(sessId, SessionRunState.COMPLETED)
+                RunResult.WaitingApproval -> setSessionState(sessId, SessionRunState.WAITING_APPROVAL)
+                RunResult.Cancelled -> setSessionState(sessId, SessionRunState.IDLE)
                 is RunResult.Failed -> {
                     setError(sessId, result.message)
                     setSessionState(sessId, SessionRunState.FAILED)
@@ -845,7 +849,9 @@ class HarnessLoop @Inject constructor(
                     }
                 }
                 val toolCall = ToolCall(
-                    id = newId(),
+                    // Preserve the provider protocol id across execution, approval,
+                    // persistence and the subsequent tool result.
+                    id = spec.id,
                     createdAt = now(),
                     tool = tool,
                     args = args,
@@ -957,6 +963,8 @@ class HarnessLoop @Inject constructor(
             HarnessTool.MEMORY -> "正在存取长期记忆：${arg("key") ?: arg("action") ?: "memory"}"
             HarnessTool.PLAN -> "正在更新任务执行规划：${arg("goal") ?: arg("action") ?: "plan"}"
             HarnessTool.SCRATCHPAD -> "正在记录工作草稿便签：${arg("key") ?: arg("action") ?: "scratchpad"}"
+            HarnessTool.HISTORY_SEARCH -> "正在检索历史消息：${arg("query")?.take(MAX_STATUS_ARG_LENGTH).orEmpty()}"
+            HarnessTool.HISTORY_READ -> "正在读取历史消息：${arg("message_id") ?: arg("index") ?: "history"}"
             HarnessTool.SUBAGENT -> "正在派发并执行子智能体协同任务…"
             HarnessTool.MCP -> "正在调用 MCP 插件工具：${rawToolName ?: "mcp"}…"
         }
@@ -1217,7 +1225,7 @@ class HarnessLoop @Inject constructor(
         val toolNames = if (toolCallMode == ToolCallMode.DISABLED) {
             "工具调用已禁用"
         } else {
-            "read, write, edit, base, memory, plan, scratchpad, invoke_subagent" +
+            "read, write, edit, base, memory, plan, scratchpad, history.search, history.read, invoke_subagent" +
                 if (toolCallMode == ToolCallMode.JSON_TEXT) "（JSON 文本调用模式）" else ""
         }
         val installedToolNames = installedTools.joinToString(", ") { it.name }.ifBlank { "暂无已安装套件记录" }
@@ -1299,8 +1307,20 @@ class HarnessLoop @Inject constructor(
             val shouldCompact = keepFromIndex > 0
             val recentTurnCutoffIndex = keepFromIndex
 
+            if (shouldCompact) {
+                add(
+                    ApiMessage(
+                        role = "system",
+                        content = ContextWindowPolicy.buildHistorySummary(
+                            msgs.take(recentTurnCutoffIndex),
+                            toolCallDetails,
+                        ),
+                    ),
+                )
+            }
+
             // JSON 文本模式：工具调用以文本表达，tool 消息需转成 user 文本（API 不认识 tool 角色）
-            val toolNames = mutableMapOf<String, String>()
+            val toolNames = toolCallDetails.mapValuesTo(mutableMapOf()) { it.value.first }
 
             var i = 0
             fun apiToolCall(tc: ToolCall) = ApiToolCall(
@@ -1310,6 +1330,10 @@ class HarnessLoop @Inject constructor(
             val isCollapsed = { index: Int -> shouldCompact && index < recentTurnCutoffIndex }
             while (i < msgs.size) {
                 val message = msgs[i]
+                if (isCollapsed(i)) {
+                    i++
+                    continue
+                }
                 if (message is CapabilityEvent) {
                     i++
                     continue
@@ -1430,7 +1454,7 @@ class HarnessLoop @Inject constructor(
 
     private suspend fun append(sessId: String, message: HarnessMessage) {
         val liveFlow = getOrCreateLiveMessages(sessId)
-        liveFlow.value = liveFlow.value + message
+        liveFlow.update { it + message }
         if (sessId == _currentSessionId.value) {
             _messages.value = liveFlow.value
         }
@@ -1439,36 +1463,36 @@ class HarnessLoop @Inject constructor(
 
     private fun streamAssistant(sessId: String, id: String, createdAt: Long, text: String) {
         val liveFlow = getOrCreateLiveMessages(sessId)
-        val current = liveFlow.value
-        val existing = current.firstOrNull { it.id == id }
-        val reasoning = (existing as? AssistantText)?.reasoning
-        val message = AssistantText(id = id, createdAt = createdAt, text = text, reasoning = reasoning)
-        val updated = if (existing != null) {
-            current.map { if (it.id == id) message else it }
-        } else {
-            current + message
+        liveFlow.update { current ->
+            val existing = current.firstOrNull { it.id == id }
+            val message = AssistantText(
+                id = id,
+                createdAt = createdAt,
+                text = text,
+                reasoning = (existing as? AssistantText)?.reasoning,
+            )
+            if (existing != null) current.map { if (it.id == id) message else it } else current + message
         }
-        liveFlow.value = updated
         if (sessId == _currentSessionId.value) {
-            _messages.value = updated
+            _messages.value = liveFlow.value
         }
     }
 
     private fun streamAssistantReasoning(sessId: String, id: String, createdAt: Long, reasoning: String) {
         val liveFlow = getOrCreateLiveMessages(sessId)
-        val current = liveFlow.value
-        val idx = current.indexOfFirst { it.id == id }
-        val updated = if (idx >= 0) {
-            val existing = current[idx]
-            (existing as? AssistantText)?.let {
-                current.toMutableList().apply { this[idx] = it.copy(reasoning = reasoning) }
-            } ?: (current + AssistantText(id = id, createdAt = createdAt, text = "", reasoning = reasoning))
-        } else {
-            current + AssistantText(id = id, createdAt = createdAt, text = "", reasoning = reasoning)
+        liveFlow.update { current ->
+            val idx = current.indexOfFirst { it.id == id }
+            if (idx >= 0) {
+                val existing = current[idx]
+                (existing as? AssistantText)?.let {
+                    current.toMutableList().apply { this[idx] = it.copy(reasoning = reasoning) }
+                } ?: (current + AssistantText(id = id, createdAt = createdAt, text = "", reasoning = reasoning))
+            } else {
+                current + AssistantText(id = id, createdAt = createdAt, text = "", reasoning = reasoning)
+            }
         }
-        liveFlow.value = updated
         if (sessId == _currentSessionId.value) {
-            _messages.value = updated
+            _messages.value = liveFlow.value
         }
     }
 
@@ -1482,15 +1506,11 @@ class HarnessLoop @Inject constructor(
     ) {
         val message = AssistantText(id = id, createdAt = createdAt, text = text, reasoning = reasoning, totalMs = totalMs)
         val liveFlow = getOrCreateLiveMessages(sessId)
-        val current = liveFlow.value
-        val updated = if (current.any { it.id == id }) {
-            current.map { if (it.id == id) message else it }
-        } else {
-            current + message
+        liveFlow.update { current ->
+            if (current.any { it.id == id }) current.map { if (it.id == id) message else it } else current + message
         }
-        liveFlow.value = updated
         if (sessId == _currentSessionId.value) {
-            _messages.value = updated
+            _messages.value = liveFlow.value
         }
         messageStore.insert(sessId, message)
     }

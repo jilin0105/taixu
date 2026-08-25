@@ -46,6 +46,8 @@ internal object HarnessApiMapper {
             lower == "memory" -> HarnessTool.MEMORY
             lower == "plan" -> HarnessTool.PLAN
             lower == "scratchpad" -> HarnessTool.SCRATCHPAD
+            lower == "history.search" || lower == "history_search" -> HarnessTool.HISTORY_SEARCH
+            lower == "history.read" || lower == "history_read" -> HarnessTool.HISTORY_READ
             lower == "invoke_subagent" || lower == "subagent" -> HarnessTool.SUBAGENT
             trimmed.startsWith("mcp__") -> HarnessTool.MCP
             else -> HarnessTool.BASE
@@ -62,6 +64,8 @@ internal object HarnessApiMapper {
         HarnessTool.MEMORY -> "memory"
         HarnessTool.PLAN -> "plan"
         HarnessTool.SCRATCHPAD -> "scratchpad"
+        HarnessTool.HISTORY_SEARCH -> "history.search"
+        HarnessTool.HISTORY_READ -> "history.read"
         HarnessTool.SUBAGENT -> "invoke_subagent"
         HarnessTool.MCP -> "mcp"
     }

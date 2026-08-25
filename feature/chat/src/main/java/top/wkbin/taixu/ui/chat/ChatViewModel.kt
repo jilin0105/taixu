@@ -16,6 +16,7 @@ import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.harness.HarnessLoop
 import top.wkbin.taixu.harness.HarnessMessage
 import top.wkbin.taixu.harness.PendingMessage
+import top.wkbin.taixu.harness.ContextWindowPolicy
 import top.wkbin.taixu.harness.mcp.McpManager
 import top.wkbin.taixu.runtime.WorkspaceManager
 import top.wkbin.taixu.runtime.WorkspaceProject
@@ -136,39 +137,37 @@ class ChatViewModel @Inject constructor(
         mcpServers,
         settingsDataStore.contextBudgetTokens,
     ) { currentMessages, currentModels, skills, mcps, defaultBudget ->
-        val activeModel = currentModels.firstOrNull { it.isActive }
+        ContextUsageInputs(
+            currentMessages = currentMessages,
+            activeModel = currentModels.firstOrNull { it.isActive },
+            skills = skills,
+            mcps = mcps,
+            defaultBudget = defaultBudget,
+        )
+    }.combine(settingsDataStore.contextCompactionEnabled) { inputs, compactionEnabled ->
+        val activeModel = inputs.activeModel
         val systemTokens = if (activeModel?.pureChatMode == true) {
             0
         } else {
-            val skillTokens = skills.filter { it.isEnabled }.sumOf { estimateContextTokens(it.systemPrompt) }
-            val mcpTokens = mcps.filter { it.isEnabled }.sumOf {
-                estimateContextTokens("${it.name}\n${it.description}\n${it.command}\n${it.args.joinToString(" ")}")
+            val skillTokens = inputs.skills.filter { it.isEnabled }.sumOf { ContextWindowPolicy.estimateTokens(it.systemPrompt) }
+            val mcpTokens = inputs.mcps.filter { it.isEnabled }.sumOf {
+                ContextWindowPolicy.estimateTokens("${it.name}\n${it.description}\n${it.command}\n${it.args.joinToString(" ")}")
             }
             1_600 + skillTokens + mcpTokens
         }
-        val conversationTokens = currentMessages.sumOf { message ->
-            when (message) {
-                is top.wkbin.taixu.harness.UserMessage -> estimateContextTokens(message.text) +
-                    message.imageUrls.size * 1_000
-                is top.wkbin.taixu.harness.AssistantText -> estimateContextTokens(message.text) +
-                    estimateContextTokens(message.reasoning.orEmpty())
-                else -> 0
-            }
-        }
-        val toolTokens = currentMessages.sumOf { message ->
-            when (message) {
-                is top.wkbin.taixu.harness.ToolCall -> estimateContextTokens(message.args.toString()) +
-                    estimateContextTokens(message.reasoning.orEmpty())
-                is top.wkbin.taixu.harness.ToolResult -> estimateContextTokens(message.output)
-                else -> 0
-            }
-        }
-        ContextUsage(
-            usedTokens = systemTokens + conversationTokens + toolTokens,
-            limitTokens = (activeModel?.contextTokens ?: defaultBudget).coerceAtLeast(1),
+        val effectiveUsage = ContextWindowPolicy.estimateEffectiveUsage(
+            messages = inputs.currentMessages,
+            budget = (activeModel?.contextTokens ?: inputs.defaultBudget).coerceAtLeast(1),
             systemTokens = systemTokens,
-            toolTokens = toolTokens,
-            conversationTokens = conversationTokens,
+            compactionEnabled = compactionEnabled,
+        )
+        ContextUsage(
+            usedTokens = effectiveUsage.totalTokens,
+            limitTokens = (activeModel?.contextTokens ?: inputs.defaultBudget).coerceAtLeast(1),
+            systemTokens = systemTokens,
+            toolTokens = effectiveUsage.toolTokens,
+            conversationTokens = effectiveUsage.conversationTokens,
+            compacted = effectiveUsage.keepFromIndex > 0,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ContextUsage())
 
@@ -447,15 +446,22 @@ class ChatViewModel @Inject constructor(
     }
 }
 
+private data class ContextUsageInputs(
+    val currentMessages: List<HarnessMessage>,
+    val activeModel: AiModelEntity?,
+    val skills: List<top.wkbin.taixu.core.model.AgentSkill>,
+    val mcps: List<top.wkbin.taixu.core.model.McpServerConfig>,
+    val defaultBudget: Int,
+)
+
 data class ContextUsage(
     val usedTokens: Int = 0,
     val limitTokens: Int = 128_000,
     val systemTokens: Int = 0,
     val toolTokens: Int = 0,
     val conversationTokens: Int = 0,
+    val compacted: Boolean = false,
 )
-
-private fun estimateContextTokens(text: String): Int = (text.length / 2.5).toInt()
 
 data class MentionItem(
     val id: String,

@@ -606,6 +606,24 @@ class ProviderClient @Inject constructor(
         val TOOLS: List<ApiToolDefinition> = listOf(
             ApiToolDefinition(
                 function = ApiFunctionDefinition(
+                    name = "history.search",
+                    description = "在当前会话的完整历史中按关键词检索旧消息。压缩摘要缺少关键细节时先用它定位消息，再用 history.read 读取原文。只读，不修改历史。",
+                    parameters = Json.parseToJsonElement(
+                        """{"type":"object","properties":{"query":{"type":"string","description":"要检索的关键词、文件名、错误信息或约束"},"limit":{"type":"integer","minimum":1,"maximum":20,"description":"最多返回命中条数，默认 8"}},"required":["query"]}""",
+                    ).jsonObject,
+                ),
+            ),
+            ApiToolDefinition(
+                function = ApiFunctionDefinition(
+                    name = "history.read",
+                    description = "读取当前会话某条历史消息的原文。使用 history.search 返回的 message_id，或使用稳定的历史 index。单条返回有大小上限。只读。",
+                    parameters = Json.parseToJsonElement(
+                        """{"type":"object","properties":{"message_id":{"type":"string","description":"history.search 返回的消息 ID"},"index":{"type":"integer","minimum":0,"description":"历史消息的 0 起始索引；与 message_id 二选一"}},"anyOf":[{"required":["message_id"]},{"required":["index"]}]}""",
+                    ).jsonObject,
+                ),
+            ),
+            ApiToolDefinition(
+                function = ApiFunctionDefinition(
                     name = "read",
                     description = "读取文件内容（UTF-8，单文件上限 1MB）。路径可用相对路径或以 /workspace/ 开头。优先用它检查文件内容，而不是用 cat/sed。大文件用 offset（1 起始行号）和 limit（行数）分页读取，返回头部会标注总行数与当前窗口。若文件不存在或读取失败，用 base 的 ls/find 定位。",
                     parameters = Json.parseToJsonElement(

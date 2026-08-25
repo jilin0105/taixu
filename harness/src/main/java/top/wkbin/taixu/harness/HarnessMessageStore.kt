@@ -7,7 +7,7 @@ import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.database.HarnessMessageEntity
 import top.wkbin.taixu.core.database.HarnessMessageRepository
 
-/** Owns transcript serialization, storage-size policy, and persistence failures. */
+/** Owns lossless transcript serialization and persistence failures. */
 @Singleton
 class HarnessMessageStore @Inject constructor(
     private val repository: HarnessMessageRepository,
@@ -23,15 +23,14 @@ class HarnessMessageStore @Inject constructor(
     }.getOrDefault(emptyList())
 
     suspend fun insert(sessionId: String, message: HarnessMessage) {
-        val safeMessage = sanitize(message)
         runCatching {
             repository.insert(
                 HarnessMessageEntity(
-                    id = safeMessage.id,
+                    id = message.id,
                     sessionId = sessionId,
-                    createdAt = safeMessage.createdAt,
-                    type = safeMessage::class.simpleName.orEmpty(),
-                    payloadJson = json.encodeToString(HarnessMessage.serializer(), safeMessage),
+                    createdAt = message.createdAt,
+                    type = message::class.simpleName.orEmpty(),
+                    payloadJson = json.encodeToString(HarnessMessage.serializer(), message),
                 ),
             )
         }.onFailure { throwable ->
@@ -44,26 +43,30 @@ class HarnessMessageStore @Inject constructor(
 
     suspend fun deleteByIds(ids: List<String>) = repository.deleteByIds(ids)
 
-    private fun sanitize(message: HarnessMessage): HarnessMessage = when (message) {
-        is CapabilityEvent -> message
-        is ToolResult -> if (message.output.length > MAX_STORAGE_STRING_LENGTH) {
-            val head = message.output.take(STORAGE_KEEP_LENGTH)
-            val tail = message.output.takeLast(STORAGE_KEEP_LENGTH)
-            message.copy(output = "$head\n\n... [工具输出过长（共 ${message.output.length} 字符），已截断保存] ...\n\n$tail")
-        } else message
-        is AssistantText -> message.copy(
-            text = message.text.truncate("文本过长已截断"),
-            reasoning = message.reasoning?.truncate("推理过程过长已截断"),
-        )
-        is UserMessage -> message.copy(text = message.text.truncate("用户消息过长已截断"))
-        is ToolCall -> message
+    suspend fun search(sessionId: String, query: String, limit: Int = 8): List<HarnessMessage> {
+        val needle = query.trim().lowercase()
+        if (needle.isBlank()) return emptyList()
+        return load(sessionId).asSequence()
+            .filter { searchableText(it).lowercase().contains(needle) }
+            .take(limit.coerceIn(1, 20))
+            .toList()
     }
 
-    private fun String.truncate(note: String): String =
-        if (length > MAX_STORAGE_STRING_LENGTH) take(MAX_STORAGE_STRING_LENGTH) + "\n... [$note]" else this
-
-    private companion object {
-        const val MAX_STORAGE_STRING_LENGTH = 128 * 1024
-        const val STORAGE_KEEP_LENGTH = 60 * 1024
+    suspend fun read(sessionId: String, messageId: String? = null, index: Int? = null): HarnessMessage? {
+        val messages = load(sessionId)
+        return when {
+            !messageId.isNullOrBlank() -> messages.firstOrNull { it.id == messageId }
+            index != null -> messages.getOrNull(index.coerceIn(0, messages.lastIndex.coerceAtLeast(0)))
+            else -> null
+        }
     }
+
+    private fun searchableText(message: HarnessMessage): String = when (message) {
+        is CapabilityEvent -> "${message.kind} ${message.name} ${message.details}"
+        is UserMessage -> message.text
+        is AssistantText -> "${message.text}\n${message.reasoning.orEmpty()}"
+        is ToolCall -> "${message.rawToolName.orEmpty()} ${message.tool} ${message.args} ${message.reasoning.orEmpty()}"
+        is ToolResult -> message.output
+    }
+
 }
