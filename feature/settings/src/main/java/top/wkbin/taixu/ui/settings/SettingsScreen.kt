@@ -70,7 +70,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.OffsetMapping
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -412,6 +411,7 @@ fun LinuxEnvironmentSettingsScreen(
     onOpenDistroManagement: () -> Unit,
     onOpenStorageMounts: () -> Unit,
     onOpenEnvironmentVariables: () -> Unit,
+    onOpenSshSettings: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val executionMode by viewModel.executionMode.collectAsStateWithLifecycle()
@@ -491,6 +491,13 @@ fun LinuxEnvironmentSettingsScreen(
                         subtitle = "为终端、Agent 和工具注入用户变量",
                         onClick = onOpenEnvironmentVariables,
                     )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(
+                        icon = RuntimeIconName.Network,
+                        title = "SSH 远程访问",
+                        subtitle = "公钥认证 · 端口与局域网监听 · 随运行时启动",
+                        onClick = onOpenSshSettings,
+                    )
                 }
             }
 
@@ -521,6 +528,7 @@ fun EnvironmentVariableSettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val entries by viewModel.environmentVariables.collectAsStateWithLifecycle()
+    val values by viewModel.environmentValues.collectAsStateWithLifecycle()
     val effectiveEntries by viewModel.effectiveEnvironment.collectAsStateWithLifecycle()
     val privacyMode by viewModel.environmentPrivacyMode.collectAsStateWithLifecycle()
     val loading by viewModel.environmentLoading.collectAsStateWithLifecycle()
@@ -529,15 +537,36 @@ fun EnvironmentVariableSettingsScreen(
     val runtimeState by viewModel.runtimeState.collectAsStateWithLifecycle()
     var showEditor by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<top.wkbin.taixu.core.model.EnvironmentVariable?>(null) }
+    var editorInitialKey by remember { mutableStateOf("") }
+    var editorInitialValue by remember { mutableStateOf("") }
     var showDelete by remember { mutableStateOf<top.wkbin.taixu.core.model.EnvironmentVariable?>(null) }
+
+    fun openEnvironmentEditor(
+        entry: top.wkbin.taixu.core.model.EnvironmentVariable?,
+        key: String,
+        value: String,
+    ) {
+        viewModel.clearEnvironmentError()
+        editing = entry
+        editorInitialKey = key
+        editorInitialValue = value
+        showEditor = true
+    }
 
     if (showEditor) {
         EnvironmentVariableEditor(
             entry = editing,
-            onDismiss = { showEditor = false; editing = null },
+            initialKey = editorInitialKey,
+            currentValue = editorInitialValue,
+            error = error,
+            onDismiss = {
+                viewModel.clearEnvironmentError()
+                showEditor = false
+                editing = null
+            },
             onSave = { key, value, note ->
                 if (editing == null) viewModel.addEnvironmentVariable(key, value, note) { if (it) { showEditor = false } }
-                else viewModel.updateEnvironmentVariable(editing!!.id, key, value.ifBlank { null }, note) { if (it) { showEditor = false; editing = null } }
+                else viewModel.updateEnvironmentVariable(editing!!.id, key, value, note) { if (it) { showEditor = false; editing = null } }
             },
         )
     }
@@ -561,7 +590,7 @@ fun EnvironmentVariableSettingsScreen(
                     IconButton(onClick = { viewModel.refreshEnvironmentVariables() }, enabled = !loading && runtimeState is top.wkbin.taixu.core.model.RuntimeState.Ready) {
                         RuntimeIcon(RuntimeIconName.Refresh)
                     }
-                    IconButton(onClick = { editing = null; showEditor = true }, enabled = !loading && runtimeState is top.wkbin.taixu.core.model.RuntimeState.Ready) {
+                    IconButton(onClick = { openEnvironmentEditor(null, "", "") }, enabled = !loading && runtimeState is top.wkbin.taixu.core.model.RuntimeState.Ready) {
                         RuntimeIcon(RuntimeIconName.Plus)
                     }
                 },
@@ -577,10 +606,34 @@ fun EnvironmentVariableSettingsScreen(
                 SettingsGroup {
                     SettingsRow(
                         icon = RuntimeIconName.Shield,
-                        title = "隐私模式",
-                        subtitle = "发送给 Agent 前遮盖已配置变量值",
+                        title = "Agent 隐私遮盖",
+                        subtitle = "仅遮盖发送给 Agent 和写入对话的变量值；本页仍显示明文",
                         trailing = { Switch(checked = privacyMode, onCheckedChange = viewModel::setEnvironmentPrivacyMode) },
                     )
+                }
+            }
+            item {
+                RuntimeCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.72f),
+                    borderColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.35f),
+                    contentPadding = PaddingValues(14.dp),
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+                        RuntimeIcon(RuntimeIconName.Alert, tint = MaterialTheme.colorScheme.tertiary)
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                "Warning · 修改环境变量可能导致运行异常",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            )
+                            Text(
+                                "错误覆盖 JAVA_HOME、GRADLE_HOME、LANG 等变量，可能使终端、构建工具或插件无法启动。请只修改你明确了解用途的变量；TaiXu 运行时关键变量会被强制保护。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            )
+                        }
+                    }
                 }
             }
             item {
@@ -619,13 +672,22 @@ fun EnvironmentVariableSettingsScreen(
                 item { RuntimeCard(modifier = Modifier.fillMaxWidth()) { Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) { Text("暂无用户变量", style = MaterialTheme.typography.titleMedium); Text("点击右上角 + 添加", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } } }
             } else {
                 items(entries, key = { it.id }) { entry ->
-                    RuntimeCard(modifier = Modifier.fillMaxWidth(), onClick = { editing = entry; showEditor = true }) {
+                    RuntimeCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { openEnvironmentEditor(entry, entry.key, values[entry.key].orEmpty()) },
+                    ) {
                         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(entry.key, style = MaterialTheme.typography.titleMedium, fontFamily = FontFamily.Monospace)
                                 if (entry.note.isNotBlank()) Text(entry.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text("••••••••", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    values[entry.key].orEmpty().ifEmpty { "（空值）" },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontFamily = FontFamily.Monospace,
+                                )
                             }
+                            IconButton(onClick = { openEnvironmentEditor(entry, entry.key, values[entry.key].orEmpty()) }) { RuntimeIcon(RuntimeIconName.Edit) }
                             IconButton(onClick = { showDelete = entry }) { RuntimeIcon(RuntimeIconName.Trash, tint = MaterialTheme.colorScheme.error) }
                         }
                     }
@@ -634,7 +696,7 @@ fun EnvironmentVariableSettingsScreen(
             item {
                 SectionHeader(
                     title = "当前有效环境",
-                    subtitle = "新命令实际可见的变量；值已隐藏",
+                    subtitle = "新命令实际可见的变量与值",
                     trailing = { Text(effectiveEntries.size.toString(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) },
                 )
             }
@@ -655,10 +717,18 @@ fun EnvironmentVariableSettingsScreen(
                     SettingsGroup {
                         effectiveEntries.forEachIndexed { index, entry ->
                             if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                            val managedEntry = entries.firstOrNull { it.key == entry.key }
                             SettingsRow(
                                 icon = RuntimeIconName.Key,
                                 title = entry.key,
-                                subtitle = if (entry.hasValue) "已设置，值已隐藏" else "空值",
+                                subtitle = entry.value.ifEmpty { "（空值）" },
+                                onClick = {
+                                    if (managedEntry == null) {
+                                        openEnvironmentEditor(null, entry.key, entry.value)
+                                    } else {
+                                        openEnvironmentEditor(managedEntry, managedEntry.key, values[managedEntry.key].orEmpty())
+                                    }
+                                },
                             )
                         }
                     }
@@ -671,20 +741,36 @@ fun EnvironmentVariableSettingsScreen(
 @Composable
 private fun EnvironmentVariableEditor(
     entry: top.wkbin.taixu.core.model.EnvironmentVariable?,
+    initialKey: String,
+    currentValue: String,
+    error: String?,
     onDismiss: () -> Unit,
     onSave: (String, String, String) -> Unit,
 ) {
-    var key by remember(entry) { mutableStateOf(entry?.key.orEmpty()) }
-    var value by remember(entry) { mutableStateOf("") }
+    var key by remember(entry?.id, initialKey) { mutableStateOf(initialKey) }
+    var value by remember(entry?.id, initialKey) { mutableStateOf(currentValue) }
     var note by remember(entry) { mutableStateOf(entry?.note.orEmpty()) }
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (entry == null) "添加环境变量" else "编辑环境变量") },
+        title = { Text(if (entry != null) "编辑环境变量" else if (initialKey.isNotBlank()) "配置环境变量" else "添加环境变量") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+                    RuntimeIcon(RuntimeIconName.Alert, Modifier.size(18.dp), MaterialTheme.colorScheme.tertiary)
+                    Text(
+                        if (entry == null && initialKey.isNotBlank()) {
+                            "这会在用户配置中覆盖 Linux 当前值。错误配置可能导致相关命令无法运行。"
+                        } else {
+                            "修改后会影响新启动的命令与终端，请确认变量名称和值正确。"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
                 OutlinedTextField(value = key, onValueChange = { key = it.uppercase() }, label = { Text("名称") }, singleLine = true)
-                OutlinedTextField(value = value, onValueChange = { value = it }, label = { Text(if (entry == null) "值" else "新值（留空保留原值）") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
+                OutlinedTextField(value = value, onValueChange = { value = it }, label = { Text("值") }, singleLine = true)
                 OutlinedTextField(value = note, onValueChange = { note = it }, label = { Text("备注（可选）") }, singleLine = true)
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             }
         },
         confirmButton = { TextButton(onClick = { onSave(key, value, note) }, enabled = key.isNotBlank() && (entry != null || value.isNotEmpty())) { Text("保存") } },

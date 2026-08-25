@@ -31,6 +31,8 @@ class FakeLinuxRuntime : LinuxRuntime {
     val executedCommands = mutableListOf<String>()
     val executedShellCommands = mutableListOf<ShellCommand>()
     val sessions = mutableListOf<SessionConfig>()
+    val backgroundProcesses = linkedMapOf<String, ManagedProcess>()
+    val backgroundLogs = mutableMapOf<String, List<String>>()
 
     override fun refreshInstalledDistros() = Unit
     override suspend fun switchActiveDistro(distroId: String): AppResult<Unit> {
@@ -93,11 +95,12 @@ class FakeLinuxRuntime : LinuxRuntime {
         toolId,
         null,
         type,
-    )
+    ).also { backgroundProcesses[id] = it }
 
-    override suspend fun stopBackground(id: String): Boolean = true
-    override fun listBackground(): List<ManagedProcess> = emptyList()
+    override suspend fun stopBackground(id: String): Boolean = backgroundProcesses.remove(id) != null
+    override fun listBackground(): List<ManagedProcess> = backgroundProcesses.values.toList()
     override suspend fun cleanupDeadBackground(): Int = 0
+    override fun getBackgroundLogs(idOrToolId: String): List<String> = backgroundLogs[idOrToolId].orEmpty()
     override suspend fun shutdown() = Unit
     override fun rootfsPath(distroId: String?): File = File("/fake/rootfs")
     override fun workspacePath(): File = File("/fake/workspace")

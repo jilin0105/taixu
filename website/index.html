@@ -158,14 +158,14 @@
       <div class="plugin-intro reveal">
         <div class="section-index">04 / 插件生态</div>
         <h2>把你的工具，<br>装进太墟。</h2>
-        <p>一个 <code>.txplugin</code> 包由清单与离线 payload 组成。声明 ARM64 架构、安装步骤、命令入口和最小权限，即可交给太墟完成导入、安装、验证与卸载。</p>
+        <p>在线 Registry 与本地 <code>.txplugin</code> 各有清晰来源标识。本地包由清单与离线 payload 组成，可声明 ARM64 架构、安装步骤、命令入口、实时进度和能力元数据。</p>
         <a class="button button-primary" href="plugins.html">阅读插件制作教程 <span>→</span></a>
       </div>
       <div class="plugin-steps reveal" data-delay="1">
         <div><b>01</b><strong>组织目录</strong><span>manifest.json + payload/</span></div>
-        <div><b>02</b><strong>声明能力</strong><span>ARM64 · 权限 · 启动类型</span></div>
-        <div><b>03</b><strong>打包导入</strong><span>ZIP 容器，扩展名 .txplugin</span></div>
-        <div><b>04</b><strong>验证发布</strong><span>离线安装 · 重复安装 · 卸载</span></div>
+        <div><b>02</b><strong>声明来源</strong><span>LOCAL / REMOTE · ARM64 · 启动类型</span></div>
+        <div><b>03</b><strong>打包导入</strong><span>ZIP64 · SHA-256 · 版本去重</span></div>
+        <div><b>04</b><strong>验证发布</strong><span>离线安装 · 百分比进度 · 卸载</span></div>
         <pre><code>{
   "id": "hello-arm64",
   "launchType": "command",

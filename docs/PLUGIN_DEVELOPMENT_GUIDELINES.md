@@ -1,109 +1,59 @@
 # TaiXu 插件开发准则
 
-本文档定义 TaiXu 插件清单、离线插件包和运行时安装脚本的统一约定。
+本文档描述当前 TaiXu 插件导入器、Registry、安装器和 PRoot 运行环境的真实行为。除明确标记为“建议”的内容外，示例均以当前实现为准。
 
-## 1. 插件包格式
+## 1. 插件来源
 
-离线插件使用 ZIP 容器，文件扩展名为 `.txplugin`：
+TaiXu 将插件分为两类：
+
+| 来源 | `source` | 安装方式 | 资源位置 |
+| --- | --- | --- | --- |
+| 在线插件 | `REMOTE` | 通常为 `SCRIPT` | 内置或签名 Registry |
+| 本地插件 | `LOCAL` | `LOCAL_PACKAGE` | 用户导入的 `.txplugin` |
+
+本地包导入时，应用会强制改写为：
+
+```json
+{
+  "source": "LOCAL",
+  "offlineOnly": true,
+  "installMethod": "LOCAL_PACKAGE"
+}
+```
+
+本地插件与在线 Registry 使用相同 `id` 时，本地插件优先显示。`permissions` 当前用于清单校验和界面展示，**不是安装脚本的权限沙箱**；安装脚本仍在 PRoot 内以当前 Linux 用户权限执行。
+
+## 2. `.txplugin` 包格式
+
+本地插件使用 ZIP 容器，扩展名为 `.txplugin`：
 
 ```text
 my-plugin.txplugin
 ├── manifest.json
 └── payload/
-    ├── archives/       # SDK、Gradle、Flutter、NDK 等大文件
-    ├── scripts/        # 安装时需要执行的脚本或配置
-    └── bin/            # 可直接部署的 ARM64 可执行文件
+    ├── archives/       # SDK、Gradle、Flutter、NDK 等归档
+    ├── scripts/        # 安装、验证和卸载脚本
+    ├── config/         # 配置模板
+    └── bin/            # 可直接部署的 ARM64 文件
 ```
 
-包内只允许 `manifest.json` 和 `payload/`，路径不得使用绝对路径或 `..`。导入后包保存在应用私有目录，安装时复制到当前发行版的 `/opt/taixu/imports/<id>`。
+硬性限制：
 
-## 2. manifest.json
+- ZIP 根目录只允许 `manifest.json` 和 `payload/`。
+- 条目不得使用绝对路径、反斜杠逃逸或 `..`。
+- `manifest.json` 最大 1 MiB。
+- 所有解包条目的累计数据最大 8 GiB。
+- 大包导入需要同时容纳应用私有插件副本、发行版内的 payload 副本、解压 staging 和最终安装目录；预留空间应明显大于 `.txplugin` 文件本身。
 
-最小示例：
-
-```json
-{
-  "schemaVersion": 1,
-  "id": "flutter-offline",
-  "name": "Flutter Offline",
-  "description": "ARM64 Flutter SDK 离线插件",
-  "version": "3.47.1",
-  "publisher": "Example",
-  "category": "DEVELOPER",
-  "launchType": "command",
-  "architectures": ["ARM64"],
-  "source": "LOCAL",
-  "offlineOnly": true,
-  "installMethod": "LOCAL_PACKAGE",
-  "installSteps": [
-    "test -f \"$TAIXU_PLUGIN_PAYLOAD/archives/flutter.tar.xz\"",
-    "mkdir -p /opt/flutter && tar -xJf \"$TAIXU_PLUGIN_PAYLOAD/archives/flutter.tar.xz\" -C /opt",
-    "ln -sf /opt/flutter/bin/flutter /opt/taixu/bin/flutter"
-  ],
-  "commandLinks": ["flutter"],
-  "verifyCommand": "flutter --version"
-}
-```
-
-`id` 只能使用小写字母、数字和连字符；`architectures` 必须包含 `ARM64`。在线插件使用 `source=REMOTE`、`installMethod=SCRIPT`。本地插件由导入器强制改写为 `source=LOCAL`、`offlineOnly=true`、`installMethod=LOCAL_PACKAGE`。
-
-## 3. 依赖与离线策略
-
-- 大型依赖必须放进 `payload/`，不能在安装脚本中再次下载。
-- 离线插件安装时不会调用 RuntimeDependency 下载器；`installSteps` 应只读取 `$TAIXU_PLUGIN_PAYLOAD`。
-- Android、Flutter、Gradle、NDK 等依赖必须提供 ARM64 版本，并在安装脚本中校验压缩包摘要、目录结构和关键可执行文件。
-- 不要把 x86_64 主机二进制伪装成 ARM64；必要时用 ELF 架构检查。
-- 安装脚本应幂等：重复执行不会破坏已有安装，也不会覆盖用户数据目录。
-
-## 4. 安装脚本安全规范
-
-- 所有路径使用固定目录或环境变量，禁止把用户输入直接拼接到 Shell 命令。
-- 独立脚本必须以 `#!/bin/sh` 开头并使用 LF 换行；清单中调用脚本时统一写 `/bin/sh "$TAIXU_PLUGIN_PAYLOAD/..."`，不要依赖 `PATH` 中的相对 `sh`。
-- 可执行文件放在插件目录的 `bin/`，通过 `commandLinks` 暴露到 `/opt/taixu/bin`。
-- 服务插件必须声明 `servicePort` 和 `servicePath`，只监听必要地址。
-- 插件只申请实际需要的 `permissions`：`NETWORK`、`WORKSPACE_READ`、`WORKSPACE_WRITE`、`LOCAL_WEB`。
-- 禁止修改 RootFS 外部路径、系统级 Android 文件或其他插件目录。
-
-## 5. 验证与发布清单
-
-发布前至少验证：
-
-1. 在 ARM64 Debian/Ubuntu PRoot 中全新安装和重复安装。
-2. 断网时安装仍能完成，且不会访问包管理器或远程 URL。
-3. `verifyCommand`、命令链接和服务启动均成功。
-4. 恶意 ZIP 路径、缺少 `manifest.json`、错误架构和损坏归档会被拒绝。
-5. 安装、验证、卸载日志能准确说明失败步骤。
-
-## 6. 版本与兼容性
-
-`schemaVersion` 当前为 `1`。破坏性清单变更必须递增 Schema；普通资源更新递增 `version`，并保持 `id` 不变。插件不得依赖未在本准则或 TaiXu API 中声明的内部路径。
-
-## 7. 从零制作一个插件
-
-下面以 `hello-arm64` 为例。这个插件把 `hello` 脚本安装到插件目录，并通过 TaiXu 的命令链接暴露出来。
-
-### 7.1 创建工作目录
+导入后，包会解压到应用私有的版本目录；安装前，`payload/` 会复制到当前发行版：
 
 ```text
-hello-arm64/
-├── manifest.json
-└── payload/
-    └── bin/
-        └── hello
+/opt/taixu/imports/<id>
 ```
 
-`payload/bin/hello` 内容：
+## 3. `manifest.json`
 
-```sh
-#!/bin/sh
-echo "hello from TaiXu"
-```
-
-在 Linux/macOS 上执行 `chmod +x payload/bin/hello`。Windows 上不能依赖 ZIP 保存 Unix 执行位，因此安装步骤必须再次执行 `chmod +x`。
-
-### 7.2 编写清单
-
-`manifest.json`：
+最小本地插件清单：
 
 ```json
 {
@@ -122,10 +72,109 @@ echo "hello from TaiXu"
   "offlineOnly": true,
   "installMethod": "LOCAL_PACKAGE",
   "installSteps": [
+    "/bin/sh \"$TAIXU_PLUGIN_PAYLOAD/scripts/install.sh\""
+  ],
+  "uninstallSteps": [
+    "/bin/sh \"$TAIXU_PLUGIN_PAYLOAD/scripts/uninstall.sh\""
+  ],
+  "launchCommand": "hello",
+  "verifyCommand": "hello",
+  "commandLinks": ["hello"]
+}
+```
+
+字段约束：
+
+| 字段 | 当前约束 |
+| --- | --- |
+| `schemaVersion` | 当前必须为 `1`。 |
+| `id` | 正则为 `[a-z0-9][a-z0-9-]{1,63}`，长度 2～64。 |
+| `version` | 必须非空；建议使用规范 `x.y.z`。 |
+| `architectures` | 必须包含 `ARM64`，不区分大小写。 |
+| `launchType` | `one_shot`、`command`、`pty`、`web` 或 `service`。 |
+| `permissions` | 只接受 `NETWORK`、`WORKSPACE_READ`、`WORKSPACE_WRITE`、`LOCAL_WEB`。 |
+| `updateStrategy` | `REINSTALL` 或 `IN_PLACE`。 |
+| `homepage` | 如提供，必须使用 HTTPS。 |
+| `servicePort` | 如提供，必须为 1～65535，且启动类型必须为 `web/service`。 |
+| `servicePath` | 必须以 `/` 开头且不能包含 `..`。 |
+
+在线插件应使用 `source=REMOTE` 和 `installMethod=SCRIPT`。当前 Validator 尚未强制 REMOTE 与 SCRIPT 的组合，Registry 发布者仍必须遵循该约定。
+
+## 4. 安装器提供的环境变量
+
+```text
+$TAIXU_TOOL_ID         当前插件 ID
+$TAIXU_TOOL_DIR        /opt/taixu/tools/<id>
+$TAIXU_TOOL_DATA       /opt/taixu/data/<id>
+$TAIXU_PLUGIN_PAYLOAD  /opt/taixu/imports/<id>（仅本地插件）
+```
+
+程序文件放在 `$TAIXU_TOOL_DIR`；用户配置、缓存、模型或项目数据放在 `$TAIXU_TOOL_DATA`。后者在普通卸载时默认保留。
+
+`commandLinks` 中的每个名称默认指向：
+
+```text
+$TAIXU_TOOL_DIR/bin/<command>
+```
+
+因此脚本必须创建对应文件并恢复可执行权限。
+
+## 5. 精简 RootFS 兼容规则
+
+插件只能默认依赖 `/bin/sh` 和实际 RootFS 已提供的基础命令。不要假设下列可选工具存在：
+
+```text
+unzip  xz  file  readelf  jq  python  node
+```
+
+具体规则：
+
+- 独立脚本以 `#!/bin/sh` 开头，使用 POSIX Shell 语法和 LF 换行。
+- 清单中使用绝对 `/bin/sh`，不要依赖 `PATH` 中的 `sh`。
+- 优先发布 `.tar.gz`；使用 `.tar.xz` 时必须随包提供兼容解压器，不能假设系统有 `xz`。
+- ZIP 不保证保留 Unix 执行位；解压后必须显式 `chmod`。
+- 不要用 `find -type f` 查找可能为符号链接的工具；使用 `\( -type f -o -type l \)`。
+- 不要把通配符直接作为单个 `test -x` 参数；先用 `find ... -print -quit` 得到明确路径。
+- 不要依赖 `file` 或 `readelf` 检查架构，可直接读取 ELF 头。
+
+POSIX ELF64 AArch64 检查示例：
+
+```sh
+elf_bytes() { od -An -t x1 "$@" 2>/dev/null | tr -d ' \n'; }
+is_elf() { test "$(elf_bytes -N 4 "$1")" = "7f454c46"; }
+is_aarch64_elf() { test "$(elf_bytes -j 18 -N 2 "$1")" = "b700"; }
+```
+
+`e_machine` 位于 ELF 头偏移 18；AArch64 为 183，即小端字节 `b7 00`。
+
+## 6. Hello 插件
+
+目录：
+
+```text
+hello-arm64/
+├── manifest.json
+└── payload/
+    └── bin/
+        └── hello
+```
+
+`payload/bin/hello`：
+
+```sh
+#!/bin/sh
+echo "hello from TaiXu"
+```
+
+清单中的安装步骤：
+
+```json
+{
+  "installSteps": [
     "test -f \"$TAIXU_PLUGIN_PAYLOAD/bin/hello\"",
     "mkdir -p \"$TAIXU_TOOL_DIR/bin\"",
     "cp \"$TAIXU_PLUGIN_PAYLOAD/bin/hello\" \"$TAIXU_TOOL_DIR/bin/hello\"",
-    "chmod +x \"$TAIXU_TOOL_DIR/bin/hello\""
+    "chmod 755 \"$TAIXU_TOOL_DIR/bin/hello\""
   ],
   "uninstallSteps": [
     "rm -f \"$TAIXU_TOOL_DIR/bin/hello\""
@@ -136,36 +185,72 @@ echo "hello from TaiXu"
 }
 ```
 
-关键字段的作用：
+## 7. 大型离线依赖
 
-| 字段 | 说明 |
-| --- | --- |
-| `id` | 稳定唯一标识，只能是小写字母、数字和连字符，长度 2~64。发布后不要修改。 |
-| `version` | 插件版本；同一 `id` 导入新版本时会替换旧版本。 |
-| `launchType` | `command` 适合命令行工具；交互式终端用 `pty`；后台 Web 服务用 `web` 或 `service`。 |
-| `architectures` | 必须包含 `ARM64`，因为当前应用只支持 arm64-v8a。 |
-| `installSteps` | 按顺序拼接成 Shell 脚本，在 PRoot Linux 中执行。 |
-| `uninstallSteps` | 删除插件创建的文件；用户数据应放在 `$TAIXU_TOOL_DATA`，不要在这里无条件删除。 |
-| `launchCommand` | 用户从工具中心启动时执行的命令。 |
-| `verifyCommand` | 安装完成后的自检命令，退出码为 0 才算通过。 |
-| `commandLinks` | 要暴露到 `/opt/taixu/bin` 的命令名列表。 |
+大型资源放入 `payload/archives/`，脚本先校验摘要，再解压到 staging，验证后提交：
 
-安装器会自动提供以下环境变量：
+```sh
+#!/bin/sh
+set -eu
 
-```text
-$TAIXU_TOOL_ID       当前插件 ID
-$TAIXU_TOOL_DIR      /opt/taixu/tools/<id>
-$TAIXU_TOOL_DATA     /opt/taixu/data/<id>
-$TAIXU_PLUGIN_PAYLOAD /opt/taixu/imports/<id>（仅本地插件）
+archive="$TAIXU_PLUGIN_PAYLOAD/archives/flutter-arm64.tar.gz"
+expected_sha256="<SHA256>"
+
+test -s "$archive"
+printf '%s  %s\n' "$expected_sha256" "$archive" | sha256sum -c -
+
+rm -rf /opt/flutter.staging
+mkdir -p /opt/flutter.staging
+tar -xzf "$archive" -C /opt/flutter.staging
+
+test -x /opt/flutter.staging/flutter/bin/flutter
+rm -rf /opt/flutter
+mv /opt/flutter.staging/flutter /opt/flutter
 ```
 
-### 7.3 打包为 `.txplugin`
+要求：
+
+- `offlineOnly=true` 会跳过 Node/Python/Curl 等 Runtime 依赖获取，但不会阻止脚本主动联网；离线插件自身不得调用网络或包管理器。
+- 主机工具必须能在 Linux ARM64 PRoot 中运行。Android ARM64/Bionic 程序与 Linux ARM64/glibc 程序也不能仅凭架构相同就混用。
+- 所有大型归档必须固定 SHA-256。
+- staging 必须位于同一文件系统，验证完成后再 `mv` 到最终目录。
+- 安装脚本默认超时 15 分钟；单次 `verifyCommand` 默认超时 60 秒。
+
+## 8. 实时进度与日志
+
+安装器会记录阶段事件、标准输出和标准错误。插件脚本可以输出结构化相对进度：
+
+```text
+[TAIXU_PROGRESS:47] [EXTRACT] 正在解压 Android NDK r29
+```
+
+格式：
+
+```text
+[TAIXU_PROGRESS:<0..100>] <用户可读消息>
+```
+
+进度必须单调递增。推荐消息标签：
+
+- `[COPY]`：复制资源。
+- `[EXTRACT]`：解压归档。
+- `[COMMAND]`：执行明确、已脱敏的命令或配置步骤。
+- `[VERIFY]`：摘要、架构和最终状态验证。
+
+不要使用 `set -x` 生成安装日志，它可能输出 Token、代理地址或其他环境变量。结构化进度是安装配方内部的相对进度，应用会映射到完整安装进度条。
+
+## 9. 打包、版本与导入
+
+### 小型插件
 
 Windows PowerShell：
 
 ```powershell
-Compress-Archive -Path .\hello-arm64\manifest.json, .\hello-arm64\payload `
-  -DestinationPath .\hello-arm64.txplugin -Force
+Compress-Archive `
+  -LiteralPath .\hello-arm64\manifest.json, .\hello-arm64\payload `
+  -DestinationPath .\hello-arm64.zip `
+  -Force
+Move-Item .\hello-arm64.zip .\hello-arm64.txplugin
 ```
 
 Linux/macOS：
@@ -175,131 +260,95 @@ cd hello-arm64
 zip -r ../hello-arm64.txplugin manifest.json payload
 ```
 
-打包后检查 ZIP 根目录，必须直接看到 `manifest.json` 和 `payload/`，不能多一层 `hello-arm64/` 目录：
+大型插件应使用支持 Zip64 的工具。已经是 `.zip`、`.tar.gz`、`.deb` 等压缩归档的条目建议使用 ZIP Store/NoCompression，避免无效的二次压缩。
 
-```sh
-unzip -l hello-arm64.txplugin
-```
+### 快速更新包内脚本
 
-### 7.4 在 TaiXu 中导入和安装
+`.txplugin` 是 ZIP。只修改 `manifest.json` 或脚本时，可以复制原包并更新少量 ZIP 条目；不需要解压、重压缩所有大型归档。只有替换归档或改变其压缩格式时，才需要处理对应大文件。
 
-1. 打开“设置 → 插件与工具中心”。
-2. 点击右上角的文件导入按钮，选择 `.txplugin`。
-3. 导入成功后，工具会出现在工具列表中；如果与在线 Registry 中的 `id` 相同，本地版本优先显示。
-4. 点击“安装”。安装器会先把 `payload/` 复制到当前发行版的 `/opt/taixu/imports/<id>`，再执行 `installSteps`。
-5. 安装结束后运行 `verifyCommand`，确认状态变为已安装。
+### 版本行为
 
-### 7.5 在终端中验证
+- 相同 `id + version` 已导入时会直接提示，不重复解包或安装。
+- 相同 `id` 的不同版本目前会在应用私有目录中共存，不会删除旧版本。
+- 当前版本选择按版本目录名做字符串排序，而不是完整 SemVer 比较。修复前应保持版本段宽度可比较，避免同时使用 `1.0.9` 与 `1.0.10` 这类字符串顺序不同的版本。
+- 选择新版本并确认后，当前 UI 会连续完成导入和安装，不需要再点击第二次“安装”。
 
-```sh
-command -v hello
-hello
-test -x /opt/taixu/tools/hello-arm64/bin/hello
-```
+## 10. Web/Service 插件
 
-在工具详情页还应验证“启动终端”“卸载”两个操作。卸载后检查：
-
-```sh
-test ! -e /opt/taixu/tools/hello-arm64/bin/hello
-```
-
-## 8. 制作带大型依赖的离线插件
-
-以 Flutter/Android/Gradle 为例，推荐把归档放入 `payload/archives/`，而不是把二进制散落在 payload 根目录：
-
-```text
-flutter-offline/
-├── manifest.json
-└── payload/
-    ├── archives/
-    │   ├── flutter-arm64.tar.xz
-    │   ├── gradle-8.14.2-bin.zip
-    │   └── android-platform-34.zip
-    └── scripts/
-        └── install-flutter.sh
-```
-
-安装脚本应先检查文件存在，再校验摘要，最后解压到固定目录：
-
-```sh
-set -eu
-archive="$TAIXU_PLUGIN_PAYLOAD/archives/flutter-arm64.tar.xz"
-test -s "$archive"
-echo "<SHA256>  $archive" | sha256sum -c -
-rm -rf /opt/flutter.staging
-mkdir -p /opt/flutter.staging
-tar -xJf "$archive" -C /opt/flutter.staging
-test -x /opt/flutter.staging/flutter/bin/flutter
-rm -rf /opt/flutter
-mv /opt/flutter.staging/flutter /opt/flutter
-ln -sf /opt/flutter/bin/flutter /opt/taixu/bin/flutter
-```
-
-注意：
-
-- `offlineOnly=true` 时，安装器不会调用 Node/Python/Curl 等在线 Runtime 依赖获取逻辑；归档和运行时必须全部随包提供，或依赖已经存在于 RootFS。
-- Flutter、Android SDK、Gradle、NDK 的主机工具必须是 Linux ARM64 可运行版本；Google 官方常见的 x86_64 工具不能直接使用。
-- 对 ELF 文件执行 `readelf -h file | grep -E 'Machine|AArch64'`，对脚本和 JAR 分别检查可执行位和文件完整性。
-- 不要把大型归档复制到 `$TAIXU_TOOL_DATA`；该目录用于用户数据，卸载时默认保留。
-
-## 9. Web 服务插件示例
-
-Web 服务需要额外声明端口和服务路径：
+Web 服务应显式声明端口和路径：
 
 ```json
 {
-  "id": "my-dashboard",
-  "name": "My Dashboard",
-  "description": "本地 Web 服务",
-  "version": "1.0.0",
   "launchType": "web",
   "servicePort": 8787,
   "servicePath": "/",
-  "architectures": ["ARM64"],
-  "permissions": ["LOCAL_WEB", "WORKSPACE_READ"],
-  "source": "LOCAL",
-  "offlineOnly": true,
-  "installMethod": "LOCAL_PACKAGE",
-  "installSteps": ["cp \"$TAIXU_PLUGIN_PAYLOAD/bin/dashboard\" \"$TAIXU_TOOL_DIR/bin/dashboard\"", "chmod +x \"$TAIXU_TOOL_DIR/bin/dashboard\""],
-  "launchCommand": "dashboard --host 0.0.0.0 --port 8787",
-  "verifyCommand": "dashboard --version",
-  "commandLinks": ["dashboard"]
+  "permissions": ["LOCAL_WEB"],
+  "launchCommand": "dashboard --host 127.0.0.1 --port 8787"
 }
 ```
 
-只申请实际需要的权限；不要为了方便声明 `NETWORK` 或 `WORKSPACE_WRITE`。服务必须支持非交互启动，并从环境变量或固定参数读取端口，避免启动后等待输入。
+当前 Validator 只在 `servicePort` 存在时校验端口，并未强制所有 `web/service` 清单提供端口。插件作者仍应声明端口；除非确有局域网访问需求，服务优先监听 `127.0.0.1`。
 
-## 10. 常见错误
+## 11. 验证、事务与卸载
+
+`verifyCommand` 应返回 0，并实际执行核心二进制。当前安装器为兼容旧插件，在验证失败但发现任意命令入口可执行时可能保留成功状态；插件不得依赖该兜底行为。
+
+安装事务只快照和恢复：
+
+```text
+/opt/taixu/tools/<id>
+```
+
+插件写入的 `/opt/android-sdk`、`/opt/flutter`、`/root/.gradle` 或其他全局目录不在框架事务快照中。因此：
+
+- 全局资源必须自行使用 staging、校验和提交。
+- 失败时脚本应通过 `trap` 清理 staging。
+- 日志出现 `ROLLED_BACK` 不代表插件创建的所有全局文件都已恢复。
+- `uninstallSteps` 必须删除插件拥有的全局程序文件，但默认保留 `$TAIXU_TOOL_DATA`。
+
+## 12. 发布前检查
+
+```text
+[ ] ZIP 根目录只有 manifest.json 与 payload/
+[ ] manifest.json 小于 1 MiB，解包总量小于 8 GiB
+[ ] id、version、ARM64、launchType、来源和权限字段正确
+[ ] 所有大文件均有固定 SHA-256
+[ ] 不依赖未声明的 unzip、xz、file、readelf 等可选命令
+[ ] ELF、符号链接和 ZIP 可执行位处理正确
+[ ] 断网可完成导入、安装、验证和启动
+[ ] 全新安装、同版本重复导入、新版本升级和卸载均测试过
+[ ] verifyCommand、命令链接、PTY/Web 服务均成功
+[ ] 结构化进度单调递增，日志不包含密钥或敏感环境变量
+[ ] 失败时 staging 可清理，且不误称全局目录已完整回滚
+[ ] 已核算插件副本、沙盒副本、staging 与最终目录所需空间
+```
+
+## 13. 常见错误
 
 ### 导入后列表没有插件
 
-检查 ZIP 根目录是否正确、`manifest.json` 是否是有效 JSON、`id` 是否符合正则、`architectures` 是否包含 `ARM64`。
+检查 ZIP 根目录、JSON、`id`、`architectures` 和包大小限制。
 
-### 提示 payload 不存在
+### 相同包无法再次导入
 
-确认 `payload/` 在 ZIP 内且没有多余目录层级；安装脚本引用的是 `$TAIXU_PLUGIN_PAYLOAD/...`，不是 Android 主机路径。
+相同 `id + version` 会被拒绝。修改内容后必须递增 `version`。
 
-### 安装成功但命令找不到
+### `cannot create .../bin/...`
 
-确认 `commandLinks` 与实际生成的 `$TAIXU_TOOL_DIR/bin/<name>` 一致，并在脚本中执行 `chmod +x`。验证命令应使用命令链接名。
+确保安装前创建 `$TAIXU_TOOL_DIR/bin`。当前通用安装器也会提前创建该目录。
 
-### ARM64 程序无法启动
+### `xz: Cannot exec`
 
-用 `readelf -h` 检查架构；不要将 Android APK 内的 x86_64 工具或桌面 Linux x86_64 SDK 直接放进插件包。
+RootFS 没有 `xz`。改用 `.tar.gz`，或随插件提供可运行的 ARM64 解压器。
 
-### 重复安装破坏用户数据
+### `unexpected operator`
 
-将缓存、配置、模型和项目数据写入 `$TAIXU_TOOL_DATA`，安装目录 `$TAIXU_TOOL_DIR` 只放可重建的程序文件。升级时使用临时目录解压，校验通过后再原子替换。
+通常是 `/bin/sh` 的 `test` 收到通配符展开后的多个参数。先用 `find ... -print -quit` 得到单一路径并加双引号。
 
-## 11. 发布前最终检查
+### ARM64 程序仍无法启动
 
-```text
-[ ] zip 列表只有 manifest.json 与 payload/
-[ ] manifest.json 可以被标准 JSON 解析器读取
-[ ] id、version、ARM64、launchType、权限字段正确
-[ ] 所有大文件均有 SHA-256 校验
-[ ] 断网可完成安装、验证和启动
-[ ] 全新安装、重复安装、升级、卸载均测试过
-[ ] 命令链接、PTY/服务启动和日志均正常
-[ ] 没有 ../、绝对路径、RootFS 外路径或未声明权限
-```
+除 ELF `e_machine` 外，还要检查解释器和 ABI。Android/Bionic ARM64 与 Linux/glibc ARM64 并不自动兼容。
+
+### 日志显示回滚但全局文件仍存在
+
+框架事务仅覆盖 `$TAIXU_TOOL_DIR`。插件拥有的全局路径必须由插件脚本自行清理。

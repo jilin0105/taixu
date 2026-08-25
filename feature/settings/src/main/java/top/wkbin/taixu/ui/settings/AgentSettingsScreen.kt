@@ -79,6 +79,7 @@ fun AgentSettingsScreen(
     val compactionThreshold by viewModel.contextCompactionThreshold.collectAsStateWithLifecycle()
     val maxToolRounds by viewModel.maxToolRounds.collectAsStateWithLifecycle()
     val autoWorkspaceCwd by viewModel.autoWorkspaceCwd.collectAsStateWithLifecycle()
+    val baseCommandTimeoutSeconds by viewModel.baseCommandTimeoutSeconds.collectAsStateWithLifecycle()
     val approvalMode by viewModel.approvalMode.collectAsStateWithLifecycle()
     val maxToolsPerRound by viewModel.maxToolsPerRound.collectAsStateWithLifecycle()
     val maxConsecutiveFailures by viewModel.maxConsecutiveFailures.collectAsStateWithLifecycle()
@@ -161,6 +162,11 @@ fun AgentSettingsScreen(
             }
             item {
                 AgentSettingsGroup {
+                    BaseCommandTimeoutSliderRow(
+                        currentValue = baseCommandTimeoutSeconds,
+                        onValueChange = viewModel::setBaseCommandTimeoutSeconds,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     RoundsSliderRow(
                         currentValue = maxToolRounds,
                         onValueChange = viewModel::setMaxToolRounds,
@@ -428,6 +434,47 @@ fun AgentSettingsScreen(
             dismissButton = {
                 TextButton(onClick = { deletingSubagent = null }) { Text("取消") }
             },
+        )
+    }
+}
+
+@Composable
+private fun BaseCommandTimeoutSliderRow(
+    currentValue: Int,
+    onValueChange: (Int) -> Unit,
+) {
+    var sliderMinutes by remember(currentValue) {
+        mutableFloatStateOf((currentValue / 60f).coerceIn(1f, 60f))
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("base 命令默认超时", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+            Text(
+                "${sliderMinutes.toInt()} 分钟",
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        Text(
+            "适用于普通前台命令；模型可为单次命令指定 1–60 分钟，常驻任务应使用 process 工具",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Slider(
+            value = sliderMinutes,
+            onValueChange = { sliderMinutes = it },
+            onValueChangeFinished = { onValueChange(sliderMinutes.toInt() * 60) },
+            valueRange = 1f..60f,
+            steps = 58,
         )
     }
 }

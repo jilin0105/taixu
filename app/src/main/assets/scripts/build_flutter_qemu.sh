@@ -9,10 +9,15 @@ JAVA_HOME="$COMPAT_ROOT/jdk-17"
 ANDROID_HOME="$COMPAT_ROOT/android-sdk"
 
 [ "$(uname -m)" = "x86_64" ] || { echo "==> [TaiXu QEMU Flutter] ❌ 当前并非 x86_64 QEMU Guest"; exit 126; }
-for binary in "$JAVA_HOME/bin/java" "$FLUTTER_HOME/bin/cache/dart-sdk/bin/dart" "$ANDROID_HOME/build-tools/35.0.0/aapt2"; do
+[ -x "$JAVA_HOME/bin/java" ] || { echo "==> [TaiXu QEMU Flutter] ❌ 缺少 $JAVA_HOME/bin/java"; exit 127; }
+java_lib=$(find "$JAVA_HOME" \( -type f -o -type l \) -name libjvm.so -print -quit 2>/dev/null || true)
+[ -n "$java_lib" ] || { echo "==> [TaiXu QEMU Flutter] ❌ 未找到 JVM 原生库 (libjvm.so)"; exit 126; }
+machine=$(od -An -t x1 -j 18 -N 2 "$java_lib" 2>/dev/null | tr -d '[:space:]')
+[ "$machine" = "3e00" ] || { echo "==> [TaiXu QEMU Flutter] ❌ JDK 不是 x86_64 ELF: $JAVA_HOME/bin/java"; exit 126; }
+for binary in "$FLUTTER_HOME/bin/cache/dart-sdk/bin/dart" "$ANDROID_HOME/build-tools/35.0.0/aapt2"; do
     [ -x "$binary" ] || { echo "==> [TaiXu QEMU Flutter] ❌ 缺少 $binary"; exit 127; }
-    machine=$(od -An -tu2 -j18 -N2 "$binary" 2>/dev/null | tr -d '[:space:]')
-    [ "$machine" = "62" ] || { echo "==> [TaiXu QEMU Flutter] ❌ 主机工具不是 x86_64 ELF: $binary"; exit 126; }
+    machine=$(od -An -t x1 -j 18 -N 2 "$binary" 2>/dev/null | tr -d '[:space:]')
+    [ "$machine" = "3e00" ] || { echo "==> [TaiXu QEMU Flutter] ❌ 主机工具不是 x86_64 ELF: $binary"; exit 126; }
 done
 
 export JAVA_HOME ANDROID_HOME

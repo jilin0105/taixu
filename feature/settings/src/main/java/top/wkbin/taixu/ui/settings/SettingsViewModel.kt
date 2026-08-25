@@ -58,6 +58,7 @@ class SettingsViewModel @Inject constructor(
     val runtimeState = linuxRuntime.state
 
     val environmentVariables = linuxEnvironmentManager.variables
+    val environmentValues = linuxEnvironmentManager.values
     val effectiveEnvironment = linuxEnvironmentManager.effectiveEnvironment
 
     private val _environmentLoading = MutableStateFlow(false)
@@ -118,6 +119,10 @@ class SettingsViewModel @Inject constructor(
             _environmentLoading.value = true
             finishEnvironmentOperation(linuxEnvironmentManager.refresh(distroId))
         }
+    }
+
+    fun clearEnvironmentError() {
+        _environmentError.value = null
     }
 
     private fun finishEnvironmentOperation(result: Result<Unit>, onResult: (Boolean) -> Unit = {}) {
@@ -420,6 +425,9 @@ class SettingsViewModel @Inject constructor(
     val autoWorkspaceCwd: StateFlow<Boolean> = settingsDataStore.autoWorkspaceCwd
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
+    val baseCommandTimeoutSeconds: StateFlow<Int> = settingsDataStore.baseCommandTimeoutSeconds
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SettingsDataStore.DEFAULT_BASE_COMMAND_TIMEOUT_SECONDS)
+
     val approvalMode: StateFlow<top.wkbin.taixu.core.model.ApprovalMode> = approvalRepository.mode
         .stateIn(viewModelScope, SharingStarted.Eagerly, top.wkbin.taixu.core.model.ApprovalMode.ASSISTED)
 
@@ -466,6 +474,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setAutoWorkspaceCwd(value: Boolean) {
         viewModelScope.launch { settingsDataStore.setAutoWorkspaceCwd(value) }
+    }
+
+    fun setBaseCommandTimeoutSeconds(value: Int) {
+        viewModelScope.launch { settingsDataStore.setBaseCommandTimeoutSeconds(value) }
     }
 
     fun setApprovalMode(mode: top.wkbin.taixu.core.model.ApprovalMode) {

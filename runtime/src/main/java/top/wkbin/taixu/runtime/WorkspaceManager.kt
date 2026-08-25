@@ -2,7 +2,9 @@ package top.wkbin.taixu.runtime
 
 import android.content.Context
 import android.content.ContextWrapper
+import android.net.Uri
 import android.os.Environment
+import android.provider.DocumentsContract
 import dagger.hilt.android.qualifiers.ApplicationContext
 import top.wkbin.taixu.core.common.files.SafeFileTree
 import top.wkbin.taixu.core.common.result.AppError
@@ -10,7 +12,11 @@ import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.common.result.ErrorCode
 import top.wkbin.taixu.core.database.WorkspaceRepository
 import top.wkbin.taixu.core.database.WorkspaceEntity
+import top.wkbin.taixu.runtime.shell.ShellCommand
 import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -29,10 +35,25 @@ enum class ProjectType {
         get() = when (this) {
             ANDROID -> "Android"
             FLUTTER -> "Flutter"
-            REVERSE -> "逆向"
+            REVERSE -> "APK 逆向"
             GENERAL -> "通用"
         }
 }
+
+enum class ProjectImportSource {
+    LOCAL_ARCHIVE,
+    GITHUB,
+}
+
+enum class GitTransport {
+    HTTP,
+    SSH,
+}
+
+data class ProjectArchiveSource(
+    val uri: String,
+    val fileName: String,
+)
 
 enum class ProjectTemplate {
     EMPTY,
@@ -102,9 +123,16 @@ class WorkspaceManager @Inject constructor(
     private val pathManager: RuntimePathManager,
     private val workspaceDao: WorkspaceRepository,
     private val fileService: WorkspaceFileService,
+    private val linuxRuntime: dagger.Lazy<LinuxRuntime>,
 ) {
     constructor(pathManager: RuntimePathManager, workspaceDao: WorkspaceRepository) : this(
-        ContextWrapper(null), pathManager, workspaceDao, WorkspaceFileService(pathManager, workspaceDao),
+        ContextWrapper(null),
+        pathManager,
+        workspaceDao,
+        WorkspaceFileService(pathManager, workspaceDao),
+        object : dagger.Lazy<LinuxRuntime> {
+            override fun get(): LinuxRuntime = error("Linux runtime is unavailable in this test constructor")
+        },
     )
     fun observeProjects(): Flow<List<WorkspaceProject>> = workspaceDao.observeAll().map { entities ->
         val projectPaths = entities.mapNotNull { runCatching { File(it.path).canonicalPath }.getOrNull() }.toSet()
@@ -228,6 +256,74 @@ class WorkspaceManager @Inject constructor(
         }
     }
 
+    /**
+     * Imports a ZIP project archive into an internal sandbox directory and records the user-selected
+     * project label. Extraction always happens under /workspace and rejects path traversal entries.
+     */
+    suspend fun importProjectArchive(
+        name: String,
+        directoryPath: String = "",
+        projectType: ProjectType,
+        source: ProjectArchiveSource,
+    ): AppResult<WorkspaceProject> = withContext(Dispatchers.IO) {
+        importProject(name, directoryPath, projectType, ProjectImportSource.LOCAL_ARCHIVE) { directory, cleanupOnFailure ->
+            try {
+                extractProjectArchive(source, directory)
+            } catch (throwable: Throwable) {
+                if (cleanupOnFailure) SafeFileTree.delete(directory)
+                throw throwable
+            }
+        }
+    }
+
+    /** Imports a GitHub repository over the explicitly selected HTTP(S) or SSH transport. */
+    suspend fun importGithubProject(
+        name: String,
+        directoryPath: String = "",
+        projectType: ProjectType,
+        gitUrl: String,
+        transport: GitTransport,
+    ): AppResult<WorkspaceProject> = withContext(Dispatchers.IO) {
+        importProject(name, directoryPath, projectType, ProjectImportSource.GITHUB) { directory, cleanupOnFailure ->
+            require(isValidGitUrlForTransport(gitUrl, transport)) {
+                when (transport) {
+                    GitTransport.HTTP -> "HTTP 地址必须以 http:// 或 https:// 开头"
+                    GitTransport.SSH -> "SSH 地址必须使用 ssh:// 或 git@host:path 格式"
+                }
+            }
+            cloneGitRepository(directory, gitUrl, cleanupOnFailure)
+        }
+    }
+
+    /** Compresses all regular project files and exports the ZIP into a SAF-selected local directory. */
+    suspend fun exportProject(name: String, targetTreeUri: String): AppResult<String> = withContext(Dispatchers.IO) {
+        try {
+            require(isValidProjectName(name)) { "项目名称无效" }
+            val entity = workspaceDao.findByName(name) ?: error("项目不存在：$name")
+            val projectDir = File(entity.path).canonicalFile
+            check(projectDir.isDirectory) { "项目目录不存在：$name" }
+
+            val treeUri = Uri.parse(targetTreeUri)
+            val parentUri = DocumentsContract.buildDocumentUriUsingTree(
+                treeUri,
+                DocumentsContract.getTreeDocumentId(treeUri),
+            )
+            val fileName = "$name-${System.currentTimeMillis()}.zip"
+            val outputUri = DocumentsContract.createDocument(
+                context.contentResolver,
+                parentUri,
+                "application/zip",
+                fileName,
+            ) ?: error("无法在所选目录创建导出文件")
+            val output = context.contentResolver.openOutputStream(outputUri, "w")
+                ?: error("无法写入导出文件")
+            output.use { stream -> writeProjectZip(projectDir, stream) }
+            AppResult.Success(fileName)
+        } catch (throwable: Throwable) {
+            AppResult.Failure(AppError(ErrorCode.IO, throwable.message ?: "导出项目失败", throwable))
+        }
+    }
+
     suspend fun deleteProject(name: String): AppResult<Unit> = withContext(Dispatchers.IO) {
         try {
             require(isValidProjectName(name)) { "项目名称无效" }
@@ -310,6 +406,7 @@ class WorkspaceManager @Inject constructor(
     }
 
     private fun detectProjectType(directory: File): ProjectType {
+        readProjectTypeMetadata(directory)?.let { return it }
         return when {
             File(directory, "pubspec.yaml").exists() -> ProjectType.FLUTTER
             File(directory, "settings.gradle.kts").exists() ||
@@ -831,23 +928,166 @@ class WorkspaceManager @Inject constructor(
                 value.startsWith("ssh://") || Regex("^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+:.+").matches(value)
         }
 
-    private fun cloneGitRepository(directory: File, url: String, cleanupOnFailure: Boolean) {
-        val process = ProcessBuilder("git", "clone", "--depth", "1", "--", url.trim(), directory.absolutePath)
-            .redirectErrorStream(true)
-            .start()
-        val completed = process.waitFor(GIT_CLONE_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
-        val output = process.inputStream.bufferedReader().use { it.readText() }
-        if (!completed) {
-            process.destroyForcibly()
-            if (cleanupOnFailure) SafeFileTree.delete(directory)
-            error("Git clone 超时（超过 ${GIT_CLONE_TIMEOUT_SECONDS / 60} 分钟）")
+    private fun isValidGitUrlForTransport(url: String, transport: GitTransport): Boolean =
+        url.trim().let { value ->
+            when (transport) {
+                GitTransport.HTTP -> value.startsWith("https://") || value.startsWith("http://")
+                GitTransport.SSH -> value.startsWith("ssh://") ||
+                    Regex("^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+:.+").matches(value)
+            }
         }
-        check(process.exitValue() == 0) {
+
+    private suspend fun cloneGitRepository(directory: File, url: String, cleanupOnFailure: Boolean) {
+        val result = linuxRuntime.get().execute(
+            ShellCommand(
+                commandLine = "git clone --depth 1 -- ${shellQuote(url.trim())} ${shellQuote(linuxPathFor(directory))}",
+                timeoutMs = GIT_CLONE_TIMEOUT_SECONDS * 1_000L,
+            ),
+        )
+        check(result.isSuccess) {
             if (cleanupOnFailure) SafeFileTree.delete(directory)
-            "Git clone 失败：${output.trim().takeLast(1200)}"
+            val output = (result.stderr + "\n" + result.stdout).trim().takeLast(1200)
+            "Git clone 失败：${output.ifBlank { "请确认 Git 已安装、仓库地址和认证配置可用" }}"
         }
         SafeFileTree.delete(File(directory, ".git/hooks"))
     }
+
+    private suspend fun importProject(
+        name: String,
+        directoryPath: String,
+        projectType: ProjectType,
+        source: ProjectImportSource,
+        materialize: suspend (directory: File, cleanupOnFailure: Boolean) -> Unit,
+    ): AppResult<WorkspaceProject> {
+        return try {
+            val safeName = name.trim()
+            require(isValidProjectName(safeName)) { "名称需以文字或数字开头，只能包含文字、数字、点、下划线和短横线" }
+            require(safeName != "sdcard") { "sdcard 是系统共享空间保留名称" }
+            check(workspaceDao.findByName(safeName) == null) { "项目已存在：$safeName" }
+            pathManager.workspaceDir.mkdirs()
+            val base = pathManager.workspaceDir.canonicalFile
+            check(base.isDirectory || base.mkdirs()) { "内部沙盒目录不可用" }
+            val requested = directoryPath.trim().replace('\\', '/').removePrefix("/workspace/").trim('/')
+            val relative = requested.ifBlank { safeName }
+            require(relative.split('/').none { it.isBlank() || it == "." || it == ".." }) { "关联目录包含无效路径" }
+            val directory = File(base, relative).canonicalFile
+            check(isInside(base, directory) && directory != base) { "关联目录越界" }
+            val duplicate = workspaceDao.listAll().any {
+                runCatching { File(it.path).canonicalFile == directory }.getOrDefault(false)
+            }
+            check(!duplicate) { "该目录已关联其他工程" }
+            val existed = directory.exists()
+            require(!existed || directory.isDirectory) { "导入目标不是目录" }
+            require(!existed || directory.listFiles().orEmpty().isEmpty()) { "导入目标目录必须为空" }
+            if (!existed) require(directory.mkdirs()) { "无法创建导入目录" }
+            materialize(directory, !existed)
+            writeProjectTypeMetadata(directory, projectType, source)
+            workspaceDao.upsert(
+                WorkspaceEntity(safeName, directory.absolutePath, System.currentTimeMillis(), ownsDirectory = !existed),
+            )
+            AppResult.Success(projectFromEntity(workspaceDao.findByName(safeName)!!)!!)
+        } catch (throwable: Throwable) {
+            AppResult.Failure(AppError(ErrorCode.IO, throwable.message ?: "导入项目失败", throwable))
+        }
+    }
+
+    private fun extractProjectArchive(source: ProjectArchiveSource, directory: File) {
+        require(source.fileName.endsWith(".zip", ignoreCase = true)) { "本地导入目前仅支持 ZIP 项目压缩包" }
+        val input = context.contentResolver.openInputStream(Uri.parse(source.uri))
+            ?: error("无法读取所选项目压缩包（URI 授权可能已过期，请重新选择）")
+        extractProjectArchive(input, source.fileName, directory)
+    }
+
+    internal fun extractProjectArchive(input: java.io.InputStream, fileName: String, directory: File) {
+        require(fileName.endsWith(".zip", ignoreCase = true)) { "本地导入目前仅支持 ZIP 项目压缩包" }
+        val staging = File(directory, IMPORT_STAGING_DIRECTORY).canonicalFile
+        check(isInside(directory.canonicalFile, staging)) { "导入暂存目录越界" }
+        SafeFileTree.delete(staging)
+        check(staging.mkdirs()) { "无法创建导入暂存目录" }
+        var entryCount = 0
+        var totalBytes = 0L
+        try {
+            ZipInputStream(input.buffered()).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    entryCount++
+                    require(entryCount <= MAX_ARCHIVE_ENTRIES) { "压缩包文件数量过多" }
+                    val normalizedName = entry.name.replace('\\', '/').trimStart('/')
+                    require(normalizedName.isNotBlank()) { "压缩包包含空路径" }
+                    require(normalizedName.split('/').none { it == ".." }) { "压缩包包含越界路径：${entry.name}" }
+                    val target = File(staging, normalizedName).canonicalFile
+                    require(isInside(staging, target) && target != staging) { "压缩包包含越界路径：${entry.name}" }
+                    if (entry.isDirectory) {
+                        check(target.isDirectory || target.mkdirs()) { "无法创建目录：${entry.name}" }
+                    } else {
+                        check(target.parentFile?.isDirectory == true || target.parentFile?.mkdirs() == true) {
+                            "无法创建目录：${entry.name}"
+                        }
+                        target.outputStream().buffered().use { output ->
+                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                            var entryBytes = 0L
+                            while (true) {
+                                val read = zip.read(buffer)
+                                if (read < 0) break
+                                entryBytes += read
+                                totalBytes += read
+                                require(entryBytes <= MAX_ARCHIVE_ENTRY_BYTES) { "压缩包单个文件过大：${entry.name}" }
+                                require(totalBytes <= MAX_ARCHIVE_TOTAL_BYTES) { "压缩包解压后体积过大" }
+                                output.write(buffer, 0, read)
+                            }
+                        }
+                    }
+                    zip.closeEntry()
+                }
+            }
+            require(entryCount > 0) { "项目压缩包为空" }
+            val meaningful = staging.listFiles().orEmpty().filterNot { it.name == "__MACOSX" }
+            val contentRoot = meaningful.singleOrNull()?.takeIf { it.isDirectory } ?: staging
+            val children = contentRoot.listFiles().orEmpty().filterNot { it.name == "__MACOSX" }
+            require(children.isNotEmpty()) { "项目压缩包没有可导入的文件" }
+            children.forEach { child ->
+                val destination = File(directory, child.name).canonicalFile
+                check(isInside(directory.canonicalFile, destination) && !destination.exists()) { "导入文件冲突：${child.name}" }
+                check(child.renameTo(destination)) { "无法写入导入文件：${child.name}" }
+            }
+        } finally {
+            SafeFileTree.delete(staging)
+        }
+    }
+
+    private fun writeProjectZip(projectDir: File, output: java.io.OutputStream) {
+        ZipOutputStream(output.buffered()).use { zip ->
+            projectDir.walkTopDown()
+                .onEnter { !java.nio.file.Files.isSymbolicLink(it.toPath()) }
+                .filter { it != projectDir && !java.nio.file.Files.isSymbolicLink(it.toPath()) }
+                .forEach { file ->
+                    val relative = file.toRelativeString(projectDir).replace(File.separatorChar, '/')
+                    if (relative == UNLINKED_MARKER || relative == IMPORT_STAGING_DIRECTORY) return@forEach
+                    val entryName = if (file.isDirectory) "$relative/" else relative
+                    zip.putNextEntry(ZipEntry(entryName).apply { time = file.lastModified() })
+                    if (file.isFile) file.inputStream().buffered().use { it.copyTo(zip) }
+                    zip.closeEntry()
+                }
+        }
+    }
+
+    private fun writeProjectTypeMetadata(directory: File, type: ProjectType, source: ProjectImportSource) {
+        File(directory, PROJECT_METADATA_FILE).writeText(
+            "type=${type.name}\nsource=${source.name}\nimportedAt=${System.currentTimeMillis()}\n",
+            Charsets.UTF_8,
+        )
+    }
+
+    private fun readProjectTypeMetadata(directory: File): ProjectType? = runCatching {
+        val metadata = File(directory, PROJECT_METADATA_FILE)
+        if (!metadata.isFile) return@runCatching null
+        val typeName = metadata.useLines { lines ->
+            lines.firstOrNull { it.startsWith("type=") }?.substringAfter("type=")?.trim()
+        }
+        ProjectType.entries.firstOrNull { it.name == typeName }
+    }.getOrNull()
+
+    private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
 
     /** Materializes the Flutter template, including its Android Gradle host. */
     private fun copyFlutterTemplate(projectDir: File, name: String, packageName: String) {
@@ -1166,6 +1406,11 @@ class WorkspaceManager @Inject constructor(
 
     companion object {
         private const val UNLINKED_MARKER = ".taixu-unlinked-project"
+        private const val PROJECT_METADATA_FILE = ".taixu-project.properties"
+        private const val IMPORT_STAGING_DIRECTORY = ".taixu-import-staging"
+        private const val MAX_ARCHIVE_ENTRIES = 100_000
+        private const val MAX_ARCHIVE_ENTRY_BYTES = 1024L * 1024L * 1024L
+        private const val MAX_ARCHIVE_TOTAL_BYTES = 4L * 1024L * 1024L * 1024L
         private const val GIT_CLONE_TIMEOUT_SECONDS = 15 * 60L
         private val PACKAGE_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+")
         const val MAX_PROJECT_NAME_LENGTH = 64

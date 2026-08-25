@@ -77,6 +77,9 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.content.ContextCompat
 import top.wkbin.taixu.runtime.ApkImportSource
+import top.wkbin.taixu.runtime.GitTransport
+import top.wkbin.taixu.runtime.ProjectArchiveSource
+import top.wkbin.taixu.runtime.ProjectType
 import top.wkbin.taixu.runtime.WorkspaceProject
 import top.wkbin.taixu.runtime.WorkspaceStorage
 import top.wkbin.taixu.ui.components.EmptyPanel
@@ -106,6 +109,8 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import top.wkbin.taixu.runtime.build.StepDuration
+
+private enum class ProjectImportMode { LOCAL, GITHUB }
 
 /**
  * 太墟 · 工坊空间 (Workspace Space)
@@ -221,10 +226,10 @@ fun WorkspaceScreen(
     val loadingProjects by viewModel.loadingProjects.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showCreate by remember { mutableStateOf(false) }
+    var showImport by remember { mutableStateOf(false) }
     var selectedTemplate by remember { mutableStateOf(top.wkbin.taixu.runtime.ProjectTemplate.ANDROID_COMPOSE) }
     var projectName by remember { mutableStateOf("") }
     var packageName by remember { mutableStateOf("") }
-    var gitUrl by remember { mutableStateOf("") }
     var projectStorage by remember { mutableStateOf(WorkspaceStorage.INTERNAL) }
     var directoryPath by remember { mutableStateOf("") }
     var internalDirectoryMenuExpanded by remember { mutableStateOf(false) }
@@ -233,6 +238,15 @@ fun WorkspaceScreen(
     var apkSource by remember { mutableStateOf<ApkImportSource?>(null) }
     var showAppPicker by remember { mutableStateOf(false) }
     var exportApkToDownload by remember { mutableStateOf(false) }
+    var importMode by remember { mutableStateOf(ProjectImportMode.LOCAL) }
+    var importProjectName by remember { mutableStateOf("") }
+    var importDirectoryPath by remember { mutableStateOf("") }
+    var importDirectoryMenuExpanded by remember { mutableStateOf(false) }
+    var importProjectType by remember { mutableStateOf(ProjectType.ANDROID) }
+    var archiveSource by remember { mutableStateOf<ProjectArchiveSource?>(null) }
+    var importGitUrl by remember { mutableStateOf("") }
+    var gitTransport by remember { mutableStateOf(GitTransport.HTTP) }
+    var pendingExportProject by remember { mutableStateOf<WorkspaceProject?>(null) }
 
     val legacyStoragePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         permissionRefresh++
@@ -251,6 +265,33 @@ fun WorkspaceScreen(
             }
             val displayName = queryDisplayName(context, uri) ?: "target.apk"
             apkSource = ApkImportSource.FromFileUri(uri.toString(), displayName)
+        }
+    }
+    val archivePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val displayName = queryDisplayName(context, uri) ?: "project.zip"
+            archiveSource = ProjectArchiveSource(uri.toString(), displayName)
+            if (importProjectName.isBlank()) {
+                importProjectName = displayName.substringBeforeLast('.').filter {
+                    it.isLetterOrDigit() || it == '.' || it == '_' || it == '-'
+                }
+            }
+        }
+    }
+    val exportDirectoryPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        val project = pendingExportProject
+        pendingExportProject = null
+        if (uri != null && project != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+            }
+            viewModel.exportProject(project, uri.toString())
         }
     }
     val directoryPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -284,6 +325,9 @@ fun WorkspaceScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onOpenToolCenter, enabled = !busy) {
                         RuntimeIcon(RuntimeIconName.Package, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                    }
+                    IconButton(onClick = { showImport = true }, enabled = !busy) {
+                        RuntimeIcon(RuntimeIconName.FolderDownload, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                     }
                     IconButton(onClick = { showCreate = true }, enabled = !busy) {
                         RuntimeIcon(RuntimeIconName.Plus, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
@@ -484,6 +528,10 @@ fun WorkspaceScreen(
                         onOpenAgent = { onNavigate(MainDestination.Agent) },
                         onRunProject = { viewModel.runProject(project) },
                         onShowBuildLog = { viewModel.showBuildDialog() },
+                        onExport = {
+                            pendingExportProject = project
+                            exportDirectoryPicker.launch(null)
+                        },
                         onDelete = { deleteTarget = project },
                     )
                 }
@@ -825,7 +873,6 @@ fun WorkspaceScreen(
                 showCreate = false
                 projectName = ""
                 packageName = ""
-                gitUrl = ""
                 directoryPath = ""
                 projectStorage = WorkspaceStorage.INTERNAL
                 apkSource = null
@@ -847,7 +894,6 @@ fun WorkspaceScreen(
                             top.wkbin.taixu.runtime.ProjectTemplate.ANDROID_COMPOSE to ("Android" to RuntimeIconName.Android),
                             top.wkbin.taixu.runtime.ProjectTemplate.FLUTTER to ("Flutter" to RuntimeIconName.Flutter),
                             top.wkbin.taixu.runtime.ProjectTemplate.APK_REVERSE to (stringResource(R.string.workspace_template_reverse) to RuntimeIconName.Reverse),
-                            top.wkbin.taixu.runtime.ProjectTemplate.GIT_IMPORT to (stringResource(R.string.workspace_template_git) to RuntimeIconName.Github),
                             top.wkbin.taixu.runtime.ProjectTemplate.EMPTY to (stringResource(R.string.workspace_template_empty) to RuntimeIconName.Code),
                         ).forEach { (tmpl, pair) ->
                             val (label, icon) = pair
@@ -1063,18 +1109,6 @@ fun WorkspaceScreen(
                         }
                     }
 
-                    if (selectedTemplate == top.wkbin.taixu.runtime.ProjectTemplate.GIT_IMPORT) {
-                        OutlinedTextField(
-                            value = gitUrl,
-                            onValueChange = { gitUrl = it },
-                            label = { Text(stringResource(R.string.workspace_git_url)) },
-                            placeholder = { Text("https://github.com/user/project.git") },
-                            supportingText = { Text(stringResource(R.string.workspace_git_import_description)) },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
                             selected = projectStorage == WorkspaceStorage.INTERNAL,
@@ -1182,10 +1216,17 @@ fun WorkspaceScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.create(projectName, projectStorage, directoryPath, selectedTemplate, packageName, apkSource, exportApkToDownload, gitUrl)
+                        viewModel.create(
+                            name = projectName,
+                            storage = projectStorage,
+                            directoryPath = directoryPath,
+                            template = selectedTemplate,
+                            packageName = packageName,
+                            apkSource = apkSource,
+                            exportApkToDownload = exportApkToDownload,
+                        )
                         projectName = ""
                         packageName = ""
-                        gitUrl = ""
                         directoryPath = ""
                         projectStorage = WorkspaceStorage.INTERNAL
                         apkSource = null
@@ -1194,8 +1235,7 @@ fun WorkspaceScreen(
                     },
                     enabled = projectName.isNotBlank() && !busy &&
                         (projectStorage != WorkspaceStorage.SHARED || sharedAccessGranted) &&
-                        (selectedTemplate != top.wkbin.taixu.runtime.ProjectTemplate.APK_REVERSE || apkSource != null) &&
-                        (selectedTemplate != top.wkbin.taixu.runtime.ProjectTemplate.GIT_IMPORT || gitUrl.isNotBlank()),
+                        (selectedTemplate != top.wkbin.taixu.runtime.ProjectTemplate.APK_REVERSE || apkSource != null),
                 ) { Text(stringResource(R.string.workspace_create), color = MaterialTheme.colorScheme.primary) }
             },
             dismissButton = {
@@ -1203,12 +1243,241 @@ fun WorkspaceScreen(
                     showCreate = false
                     projectName = ""
                     packageName = ""
-                    gitUrl = ""
                     directoryPath = ""
                     projectStorage = WorkspaceStorage.INTERNAL
                     apkSource = null
                     exportApkToDownload = false
                 }) { Text(stringResource(R.string.workspace_cancel)) }
+            },
+        )
+    }
+
+    if (showImport) {
+        fun resetImportDialog() {
+            showImport = false
+            importMode = ProjectImportMode.LOCAL
+            importProjectName = ""
+            importDirectoryPath = ""
+            importProjectType = ProjectType.ANDROID
+            archiveSource = null
+            importGitUrl = ""
+            gitTransport = GitTransport.HTTP
+        }
+        RuntimeAlertDialog(
+            onDismissRequest = { resetImportDialog() },
+            title = { Text(stringResource(R.string.workspace_import_project), fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        stringResource(R.string.workspace_import_source),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = importMode == ProjectImportMode.LOCAL,
+                            onClick = { importMode = ProjectImportMode.LOCAL },
+                            leadingIcon = { RuntimeIcon(RuntimeIconName.FolderDownload, Modifier.size(16.dp)) },
+                            label = { Text(stringResource(R.string.workspace_local_archive)) },
+                            modifier = Modifier.weight(1f),
+                        )
+                        FilterChip(
+                            selected = importMode == ProjectImportMode.GITHUB,
+                            onClick = { importMode = ProjectImportMode.GITHUB },
+                            leadingIcon = { RuntimeIcon(RuntimeIconName.Github, Modifier.size(16.dp)) },
+                            label = { Text("GitHub") },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+
+                    if (importMode == ProjectImportMode.LOCAL) {
+                        OutlinedButton(
+                            onClick = {
+                                archivePicker.launch(
+                                    arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"),
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            RuntimeIcon(RuntimeIconName.FolderOpen, Modifier.size(17.dp))
+                            Spacer(Modifier.size(7.dp))
+                            Text(stringResource(R.string.workspace_choose_project_archive))
+                        }
+                        archiveSource?.let { source ->
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    RuntimeIcon(RuntimeIconName.Compress, Modifier.size(18.dp), MaterialTheme.colorScheme.primary)
+                                    Text(
+                                        source.fileName,
+                                        modifier = Modifier.weight(1f),
+                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    IconButton(onClick = { archiveSource = null }, modifier = Modifier.size(30.dp)) {
+                                        RuntimeIcon(RuntimeIconName.Close, Modifier.size(15.dp))
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        Text(
+                            stringResource(R.string.workspace_git_transport),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = gitTransport == GitTransport.HTTP,
+                                onClick = { gitTransport = GitTransport.HTTP },
+                                label = { Text("HTTP(S)") },
+                                modifier = Modifier.weight(1f),
+                            )
+                            FilterChip(
+                                selected = gitTransport == GitTransport.SSH,
+                                onClick = { gitTransport = GitTransport.SSH },
+                                label = { Text("SSH") },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        OutlinedTextField(
+                            value = importGitUrl,
+                            onValueChange = { importGitUrl = it },
+                            label = { Text(stringResource(R.string.workspace_git_url)) },
+                            placeholder = {
+                                Text(
+                                    if (gitTransport == GitTransport.HTTP) "https://github.com/user/project.git"
+                                    else "git@github.com:user/project.git",
+                                )
+                            },
+                            supportingText = { Text(stringResource(R.string.workspace_git_import_description)) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+
+                    Text(
+                        stringResource(R.string.workspace_project_label),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        listOf(
+                            ProjectType.ANDROID to ("Android" to RuntimeIconName.Android),
+                            ProjectType.FLUTTER to ("Flutter" to RuntimeIconName.Flutter),
+                            ProjectType.REVERSE to (stringResource(R.string.workspace_template_reverse) to RuntimeIconName.Reverse),
+                            ProjectType.GENERAL to (stringResource(R.string.workspace_template_empty) to RuntimeIconName.Code),
+                        ).forEach { (type, pair) ->
+                            FilterChip(
+                                selected = importProjectType == type,
+                                onClick = { importProjectType = type },
+                                leadingIcon = { RuntimeIcon(pair.second, Modifier.size(16.dp)) },
+                                label = { Text(pair.first, style = MaterialTheme.typography.labelSmall) },
+                            )
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = importProjectName,
+                        onValueChange = { importProjectName = it },
+                        label = { Text(stringResource(R.string.workspace_project_name)) },
+                        placeholder = { Text("my-imported-project") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+
+                    val importPathName = importProjectName.trim().ifBlank { "my-project" }
+                    val commonDirectories = listOf(
+                        "" to stringResource(R.string.workspace_location_project, importPathName),
+                        "projects/$importPathName" to stringResource(R.string.workspace_location_projects, importPathName),
+                        "repos/$importPathName" to stringResource(R.string.workspace_location_repos, importPathName),
+                        "work/$importPathName" to stringResource(R.string.workspace_location_work, importPathName),
+                    )
+                    ExposedDropdownMenuBox(
+                        expanded = importDirectoryMenuExpanded,
+                        onExpandedChange = { importDirectoryMenuExpanded = it },
+                    ) {
+                        OutlinedTextField(
+                            value = importDirectoryPath,
+                            onValueChange = {
+                                importDirectoryPath = it
+                                importDirectoryMenuExpanded = true
+                            },
+                            label = { Text(stringResource(R.string.workspace_linked_directory)) },
+                            placeholder = { Text(stringResource(R.string.workspace_directory_default)) },
+                            supportingText = { Text(stringResource(R.string.workspace_import_directory_hint)) },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(importDirectoryMenuExpanded) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().menuAnchor(
+                                ExposedDropdownMenuAnchorType.PrimaryEditable,
+                                true,
+                            ),
+                        )
+                        ExposedDropdownMenu(
+                            expanded = importDirectoryMenuExpanded,
+                            onDismissRequest = { importDirectoryMenuExpanded = false },
+                        ) {
+                            commonDirectories.forEach { (path, label) ->
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    onClick = {
+                                        importDirectoryPath = path
+                                        importDirectoryMenuExpanded = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    val targetPath = importDirectoryPath.trim().ifBlank { importProjectName.trim() }
+                    if (targetPath.isNotBlank()) {
+                        Text(
+                            stringResource(R.string.workspace_sandbox_path, "/workspace", targetPath.trimStart('/')),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (importMode == ProjectImportMode.LOCAL) {
+                            archiveSource?.let {
+                                viewModel.importLocalProject(importProjectName, importDirectoryPath, importProjectType, it)
+                            }
+                        } else {
+                            viewModel.importGithubProject(
+                                importProjectName,
+                                importDirectoryPath,
+                                importProjectType,
+                                importGitUrl,
+                                gitTransport,
+                            )
+                        }
+                        resetImportDialog()
+                    },
+                    enabled = importProjectName.isNotBlank() && !busy &&
+                        ((importMode == ProjectImportMode.LOCAL && archiveSource != null) ||
+                            (importMode == ProjectImportMode.GITHUB && importGitUrl.isNotBlank())),
+                ) { Text(stringResource(R.string.workspace_import), color = MaterialTheme.colorScheme.primary) }
+            },
+            dismissButton = {
+                TextButton(onClick = { resetImportDialog() }) { Text(stringResource(R.string.workspace_cancel)) }
             },
         )
     }
@@ -1254,6 +1523,7 @@ private fun ProjectCard(
     onOpenAgent: () -> Unit,
     onRunProject: () -> Unit,
     onShowBuildLog: () -> Unit,
+    onExport: () -> Unit,
     onDelete: () -> Unit,
 ) {
     var moreExpanded by remember { mutableStateOf(false) }
@@ -1343,6 +1613,16 @@ private fun ProjectCard(
                             onClick = {
                                 moreExpanded = false
                                 onOpenTerminal()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.workspace_export_project)) },
+                            leadingIcon = {
+                                RuntimeIcon(RuntimeIconName.Compress, Modifier.size(17.dp))
+                            },
+                            onClick = {
+                                moreExpanded = false
+                                onExport()
                             },
                         )
                         DropdownMenuItem(

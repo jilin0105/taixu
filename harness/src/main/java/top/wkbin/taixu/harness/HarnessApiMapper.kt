@@ -41,6 +41,7 @@ internal object HarnessApiMapper {
             lower == "read" -> HarnessTool.READ
             lower == "write" -> HarnessTool.WRITE
             lower == "edit" -> HarnessTool.EDIT
+            lower == "process" -> HarnessTool.PROCESS
             lower == "download" -> HarnessTool.DOWNLOAD
             lower == "memory" -> HarnessTool.MEMORY
             lower == "plan" -> HarnessTool.PLAN
@@ -56,6 +57,7 @@ internal object HarnessApiMapper {
         HarnessTool.WRITE -> "write"
         HarnessTool.EDIT -> "edit"
         HarnessTool.BASE -> "base"
+        HarnessTool.PROCESS -> "process"
         HarnessTool.DOWNLOAD -> "download"
         HarnessTool.MEMORY -> "memory"
         HarnessTool.PLAN -> "plan"

@@ -62,7 +62,7 @@ class GenericRecipeInstallerTest {
         )
 
         // 配置命令返回值
-        runtime.commandResults["mkdir -p /opt/taixu/tools/claude-code /opt/taixu/data/claude-code"] =
+        runtime.commandResults["mkdir -p /opt/taixu/tools/claude-code/bin /opt/taixu/data/claude-code"] =
             CommandResult(0, "", "", 1)
         runtime.commandResults["npm install -g @anthropic-ai/claude-code"] =
             CommandResult(0, "added 1 package in 2s", "", 1)
@@ -81,6 +81,11 @@ class GenericRecipeInstallerTest {
 
         assertEquals(listOf(RuntimeName.NODE, RuntimeName.CURL), depManager.acquired.map { it.name })
         assertTrue(events.any { it is InstallEvent.Completed })
+        assertTrue(
+            runtime.executedCommands.contains(
+                "mkdir -p /opt/taixu/tools/claude-code/bin /opt/taixu/data/claude-code",
+            ),
+        )
         val completed = events.filterIsInstance<InstallEvent.Completed>().single()
         assertEquals("1.0.0", completed.version)
     }
@@ -112,5 +117,36 @@ class GenericRecipeInstallerTest {
 
         val result = installer.uninstall(deleteData = false)
         assertTrue(result.success)
+    }
+
+    @Test
+    fun convertsStructuredInstallerOutputIntoPercentageProgress() = runBlocking {
+        val runtime = FakeLinuxRuntime()
+        val manifest = ToolManifest(
+            id = "progress-tool",
+            name = "Progress Tool",
+            description = "Progress protocol fixture",
+            installSteps = listOf("install-progress-tool"),
+            verifyCommand = "progress-tool --version",
+        )
+        runtime.commandResults["install-progress-tool"] = CommandResult(
+            0,
+            "[TAIXU_PROGRESS:50] [EXTRACT] 正在解压测试资源\n",
+            "",
+            1,
+        )
+        runtime.commandResults["progress-tool --version"] = CommandResult(0, "1.0.0\n", "", 1)
+
+        val events = GenericRecipeInstaller(
+            manifest = manifest,
+            linuxRuntime = runtime,
+            dependencyManager = FakeDependencyManager(),
+            providerManager = FakeProviderManager(),
+            toolCommandLinker = ToolCommandLinker(runtime),
+        ).install().toList()
+
+        val scripted = events.filterIsInstance<InstallEvent.Progress>()
+            .single { it.message == "[EXTRACT] 正在解压测试资源" }
+        assertEquals(0.665f, scripted.progress ?: 0f, 0.0001f)
     }
 }

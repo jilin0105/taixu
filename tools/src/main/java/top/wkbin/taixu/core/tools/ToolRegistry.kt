@@ -53,6 +53,7 @@ data class LocalPluginImportProgress(
 data class LocalPluginPreview(
     val manifest: ToolManifest,
     val archiveSizeBytes: Long?,
+    val alreadyImported: Boolean,
 )
 
 private class CountingInputStream(input: InputStream) : FilterInputStream(input) {
@@ -151,7 +152,13 @@ class ToolRegistry @Inject constructor(
             val parsed = json.decodeFromString<ToolManifest>(manifestText)
             val manifest = parsed.copy(source = "LOCAL", offlineOnly = true, installMethod = "LOCAL_PACKAGE")
             ToolManifestValidator.validateAll(listOf(manifest))
-            AppResult.Success(LocalPluginPreview(manifest, totalBytes))
+            AppResult.Success(
+                LocalPluginPreview(
+                    manifest = manifest,
+                    archiveSizeBytes = totalBytes,
+                    alreadyImported = isLocalVersionImported(manifest.id, manifest.version),
+                ),
+            )
         } catch (throwable: Throwable) {
             AppResult.Failure(AppError(ErrorCode.SECURITY, "本地插件预览失败：${throwable.message ?: "未知错误"}", throwable))
         }
@@ -283,7 +290,9 @@ class ToolRegistry @Inject constructor(
             onProgress(LocalPluginImportProgress(totalBytes ?: bytes, totalBytes, "正在保存插件"))
             val versionDir = File(localRoot, "${manifest.id}/${manifest.version}")
             versionDir.parentFile?.mkdirs()
-            versionDir.deleteRecursively()
+            check(!versionDir.exists()) {
+                "插件 ${manifest.name} v${manifest.version} 已导入，无需重复导入"
+            }
             check(staging.renameTo(versionDir)) { "无法提交本地插件包" }
             committed = true
             AppResult.Success(manifest)
@@ -304,6 +313,9 @@ class ToolRegistry @Inject constructor(
     fun localPayloadRoot(toolId: String): File? = loadLocalManifests()
         .firstOrNull { it.id == toolId }
         ?.let { File(localRoot, "${it.id}/${it.version}/payload") }
+
+    private fun isLocalVersionImported(toolId: String, version: String): Boolean =
+        File(localRoot, "$toolId/$version/manifest.json").isFile
 
     private fun loadLocalManifests(): List<ToolManifest> {
         if (!localRoot.isDirectory) return emptyList()

@@ -63,6 +63,7 @@ sealed interface LocalPluginImportState {
         val currentEntry: String?,
     ) : LocalPluginImportState
     data class Succeeded(val pluginName: String, val version: String) : LocalPluginImportState
+    data class AlreadyImported(val pluginName: String, val version: String) : LocalPluginImportState
     data class Failed(val message: String) : LocalPluginImportState
 }
 
@@ -155,12 +156,19 @@ class ToolManager @Inject constructor(
         return managerScope.launch {
             val result = toolRepository.inspectLocal(uri)
             _localPluginImportState.value = when (result) {
-                is AppResult.Success -> LocalPluginImportState.PendingConfirmation(
-                    uri = uri,
-                    fileName = fileName,
-                    manifest = result.data.manifest,
-                    archiveSizeBytes = result.data.archiveSizeBytes,
-                )
+                is AppResult.Success -> if (result.data.alreadyImported) {
+                    LocalPluginImportState.AlreadyImported(
+                        pluginName = result.data.manifest.name,
+                        version = result.data.manifest.version,
+                    )
+                } else {
+                    LocalPluginImportState.PendingConfirmation(
+                        uri = uri,
+                        fileName = fileName,
+                        manifest = result.data.manifest,
+                        archiveSizeBytes = result.data.archiveSizeBytes,
+                    )
+                }
                 is AppResult.Failure -> LocalPluginImportState.Failed(result.error.message)
             }
         }.also { localPluginImportJob = it }

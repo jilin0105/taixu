@@ -111,6 +111,8 @@ fun ToolCenterScreen(
     val categories = listOf(
         "ALL" to "全部生态",
         "BUNDLES" to "全栈开发套件",
+        "SOURCE_LOCAL" to "本地插件",
+        "SOURCE_REMOTE" to "在线插件",
         "CODING_AGENT" to "编程助手",
         "AI_AGENT" to "智能体生态",
     )
@@ -118,8 +120,13 @@ fun ToolCenterScreen(
     val showBundles = selectedCategory == "ALL" || selectedCategory == "BUNDLES"
     val showTools = selectedCategory != "BUNDLES"
 
-    val filteredTools = tools.filter {
-        selectedCategory == "ALL" || it.category.equals(selectedCategory, ignoreCase = true)
+    val filteredTools = tools.filter { tool ->
+        when (selectedCategory) {
+            "ALL" -> true
+            "SOURCE_LOCAL" -> viewModel.toolSource(tool.id) == "LOCAL"
+            "SOURCE_REMOTE" -> viewModel.toolSource(tool.id) != "LOCAL"
+            else -> tool.category.equals(selectedCategory, ignoreCase = true)
+        }
     }
 
     Scaffold(
@@ -232,6 +239,7 @@ fun ToolCenterScreen(
                                                 is top.wkbin.taixu.core.tools.LocalPluginImportState.PendingConfirmation -> "等待确认安装本地插件"
                                                 is top.wkbin.taixu.core.tools.LocalPluginImportState.Importing -> "正在安装本地插件"
                                                 is top.wkbin.taixu.core.tools.LocalPluginImportState.Succeeded -> "本地插件安装完成"
+                                                is top.wkbin.taixu.core.tools.LocalPluginImportState.AlreadyImported -> "插件已导入"
                                                 is top.wkbin.taixu.core.tools.LocalPluginImportState.Failed -> "本地插件安装失败"
                                                 top.wkbin.taixu.core.tools.LocalPluginImportState.Idle -> ""
                                             },
@@ -247,6 +255,7 @@ fun ToolCenterScreen(
                                                     "${state.fileName}$percent · ${state.currentEntry ?: "正在解包插件资源"}，大型 ARM64 插件可能需要几分钟，请保持应用打开"
                                                 }
                                                 is top.wkbin.taixu.core.tools.LocalPluginImportState.Succeeded -> "${state.pluginName} v${state.version} 已解压、安装并完成验证"
+                                                is top.wkbin.taixu.core.tools.LocalPluginImportState.AlreadyImported -> "${state.pluginName} v${state.version} 已存在，无需重复导入；可在下方插件列表中安装或重试"
                                                 is top.wkbin.taixu.core.tools.LocalPluginImportState.Failed -> state.message
                                                 top.wkbin.taixu.core.tools.LocalPluginImportState.Idle -> ""
                                             },
@@ -506,6 +515,7 @@ fun ToolCenterScreen(
                     items(filteredTools, key = { it.id }) { tool ->
                         ToolCard(
                             tool = tool,
+                            source = viewModel.toolSource(tool.id),
                             progress = installProgress[tool.id],
                             verification = verifications[tool.id],
                             onInstall = { viewModel.installTool(tool.id) },
@@ -541,6 +551,7 @@ fun ToolCenterScreen(
                         Text(manifest.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Text(manifest.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         InfoRow("版本", manifest.version, isCode = false)
+                        InfoRow("来源", "本地插件", isCode = false)
                         InfoRow("架构", manifest.architectures.joinToString(", "), isCode = false)
                         InfoRow("包大小", pending.archiveSizeBytes?.let { formatBytes(it) } ?: "未知", isCode = false)
                         InfoRow("离线模式", if (manifest.offlineOnly) "是（不拉取在线依赖）" else "否", isCode = false)
@@ -998,6 +1009,7 @@ private fun ToolBrandAvatar(
 @Composable
 private fun ToolCard(
     tool: ToolEntity,
+    source: String,
     progress: ToolInstallProgress?,
     verification: ToolVerification?,
     onInstall: () -> Unit,
@@ -1075,6 +1087,27 @@ private fun ToolCard(
                                         softWrap = false,
                                     )
                                 }
+                            }
+                            Surface(
+                                color = if (source == "LOCAL") {
+                                    MaterialTheme.colorScheme.tertiaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.secondaryContainer
+                                },
+                                shape = RoundedCornerShape(6.dp),
+                            ) {
+                                Text(
+                                    text = if (source == "LOCAL") "本地插件" else "在线插件",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                    color = if (source == "LOCAL") {
+                                        MaterialTheme.colorScheme.onTertiaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.onSecondaryContainer
+                                    },
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                )
                             }
                         }
 

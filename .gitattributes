@@ -1,0 +1,4 @@
+*.sh text eol=lf
+app/src/main/assets/scripts/*.gradle text eol=lf
+assets/plugins/**/payload/**/*.properties text eol=lf
+assets/plugins/**/payload/**/*.gradle text eol=lf

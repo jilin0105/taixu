@@ -452,11 +452,16 @@ if [ -n "$TAIXU_AAPT2_PATH" ] && [ -x "$TAIXU_AAPT2_PATH" ] && \
         sed \
             -e '/^[[:space:]]*android\.aapt2FromMavenOverride[[:space:]]*=/d' \
             -e '/^[[:space:]]*android\.builder\.sdkDownload[[:space:]]*=/d' \
+            -e '/^[[:space:]]*org\.gradle\.daemon[[:space:]]*=/d' \
+            -e '/^[[:space:]]*org\.gradle\.parallel[[:space:]]*=/d' \
+            -e '/^[[:space:]]*org\.gradle\.workers\.max[[:space:]]*=/d' \
+            -e '/^[[:space:]]*org\.gradle\.jvmargs[[:space:]]*=/d' \
+            -e '/^[[:space:]]*kotlin\.daemon\.jvmargs[[:space:]]*=/d' \
             "$GRADLE_PROPERTIES" > "$GRADLE_PROPERTIES_TMP"
     else
         : > "$GRADLE_PROPERTIES_TMP"
     fi
-    printf '\n# TaiXu: immutable ARM64 toolchain; never auto-download host binaries.\nandroid.aapt2FromMavenOverride=%s\nandroid.builder.sdkDownload=false\n' \
+    printf '\n# TaiXu: immutable ARM64 toolchain and mobile-safe build limits.\nandroid.aapt2FromMavenOverride=%s\nandroid.builder.sdkDownload=false\norg.gradle.daemon=false\norg.gradle.parallel=false\norg.gradle.workers.max=2\norg.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+UseSerialGC -Dfile.encoding=UTF-8\nkotlin.daemon.jvmargs=-Xmx512m -XX:MaxMetaspaceSize=256m\n' \
         "$TAIXU_AAPT2_PATH" >> "$GRADLE_PROPERTIES_TMP"
     mv -f "$GRADLE_PROPERTIES_TMP" "$GRADLE_PROPERTIES"
     echo "==> [TaiXu] Gradle 全局 AAPT2 覆盖: $TAIXU_AAPT2_PATH"
@@ -530,6 +535,11 @@ AAPT2_MACHINE=$(od -An -tu2 -j18 -N2 "$TAIXU_AAPT2_PATH" 2>/dev/null | tr -d '[:
 [ -f /root/.gradle/init.gradle ] && echo "    [OK] 阿里云镜像" || { echo "    [MISS] Gradle 镜像配置"; exit 1; }
 grep -Fqx "android.aapt2FromMavenOverride=$TAIXU_AAPT2_PATH" /root/.gradle/gradle.properties && echo "    [OK] Gradle 全局 AAPT2 覆盖" || { echo "    [MISS] Gradle 全局 AAPT2 覆盖"; exit 1; }
 grep -Fqx "android.builder.sdkDownload=false" /root/.gradle/gradle.properties && echo "    [OK] Gradle SDK 自动下载已禁用" || { echo "    [MISS] Gradle SDK 自动下载禁用策略"; exit 1; }
+grep -Fqx "org.gradle.daemon=false" /root/.gradle/gradle.properties && \
+grep -Fqx "org.gradle.parallel=false" /root/.gradle/gradle.properties && \
+grep -Fqx "org.gradle.workers.max=2" /root/.gradle/gradle.properties && \
+grep -Fq "org.gradle.jvmargs=-Xmx1024m" /root/.gradle/gradle.properties && \
+    echo "    [OK] Gradle 移动端资源与 daemon 策略" || { echo "    [MISS] Gradle 移动端资源策略"; exit 1; }
 [ -f /root/.gradle/init.d/taixu-android-ndk.gradle ] && grep -Fq "$TAIXU_NDK_PATH" /root/.gradle/init.d/taixu-android-ndk.gradle && echo "    [OK] Gradle 固定 NDK 路径注入" || { echo "    [MISS] Gradle NDK 路径注入"; exit 1; }
 grep -Fq "export JAVA_HOME=\"$JAVA_HOME_RESOLVED\"" /etc/profile.d/taixu-android.sh && echo "    [OK] JAVA_HOME 持久化环境" || { echo "    [MISS] JAVA_HOME 持久化环境"; exit 1; }
 

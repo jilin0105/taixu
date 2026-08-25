@@ -4,6 +4,7 @@ import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.database.HarnessSessionRepository
 import top.wkbin.taixu.core.security.SecretRedactor
 import top.wkbin.taixu.core.datastore.AgentPreferences
+import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.core.model.ApprovalMode
 import top.wkbin.taixu.core.network.DownloadEvent
 import top.wkbin.taixu.core.network.DownloadRequest
@@ -11,6 +12,7 @@ import top.wkbin.taixu.core.network.FileDownloader
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.LinuxEnvironmentManager
 import top.wkbin.taixu.runtime.shell.ShellCommand
+import top.wkbin.taixu.runtime.shell.ProcessType
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -33,9 +35,9 @@ import kotlinx.serialization.json.jsonPrimitive
 class ToolExecutor @Inject constructor(
     private val fileAccess: WorkspaceFileAccess,
     private val linuxRuntime: LinuxRuntime,
-    private val linuxEnvironmentManager: LinuxEnvironmentManager,
     private val secretRedactor: SecretRedactor,
     private val fileDownloader: FileDownloader,
+    private val linuxEnvironmentManager: LinuxEnvironmentManager? = null,
     private val approvalRepository: top.wkbin.taixu.core.database.AgentApprovalRepository? = null,
     private val sessionDao: HarnessSessionRepository? = null,
     private val subagentOrchestrator: SubagentOrchestrator? = null,
@@ -81,7 +83,7 @@ class ToolExecutor @Inject constructor(
             false to "工具执行异常：${throwable.message ?: throwable::class.simpleName}"
         }
         val (success, rawOutput) = outcome
-        linuxEnvironmentManager.refreshIfNeeded()
+        linuxEnvironmentManager?.refreshIfNeeded()
         return ToolResult(
             id = UUID.randomUUID().toString(),
             createdAt = now,
@@ -89,7 +91,7 @@ class ToolExecutor @Inject constructor(
             success = success,
             output = secretRedactor.redact(
                 value = truncateOutput(rawOutput),
-                secretValues = linuxEnvironmentManager.values.value.values,
+                secretValues = linuxEnvironmentManager?.values?.value?.values.orEmpty(),
                 privacyMode = if (::settingsDataStore.isInitialized) runCatching { settingsDataStore.environmentPrivacyMode.first() }.getOrDefault(true) else true,
             ),
         )
@@ -145,6 +147,7 @@ class ToolExecutor @Inject constructor(
                 activeFileAccess.edit(path, oldText, newText).toToolOutput("已修改 $path")
             }
             HarnessTool.BASE -> executeBase(args, workspace)
+            HarnessTool.PROCESS -> executeProcess(args, workspace)
             HarnessTool.DOWNLOAD -> executeDownload(args, activeFileAccess, progressReporter)
             HarnessTool.MEMORY -> contextExecutor?.executeMemory(args, sessionId, "") ?: (false to "未初始化记忆执行器")
             HarnessTool.PLAN -> contextExecutor?.executePlan(args, sessionId) ?: (false to "未初始化计划执行器")
@@ -159,13 +162,24 @@ class ToolExecutor @Inject constructor(
         require(command.length <= MAX_COMMAND_LENGTH) { "命令过长（${command.length} 字符，上限 $MAX_COMMAND_LENGTH）" }
         val cwd = args["cwd"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
             ?: (if (workspace.isNotBlank()) (if (workspace.startsWith("/")) workspace else "/workspace/$workspace") else DEFAULT_CWD)
-        val timeoutMs = args["timeout_seconds"]?.jsonPrimitive?.content?.toLongOrNull()?.let { it * 1000L }
-            ?: BASE_TIMEOUT_MS
+        val configuredTimeoutSeconds = if (::settingsDataStore.isInitialized) {
+            runCatching { settingsDataStore.baseCommandTimeoutSeconds.first() }
+                .getOrDefault(SettingsDataStore.DEFAULT_BASE_COMMAND_TIMEOUT_SECONDS)
+        } else {
+            SettingsDataStore.DEFAULT_BASE_COMMAND_TIMEOUT_SECONDS
+        }
+        val timeoutSeconds = optionalLong(
+            args = args,
+            key = "timeout_seconds",
+            default = configuredTimeoutSeconds.toLong(),
+            min = MIN_BASE_TIMEOUT_SECONDS,
+            max = MAX_BASE_TIMEOUT_SECONDS,
+        )
         val result = linuxRuntime.execute(
             ShellCommand(
                 commandLine = command,
                 workingDirectory = cwd,
-                timeoutMs = timeoutMs,
+                timeoutMs = timeoutSeconds * 1000L,
             ),
         )
         val stdout = result.stdout.trim()
@@ -177,6 +191,86 @@ class ToolExecutor @Inject constructor(
         }
         return result.isSuccess to body
     }
+
+    private suspend fun executeProcess(args: JsonObject, workspace: String): Pair<Boolean, String> {
+        val action = requireString(args, "action").trim().lowercase()
+        return when (action) {
+            "start" -> {
+                val externalId = requireProcessId(args)
+                val internalId = processId(externalId)
+                val command = requireString(args, "command")
+                require(command.length <= MAX_COMMAND_LENGTH) { "命令过长（${command.length} 字符，上限 $MAX_COMMAND_LENGTH）" }
+                val cwd = args["cwd"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                    ?: defaultWorkingDirectory(workspace)
+                val existing = linuxRuntime.listBackground().firstOrNull { it.id == internalId && it.session.isAlive }
+                require(existing == null) { "后台进程 $externalId 已在运行；请先查询状态或停止它" }
+                val managed = linuxRuntime.startBackground(
+                    id = internalId,
+                    command = ShellCommand(
+                        commandLine = command,
+                        workingDirectory = cwd,
+                        timeoutMs = Long.MAX_VALUE,
+                    ),
+                    type = ProcessType.COMMAND,
+                )
+                true to buildString {
+                    append("后台进程已启动：").append(externalId)
+                    managed.pid?.let { append("\npid: ").append(it) }
+                    append("\n工作目录：").append(cwd)
+                    append("\n请用 process(status/logs/stop) 管理；命令应以前台模式运行，不要再套 nohup 或 &。")
+                }
+            }
+            "status" -> {
+                val externalId = requireProcessId(args)
+                val managed = linuxRuntime.listBackground().firstOrNull { it.id == processId(externalId) }
+                    ?: return false to "未找到后台进程：$externalId"
+                true to buildString {
+                    append("后台进程：").append(externalId)
+                    append("\n状态：").append(if (managed.session.isAlive) "运行中" else "已退出")
+                    managed.pid?.let { append("\npid: ").append(it) }
+                    append("\n已运行：").append((System.currentTimeMillis() - managed.startedAt).coerceAtLeast(0L)).append(" ms")
+                }
+            }
+            "logs" -> {
+                val externalId = requireProcessId(args)
+                val tailLines = optionalLong(args, "tail_lines", DEFAULT_PROCESS_LOG_LINES, 1L, MAX_PROCESS_LOG_LINES).toInt()
+                val logs = linuxRuntime.getBackgroundLogs(processId(externalId)).takeLast(tailLines)
+                true to if (logs.isEmpty()) "后台进程 $externalId 暂无日志" else logs.joinToString("\n")
+            }
+            "list" -> {
+                val managed = linuxRuntime.listBackground().filter { it.id.startsWith(AGENT_PROCESS_PREFIX) }
+                true to if (managed.isEmpty()) {
+                    "当前没有 Agent 管理的后台进程"
+                } else {
+                    managed.joinToString("\n") {
+                        val externalId = it.id.removePrefix(AGENT_PROCESS_PREFIX)
+                        "$externalId · ${if (it.session.isAlive) "运行中" else "已退出"} · ${(System.currentTimeMillis() - it.startedAt).coerceAtLeast(0L)} ms"
+                    }
+                }
+            }
+            "stop" -> {
+                val externalId = requireProcessId(args)
+                val stopped = linuxRuntime.stopBackground(processId(externalId))
+                stopped to if (stopped) "后台进程已停止：$externalId" else "未找到后台进程：$externalId"
+            }
+            else -> false to "不支持的 process action：$action；可用 start/status/logs/list/stop"
+        }
+    }
+
+    private fun defaultWorkingDirectory(workspace: String): String =
+        if (workspace.isNotBlank()) {
+            if (workspace.startsWith("/")) workspace else "/workspace/$workspace"
+        } else {
+            DEFAULT_CWD
+        }
+
+    private fun requireProcessId(args: JsonObject): String {
+        val id = requireString(args, "id").trim().lowercase()
+        require(PROCESS_ID.matches(id)) { "进程 id 仅允许小写字母、数字、点、下划线和连字符，长度 1-64" }
+        return id
+    }
+
+    private fun processId(externalId: String): String = AGENT_PROCESS_PREFIX + externalId
 
     private suspend fun executeDownload(
         args: JsonObject,
@@ -283,7 +377,8 @@ class ToolExecutor @Inject constructor(
     }
 
     companion object {
-        const val BASE_TIMEOUT_MS = 60 * 1000L
+        const val MIN_BASE_TIMEOUT_SECONDS = 1L
+        const val MAX_BASE_TIMEOUT_SECONDS = 60L * 60L
         const val MAX_OUTPUT_LENGTH = 64 * 1024
         const val TRUNCATE_KEEP_LENGTH = 60 * 1024
         const val MAX_COMMAND_LENGTH = 32 * 1024
@@ -294,6 +389,10 @@ class ToolExecutor @Inject constructor(
         const val DEFAULT_DOWNLOAD_MAX_BYTES = 1024L * 1024L * 1024L
         const val MAX_DOWNLOAD_MAX_BYTES = 4L * 1024L * 1024L * 1024L
         const val PROGRESS_REPORT_INTERVAL_MS = 250L
+        const val DEFAULT_PROCESS_LOG_LINES = 120L
+        const val MAX_PROCESS_LOG_LINES = 500L
+        const val AGENT_PROCESS_PREFIX = "agent-process:"
+        val PROCESS_ID = Regex("[a-z0-9][a-z0-9._-]{0,63}")
 
     }
 }

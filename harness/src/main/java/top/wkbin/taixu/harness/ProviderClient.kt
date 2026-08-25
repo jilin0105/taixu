@@ -634,9 +634,18 @@ class ProviderClient @Inject constructor(
             ApiToolDefinition(
                 function = ApiFunctionDefinition(
                     name = "base",
-                    description = "在 Debian Linux 沙箱中执行 shell 命令，返回退出码/stdout/stderr。用于安装软件（apt-get/npm/pip install）、运行脚本、查看文件/进程/网络、执行任意 bash。命令有超时与输出截断；可用 cwd 指定工作目录（会话关联工作区时默认在其目录执行）。",
+                    description = "在 Debian Linux 沙箱中执行前台 shell 命令，返回退出码/stdout/stderr。用于安装软件、运行脚本、检查状态和执行构建。默认超时由用户在 Agent 设置中配置；可用 timeout_seconds 为单次调用指定 1-3600 秒。常驻服务不要使用 nohup 或 &，应改用 process 工具。",
                     parameters = Json.parseToJsonElement(
-                        """{"type":"object","properties":{"command":{"type":"string","description":"要执行的 shell 命令"},"cwd":{"type":"string","description":"工作目录，默认 /root"}},"required":["command"]}""",
+                        """{"type":"object","properties":{"command":{"type":"string","description":"要执行的 shell 命令"},"cwd":{"type":"string","description":"工作目录；关联工作区时默认使用工作区，否则为 /root"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":3600,"description":"可选的单次超时秒数；省略时使用用户设置的默认值"}},"required":["command"]}""",
+                    ).jsonObject,
+                ),
+            ),
+            ApiToolDefinition(
+                function = ApiFunctionDefinition(
+                    name = "process",
+                    description = "管理需要跨工具调用持续运行的 PRoot 后台进程。start 的命令必须以前台模式运行，由 TaiXu 托管生命周期；不要使用 nohup、& 或自行 daemonize。使用 status/logs/list/stop 查询和停止。",
+                    parameters = Json.parseToJsonElement(
+                        """{"type":"object","properties":{"action":{"type":"string","enum":["start","status","logs","list","stop"]},"id":{"type":"string","pattern":"^[a-z0-9][a-z0-9._-]{0,63}$","description":"稳定的进程标识；list 不需要"},"command":{"type":"string","description":"start 时必需，需以前台模式持续运行"},"cwd":{"type":"string","description":"start 的工作目录"},"tail_lines":{"type":"integer","minimum":1,"maximum":500,"description":"logs 返回的末尾行数，默认 120"}},"required":["action"]}""",
                     ).jsonObject,
                 ),
             ),

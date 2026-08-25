@@ -2829,6 +2829,7 @@ private fun toolName(tool: HarnessTool, rawToolName: String? = null): String {
         HarnessTool.WRITE -> "write"
         HarnessTool.EDIT -> "edit"
         HarnessTool.BASE -> "base"
+        HarnessTool.PROCESS -> "process"
         HarnessTool.DOWNLOAD -> "download"
         HarnessTool.MEMORY -> "memory"
         HarnessTool.PLAN -> "plan"

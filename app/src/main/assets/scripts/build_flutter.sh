@@ -34,17 +34,17 @@ export ANDROID_SDK_ROOT="$ANDROID_HOME"
 export PUB_HOSTED_URL="https://pub.flutter-io.cn"
 export FLUTTER_STORAGE_BASE_URL="https://storage.flutter-io.cn"
 export PUB_CACHE="${PUB_CACHE:-/opt/taixu/cache/flutter-pub}"
-NDK_PATH="${TAIXU_NDK_PATH:-}"
-LLVM_STRIP="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
-NDK_CLANG="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+NDK_PATH="${TAIXU_NDK_PATH:-${ANDROID_NDK_HOME:-/opt/taixu/toolchains/android/ndk}}"
+LLVM_STRIP=$(find "$NDK_PATH/toolchains/llvm/prebuilt" \( -type f -o -type l \) -name llvm-strip -print -quit 2>/dev/null)
+NDK_CLANG=$(find "$NDK_PATH/toolchains/llvm/prebuilt" \( -type f -o -type l \) -name clang -print -quit 2>/dev/null)
 if [ -z "$NDK_PATH" ] || [ ! -f "$NDK_PATH/source.properties" ] || \
    [ ! -x "$LLVM_STRIP" ] || [ ! -x "$NDK_CLANG" ]; then
     echo "==> [TaiXu Build] ❌ 固定 ARM64 NDK 未就位，请重新装配 Android 核心基础环境"
     exit 126
 fi
-STRIP_MACHINE=$(od -An -tu2 -j18 -N2 "$LLVM_STRIP" 2>/dev/null | tr -d '[:space:]')
-CLANG_MACHINE=$(od -An -tu2 -j18 -N2 "$NDK_CLANG" 2>/dev/null | tr -d '[:space:]')
-if [ "$STRIP_MACHINE" != "183" ] || [ "$CLANG_MACHINE" != "183" ] || \
+STRIP_MACHINE=$(od -An -t x1 -j 18 -N 2 "$LLVM_STRIP" 2>/dev/null | tr -d '[:space:]')
+CLANG_MACHINE=$(od -An -t x1 -j 18 -N 2 "$NDK_CLANG" 2>/dev/null | tr -d '[:space:]')
+if [ "$STRIP_MACHINE" != "b700" ] || [ "$CLANG_MACHINE" != "b700" ] || \
    ! "$LLVM_STRIP" --version >/dev/null 2>&1 || \
    ! "$NDK_CLANG" --version >/dev/null 2>&1; then
     echo "==> [TaiXu Build] ❌ NDK 主机工具不是可执行的 Linux AArch64 制品"
@@ -67,7 +67,7 @@ if ! command -v flutter >/dev/null 2>&1; then
     echo "==> [TaiXu Build] ❌ 未找到 Flutter SDK，请安装 Flutter 跨平台开发套件"
     exit 127
 fi
-if [ ! -f /opt/flutter/.taixu-arm64 ] || [ ! -x /opt/flutter/bin/cache/dart-sdk/bin/dart ]; then
+if [ ! -x /opt/flutter/bin/flutter ] || [ ! -x /opt/flutter/bin/cache/dart-sdk/bin/dart ]; then
     echo "==> [TaiXu Build] ❌ Flutter SDK 不是可用的 Linux ARM64 版本，请在工坊重新装配 Flutter 套件"
     exit 126
 fi
@@ -123,19 +123,21 @@ if [ -f /opt/flutter/bin/flutter ]; then
     else
         : > "$LOCAL_PROPERTIES_TMP"
     fi
-    printf 'sdk.dir=%s\nndk.dir=%s\nflutter.sdk=/opt/flutter\n' "$ANDROID_HOME" "$NDK_PATH" >> "$LOCAL_PROPERTIES_TMP"
+    # NDK 由全局 init policy 的 android.ndkPath 唯一定位。只清理遗留
+    # ndk.dir，不写回，避免 AGP 8.11.1 判定两种 NDK locator 冲突。
+    printf 'sdk.dir=%s\nflutter.sdk=/opt/flutter\n' "$ANDROID_HOME" >> "$LOCAL_PROPERTIES_TMP"
     mv -f "$LOCAL_PROPERTIES_TMP" "$LOCAL_PROPERTIES"
 fi
-AAPT2_PATH="${TAIXU_AAPT2_PATH:-}"
+AAPT2_PATH="${TAIXU_AAPT2_PATH:-$ANDROID_HOME/build-tools/35.0.0/aapt2}"
 case "$AAPT2_PATH" in
-    /opt/taixu/toolchains/android/sdk-tools/artifacts/*/build-tools/aapt2) ;;
+    /opt/android-sdk/build-tools/35.0.0/aapt2|/opt/taixu/toolchains/android/sdk-tools/artifacts/*/build-tools/aapt2) ;;
     *)
         echo "==> [TaiXu Build] ❌ AAPT2 未指向不可变 ARM64 制品目录"
         exit 126
         ;;
 esac
-AAPT2_MACHINE=$(od -An -tu2 -j18 -N2 "$AAPT2_PATH" 2>/dev/null | tr -d '[:space:]')
-if [ "$AAPT2_MACHINE" = "183" ] && [ -x "$AAPT2_PATH" ] && \
+AAPT2_MACHINE=$(od -An -t x1 -j 18 -N 2 "$AAPT2_PATH" 2>/dev/null | tr -d '[:space:]')
+if [ "$AAPT2_MACHINE" = "b700" ] && [ -x "$AAPT2_PATH" ] && \
    "$AAPT2_PATH" version >/dev/null 2>&1; then
     export ORG_GRADLE_PROJECT_android_aapt2FromMavenOverride="$AAPT2_PATH"
     echo "==> [TaiXu Build] 使用 ARM64 原生 AAPT2: $AAPT2_PATH"
@@ -149,7 +151,7 @@ if ! grep -Fqx 'android.builder.sdkDownload=false' /root/.gradle/gradle.properti
     exit 126
 fi
 if [ ! -f /root/.gradle/init.d/taixu-android-ndk.gradle ] || \
-   ! grep -Fq "$NDK_PATH" /root/.gradle/init.d/taixu-android-ndk.gradle; then
+   ! grep -Fq 'androidExtension.ndkPath = taixuNdkPath' /root/.gradle/init.d/taixu-android-ndk.gradle; then
     echo "==> [TaiXu Build] ❌ 固定 NDK 路径注入缺失"
     exit 126
 fi

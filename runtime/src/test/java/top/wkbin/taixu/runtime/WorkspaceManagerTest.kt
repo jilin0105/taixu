@@ -6,6 +6,10 @@ import top.wkbin.taixu.core.database.WorkspaceRepository
 import top.wkbin.taixu.core.database.WorkspaceEntity
 import top.wkbin.taixu.runtime.rootfs.RootfsValidator
 import java.io.File
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
@@ -177,6 +181,47 @@ class WorkspaceManagerTest {
         assertTrue(launcher.isFile)
         assertTrue(launcher.readText().startsWith("package com.example.fluttergenerated"))
         assertFalse(project.walkTopDown().any { it.name.endsWith(".template") })
+    }
+
+    @Test
+    fun projectArchiveImportFlattensSingleWrapperDirectory() {
+        val archive = zipOf(
+            "repository-main/settings.gradle.kts" to "rootProject.name = \"Imported\"",
+            "repository-main/app/src/main.txt" to "hello",
+        )
+        val target = File(workspaceDir, "archive-target").apply { mkdirs() }
+
+        manager.extractProjectArchive(ByteArrayInputStream(archive), "project.zip", target)
+
+        assertEquals("rootProject.name = \"Imported\"", target.resolve("settings.gradle.kts").readText())
+        assertEquals("hello", target.resolve("app/src/main.txt").readText())
+        assertFalse(target.resolve("repository-main").exists())
+    }
+
+    @Test
+    fun projectArchiveImportRejectsPathTraversal() {
+        val archive = zipOf("../escaped.txt" to "unsafe")
+        val target = File(workspaceDir, "safe-archive-target").apply { mkdirs() }
+
+        val result = runCatching {
+            manager.extractProjectArchive(ByteArrayInputStream(archive), "project.zip", target)
+        }
+
+        assertTrue(result.isFailure)
+        assertFalse(File(workspaceDir, "escaped.txt").exists())
+        assertTrue(target.listFiles().orEmpty().isEmpty())
+    }
+
+    private fun zipOf(vararg entries: Pair<String, String>): ByteArray {
+        val bytes = ByteArrayOutputStream()
+        ZipOutputStream(bytes).use { zip ->
+            entries.forEach { (name, content) ->
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(content.toByteArray())
+                zip.closeEntry()
+            }
+        }
+        return bytes.toByteArray()
     }
 
     private class TestContext(private val baseDir: File) : ContextWrapper(null) {

@@ -43,7 +43,7 @@ object BuiltinSkills {
                 【Linux 沙箱运维专精指导】：
                 1. PRoot 环境中没有真实 root 权限，避免执行破坏性内核命令（如 mount、sysctl、chown）。
                 2. dpkg 安装/升级时若提示 unable to securely remove .dpkg-tmp，先清理临时文件并使用 chmod u-s 降低 setuid 属性后再重试。
-                3. 无 systemd 支持，需常驻的后台服务应推荐使用 nohup 或前台并排运行，并向用户说明。
+                3. 无 systemd 支持；需常驻的后台服务必须通过 TaiXu process 工具注册，并保持前台运行。不要在普通 base 命令中使用 nohup 或 &，PRoot 退出时会回收未托管子进程。
             """.trimIndent(),
             triggerCommand = "/ops",
             iconName = "Terminal",

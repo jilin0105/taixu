@@ -1,0 +1,40 @@
+// Managed by TaiXu. Prefer the active toolchain environment and fall back to
+// the standard local offline-suite path.
+def taixuNdkPath = System.getenv('TAIXU_NDK_PATH') ?:
+    System.getenv('ANDROID_NDK_HOME') ?:
+    '/opt/taixu/toolchains/android/ndk'
+def taixuAndroidPluginIds = [
+    'com.android.application',
+    'com.android.library',
+    'com.android.dynamic-feature',
+    'com.android.test',
+    'com.android.kotlin.multiplatform.library'
+]
+
+gradle.beforeProject { project ->
+    taixuAndroidPluginIds.each { pluginId ->
+        project.pluginManager.withPlugin(pluginId) {
+            def androidExtension = project.extensions.findByName('android')
+            if (androidExtension != null && androidExtension.hasProperty('ndkPath')) {
+                androidExtension.ndkPath = taixuNdkPath
+                project.logger.info('TaiXu ARM64 NDK: ' + taixuNdkPath)
+            }
+        }
+    }
+}
+
+gradle.projectsEvaluated {
+    gradle.rootProject.allprojects.each { project ->
+        def androidExtension = project.extensions.findByName('android')
+        if (androidExtension != null && androidExtension.hasProperty('ndkPath')) {
+            def effective = androidExtension.ndkPath == null ? '' :
+                new File(androidExtension.ndkPath.toString()).canonicalPath
+            def expected = new File(taixuNdkPath).canonicalPath
+            if (effective != expected) {
+                throw new GradleException(
+                    'TaiXu blocked Android NDK path drift: ' + effective + ' != ' + expected
+                )
+            }
+        }
+    }
+}

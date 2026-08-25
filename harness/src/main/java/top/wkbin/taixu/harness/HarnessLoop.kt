@@ -784,7 +784,7 @@ class HarnessLoop @Inject constructor(
                             createdAt = now(),
                             toolCallId = spec.id,
                             success = false,
-                            output = "未知工具：${spec.name}。可用工具包含 read / write / edit / base / invoke_subagent 以及已启用的 MCP 插件工具。",
+                            output = "未知工具：${spec.name}。可用工具包含 read / write / edit / base / process / invoke_subagent 以及已启用的 MCP 插件工具。",
                         ),
                     )
                     return@forEach
@@ -901,6 +901,7 @@ class HarnessLoop @Inject constructor(
                 val command = arg("command")?.lineSequence()?.first()?.trim().orEmpty()
                 if (command.isEmpty()) "执行命令" else "执行命令：${command.take(MAX_STATUS_ARG_LENGTH)}"
             }
+            HarnessTool.PROCESS -> "管理后台进程：${arg("action") ?: "process"}${arg("id")?.let { " · ${it.take(MAX_STATUS_ARG_LENGTH)}" }.orEmpty()}"
             HarnessTool.DOWNLOAD -> arg("destination")?.let { "下载文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "下载文件"
             HarnessTool.READ -> arg("path")?.let { "读取文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "读取文件"
             HarnessTool.WRITE -> arg("path")?.let { "写入文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "写入文件"
@@ -1443,6 +1444,7 @@ class HarnessLoop @Inject constructor(
         HarnessTool.WRITE -> "write"
         HarnessTool.EDIT -> "edit"
         HarnessTool.BASE -> "base"
+        HarnessTool.PROCESS -> "process"
         HarnessTool.DOWNLOAD -> "download"
         HarnessTool.MEMORY -> "memory"
         HarnessTool.PLAN -> "plan"
@@ -1594,7 +1596,7 @@ class HarnessLoop @Inject constructor(
     companion object {
         const val STREAM_FLUSH_INTERVAL_MS = 80L
         const val MAX_ROUNDS = 200
-        val KNOWN_TOOL_NAMES = setOf("read", "write", "edit", "base", "memory", "plan", "scratchpad", "invoke_subagent", "subagent")
+        val KNOWN_TOOL_NAMES = setOf("read", "write", "edit", "base", "process", "memory", "plan", "scratchpad", "invoke_subagent", "subagent")
         const val PROJECT_CONTEXT_MAX_BYTES = 16 * 1024
         const val MAX_STREAM_RETRIES = 5
         const val RETRY_BACKOFF_MS = 1_000L
@@ -1620,13 +1622,16 @@ class HarnessLoop @Inject constructor(
 
             4. base —— 在 Debian Linux 沙箱中执行 shell 命令
                用途：安装软件（apt-get / npm / pip install）、运行脚本、查看系统状态（文件、进程、网络）、执行任意 bash。
-               返回退出码、stdout、stderr。命令有超时与输出截断。若执行前需要某个目录，用参数 cwd 指定；当前会话关联了工作区时，默认在工作区目录执行。
+               返回退出码、stdout、stderr。默认超时由用户设置，可用 timeout_seconds 为单次命令指定 1-3600 秒。若执行前需要某个目录，用参数 cwd 指定；当前会话关联了工作区时，默认在工作区目录执行。
+
+            5. process —— 托管跨工具调用持续运行的后台进程
+               start 时提供稳定 id 和前台运行命令；随后用 status/logs/list/stop 管理。不要在命令中使用 nohup、& 或自行 daemonize，PRoot 子进程必须由 TaiXu 生命周期注册表持有。
 
             运行环境约束（PRoot 沙箱，务必遵守，不要浪费时间在注定失败的操作上）：
             - 你运行在 Android 设备上的 PRoot Debian 沙箱中：没有真正的 root 权限。chown/chgrp 改属主、mount、insmod、sysctl 大部分参数、设置 capabilities 等内核级操作会被静默忽略或失败——不要尝试，也不要因为命令返回成功就误以为生效。
             - 文件权限与属主由 PRoot 模拟。perl 等程序可能因“幽灵”硬链接报错：遇到时改用符号链接（ln -s）替代。锁文件（*.lock、groupadd 的锁机制）在沙箱里可能异常，必要时直接写配置文件或清理残留锁。
             - dpkg 升级含 setuid 文件的包（util-linux 的 su/mount/umount、login 的 newgrp 等）会卡死在 "unable to securely remove *.dpkg-tmp"：PRoot 下无法删除 setuid 的解包残留。已验证的解法：先 rm 所有 .dpkg-tmp 残留，再 chmod u-s,g-s 降级现存的 setuid 目标文件，然后 dpkg -i 重装。装完后文件会恢复 setuid 标记，下次大版本升级可能再卡，同样处理即可——不要反复重试 dpkg，也不要试图让 setuid 真正生效。
-            - 没有 systemd：服务不会自启，systemctl 不可用。需要常驻进程时用 nohup 或前台运行，并告知用户。
+            - 没有 systemd：服务不会自启，systemctl 不可用。需要常驻进程时必须使用 process 工具托管，并让命令保持前台运行；普通 base 中的 nohup 或 & 无法跨 PRoot 会话存活。
             - /proc、/sys 部分内容反映的是宿主 Android 系统，不要据此判断 Debian 的状态。
             - 设备 CPU/IO 弱于服务器：编译、apt upgrade 等操作耗时长属正常现象；重操作前先告知用户预计耗时。
             - 遇到奇怪的错误（Bad substitution、dpkg -V 报缺文档、权限异常）优先怀疑是沙箱差异而非系统损坏；确认无实际影响后继续，不要反复重试同一命令，也不要试图“修复”沙箱本身。

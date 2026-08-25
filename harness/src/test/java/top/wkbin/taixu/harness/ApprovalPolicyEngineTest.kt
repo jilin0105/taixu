@@ -21,6 +21,8 @@ class ApprovalPolicyEngineTest {
         assertFalse(policy.decide(ApprovalMode.REQUEST, HarnessTool.READ, args("path" to "a.txt"), workspace).required)
         assertTrue(policy.decide(ApprovalMode.REQUEST, HarnessTool.WRITE, args("path" to "a.txt", "content" to "x"), workspace).required)
         assertTrue(policy.decide(ApprovalMode.REQUEST, HarnessTool.BASE, args("command" to "git status"), workspace).required)
+        assertFalse(policy.decide(ApprovalMode.REQUEST, HarnessTool.PROCESS, args("action" to "status", "id" to "server"), workspace).required)
+        assertTrue(policy.decide(ApprovalMode.REQUEST, HarnessTool.PROCESS, args("action" to "start", "id" to "server", "command" to "python -m http.server"), workspace).required)
         assertTrue(policy.decide(ApprovalMode.REQUEST, HarnessTool.MCP, args("name" to "search"), workspace).required)
         assertTrue(policy.decide(ApprovalMode.REQUEST, HarnessTool.DOWNLOAD, args("destination" to "a.zip"), workspace).required)
     }
@@ -31,6 +33,8 @@ class ApprovalPolicyEngineTest {
         assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.EDIT, args("path" to "/workspace/project/src/Main.kt"), workspace).required)
         assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.BASE, args("command" to "./gradlew test"), workspace).required)
         assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.BASE, args("command" to "git status"), workspace).required)
+        assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.PROCESS, args("action" to "logs", "id" to "server"), workspace).required)
+        assertTrue(policy.decide(ApprovalMode.ASSISTED, HarnessTool.PROCESS, args("action" to "stop", "id" to "server"), workspace).required)
     }
 
     @Test
@@ -60,6 +64,7 @@ class ApprovalPolicyEngineTest {
             val toolArgs = when (tool) {
                 HarnessTool.WRITE, HarnessTool.EDIT -> args("path" to "/etc/hosts", "content" to "x")
                 HarnessTool.BASE -> args("command" to "rm -rf /")
+                HarnessTool.PROCESS -> args("action" to "start", "id" to "server", "command" to "rm -rf /")
                 HarnessTool.DOWNLOAD -> args("url" to "https://example.com/a.zip", "destination" to "a.zip")
                 HarnessTool.READ -> args("path" to "/etc/passwd")
                 else -> args("name" to "anything")

@@ -10,6 +10,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import top.wkbin.taixu.R
 import top.wkbin.taixu.runtime.shell.ProcessRegistry
+import top.wkbin.taixu.runtime.SshServiceManager
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -22,10 +23,12 @@ import kotlinx.coroutines.launch
 class RuntimeForegroundService : Service() {
     @Inject lateinit var processRegistry: ProcessRegistry
     @Inject lateinit var localServiceLauncher: LocalServiceLauncher
+    @Inject lateinit var sshServiceManager: SshServiceManager
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate() {
         super.onCreate()
+        sshServiceManager.startObserving()
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, getString(R.string.taixu_runtime_notification_channel), NotificationManager.IMPORTANCE_LOW),

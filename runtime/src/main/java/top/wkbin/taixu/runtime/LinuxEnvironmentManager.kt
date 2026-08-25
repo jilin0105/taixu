@@ -134,7 +134,11 @@ class LinuxEnvironmentManager @Inject constructor(
 
     private suspend fun readRecords(distroId: String): List<LinuxEnvironmentRecord> {
         val result = linuxRuntime.execute(
-            ShellCommand("if [ -f '$PROFILE_PATH' ]; then cat '$PROFILE_PATH'; fi"),
+            ShellCommand(
+                "if [ ! -f '$PROFILE_PATH' ] && [ -f '$LEGACY_PROFILE_PATH' ]; then " +
+                    "mv -f '$LEGACY_PROFILE_PATH' '$PROFILE_PATH'; fi; " +
+                    "if [ -f '$PROFILE_PATH' ]; then cat '$PROFILE_PATH'; fi",
+            ),
             distroId,
         )
         check(result.isSuccess) { result.stderr.trim().ifBlank { "读取 Linux 环境变量失败" } }
@@ -160,7 +164,8 @@ class LinuxEnvironmentManager @Inject constructor(
             append(shellQuote(content))
             append(" > '$TEMP_PROFILE_PATH' && ")
             append("chmod 600 '$TEMP_PROFILE_PATH' && ")
-            append("mv -f '$TEMP_PROFILE_PATH' '$PROFILE_PATH'")
+            append("mv -f '$TEMP_PROFILE_PATH' '$PROFILE_PATH' && ")
+            append("rm -f '$LEGACY_PROFILE_PATH'")
         }
         val result = linuxRuntime.execute(ShellCommand(command), distroId)
         check(result.isSuccess) { result.stderr.trim().ifBlank { "写入 Linux 环境变量失败" } }
@@ -203,7 +208,8 @@ class LinuxEnvironmentManager @Inject constructor(
     private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
 
     private companion object {
-        const val PROFILE_PATH = "/etc/profile.d/99-taixu-user-env.sh"
+        const val PROFILE_PATH = "/etc/profile.d/zz-taixu-user-env.sh"
+        const val LEGACY_PROFILE_PATH = "/etc/profile.d/99-taixu-user-env.sh"
         const val TEMP_PROFILE_PATH = "$PROFILE_PATH.tmp"
         val ENVIRONMENT_KEY = Regex("^[A-Z_][A-Z0-9_]*$")
         val RESERVED_KEYS = setOf(
@@ -214,7 +220,7 @@ class LinuxEnvironmentManager @Inject constructor(
 
 data class EffectiveEnvironmentVariable(
     val key: String,
-    val hasValue: Boolean,
+    val value: String,
 )
 
 internal object LinuxEnvironmentSnapshot {
@@ -230,7 +236,7 @@ internal object LinuxEnvironmentSnapshot {
                 if (separator <= 0) return@mapNotNull null
                 val key = line.substring(0, separator)
                 if (!environmentKey.matches(key)) return@mapNotNull null
-                EffectiveEnvironmentVariable(key, line.length > separator + 1)
+                EffectiveEnvironmentVariable(key, line.substring(separator + 1))
             }
             .distinctBy { it.key }
             .sortedBy { it.key }

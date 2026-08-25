@@ -42,7 +42,7 @@
     <string name="workspace_projects_section">工坊隔离工程</string>
     <string name="workspace_projects_description">位于 Linux 沙箱 /workspace 目录下，与 Agent 实时互通</string>
     <string name="workspace_no_projects">还没有工坊工程</string>
-    <string name="workspace_no_projects_description">点击右上角 ➕ 选择 Android / Flutter / APK 逆向模板或自定义创建工程</string>
+    <string name="workspace_no_projects_description">点击右上角新建工程，或从本地 ZIP / GitHub 导入已有项目</string>
     <string name="workspace_building_device">正在构建到手机…</string>
     <string name="workspace_run_ready">运行就绪</string>
     <string name="workspace_run_failed">运行失败</string>
@@ -71,6 +71,15 @@
     <string name="workspace_template_reverse">APK 逆向</string>
     <string name="workspace_template_git">Git 导入</string>
     <string name="workspace_template_empty">空工程</string>
+    <string name="workspace_import_project">导入项目</string>
+    <string name="workspace_import_source">选择导入方式</string>
+    <string name="workspace_local_archive">本地压缩包</string>
+    <string name="workspace_choose_project_archive">选择项目 ZIP 压缩包</string>
+    <string name="workspace_git_transport">GitHub 连接方式</string>
+    <string name="workspace_project_label">选择项目标签</string>
+    <string name="workspace_import_directory_hint">项目将解压或拉取到 /workspace 下的这个内部目录</string>
+    <string name="workspace_import">导入</string>
+    <string name="workspace_export_project">导出项目 ZIP</string>
     <string name="workspace_project_name">工程名称 (Name)</string>
     <string name="workspace_package_name">应用包名 (Package Name)</string>
     <string name="workspace_choose_apk_source">选择安装包来源</string>
@@ -119,6 +128,8 @@
     <string name="workspace_suite_installed">开发套件组件已成功装配！</string>
     <string name="workspace_deploy_failed">部署失败：%1$s</string>
     <string name="workspace_project_created">项目已创建，目录已关联</string>
+    <string name="workspace_project_imported">项目已导入内部沙盒</string>
+    <string name="workspace_project_exported">项目已导出：%1$s</string>
     <string name="workspace_project_deleted">项目已删除</string>
     <string name="workspace_read_directory_failed">读取目录失败</string>
     <string name="workspace_file_created">文件已创建：%1$s</string>

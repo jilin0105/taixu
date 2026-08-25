@@ -78,6 +78,8 @@ class ToolCenterViewModel @Inject constructor(
         _selectedCategory.value = category
     }
 
+    fun toolSource(toolId: String): String = toolManager.manifest(toolId)?.source ?: "REMOTE"
+
     fun installTool(toolId: String) {
         toolManager.startInstall(toolId)
     }

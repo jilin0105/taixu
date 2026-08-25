@@ -78,7 +78,7 @@ This file tracks known issues and environment notes for the TaiXu Android projec
   - JAVA_HOME 推导、java/gradle 全局软链、cacerts 注入。
 - `build_android.sh` 重构为纯执行器：加载 profile 环境 → 前置校验（缺 java.jar/gradle 快速失败并指引插件中心）→ 写 local.properties → 多级 Gradle 调度。`android init` 脚手架直接预置阿里云镜像（替代旧版构建期 sed 自愈注入）。
 - ToolManager 批量装配对重型下载脚本（setup_android_core.sh / setup_flutter.sh / setup_jadx.sh / setup_pnpm.sh）超时从 180s 放宽到 20 分钟（与 GenericRecipeInstaller 对齐）；apt 聚合安装整批失败时降级 `--ignore-missing`，避免个别发行版缺包（如 apksigner）导致全部装不上。
-- Android 核心套件把 AAPT2 和 NDK 安装到带 SHA-256 的不可变制品目录，正式构建只注入规范制品路径；`/opt/taixu/android-sdk-tools/aapt2` 与 `/opt/android-sdk/ndk/<version>` 仅是旧项目兼容视图。`/root/.gradle/gradle.properties` 固定 `android.aapt2FromMavenOverride` 并设置 `android.builder.sdkDownload=false`，`/root/.gradle/init.d/taixu-android-ndk.gradle` 固定 `android.ndkPath`，阻止 AGP 在构建中补装官方 x86_64 主机工具。内置构建与工具链装配还通过 `/opt/taixu/locks/android-toolchain.lock` 共享/排他互斥。
+- Android 核心套件把 AAPT2 和 NDK 安装到带 SHA-256 的不可变制品目录，正式构建只注入规范制品路径；`/opt/taixu/android-sdk-tools/aapt2` 与 `/opt/android-sdk/ndk/<version>` 仅是旧项目兼容视图。`/root/.gradle/gradle.properties` 固定 `android.aapt2FromMavenOverride` 并设置 `android.builder.sdkDownload=false`，`/root/.gradle/init.d/taixu-android-ndk.gradle` 固定 `android.ndkPath`，阻止 AGP 在构建中补装官方 x86_64 主机工具。Android/Flutter 构建脚本会清理遗留的 `local.properties` `ndk.dir`，但不再写回，以保证 AGP 只看到 `ndkPath` 这一种 NDK locator。内置构建与工具链装配还通过 `/opt/taixu/locks/android-toolchain.lock` 共享/排他互斥。
 - 注意：插件中心的组件就绪探针已升级为校验真实 SDK（java + aapt + android.jar + gradle launcher jar），老沙箱升级 App 后探针会显示未就绪，重新装配一次即可（幂等，已下载组件会跳过）。
 
 ---

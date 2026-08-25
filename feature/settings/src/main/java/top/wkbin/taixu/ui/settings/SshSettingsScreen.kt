@@ -1,0 +1,434 @@
+package top.wkbin.taixu.ui.settings
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import top.wkbin.taixu.runtime.SshServiceState
+import top.wkbin.taixu.ui.components.NoticeBanner
+import top.wkbin.taixu.ui.components.RuntimeAlertDialog
+import top.wkbin.taixu.ui.components.RuntimeButton
+import top.wkbin.taixu.ui.components.RuntimeCard
+import top.wkbin.taixu.ui.components.RuntimeIcon
+import top.wkbin.taixu.ui.components.RuntimeIconName
+import top.wkbin.taixu.ui.components.RuntimeOutlinedButton
+import top.wkbin.taixu.ui.components.RuntimeSwitch
+import top.wkbin.taixu.ui.components.RuntimeTextButton
+import top.wkbin.taixu.ui.components.RuntimeTopBar
+import top.wkbin.taixu.ui.settings.LocalizedText as Text
+
+@Composable
+fun SshSettingsScreen(
+    onBack: () -> Unit,
+    viewModel: SshSettingsViewModel = hiltViewModel(),
+) {
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val serviceState by viewModel.serviceState.collectAsStateWithLifecycle()
+    val operating by viewModel.operating.collectAsStateWithLifecycle()
+    val message by viewModel.message.collectAsStateWithLifecycle()
+    val logs by viewModel.logs.collectAsStateWithLifecycle()
+    val vpnActive by viewModel.vpnActive.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+
+    var portText by remember { mutableStateOf(settings.port.toString()) }
+    var authorizedKeysText by remember { mutableStateOf(settings.authorizedKeys) }
+    var showLanWarning by remember { mutableStateOf(false) }
+    var showPasswordDialog by remember { mutableStateOf(false) }
+    LaunchedEffect(settings.distroId, settings.port) { portText = settings.port.toString() }
+    LaunchedEffect(settings.distroId, settings.authorizedKeys) { authorizedKeysText = settings.authorizedKeys }
+
+    message?.let { current ->
+        RuntimeAlertDialog(
+            onDismissRequest = viewModel::consumeMessage,
+            title = { Text(if (current.contains("失败") || current.contains("无效") || current.contains("请先")) "SSH 操作未完成" else "SSH 远程访问") },
+            text = { Text(current) },
+            confirmButton = { RuntimeTextButton(onClick = viewModel::consumeMessage) { Text("知道了") } },
+        )
+    }
+
+    if (showLanWarning) {
+        RuntimeAlertDialog(
+            onDismissRequest = { showLanWarning = false },
+            title = { Text("允许局域网访问？") },
+            text = {
+                Text("SSH 将监听所有网络接口，同一局域网内的设备都能尝试连接。请只在可信 Wi-Fi 下开启，并妥善保管对应私钥。")
+            },
+            confirmButton = {
+                RuntimeButton(
+                    onClick = {
+                        showLanWarning = false
+                        viewModel.setAllowLan(true)
+                    },
+                ) { Text("确认开启") }
+            },
+            dismissButton = {
+                RuntimeTextButton(onClick = { showLanWarning = false }) { Text("取消") }
+            },
+        )
+    }
+
+    if (showPasswordDialog) {
+        PasswordSettingsDialog(
+            passwordConfigured = settings.passwordConfigured,
+            onDismiss = { showPasswordDialog = false },
+            onSave = { password ->
+                showPasswordDialog = false
+                viewModel.savePassword(password)
+            },
+            onClear = {
+                showPasswordDialog = false
+                viewModel.clearPassword()
+            },
+        )
+    }
+
+    val statusText = when (serviceState) {
+        is SshServiceState.Stopped -> "已停止"
+        is SshServiceState.Installing -> "正在安装 OpenSSH"
+        is SshServiceState.Starting -> "正在启动"
+        is SshServiceState.Running -> "运行中"
+        is SshServiceState.Failed -> "启动失败"
+    }
+    val busy = operating || serviceState is SshServiceState.Installing || serviceState is SshServiceState.Starting
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = { RuntimeTopBar("SSH 远程访问", onBack, statusText = statusText) },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item {
+                NoticeBanner(
+                    text = "SSH 按当前 Linux 发行版独立配置。首次启用会按需安装 OpenSSH；支持传统 root + 密码登录，也可使用公钥。",
+                )
+            }
+
+            item {
+                SectionLabel("服务状态")
+                SettingsGroup {
+                    SettingsRow(
+                        icon = RuntimeIconName.Server,
+                        title = "启用 SSH 服务",
+                        subtitle = "保持启用并随 Linux 运行时自动启动",
+                        value = when (serviceState) {
+                            is SshServiceState.Running -> "运行中"
+                            is SshServiceState.Installing -> "安装中"
+                            is SshServiceState.Starting -> "启动中"
+                            is SshServiceState.Failed -> "失败"
+                            is SshServiceState.Stopped -> if ((serviceState as SshServiceState.Stopped).installed) "已安装" else "未安装"
+                        },
+                        trailing = {
+                            RuntimeSwitch(
+                                checked = settings.enabled,
+                                onCheckedChange = viewModel::toggleEnabled,
+                                enabled = !busy,
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            )
+                        },
+                    )
+                }
+                (serviceState as? SshServiceState.Failed)?.let { failed ->
+                    RuntimeCard(
+                        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f),
+                        borderColor = MaterialTheme.colorScheme.error.copy(alpha = 0.25f),
+                    ) {
+                        Text(failed.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+
+            item {
+                SectionLabel("登录认证")
+                SettingsGroup {
+                    SettingsRow(
+                        icon = RuntimeIconName.Admin,
+                        title = "登录用户名",
+                        subtitle = "PRoot Linux 沙箱管理员账户",
+                        value = "root",
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(
+                        icon = RuntimeIconName.Key,
+                        title = "登录密码",
+                        subtitle = if (settings.passwordConfigured) "密码已加密保存，可点击修改或清除" else "尚未设置，使用密码登录前必须配置",
+                        value = if (settings.passwordConfigured) "已设置" else "未设置",
+                        onClick = { showPasswordDialog = true },
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(
+                        icon = RuntimeIconName.Shield,
+                        title = "允许密码登录",
+                        subtitle = if (settings.passwordAuthEnabled) "连接时输入 root 对应密码" else "密码认证已关闭",
+                        trailing = {
+                            RuntimeSwitch(
+                                checked = settings.passwordAuthEnabled,
+                                onCheckedChange = { enabled ->
+                                    if (enabled && !settings.passwordConfigured) {
+                                        showPasswordDialog = true
+                                    } else {
+                                        viewModel.setPasswordAuthEnabled(enabled)
+                                    }
+                                },
+                                enabled = !busy,
+                            )
+                        },
+                    )
+                }
+            }
+
+            item {
+                SectionLabel("连接")
+                RuntimeCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            text = settings.connectionCommand,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            text = if (settings.allowLan) {
+                                "首次连接输入 yes 确认服务器指纹，然后输入 root 登录密码"
+                            } else {
+                                "命令使用当前局域网地址；开启“允许局域网访问”后电脑才能连接"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        RuntimeOutlinedButton(
+                            onClick = { copyText(context, settings.connectionCommand, "SSH 命令已复制") },
+                            modifier = Modifier.align(Alignment.End),
+                        ) {
+                            RuntimeIcon(RuntimeIconName.Copy, Modifier.size(16.dp))
+                            Spacer(Modifier.size(6.dp))
+                            Text("复制命令")
+                        }
+                    }
+                }
+            }
+
+            if (settings.allowLan && vpnActive) {
+                item {
+                    NoticeBanner(
+                        text = "检测到手机正处于 VPN 连接中，当前 VPN 会接管本应用流量。启用“允许局域网访问”后，请先关闭 VPN 或将本应用加入 VPN 直连/排除名单，否则同一局域网的电脑连接会超时。",
+                        isError = true,
+                    )
+                }
+            }
+
+            item {
+                SectionLabel("网络配置")
+                SettingsGroup {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 76.dp).padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        RuntimeIcon(RuntimeIconName.Network, Modifier.size(20.dp), MaterialTheme.colorScheme.primary)
+                        OutlinedTextField(
+                            value = portText,
+                            onValueChange = { portText = it.filter(Char::isDigit).take(5) },
+                            label = { Text("SSH 端口") },
+                            supportingText = { Text("允许范围：1024–65535") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f),
+                        )
+                        RuntimeOutlinedButton(onClick = { viewModel.savePort(portText) }, enabled = !busy) { Text("保存") }
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(
+                        icon = RuntimeIconName.Globe,
+                        title = "允许局域网访问",
+                        subtitle = if (settings.allowLan) "监听 0.0.0.0，请只在可信网络使用" else "仅监听 127.0.0.1（推荐）",
+                        trailing = {
+                            RuntimeSwitch(
+                                checked = settings.allowLan,
+                                onCheckedChange = { enabled ->
+                                    if (enabled) showLanWarning = true else viewModel.setAllowLan(false)
+                                },
+                                enabled = !busy,
+                            )
+                        },
+                    )
+                }
+            }
+
+            item {
+                SectionLabel("公钥登录（可选）")
+                RuntimeCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            "无需公钥也可以使用密码登录。需要免密连接时，每行添加一个 OpenSSH 公钥。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        OutlinedTextField(
+                            value = authorizedKeysText,
+                            onValueChange = { authorizedKeysText = it },
+                            label = { Text("authorized_keys") },
+                            placeholder = { Text("ssh-ed25519 AAAAC3... user@device") },
+                            minLines = 4,
+                            maxLines = 8,
+                            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        RuntimeButton(
+                            onClick = { viewModel.saveAuthorizedKeys(authorizedKeysText) },
+                            enabled = !busy,
+                            modifier = Modifier.align(Alignment.End),
+                            shape = RoundedCornerShape(10.dp),
+                        ) {
+                            RuntimeIcon(RuntimeIconName.Save, Modifier.size(16.dp))
+                            Spacer(Modifier.size(6.dp))
+                            Text("保存公钥")
+                        }
+                    }
+                }
+            }
+
+            if (logs.isNotEmpty()) {
+                item {
+                    SectionLabel("最近日志")
+                    RuntimeCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                        borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                    ) {
+                        Text(
+                            logs.takeLast(12).joinToString("\n"),
+                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+    )
+}
+
+private fun copyText(context: Context, text: String, toast: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+    clipboard?.setPrimaryClip(ClipData.newPlainText("SSH command", text))
+    Toast.makeText(context, toast, Toast.LENGTH_SHORT).show()
+}
+
+@Composable
+private fun PasswordSettingsDialog(
+    passwordConfigured: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit,
+    onClear: () -> Unit,
+) {
+    var password by remember { mutableStateOf("") }
+    var confirmation by remember { mutableStateOf("") }
+    val matches = password == confirmation
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (passwordConfigured) "修改 SSH 登录密码" else "设置 SSH 登录密码") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "密码将通过 Android Keystore 加密保存，并应用到当前 Linux 发行版的 root 账户。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it.take(128) },
+                    label = { Text("新密码") },
+                    supportingText = { Text("至少 8 个字符，不能包含冒号") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = confirmation,
+                    onValueChange = { confirmation = it.take(128) },
+                    label = { Text("再次输入密码") },
+                    isError = confirmation.isNotEmpty() && !matches,
+                    supportingText = {
+                        if (confirmation.isNotEmpty() && !matches) Text("两次输入的密码不一致")
+                    },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            RuntimeButton(
+                onClick = { onSave(password) },
+                enabled = password.length >= 8 && matches && ':' !in password,
+            ) { Text("保存并启用") }
+        },
+        dismissButton = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (passwordConfigured) {
+                    RuntimeTextButton(onClick = onClear) { Text("清除密码") }
+                }
+                RuntimeTextButton(onClick = onDismiss) { Text("取消") }
+            }
+        },
+    )
+}

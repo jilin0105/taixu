@@ -235,6 +235,50 @@ class WorkspaceViewModel @Inject constructor(
         }
     }
 
+    fun importLocalProject(
+        name: String,
+        directoryPath: String,
+        projectType: top.wkbin.taixu.runtime.ProjectType,
+        source: top.wkbin.taixu.runtime.ProjectArchiveSource,
+    ) {
+        if (_busy.value) return
+        viewModelScope.launch {
+            _busy.value = true
+            val result = workspaceManager.importProjectArchive(name, directoryPath, projectType, source)
+            _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_project_imported)
+            if (result.isSuccess) workspaceManager.listProjects()
+            _busy.value = false
+        }
+    }
+
+    fun importGithubProject(
+        name: String,
+        directoryPath: String,
+        projectType: top.wkbin.taixu.runtime.ProjectType,
+        gitUrl: String,
+        transport: top.wkbin.taixu.runtime.GitTransport,
+    ) {
+        if (_busy.value) return
+        viewModelScope.launch {
+            _busy.value = true
+            val result = workspaceManager.importGithubProject(name, directoryPath, projectType, gitUrl, transport)
+            _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_project_imported)
+            if (result.isSuccess) workspaceManager.listProjects()
+            _busy.value = false
+        }
+    }
+
+    fun exportProject(project: WorkspaceProject, targetTreeUri: String) {
+        if (_busy.value) return
+        viewModelScope.launch {
+            _busy.value = true
+            val result = workspaceManager.exportProject(project.name, targetTreeUri)
+            _message.value = result.errorOrNull()?.message
+                ?: context.getString(R.string.workspace_project_exported, result.getOrNull().orEmpty())
+            _busy.value = false
+        }
+    }
+
     fun runProject(project: WorkspaceProject) {
         if (buildCoordinator.state.value?.progress?.isRunning == true) {
             _isBuildDialogVisible.value = true

@@ -4,12 +4,10 @@ set -u
 if test -f /etc/profile.d/taixu-android.sh; then
     . /etc/profile.d/taixu-android.sh
 fi
-if test -z "${JAVA_HOME:-}"; then
-    if test -x /opt/taixu/toolchains/android/jdk/bin/java; then
-        JAVA_HOME=/opt/taixu/toolchains/android/jdk
-    else
-        JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64
-    fi
+if test -x /opt/taixu/toolchains/android/jdk/bin/java; then
+    JAVA_HOME=/opt/taixu/toolchains/android/jdk
+elif test -z "${JAVA_HOME:-}"; then
+    JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64
 fi
 ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
 ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
@@ -32,21 +30,32 @@ verify_artifact() {
     /bin/sh "$verifier" "$1" || fail "APK 产物验证失败，拒绝导出/安装"
 }
 
-check_arch() {
-    path="$1"
-    label="$2"
-    if command -v file >/dev/null 2>&1 && test -f "$path"; then
-        description=$(file "$path" 2>/dev/null || true)
-        echo "$description" | grep -Eiq 'aarch64|arm64|ARM aarch64' || fail "$label 不是 ARM64 ELF: $description"
-    fi
-}
-
 check_elf_machine() {
     path="$1"
     expected="$2"
     label="$3"
     test -f "$path" || fail "$label 不存在: $path"
-    machine=$(od -An -tu2 -j18 -N2 "$path" 2>/dev/null | tr -d '[:space:]')
+    machine=$(od -An -t x1 -j 18 -N 2 "$path" 2>/dev/null | tr -d '[:space:]')
+    test "$machine" = "$expected" || fail "$label ELF 架构不匹配 (machine=$machine, expected=$expected)"
+}
+
+# JDK launcher (bin/java) may be a script/symlink rather than a raw ELF.
+# Verify the actual JVM shared library so the arch check works for any JDK.
+java_arch_machine() {
+    bin="$1"
+    real=$(readlink -f "$bin" 2>/dev/null || echo "$bin")
+    home=$(dirname "$(dirname "$real")")
+    jvm_lib=$(find "$home" \( -type f -o -type l \) -name libjvm.so -print -quit 2>/dev/null || true)
+    test -n "$jvm_lib" || { echo unreadable; return 0; }
+    od -An -t x1 -j 18 -N 2 "$jvm_lib" 2>/dev/null | tr -d '[:space:]'
+}
+
+check_java_arch() {
+    bin="$1"
+    expected="$2"
+    label="$3"
+    test -x "$bin" || fail "$label 不存在: $bin"
+    machine=$(java_arch_machine "$bin")
     test "$machine" = "$expected" || fail "$label ELF 架构不匹配 (machine=$machine, expected=$expected)"
 }
 
@@ -63,7 +72,6 @@ doctor() {
     test -d "$project" || fail "项目目录不存在: $project"
     need_exec /bin/sh "POSIX Shell"
     need_exec "$JAVA_HOME/bin/java" "JDK 17"
-    check_arch "$JAVA_HOME/bin/java" "JDK 17"
     kind=$(detect_project "$project")
     analyze_args=""
     test "${TAIXU_OFFLINE:-0}" = 1 && analyze_args="--offline"
@@ -71,14 +79,26 @@ doctor() {
     need_file "$ANDROID_HOME/build-tools/35.0.0/lib/d8.jar" "Android Build-Tools 35"
     aapt2="${TAIXU_AAPT2_PATH:-$ANDROID_HOME/build-tools/35.0.0/aapt2}"
     need_exec "$aapt2" "ARM64 AAPT2"
-    check_elf_machine "$JAVA_HOME/bin/java" 183 "JDK 17"
-    check_elf_machine "$aapt2" 183 "AAPT2"
-    ndk="${TAIXU_NDK_PATH:-}"
+    check_java_arch "$JAVA_HOME/bin/java" b700 "JDK 17"
+    check_elf_machine "$aapt2" b700 "AAPT2"
+    TAIXU_AAPT2_PATH="$aapt2"
+    export TAIXU_AAPT2_PATH
+    ndk="${TAIXU_NDK_PATH:-${ANDROID_NDK_HOME:-/opt/taixu/toolchains/android/ndk}}"
     need_file "$ndk/source.properties" "固定 ARM64 NDK"
-    need_exec "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" "ARM64 NDK clang"
-    need_exec "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" "ARM64 NDK llvm-strip"
-    check_elf_machine "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" 183 "NDK clang"
-    check_elf_machine "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" 183 "NDK llvm-strip"
+    ndk_clang=$(find "$ndk/toolchains/llvm/prebuilt" \( -type f -o -type l \) -name clang -print -quit 2>/dev/null)
+    ndk_strip=$(find "$ndk/toolchains/llvm/prebuilt" \( -type f -o -type l \) -name llvm-strip -print -quit 2>/dev/null)
+    need_exec "$ndk_clang" "ARM64 NDK clang"
+    need_exec "$ndk_strip" "ARM64 NDK llvm-strip"
+    check_elf_machine "$ndk_clang" b700 "NDK clang"
+    check_elf_machine "$ndk_strip" b700 "NDK llvm-strip"
+    TAIXU_NDK_PATH="$ndk"
+    ANDROID_NDK_HOME="$ndk"
+    ANDROID_NDK_ROOT="$ndk"
+    export TAIXU_NDK_PATH ANDROID_NDK_HOME ANDROID_NDK_ROOT
+    managed_ndk_policy=/opt/taixu/scripts/taixu-android-ndk.gradle
+    need_file "$managed_ndk_policy" "太墟 NDK 构建策略"
+    mkdir -p /root/.gradle/init.d
+    cp "$managed_ndk_policy" /root/.gradle/init.d/taixu-android-ndk.gradle
     grep -Fqx 'android.builder.sdkDownload=false' /root/.gradle/gradle.properties 2>/dev/null ||
         fail "Gradle SDK 自动下载未禁用，可能拉取 x86_64 主机工具"
     wrapper_project="$project"
@@ -86,7 +106,7 @@ doctor() {
     if test -f "$wrapper_project/gradlew" || test -d "$wrapper_project/gradle/wrapper"; then
         test -f "$wrapper_project/gradlew" -a -f "$wrapper_project/gradle/wrapper/gradle-wrapper.jar" -a \
             -f "$wrapper_project/gradle/wrapper/gradle-wrapper.properties" ||
-            fail "项目 Gradle Wrapper 不完整 (需要 gradlew、gradle-wrapper.jar、gradle-wrapper.properties)"
+            warn "项目 Gradle Wrapper 不完整，将使用本地 Gradle 8.14.2"
     fi
     test -x "$GRADLE_HOME/bin/gradle" -o -d "$GRADLE_HOME/lib" -o -x "$wrapper_project/gradlew" -o -n "$(command -v gradle 2>/dev/null || true)" ||
         fail "未找到 Gradle 8.14.2 或项目 Gradle Wrapper"
@@ -106,7 +126,7 @@ doctor() {
     if test "$kind" = flutter; then
         need_exec "$FLUTTER_HOME/bin/flutter" "Flutter SDK"
         need_exec "$FLUTTER_HOME/bin/cache/dart-sdk/bin/dart" "Dart SDK"
-        check_elf_machine "$FLUTTER_HOME/bin/cache/dart-sdk/bin/dart" 183 "Dart SDK"
+        check_elf_machine "$FLUTTER_HOME/bin/cache/dart-sdk/bin/dart" b700 "Dart SDK"
         test -d "$project/android" || fail "Flutter 工程缺少 android 宿主目录"
     elif test "$kind" = unknown; then
         warn "无法识别项目类型，将只检查通用 Android 工具链"
@@ -133,8 +153,8 @@ qemu_doctor() {
     test "$(uname -m)" = x86_64 || fail "--qemu 必须由太墟应用启动隔离 QEMU PRoot 会话，普通 ARM64 终端不能直接切换"
     need_exec "$compat/jdk-17/bin/java" "QEMU x86_64 JDK"
     need_exec "$compat/android-sdk/build-tools/35.0.0/aapt2" "QEMU x86_64 AAPT2"
-    check_elf_machine "$compat/jdk-17/bin/java" 62 "QEMU JDK"
-    check_elf_machine "$compat/android-sdk/build-tools/35.0.0/aapt2" 62 "QEMU AAPT2"
+    check_java_arch "$compat/jdk-17/bin/java" 3e00 "QEMU JDK"
+    check_elf_machine "$compat/android-sdk/build-tools/35.0.0/aapt2" 3e00 "QEMU AAPT2"
     need_file "$compat/android-sdk/platforms/android-34/android.jar" "QEMU Android Platform 34"
     need_file "$compat/android-sdk/build-tools/35.0.0/lib/d8.jar" "QEMU Android Build-Tools 35"
     kind=$(detect_project "$project")
@@ -143,7 +163,7 @@ qemu_doctor() {
     if test -f "$wrapper_project/gradlew" || test -d "$wrapper_project/gradle/wrapper"; then
         test -f "$wrapper_project/gradlew" -a -f "$wrapper_project/gradle/wrapper/gradle-wrapper.jar" -a \
             -f "$wrapper_project/gradle/wrapper/gradle-wrapper.properties" ||
-            fail "项目 Gradle Wrapper 不完整 (需要 gradlew、gradle-wrapper.jar、gradle-wrapper.properties)"
+            warn "项目 Gradle Wrapper 不完整，将使用 QEMU 环境中的 Gradle 8.14.2"
     fi
     test -x "$compat/gradle-8.14.2/bin/gradle" -o -d "$compat/gradle-8.14.2/lib" -o -f "$wrapper_project/gradle/wrapper/gradle-wrapper.jar" ||
         fail "QEMU 环境缺少 Gradle 8.14.2 或项目 Wrapper"
@@ -151,7 +171,7 @@ qemu_doctor() {
     if test "$kind" = flutter; then
         need_exec "$compat/flutter/bin/flutter" "QEMU Flutter SDK"
         need_exec "$compat/flutter/bin/cache/dart-sdk/bin/dart" "QEMU Dart SDK"
-        check_elf_machine "$compat/flutter/bin/cache/dart-sdk/bin/dart" 62 "QEMU Dart SDK"
+        check_elf_machine "$compat/flutter/bin/cache/dart-sdk/bin/dart" 3e00 "QEMU Dart SDK"
         test -d "$project/android" || fail "Flutter 工程缺少 android 宿主目录"
     elif test "$kind" = android; then
         test -f "$project/settings.gradle" -o -f "$project/settings.gradle.kts" ||

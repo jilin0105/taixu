@@ -63,7 +63,7 @@ fun ToolDiffView(
             HarnessTool.WRITE -> WriteToolDiff(call, result, workspace, onOpenFile)
             HarnessTool.READ -> ReadToolDiff(call, result, workspace, onOpenFile)
             HarnessTool.BASE -> BaseToolDiff(call, result)
-            HarnessTool.DOWNLOAD, HarnessTool.MEMORY, HarnessTool.PLAN, HarnessTool.SCRATCHPAD, HarnessTool.SUBAGENT, HarnessTool.MCP -> BaseToolDiff(call, result)
+            HarnessTool.PROCESS, HarnessTool.DOWNLOAD, HarnessTool.MEMORY, HarnessTool.PLAN, HarnessTool.SCRATCHPAD, HarnessTool.SUBAGENT, HarnessTool.MCP -> BaseToolDiff(call, result)
         }
     }
 }

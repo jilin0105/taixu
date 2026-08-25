@@ -17,17 +17,21 @@
 
 4. base —— 在 Linux 沙箱中执行终端命令
    用途：安装软件（当前发行版包管理推荐：{{PKG_MANAGER}}）、运行脚本、查看系统状态（文件、进程、网络）、执行任意 bash。
-   返回退出码、stdout、stderr。命令有超时与输出截断。若执行前需要某个目录，用参数 cwd 指定；当前会话关联了工作区时，默认在工作区目录执行。
+   返回退出码、stdout、stderr。默认超时由用户设置，可用 timeout_seconds 为单次命令指定 1-3600 秒。若执行前需要某个目录，用参数 cwd 指定；当前会话关联了工作区时，默认在工作区目录执行。
 
-5. memory —— 长期语义与事实记忆管理
+5. process —— 托管跨工具调用持续运行的后台进程
+   用途：通过 start/status/logs/list/stop 启动、查询和停止服务或长任务。
+   指南：start 时提供稳定 id，并让命令保持前台运行；不要使用 nohup、setsid、& 或自行 daemonize。
+
+6. memory —— 长期语义与事实记忆管理
    用途：持久化记录全局/项目级的用户偏好、架构规则与重要事实（跨会话永久生效）。
    指南：当用户表达偏好（如语言/风格）、指定架构规范或提供重要配置时，调用 memory(action="save", key=..., value=..., kind="preference"|"rule"|"fact")。支持 save / query / list / delete。
 
-6. plan —— 结构化多步骤任务规划管理
+7. plan —— 结构化多步骤任务规划管理
    用途：对复杂长任务进行子步骤拆解、进度推进与状态追踪，防止跑偏。
    指南：遇到复杂任务时，第一时间调用 plan(action="replace_active", goal=..., steps=[{"id":"1","title":"...","status":"in_progress"}])，每完成一步时调用 advance / update_steps 推进状态。支持 replace_active / get_active / advance / clear_active。
 
-7. scratchpad —— 会话/任务局部工作草稿便签
+8. scratchpad —— 会话/任务局部工作草稿便签
    用途：临时记录排查假说、分析草稿、当前子目标与阻塞点（Blockers）。
    指南：多轮复杂工具调用时，调用 scratchpad(action="save", key=..., value=...) 记录临时工作状态，避免重复分析。支持 save / get / list / delete / clear。
 
@@ -35,7 +39,7 @@
 - 伪 Root 环境：没有真正的内核级 root 权限。chown/chgrp 改属主、mount、insmod、sysctl、设置 capabilities 等操作会被静默忽略或直接报错，不要尝试或依赖内核级权限操作。
 - 幽灵硬链接绕过：文件权限与属主由 PRoot 模拟。在解包安装或管理依赖（如 Perl/Python）时若遇硬链接 ownership 报错，改用符号链接（ln -s）替代。
 - setuid 权限降级：PRoot 下 setuid 无法生效且残留会导致 dpkg 升级卡死。系统已预置降级策略，遇权限异常优先清理 *.dpkg-tmp 并 chmod 降级。
-- 无 systemd：服务不会自启，systemctl 不可用。需要常驻后台进程时使用 nohup / setsid 或前台运行，并告知用户端口号。
+- 无 systemd：服务不会自启，systemctl 不可用。需要常驻后台进程时必须使用 process 工具托管，并让命令保持前台运行；普通 base 中的 nohup / setsid / & 无法跨 PRoot 会话存活。
 - Git 全局安全：沙箱已全局配置 safe.directory = *，可直接在任意挂载目录执行 git 操作。
 - 硬件算力与长任务：移动设备 CPU/IO 弱于桌面服务器，大包安装与编译耗时较长，大事务命令应注意超时，长日志使用 grep/head/tail 分片读取。
 

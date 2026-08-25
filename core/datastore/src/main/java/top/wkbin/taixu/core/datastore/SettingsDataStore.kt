@@ -373,6 +373,7 @@ class SettingsDataStore @Inject constructor(
     private val contextCompactionThresholdKey = androidx.datastore.preferences.core.intPreferencesKey("agent_context_compaction_threshold")
     private val maxToolRoundsKey = androidx.datastore.preferences.core.intPreferencesKey("agent_max_tool_rounds")
     private val autoWorkspaceCwdKey = booleanPreferencesKey("agent_auto_workspace_cwd")
+    private val baseCommandTimeoutSecondsKey = androidx.datastore.preferences.core.intPreferencesKey("agent_base_command_timeout_seconds")
 
     val contextCompactionEnabled: Flow<Boolean> = context.settingsDataStore.data.map { it[contextCompactionEnabledKey] ?: true }
     suspend fun setContextCompactionEnabled(value: Boolean) { context.settingsDataStore.edit { it[contextCompactionEnabledKey] = value } }
@@ -388,6 +389,21 @@ class SettingsDataStore @Inject constructor(
     /** 执行命令时是否自动注入工作区路径为 cwd */
     val autoWorkspaceCwd: Flow<Boolean> = context.settingsDataStore.data.map { it[autoWorkspaceCwdKey] ?: true }
     suspend fun setAutoWorkspaceCwd(value: Boolean) { context.settingsDataStore.edit { it[autoWorkspaceCwdKey] = value } }
+
+    /** Agent base 命令的默认前台等待时间；单次工具调用可在安全范围内覆盖。 */
+    val baseCommandTimeoutSeconds: Flow<Int> = context.settingsDataStore.data.map {
+        (it[baseCommandTimeoutSecondsKey] ?: DEFAULT_BASE_COMMAND_TIMEOUT_SECONDS)
+            .coerceIn(MIN_BASE_COMMAND_TIMEOUT_SECONDS, MAX_BASE_COMMAND_TIMEOUT_SECONDS)
+    }
+
+    suspend fun setBaseCommandTimeoutSeconds(value: Int) {
+        context.settingsDataStore.edit {
+            it[baseCommandTimeoutSecondsKey] = value.coerceIn(
+                MIN_BASE_COMMAND_TIMEOUT_SECONDS,
+                MAX_BASE_COMMAND_TIMEOUT_SECONDS,
+            )
+        }
+    }
 
     /**
      * 上下文 Token 预算（默认 128000）。当模型未单独配置 contextTokens 时作为兜底，
@@ -429,6 +445,78 @@ class SettingsDataStore @Inject constructor(
     suspend fun setAdbPairedOnce(value: Boolean) {
         context.settingsDataStore.edit { it[adbPairedOnceKey] = value }
     }
+
+    // ==================== Linux SSH 远程访问 ====================
+
+    /** SSH 配置按发行版隔离，避免切换 RootFS 后复用错误的端口或授权密钥。 */
+    fun sshEnabled(distroId: String): Flow<Boolean> = context.settingsDataStore.data.map {
+        it[booleanPreferencesKey("ssh_${normalizedDistroId(distroId)}_enabled")] ?: false
+    }
+
+    suspend fun setSshEnabled(distroId: String, enabled: Boolean) {
+        context.settingsDataStore.edit {
+            it[booleanPreferencesKey("ssh_${normalizedDistroId(distroId)}_enabled")] = enabled
+        }
+    }
+
+    fun sshPort(distroId: String): Flow<Int> = context.settingsDataStore.data.map {
+        (it[intPreferencesKey("ssh_${normalizedDistroId(distroId)}_port")] ?: 8022)
+            .coerceIn(1024, 65535)
+    }
+
+    suspend fun setSshPort(distroId: String, port: Int) {
+        require(port in 1024..65535) { "SSH 端口必须在 1024..65535 之间" }
+        context.settingsDataStore.edit {
+            it[intPreferencesKey("ssh_${normalizedDistroId(distroId)}_port")] = port
+        }
+    }
+
+    fun sshAllowLan(distroId: String): Flow<Boolean> = context.settingsDataStore.data.map {
+        it[booleanPreferencesKey("ssh_${normalizedDistroId(distroId)}_allow_lan")] ?: false
+    }
+
+    suspend fun setSshAllowLan(distroId: String, enabled: Boolean) {
+        context.settingsDataStore.edit {
+            it[booleanPreferencesKey("ssh_${normalizedDistroId(distroId)}_allow_lan")] = enabled
+        }
+    }
+
+    fun sshAuthorizedKeys(distroId: String): Flow<String> = context.settingsDataStore.data.map {
+        it[stringPreferencesKey("ssh_${normalizedDistroId(distroId)}_authorized_keys")].orEmpty()
+    }
+
+    suspend fun setSshAuthorizedKeys(distroId: String, keys: String) {
+        val preferenceKey = stringPreferencesKey("ssh_${normalizedDistroId(distroId)}_authorized_keys")
+        context.settingsDataStore.edit {
+            if (keys.isBlank()) it.remove(preferenceKey) else it[preferenceKey] = keys.trim()
+        }
+    }
+
+    fun sshPasswordAuthEnabled(distroId: String): Flow<Boolean> = context.settingsDataStore.data.map {
+        it[booleanPreferencesKey("ssh_${normalizedDistroId(distroId)}_password_auth_enabled")] ?: false
+    }
+
+    suspend fun setSshPasswordAuthEnabled(distroId: String, enabled: Boolean) {
+        context.settingsDataStore.edit {
+            it[booleanPreferencesKey("ssh_${normalizedDistroId(distroId)}_password_auth_enabled")] = enabled
+        }
+    }
+
+    fun sshPasswordConfigured(distroId: String): Flow<Boolean> = context.settingsDataStore.data.map {
+        !it[stringPreferencesKey("ssh_${normalizedDistroId(distroId)}_password")].isNullOrBlank()
+    }
+
+    suspend fun setSshPassword(distroId: String, password: String?) {
+        val preferenceKey = stringPreferencesKey("ssh_${normalizedDistroId(distroId)}_password")
+        context.settingsDataStore.edit {
+            if (password == null) it.remove(preferenceKey) else it[preferenceKey] = encodeProtectedValue(password)
+        }
+    }
+
+    suspend fun readSshPassword(distroId: String): String? = context.settingsDataStore.data
+        .map { it[stringPreferencesKey("ssh_${normalizedDistroId(distroId)}_password")] }
+        .first()
+        ?.let(::decodeProtectedValue)
 
     /** 同步读取插件启用状态（供运行时启停判断）。 */
     suspend fun isPluginEnabled(pluginId: String): Boolean = allPlugins.first().any { it.id == pluginId && it.isEnabled }
@@ -504,8 +592,17 @@ class SettingsDataStore @Inject constructor(
             value
         }
 
-    private companion object {
-        const val PROTECTED_VALUE_PREFIX = "enc:v1:"
+    private fun normalizedDistroId(value: String): String {
+        val normalized = value.lowercase().trim()
+        require(normalized.matches(Regex("[a-z0-9][a-z0-9_-]{0,31}"))) { "Linux 发行版 ID 无效" }
+        return normalized
+    }
+
+    companion object {
+        private const val PROTECTED_VALUE_PREFIX = "enc:v1:"
+        const val DEFAULT_BASE_COMMAND_TIMEOUT_SECONDS = 10 * 60
+        const val MIN_BASE_COMMAND_TIMEOUT_SECONDS = 60
+        const val MAX_BASE_COMMAND_TIMEOUT_SECONDS = 60 * 60
     }
 }
 

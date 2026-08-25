@@ -120,6 +120,59 @@ class ToolExecutorTest {
     }
 
     @Test
+    fun `base tool uses configurable default and accepts bounded override`() = runBlocking {
+        executor.execute(toolCall(HarnessTool.BASE, buildJsonObject {
+            put("command", "pwd")
+        }))
+        assertEquals(600_000L, runtime.executedShellCommands.last().timeoutMs)
+
+        executor.execute(toolCall(HarnessTool.BASE, buildJsonObject {
+            put("command", "pwd")
+            put("timeout_seconds", 900)
+        }))
+        assertEquals(900_000L, runtime.executedShellCommands.last().timeoutMs)
+
+        val invalid = executor.execute(toolCall(HarnessTool.BASE, buildJsonObject {
+            put("command", "pwd")
+            put("timeout_seconds", 3601)
+        }))
+        assertFalse(invalid.success)
+        assertTrue(invalid.output.contains("1-3600"))
+    }
+
+    @Test
+    fun `process tool manages namespaced background command`() = runBlocking {
+        val started = executor.execute(toolCall(HarnessTool.PROCESS, buildJsonObject {
+            put("action", "start")
+            put("id", "dev-server")
+            put("command", "python -m http.server 8080")
+            put("cwd", "/workspace/project")
+        }))
+        assertTrue(started.success)
+        assertTrue(runtime.backgroundProcesses.containsKey("agent-process:dev-server"))
+
+        runtime.backgroundLogs["agent-process:dev-server"] = listOf("ready", "request")
+        val logs = executor.execute(toolCall(HarnessTool.PROCESS, buildJsonObject {
+            put("action", "logs")
+            put("id", "dev-server")
+            put("tail_lines", 1)
+        }))
+        assertEquals("request", logs.output)
+
+        val listed = executor.execute(toolCall(HarnessTool.PROCESS, buildJsonObject {
+            put("action", "list")
+        }))
+        assertTrue(listed.output.contains("dev-server · 运行中"))
+
+        val stopped = executor.execute(toolCall(HarnessTool.PROCESS, buildJsonObject {
+            put("action", "stop")
+            put("id", "dev-server")
+        }))
+        assertTrue(stopped.success)
+        assertTrue(runtime.backgroundProcesses.isEmpty())
+    }
+
+    @Test
     fun `download tool uses built in downloader and workspace destination`() = runBlocking {
         val result = executor.execute(toolCall(HarnessTool.DOWNLOAD, buildJsonObject {
             put("url", "https://example.com/archive.tar.gz")

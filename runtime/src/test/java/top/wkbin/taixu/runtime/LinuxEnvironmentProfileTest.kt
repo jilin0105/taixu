@@ -21,9 +21,9 @@ class LinuxEnvironmentProfileTest {
 
         assertEquals(
             listOf(
-                EffectiveEnvironmentVariable("EMPTY", false),
-                EffectiveEnvironmentVariable("HOME", true),
-                EffectiveEnvironmentVariable("VALUE", true),
+                EffectiveEnvironmentVariable("EMPTY", ""),
+                EffectiveEnvironmentVariable("HOME", "/root"),
+                EffectiveEnvironmentVariable("VALUE", "one=two"),
             ),
             LinuxEnvironmentSnapshot.parse(output),
         )

@@ -42,7 +42,7 @@
     <string name="workspace_projects_section">Isolated workspace projects</string>
     <string name="workspace_projects_description">Located under /workspace in the Linux sandbox with real-time agent access</string>
     <string name="workspace_no_projects">No workspace projects yet</string>
-    <string name="workspace_no_projects_description">Use ➕ in the top-right to create an Android, Flutter, APK reverse-engineering, or custom project</string>
+    <string name="workspace_no_projects_description">Create a project in the top-right, or import one from a local ZIP or GitHub</string>
     <string name="workspace_building_device">Building for device…</string>
     <string name="workspace_run_ready">Ready to run</string>
     <string name="workspace_run_failed">Run failed</string>
@@ -71,6 +71,15 @@
     <string name="workspace_template_reverse">APK reverse engineering</string>
     <string name="workspace_template_git">Import Git repository</string>
     <string name="workspace_template_empty">Empty project</string>
+    <string name="workspace_import_project">Import project</string>
+    <string name="workspace_import_source">Choose import source</string>
+    <string name="workspace_local_archive">Local archive</string>
+    <string name="workspace_choose_project_archive">Choose project ZIP archive</string>
+    <string name="workspace_git_transport">GitHub transport</string>
+    <string name="workspace_project_label">Choose project label</string>
+    <string name="workspace_import_directory_hint">The project will be extracted or cloned into this internal /workspace directory</string>
+    <string name="workspace_import">Import</string>
+    <string name="workspace_export_project">Export project ZIP</string>
     <string name="workspace_project_name">Project name</string>
     <string name="workspace_package_name">Package name</string>
     <string name="workspace_choose_apk_source">Choose APK source</string>
@@ -119,6 +128,8 @@
     <string name="workspace_suite_installed">Development suite components installed successfully!</string>
     <string name="workspace_deploy_failed">Deployment failed: %1$s</string>
     <string name="workspace_project_created">Project created and directory linked</string>
+    <string name="workspace_project_imported">Project imported into the internal sandbox</string>
+    <string name="workspace_project_exported">Project exported: %1$s</string>
     <string name="workspace_project_deleted">Project deleted</string>
     <string name="workspace_read_directory_failed">Failed to read directory</string>
     <string name="workspace_file_created">File created: %1$s</string>

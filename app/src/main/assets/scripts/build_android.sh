@@ -50,11 +50,17 @@ fi
 export ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
 export ANDROID_SDK_ROOT="${ANDROID_HOME}"
 
+# The local offline suite is authoritative when present. A distro package may
+# leave an x86_64 Java earlier on PATH, which is unusable in the ARM64 PRoot.
+if [ -x /opt/taixu/toolchains/android/jdk/bin/java ]; then
+    JAVA_HOME=/opt/taixu/toolchains/android/jdk
+fi
+
 # AGP's default Maven artifact is a Linux x86_64 executable.  When the
 # android-core plugin installed the ARM64 tool bundle, pass the real aapt2
 # executable explicitly so AGP never tries to start the incompatible daemon.
-AAPT2_OVERRIDE="${TAIXU_AAPT2_PATH:-}"
-NDK_PATH="${TAIXU_NDK_PATH:-}"
+AAPT2_OVERRIDE="${TAIXU_AAPT2_PATH:-$ANDROID_HOME/build-tools/35.0.0/aapt2}"
+NDK_PATH="${TAIXU_NDK_PATH:-${ANDROID_NDK_HOME:-/opt/taixu/toolchains/android/ndk}}"
 
 # 非登录 shell 可能没有继承插件写入的 profile；变量为空时从标准 JDK
 # 目录和 PATH 重新解析，避免环境变量漂移阻断构建。
@@ -109,30 +115,30 @@ if [ ! -f "$ANDROID_HOME/build-tools/$REQUIRED_BUILD_TOOLS/source.properties" ] 
     exit 2
 fi
 case "$AAPT2_OVERRIDE" in
-    /opt/taixu/toolchains/android/sdk-tools/artifacts/*/build-tools/aapt2) ;;
+    /opt/android-sdk/build-tools/35.0.0/aapt2|/opt/taixu/toolchains/android/sdk-tools/artifacts/*/build-tools/aapt2) ;;
     *)
         echo "==> [TaiXu Build] ❌ AAPT2 未指向不可变 ARM64 制品目录"
         exit 2
         ;;
 esac
-AAPT2_MACHINE=$(od -An -tu2 -j18 -N2 "$AAPT2_OVERRIDE" 2>/dev/null | tr -d '[:space:]')
-if [ "$AAPT2_MACHINE" != "183" ] || [ ! -x "$AAPT2_OVERRIDE" ] || \
+AAPT2_MACHINE=$(od -An -t x1 -j 18 -N 2 "$AAPT2_OVERRIDE" 2>/dev/null | tr -d '[:space:]')
+if [ "$AAPT2_MACHINE" != "b700" ] || [ ! -x "$AAPT2_OVERRIDE" ] || \
    ! "$AAPT2_OVERRIDE" version >/dev/null 2>&1; then
     echo "==> [TaiXu Build] ❌ ARM64 AAPT2 未就位"
     echo "==> [TaiXu Build] 请在插件中心重新装配【Android 核心基础环境】后再构建"
     exit 2
 fi
 
-NDK_STRIP="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
-NDK_CLANG="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+NDK_STRIP=$(find "$NDK_PATH/toolchains/llvm/prebuilt" \( -type f -o -type l \) -name llvm-strip -print -quit 2>/dev/null)
+NDK_CLANG=$(find "$NDK_PATH/toolchains/llvm/prebuilt" \( -type f -o -type l \) -name clang -print -quit 2>/dev/null)
 if [ -z "$NDK_PATH" ] || [ ! -f "$NDK_PATH/source.properties" ] || \
    [ ! -x "$NDK_STRIP" ] || [ ! -x "$NDK_CLANG" ]; then
     echo "==> [TaiXu Build] ❌ 固定 ARM64 NDK 未就位，请重新装配 Android 核心基础环境"
     exit 2
 fi
-STRIP_MACHINE=$(od -An -tu2 -j18 -N2 "$NDK_STRIP" 2>/dev/null | tr -d '[:space:]')
-CLANG_MACHINE=$(od -An -tu2 -j18 -N2 "$NDK_CLANG" 2>/dev/null | tr -d '[:space:]')
-if [ "$STRIP_MACHINE" != "183" ] || [ "$CLANG_MACHINE" != "183" ] || \
+STRIP_MACHINE=$(od -An -t x1 -j 18 -N 2 "$NDK_STRIP" 2>/dev/null | tr -d '[:space:]')
+CLANG_MACHINE=$(od -An -t x1 -j 18 -N 2 "$NDK_CLANG" 2>/dev/null | tr -d '[:space:]')
+if [ "$STRIP_MACHINE" != "b700" ] || [ "$CLANG_MACHINE" != "b700" ] || \
    ! "$NDK_STRIP" --version >/dev/null 2>&1 || \
    ! "$NDK_CLANG" --version >/dev/null 2>&1; then
     echo "==> [TaiXu Build] ❌ NDK 主机工具不是可执行的 Linux AArch64 制品"
@@ -144,12 +150,14 @@ if ! grep -Fqx 'android.builder.sdkDownload=false' /root/.gradle/gradle.properti
     exit 2
 fi
 if [ ! -f /root/.gradle/init.d/taixu-android-ndk.gradle ] || \
-   ! grep -Fq "$NDK_PATH" /root/.gradle/init.d/taixu-android-ndk.gradle; then
+   ! grep -Fq 'androidExtension.ndkPath = taixuNdkPath' /root/.gradle/init.d/taixu-android-ndk.gradle; then
     echo "==> [TaiXu Build] ❌ 固定 NDK 路径注入缺失"
     exit 2
 fi
 
-# 2. 绑定 SDK/NDK 到当前工程。保留用户的其他 local.properties 键。
+# 2. 绑定 SDK 到当前工程。保留用户的其他 local.properties 键。
+# NDK 路径由 taixu-android-ndk.gradle 通过 android.ndkPath 唯一注入。
+# 清理旧 ndk.dir 但不再写回，避免 AGP 8.11.1 拒绝两种 locator 并存。
 LOCAL_PROPERTIES="$PROJECT_PATH/local.properties"
 LOCAL_PROPERTIES_TMP="${LOCAL_PROPERTIES}.taixu.tmp"
 if [ -f "$LOCAL_PROPERTIES" ]; then
@@ -159,7 +167,7 @@ if [ -f "$LOCAL_PROPERTIES" ]; then
 else
     : > "$LOCAL_PROPERTIES_TMP"
 fi
-printf 'sdk.dir=%s\nndk.dir=%s\n' "$ANDROID_HOME" "$NDK_PATH" >> "$LOCAL_PROPERTIES_TMP"
+printf 'sdk.dir=%s\n' "$ANDROID_HOME" >> "$LOCAL_PROPERTIES_TMP"
 mv -f "$LOCAL_PROPERTIES_TMP" "$LOCAL_PROPERTIES"
 echo "==> [TaiXu Build] 绑定 ANDROID_HOME: $ANDROID_HOME"
 
@@ -180,12 +188,12 @@ export PATH="/opt/gradle-$GRADLE_VER/bin:${TAIXU_TOOL_DIR:-/opt/taixu/tools}/bin
 cd "$PROJECT_PATH"
 
 # 4. 调度 Gradle 构建
-EXTRA_ARGS="--console=plain --stacktrace --no-daemon -Dorg.gradle.native=false -Pandroid.builder.sdkDownload=false"
+EXTRA_ARGS="--console=plain --stacktrace --no-daemon --max-workers=2 -Dorg.gradle.native=false -Pandroid.builder.sdkDownload=false"
 if [ "${TAIXU_OFFLINE:-0}" = "1" ]; then
     EXTRA_ARGS="$EXTRA_ARGS --offline"
     echo "==> [TaiXu Build] 离线模式：禁止 Gradle 网络请求，仅使用本地缓存"
 fi
-if [ "$AAPT2_MACHINE" = "183" ] && [ -x "$AAPT2_OVERRIDE" ] && \
+if [ "$AAPT2_MACHINE" = "b700" ] && [ -x "$AAPT2_OVERRIDE" ] && \
    "$AAPT2_OVERRIDE" version >/dev/null 2>&1; then
     EXTRA_ARGS="$EXTRA_ARGS -Pandroid.aapt2FromMavenOverride=$AAPT2_OVERRIDE"
     echo "==> [TaiXu Build] ARM64 AAPT2: $AAPT2_OVERRIDE"
@@ -196,10 +204,11 @@ fi
 JAVA_RUNTIME_OPTS="-Djava.security.egd=file:/dev/urandom"
 [ -n "$SSL_OPTS" ] && JAVA_RUNTIME_OPTS="$JAVA_RUNTIME_OPTS $SSL_OPTS"
 export GRADLE_OPTS="${GRADLE_OPTS:-} $JAVA_RUNTIME_OPTS"
+GRADLE_JVM_MEMORY_OPTS="-Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+UseSerialGC -Dfile.encoding=UTF-8"
 
 if [ -d /opt/gradle-$GRADLE_VER/lib ]; then
     echo "==> [TaiXu Build] 调度官方独立完整版 Gradle $GRADLE_VER 执行构建..."
-    exec "$JAVA_EXEC" -Xmx1024m \
+    exec "$JAVA_EXEC" $GRADLE_JVM_MEMORY_OPTS \
         -Dorg.gradle.appname=gradle \
         -Dorg.gradle.installation.dir=/opt/gradle-$GRADLE_VER \
         $JAVA_RUNTIME_OPTS \
@@ -207,7 +216,7 @@ if [ -d /opt/gradle-$GRADLE_VER/lib ]; then
         org.gradle.launcher.GradleMain $TASK $EXTRA_ARGS
 elif [ -d /opt/gradle-8.7/lib ]; then
     echo "==> [TaiXu Build] 调度官方独立完整版 Gradle 8.7 执行构建..."
-    exec "$JAVA_EXEC" -Xmx1024m \
+    exec "$JAVA_EXEC" $GRADLE_JVM_MEMORY_OPTS \
         -Dorg.gradle.appname=gradle \
         -Dorg.gradle.installation.dir=/opt/gradle-8.7 \
         $JAVA_RUNTIME_OPTS \

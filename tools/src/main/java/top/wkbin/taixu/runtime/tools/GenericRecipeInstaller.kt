@@ -16,6 +16,7 @@ import top.wkbin.taixu.runtime.shell.SessionConfig
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 
 /**
@@ -39,8 +40,21 @@ class GenericRecipeInstaller(
 
             val localPayload = if (manifest.source == "LOCAL") {
                 emit(InstallEvent.Progress(toolId, "正在装载本地插件资源", 0.05f, InstallEvent.Phase.PREPARING))
-                localPluginPayloadManager?.prepare(toolId, linuxRuntime.activeDistroId.value)
-                    ?: error("本地插件 payload 不存在")
+                var preparedPath: String? = null
+                localPluginPayloadManager?.prepare(toolId, linuxRuntime.activeDistroId.value)?.collect { event ->
+                    when (event) {
+                        is top.wkbin.taixu.core.tools.LocalPluginPreparationEvent.Copying -> emit(
+                            InstallEvent.Progress(
+                                toolId = toolId,
+                                message = event.message,
+                                progress = LOCAL_COPY_PROGRESS_START + event.fraction * LOCAL_COPY_PROGRESS_SPAN,
+                                phase = InstallEvent.Phase.PREPARING,
+                            ),
+                        )
+                        is top.wkbin.taixu.core.tools.LocalPluginPreparationEvent.Ready -> preparedPath = event.payloadPath
+                    }
+                } ?: error("本地插件 payload 管理器不可用")
+                preparedPath ?: error("本地插件 payload 不存在")
             } else null
 
             // 1. 准备前置依赖
@@ -66,7 +80,9 @@ class GenericRecipeInstaller(
             emit(InstallEvent.Progress(toolId, "正在配置沙箱隔离环境...", 0.35f, InstallEvent.Phase.RUNNING_INSTALLER))
             val toolDir = ToolLayout.toolDirectory(toolId)
             val toolDataDir = ToolLayout.toolDataDirectory(toolId)
-            executeAndReport("mkdir -p $toolDir $toolDataDir")
+            // The framework may install compatibility helpers before the plugin recipe runs,
+            // so the conventional bin directory must already exist here.
+            executeAndReport("mkdir -p $toolDir/bin $toolDataDir")
 
             val baseEnvironment = runtimeEnvironment(localPayload)
 
@@ -281,8 +297,27 @@ class GenericRecipeInstaller(
     private suspend fun kotlinx.coroutines.flow.FlowCollector<InstallEvent>.executeAndReport(
         result: CommandResult,
     ): CommandResult {
-        result.stdout.lineSequence().filter { it.isNotBlank() }.forEach { emit(InstallEvent.Output(toolId, it)) }
-        result.stderr.lineSequence().filter { it.isNotBlank() }.forEach { emit(InstallEvent.Output(toolId, it)) }
+        (result.stdout.lineSequence() + result.stderr.lineSequence())
+            .filter { it.isNotBlank() }
+            .forEach { line ->
+                val scriptedProgress = INSTALLER_PROGRESS_PATTERN.matchEntire(line.trim())
+                if (scriptedProgress != null) {
+                    val relativeProgress = scriptedProgress.groupValues[1].toFloatOrNull()
+                        ?.div(100f)
+                        ?.coerceIn(0f, 1f)
+                        ?: 0f
+                    emit(
+                        InstallEvent.Progress(
+                            toolId = toolId,
+                            message = scriptedProgress.groupValues[2],
+                            progress = INSTALLER_PROGRESS_START + relativeProgress * INSTALLER_PROGRESS_SPAN,
+                            phase = InstallEvent.Phase.RUNNING_INSTALLER,
+                        ),
+                    )
+                } else {
+                    emit(InstallEvent.Output(toolId, line))
+                }
+            }
         return result
     }
 
@@ -292,5 +327,13 @@ class GenericRecipeInstaller(
 
     private fun checkReady() = check(linuxRuntime.state.value is top.wkbin.taixu.core.model.RuntimeState.Ready) {
         "Linux Runtime 未就绪，请先初始化 Linux"
+    }
+
+    private companion object {
+        const val LOCAL_COPY_PROGRESS_START = 0.02f
+        const val LOCAL_COPY_PROGRESS_SPAN = 0.12f
+        const val INSTALLER_PROGRESS_START = 0.55f
+        const val INSTALLER_PROGRESS_SPAN = 0.23f
+        val INSTALLER_PROGRESS_PATTERN = Regex("""\[TAIXU_PROGRESS:(\d{1,3})]\s+(.+)""")
     }
 }

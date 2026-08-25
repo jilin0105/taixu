@@ -21,6 +21,9 @@ class ApprovalPolicyEngine {
             return ApprovalDecision(false)
         }
         if (tool == HarnessTool.SUBAGENT) return ApprovalDecision(false)
+        if (tool == HarnessTool.PROCESS && processAction(args) in setOf("status", "logs", "list")) {
+            return ApprovalDecision(false)
+        }
 
         val summary = summarize(tool, args)
         if (mode == ApprovalMode.REQUEST) {
@@ -40,6 +43,15 @@ class ApprovalPolicyEngine {
                 val command = args["command"]?.jsonPrimitive?.content.orEmpty()
                 if (isRoutineCommand(command)) ApprovalDecision(false)
                 else ApprovalDecision(true, if (isDestructiveCommand(command)) "critical" else "high", reasonForCommand(command), summary)
+            }
+            HarnessTool.PROCESS -> when (processAction(args)) {
+                "start" -> {
+                    val command = args["command"]?.jsonPrimitive?.content.orEmpty()
+                    if (isRoutineCommand(command)) ApprovalDecision(false)
+                    else ApprovalDecision(true, if (isDestructiveCommand(command)) "critical" else "high", reasonForCommand(command), summary)
+                }
+                "stop" -> ApprovalDecision(true, "high", "停止操作会终止一个由 TaiXu 托管的后台进程。", summary)
+                else -> ApprovalDecision(false)
             }
             HarnessTool.DOWNLOAD -> ApprovalDecision(true, "high", "下载会访问外部网络并写入工作区文件。", summary)
             HarnessTool.MCP -> ApprovalDecision(true, "high", "MCP 工具可能访问外部服务或产生工作区之外的副作用。", summary)
@@ -64,10 +76,14 @@ class ApprovalPolicyEngine {
     private fun summarize(tool: HarnessTool, args: JsonObject): String = when (tool) {
         HarnessTool.WRITE, HarnessTool.EDIT -> "${tool.name.lowercase()} ${args["path"]?.jsonPrimitive?.content.orEmpty()}"
         HarnessTool.BASE -> args["command"]?.jsonPrimitive?.content.orEmpty().lineSequence().firstOrNull().orEmpty()
+        HarnessTool.PROCESS -> "process ${processAction(args)} ${args["id"]?.jsonPrimitive?.content.orEmpty()}".trim()
         HarnessTool.DOWNLOAD -> "download ${args["destination"]?.jsonPrimitive?.content.orEmpty()}"
         HarnessTool.MCP -> "MCP ${args["name"]?.jsonPrimitive?.content ?: "工具调用"}"
         else -> tool.name.lowercase()
     }
+
+    private fun processAction(args: JsonObject): String =
+        args["action"]?.jsonPrimitive?.content.orEmpty().trim().lowercase()
 
     private fun isWithinWorkspace(path: String, workspace: String): Boolean {
         if (path.isBlank()) return false
