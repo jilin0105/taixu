@@ -76,6 +76,7 @@ sealed interface AppDestination : NavKey
 @Serializable data object ModelProfilesDestination : AppDestination
 @Serializable data object LocalLlmDestination : AppDestination
 @Serializable data class ModelEditorDestination(val modelId: String? = null) : AppDestination
+@Serializable data object StatsDestination : AppDestination
 @Serializable data object DeveloperDestination : AppDestination
 @Serializable data object CustomIterationDestination : AppDestination
 @Serializable data class TerminalDestination(val toolId: String = "", val project: String = "") : AppDestination
@@ -218,6 +219,7 @@ fun TaiXuNavHost() {
                     onOpenToolCenter = { settingsStack.push(ToolCenterDestination) },
                     onOpenAgentSettings = { settingsStack.push(AgentSettingsDestination) },
                     onOpenMcpSettings = { settingsStack.push(McpSettingsDestination) },
+                    onOpenStats = { settingsStack.push(StatsDestination) },
                     viewModel = settingsViewModel,
                 )
             }
@@ -323,6 +325,9 @@ fun TaiXuNavHost() {
                     onSaved = ::popBack,
                     viewModel = settingsViewModel,
                 )
+            }
+            entry<StatsDestination> {
+                top.wkbin.taixu.ui.settings.stats.StatsScreen(onBack = ::popBack)
             }
             entry<DeveloperDestination> {
                 DeveloperScreen(onBack = ::popBack)

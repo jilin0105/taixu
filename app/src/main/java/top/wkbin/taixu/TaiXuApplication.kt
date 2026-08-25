@@ -32,6 +32,7 @@ class TaiXuApplication : Application() {
         appScope.launch(Dispatchers.IO) {
             agentSkillRepository.ensureInitialized()
             mcpServerRepository.ensureInitialized()
+            settingsDataStore.incrementLaunchCount()
         }
         // Agent 开始执行时拉起前台服务，保证后台存活 + 通知进度；结束后由服务发带回复框的通知。
         appScope.launch {

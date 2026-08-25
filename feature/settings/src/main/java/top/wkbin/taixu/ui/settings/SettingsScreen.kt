@@ -347,6 +347,7 @@ fun AgentEcoSettingsScreen(
     onOpenToolCenter: () -> Unit,
     onOpenAgentSettings: () -> Unit,
     onOpenMcpSettings: () -> Unit,
+    onOpenStats: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val models by viewModel.models.collectAsStateWithLifecycle()
@@ -382,6 +383,13 @@ fun AgentEcoSettingsScreen(
                         title = "本地 LLM",
                         subtitle = "导入或下载 GGUF，在 ARM64 设备端通过 llama.cpp 离线推理",
                         onClick = onOpenLocalLlm,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(
+                        icon = RuntimeIconName.Speed,
+                        title = "数据统计与用量分析",
+                        subtitle = "Token 消耗、活跃度热力图、模型与话题排行",
+                        onClick = onOpenStats,
                     )
                 }
             }

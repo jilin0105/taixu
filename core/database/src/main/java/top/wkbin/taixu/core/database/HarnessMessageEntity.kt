@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.core.database
+package top.wkbin.taixu.core.database
 
 import androidx.room.Dao
 import androidx.room.Entity
@@ -50,4 +50,27 @@ interface HarnessMessageDao {
 
     @Query("DELETE FROM harness_messages")
     suspend fun clear()
+
+    @Query("SELECT COUNT(*) FROM harness_messages WHERE (:start IS NULL OR createdAt >= :start) AND (:end IS NULL OR createdAt < :end)")
+    suspend fun countInRange(start: Long?, end: Long?): Int
+
+    @Query("SELECT strftime('%Y-%m-%d', createdAt / 1000, 'unixepoch', 'localtime') AS day, COUNT(*) AS count FROM harness_messages WHERE createdAt >= :start GROUP BY day ORDER BY day ASC")
+    suspend fun queryHeatmap(start: Long): List<StatsDayCountResult>
+
+    @Query("SELECT s.id AS id, s.title AS label, COUNT(m.id) AS count FROM harness_messages m JOIN harness_sessions s ON m.sessionId = s.id WHERE (:start IS NULL OR m.createdAt >= :start) AND (:end IS NULL OR m.createdAt < :end) GROUP BY s.id, s.title ORDER BY count DESC LIMIT :limit")
+    suspend fun queryTopicRank(start: Long?, end: Long?, limit: Int = 20): List<StatsTopicRankResult>
+
+    @Query("SELECT * FROM harness_messages WHERE (:start IS NULL OR createdAt >= :start) AND (:end IS NULL OR createdAt < :end) ORDER BY createdAt ASC")
+    suspend fun listInRange(start: Long?, end: Long?): List<HarnessMessageEntity>
 }
+
+data class StatsDayCountResult(
+    val day: String,
+    val count: Int,
+)
+
+data class StatsTopicRankResult(
+    val id: String,
+    val label: String,
+    val count: Int,
+)

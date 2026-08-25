@@ -68,6 +68,11 @@ data class AssistantText(
      * 仅在作为本轮收尾消息（最终回复 / 中断提示）时记录；旧数据无此字段，默认 null。
      */
     val totalMs: Long? = null,
+    val modelId: String? = null,
+    val providerId: String? = null,
+    val promptTokens: Int? = null,
+    val completionTokens: Int? = null,
+    val cachedTokens: Int? = null,
 ) : HarnessMessage
 
 @Serializable

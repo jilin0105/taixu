@@ -675,6 +675,16 @@ class SettingsDataStore @Inject constructor(
         }
     }
 
+    private val appLaunchCountKey = intPreferencesKey("app_launch_count")
+    val appLaunchCount: Flow<Int> = context.settingsDataStore.data.map { it[appLaunchCountKey] ?: 1 }
+
+    suspend fun incrementLaunchCount() {
+        context.settingsDataStore.edit { prefs ->
+            val current = prefs[appLaunchCountKey] ?: 0
+            prefs[appLaunchCountKey] = current + 1
+        }
+    }
+
     private fun encodeProtectedValue(value: String): String = PROTECTED_VALUE_PREFIX + secretManager.encrypt(value)
 
     /** 兼容升级前的明文值；下一次保存时会自动转为 Keystore 密文。 */
