@@ -149,28 +149,22 @@ taixu_align_build_versions() {
     fi
 
     # --- CMake 版本对齐 ---
+    # Flutter/AGP 默认要求 CMake 3.22.1，太墟环境可能装了更新版本。
+    # 必须在 android {} 配置块内设置 externalNativeBuild.cmake.version，
+    # afterEvaluate 阶段再设会被 AGP 拒绝（"It is too late to set version"）。
     if command -v cmake >/dev/null 2>&1; then
         actual_cmake=$(cmake --version 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
         flutter_cmake="3.22.1"
         if [ -n "$actual_cmake" ] && [ "$actual_cmake" != "$flutter_cmake" ]; then
             echo "==> [TaiXu Build] CMake 版本对齐：Flutter 要求=$flutter_cmake, 实际=$actual_cmake"
             backup_once
-            cat >> "$app_gradle" <<GROOVY_EOF
-
-// TaiXu: 临时对齐 CMake 版本到环境实际版本（构建后自动移除此段）
-afterEvaluate {
-    try {
-        def cmakeOpts = android.externalNativeBuild?.cmake
-        if (cmakeOpts != null) {
-            cmakeOpts.version = "$actual_cmake"
-            logger.warn("TaiXu aligned CMake version: $flutter_cmake -> $actual_cmake")
-        }
-    } catch (Exception e) {
-        logger.warn("TaiXu CMake version alignment skipped: " + e.message)
-    }
-}
-GROOVY_EOF
-            echo "==> [TaiXu Build] ✅ 已追加 afterEvaluate 覆盖 CMake 版本为 $actual_cmake"
+            # 在 android { 块内注入 externalNativeBuild.cmake.version
+            sed -i "s/^\([[:space:]]*android[[:space:]]*{\)/\1\n    externalNativeBuild {\n        cmake {\n            version \"$actual_cmake\"\n        }\n    }/" "$app_gradle"
+            if grep -q "version \"$actual_cmake\"" "$app_gradle"; then
+                echo "==> [TaiXu Build] ✅ 已注入 externalNativeBuild.cmake.version=$actual_cmake"
+            else
+                echo "==> [TaiXu Build] ⚠️ CMake 版本注入失败"
+            fi
         fi
     fi
 }
