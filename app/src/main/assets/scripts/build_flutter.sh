@@ -104,48 +104,84 @@ fi
 cd "$PROJECT_PATH"
 
 # ==============================================================================
-# NDK 版本临时对齐（构建后自动恢复，不修改 NDK 本身）
-# Flutter Gradle 插件默认注入的 ndkVersion（如 27.0.12077973）可能与太墟
-# 实际安装的 NDK 版本（如 29.0.14206865）不一致，AGP 在配置阶段会抛
-# CXX1100 错误终止构建。这里临时在项目 app/build.gradle 里注入实际版本，
-# 构建结束后通过 trap EXIT 自动恢复原文件。不修改 NDK 的 source.properties，
-# 避免影响其他需要特定版本的项目（如 Android 原生工程需要 29）。
+# 构建工具版本临时对齐（构建后自动恢复，不修改工具链本身）
+#
+# 1. NDK：Flutter Gradle 插件默认注入 ndkVersion（如 27.0.12077973），可能与
+#    太墟实际安装的 NDK（如 29.0.14206865）不一致，AGP 抛 CXX1100。
+# 2. CMake：Flutter 硬编码要求 CMake 3.22.1，太墟环境可能装了更新版本，
+#    AGP 抛 CXX1300。
+#
+# 处理方式：临时修改项目 android/app/build.gradle 注入实际版本，构建结束后
+# 通过 trap EXIT 自动恢复原文件。不修改 NDK/CMake 本身，不影响 Android 项目。
 # ==============================================================================
-TAIXU_NDK_ALIGN_BAK=""
-taixu_align_ndk_version() {
+TAIXU_GRADLE_ALIGN_BAK=""
+taixu_align_build_versions() {
     app_gradle="android/app/build.gradle"
     [ -f "$app_gradle" ] || return 0
+    modified=0
+    backup_once() {
+        if [ $modified -eq 0 ]; then
+            TAIXU_GRADLE_ALIGN_BAK="${app_gradle}.taixu-align.bak"
+            cp "$app_gradle" "$TAIXU_GRADLE_ALIGN_BAK"
+            modified=1
+        fi
+    }
+
+    # --- NDK 版本对齐 ---
     ndk_home="${ANDROID_NDK_HOME:-/opt/taixu/toolchains/android/ndk}"
-    [ -f "$ndk_home/source.properties" ] || return 0
-    # NDK source.properties 格式为 "Pkg.Revision = 29.0.14206865"（等号两侧有空格）
-    actual_version=$(sed -n 's/^[[:space:]]*Pkg\.Revision[[:space:]]*=[[:space:]]*//p' "$ndk_home/source.properties" | head -n1 | tr -d '[:space:]')
-    [ -n "$actual_version" ] || { echo "==> [TaiXu Build] ⚠️ 无法从 $ndk_home/source.properties 读取 NDK 版本，跳过对齐"; return 0; }
-    # 检测项目已声明的 ndkVersion（Groovy 格式：ndkVersion "x.y.z"）
-    declared=$(grep -oE 'ndkVersion[[:space:]]*["'"'"'][^"'"'"']*["'"'"']' "$app_gradle" | head -1 | grep -oE '["'"'"'][^"'"'"']*["'"'"']' | tr -d "\"'")
-    if [ -n "$declared" ] && [ "$declared" = "$actual_version" ]; then
-        echo "==> [TaiXu Build] NDK 版本一致：$actual_version，无需对齐"
-        return 0
+    if [ -f "$ndk_home/source.properties" ]; then
+        actual_ndk=$(sed -n 's/^[[:space:]]*Pkg\.Revision[[:space:]]*=[[:space:]]*//p' "$ndk_home/source.properties" | head -n1 | tr -d '[:space:]')
+        if [ -n "$actual_ndk" ]; then
+            declared_ndk=$(grep -oE 'ndkVersion[[:space:]]*["'"'"'][^"'"'"']*["'"'"']' "$app_gradle" | head -1 | grep -oE '["'"'"'][^"'"'"']*["'"'"']' | tr -d "\"'")
+            if [ -z "$declared_ndk" ] || [ "$declared_ndk" != "$actual_ndk" ]; then
+                echo "==> [TaiXu Build] NDK 版本对齐：项目声明=${declared_ndk:-<Flutter默认>}, 实际=$actual_ndk"
+                backup_once
+                sed -i "s/^\([[:space:]]*android[[:space:]]*{\)/\1\n    ndkVersion \"$actual_ndk\"/" "$app_gradle"
+                if grep -q "ndkVersion \"$actual_ndk\"" "$app_gradle"; then
+                    echo "==> [TaiXu Build] ✅ 已注入 ndkVersion=$actual_ndk"
+                else
+                    echo "==> [TaiXu Build] ⚠️ ndkVersion 注入失败"
+                fi
+            fi
+        else
+            echo "==> [TaiXu Build] ⚠️ 无法读取 NDK 版本，跳过 NDK 对齐"
+        fi
     fi
-    echo "==> [TaiXu Build] NDK 版本不一致：项目声明=${declared:-<Flutter插件默认注入>}, 实际=$actual_version"
-    echo "==> [TaiXu Build] 临时将项目 ndkVersion 对齐到实际版本 $actual_version（构建后自动恢复）"
-    TAIXU_NDK_ALIGN_BAK="${app_gradle}.taixu-ndk-align.bak"
-    cp "$app_gradle" "$TAIXU_NDK_ALIGN_BAK"
-    # 在 android { 块的第一行后插入 ndkVersion（用 s 替换，比 a\ 追加更兼容）
-    sed -i "s/^\([[:space:]]*android[[:space:]]*{\)/\1\n    ndkVersion \"$actual_version\"/" "$app_gradle"
-    if grep -q "ndkVersion \"$actual_version\"" "$app_gradle"; then
-        echo "==> [TaiXu Build] ✅ 已确认注入 ndkVersion=$actual_version 到 $app_gradle"
-    else
-        echo "==> [TaiXu Build] ⚠️ ndkVersion 注入失败：未在 $app_gradle 中匹配到 android { 块"
+
+    # --- CMake 版本对齐 ---
+    if command -v cmake >/dev/null 2>&1; then
+        actual_cmake=$(cmake --version 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+        flutter_cmake="3.22.1"
+        if [ -n "$actual_cmake" ] && [ "$actual_cmake" != "$flutter_cmake" ]; then
+            echo "==> [TaiXu Build] CMake 版本对齐：Flutter 要求=$flutter_cmake, 实际=$actual_cmake"
+            backup_once
+            cat >> "$app_gradle" <<GROOVY_EOF
+
+// TaiXu: 临时对齐 CMake 版本到环境实际版本（构建后自动移除此段）
+afterEvaluate {
+    try {
+        def cmakeOpts = android.externalNativeBuild?.cmake
+        if (cmakeOpts != null) {
+            cmakeOpts.version = "$actual_cmake"
+            logger.warn("TaiXu aligned CMake version: $flutter_cmake -> $actual_cmake")
+        }
+    } catch (Exception e) {
+        logger.warn("TaiXu CMake version alignment skipped: " + e.message)
+    }
+}
+GROOVY_EOF
+            echo "==> [TaiXu Build] ✅ 已追加 afterEvaluate 覆盖 CMake 版本为 $actual_cmake"
+        fi
     fi
 }
-taixu_restore_ndk_version() {
-    if [ -n "$TAIXU_NDK_ALIGN_BAK" ] && [ -f "$TAIXU_NDK_ALIGN_BAK" ]; then
-        mv "$TAIXU_NDK_ALIGN_BAK" "android/app/build.gradle"
-        echo "==> [TaiXu Build] 已恢复 android/app/build.gradle（NDK 版本对齐临时修改已撤销）"
+taixu_restore_gradle() {
+    if [ -n "$TAIXU_GRADLE_ALIGN_BAK" ] && [ -f "$TAIXU_GRADLE_ALIGN_BAK" ]; then
+        mv "$TAIXU_GRADLE_ALIGN_BAK" "android/app/build.gradle"
+        echo "==> [TaiXu Build] 已恢复 android/app/build.gradle（版本对齐临时修改已撤销）"
     fi
 }
-trap taixu_restore_ndk_version EXIT
-taixu_align_ndk_version
+trap taixu_restore_gradle EXIT
+taixu_align_build_versions
 
 if ! command -v flutter >/dev/null 2>&1; then
     echo "==> [TaiXu Build] ❌ 未找到 Flutter SDK，请安装 Flutter 跨平台开发套件"
