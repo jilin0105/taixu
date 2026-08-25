@@ -265,9 +265,20 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun uninstallDistro(distroId: String) {
+    private val _deletingDistroId = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    val deletingDistroId: StateFlow<String?> = _deletingDistroId.asStateFlow()
+
+    fun uninstallDistro(distroId: String, onResult: ((Boolean, String) -> Unit)? = null) {
+        if (_deletingDistroId.value != null) return
+        _deletingDistroId.value = distroId
         viewModelScope.launch {
-            linuxRuntime.uninstallDistro(distroId)
+            val res = linuxRuntime.uninstallDistro(distroId)
+            _deletingDistroId.value = null
+            if (res is top.wkbin.taixu.core.common.result.AppResult.Success) {
+                onResult?.invoke(true, "系统已成功删除")
+            } else {
+                onResult?.invoke(false, res.errorOrNull()?.message ?: "删除失败")
+            }
         }
     }
 

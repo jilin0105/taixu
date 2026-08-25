@@ -83,6 +83,7 @@ fun DistroManagementScreen(
     val activeDistroId by viewModel.activeDistroId.collectAsStateWithLifecycle()
     val runtimeState by viewModel.runtimeState.collectAsStateWithLifecycle()
     val restoringDistroId by viewModel.restoringDistroId.collectAsStateWithLifecycle()
+    val deletingDistroId by viewModel.deletingDistroId.collectAsStateWithLifecycle()
 
     var showInstallDialog by remember { mutableStateOf(false) }
     var distroToReset by remember { mutableStateOf<InstalledDistro?>(null) }
@@ -153,7 +154,8 @@ fun DistroManagementScreen(
                     distro = distro,
                     isActive = distro.id.equals(activeDistroId, ignoreCase = true),
                     isRestoring = distro.id.equals(restoringDistroId, ignoreCase = true),
-                    canUninstall = installedDistros.size > 1,
+                    isDeleting = distro.id.equals(deletingDistroId, ignoreCase = true),
+                    canOperateMulti = installedDistros.size > 1,
                     onSwitchActive = {
                         viewModel.switchActiveDistro(distro.id)
                     },
@@ -238,33 +240,20 @@ fun DistroManagementScreen(
         )
     }
 
-    // 删除系统确认对话框
+    // 删除系统确认对话框（带 3 秒倒计时锁）
     distroToUninstall?.let { target ->
-        RuntimeAlertDialog(
-            onDismissRequest = { distroToUninstall = null },
-            title = { Text(text = "确认删除 ${target.displayName}？") },
-            text = {
-                Text(
-                    text = "删除将清除该发行版沙箱下的根目录文件与独立软件（释放约 ${String.format("%.1f", target.sizeBytes.toDouble() / (1024 * 1024))} MB 空间）。/workspace 工作区中的代码文件不会受到任何影响。",
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val toDelete = target.id
-                        distroToUninstall = null
-                        viewModel.uninstallDistro(toDelete)
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                ) {
-                    Text(text = "确认删除", color = MaterialTheme.colorScheme.onError)
+        DeleteDistroConfirmDialog(
+            distro = target,
+            onConfirm = {
+                val toDelete = target.id
+                distroToUninstall = null
+                viewModel.uninstallDistro(toDelete) { success, msg ->
+                    scope.launch {
+                        snackbarHostState.showSnackbar(msg)
+                    }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { distroToUninstall = null }) {
-                    Text(text = "取消")
-                }
-            },
+            onDismiss = { distroToUninstall = null },
         )
     }
 }
@@ -330,11 +319,72 @@ private fun ResetDistroConfirmDialog(
 }
 
 @Composable
+private fun DeleteDistroConfirmDialog(
+    distro: InstalledDistro,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var countdown by remember { mutableStateOf(3) }
+
+    LaunchedEffect(distro.id) {
+        while (countdown > 0) {
+            delay(1000)
+            countdown--
+        }
+    }
+
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "删除 ${distro.displayName} 系统？",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "• 将彻底清除该 Linux 发行版与已安装软件",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "• 不会删除 /workspace 中的项目代码",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                enabled = countdown == 0,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    disabledContainerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.3f),
+                ),
+            ) {
+                Text(
+                    text = if (countdown > 0) "确认删除 (${countdown}s)" else "确认删除",
+                    color = if (countdown == 0) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onError.copy(alpha = 0.6f),
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = "取消")
+            }
+        },
+    )
+}
+
+@Composable
 private fun DistroItemCard(
     distro: InstalledDistro,
     isActive: Boolean,
     isRestoring: Boolean,
-    canUninstall: Boolean,
+    isDeleting: Boolean,
+    canOperateMulti: Boolean,
     onSwitchActive: () -> Unit,
     onReset: () -> Unit,
     onUninstall: () -> Unit,
@@ -380,7 +430,7 @@ private fun DistroItemCard(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            text = "标识: ${distro.id} · 包管理: ${distro.packageManager}",
+                            text = "标识: ${distro.id} · 包管理: ${distro.packageManager} · 占用: ${formatSize(distro.sizeBytes)}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -400,62 +450,76 @@ private fun DistroItemCard(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = "占用空间: ${formatSize(distro.sizeBytes)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontFamily = FontFamily.Monospace,
-                )
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                // 按钮 1: 设为主系统 (当前为主系统或仅有 1 个系统时置灰禁用)
+                OutlinedButton(
+                    onClick = onSwitchActive,
+                    enabled = !isActive && canOperateMulti && !isRestoring && !isDeleting,
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.weight(1f),
                 ) {
-                    if (!isActive) {
-                        OutlinedButton(
-                            onClick = onSwitchActive,
-                            enabled = !isRestoring,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                            shape = RoundedCornerShape(6.dp),
-                        ) {
-                            Text(text = "设为主系统", style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
+                    Text(
+                        text = "设为主系统",
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                    )
+                }
 
-                    OutlinedButton(
-                        onClick = onReset,
-                        enabled = !isRestoring,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                        shape = RoundedCornerShape(6.dp),
-                    ) {
-                        if (isRestoring) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(12.dp),
-                                strokeWidth = 1.5.dp,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(text = "正在还原...", style = MaterialTheme.typography.labelSmall)
-                        } else {
-                            Text(text = "重置沙箱", style = MaterialTheme.typography.labelSmall)
-                        }
+                // 按钮 2: 重置沙箱 (执行中显示正在还原...并锁死)
+                OutlinedButton(
+                    onClick = onReset,
+                    enabled = !isRestoring && !isDeleting,
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    if (isRestoring) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(12.dp),
+                            strokeWidth = 1.5.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(text = "正在还原...", style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                    } else {
+                        Text(text = "重置沙箱", style = MaterialTheme.typography.labelSmall, maxLines = 1)
                     }
+                }
 
-                    if (canUninstall) {
-                        TextButton(
-                            onClick = onUninstall,
-                            enabled = !isRestoring,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                        ) {
-                            Text(
-                                text = "删除系统",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        }
+                // 按钮 3: 删除系统 (仅有 1 个系统时置灰禁用，执行中显示正在删除...并锁死)
+                OutlinedButton(
+                    onClick = onUninstall,
+                    enabled = canOperateMulti && !isRestoring && !isDeleting,
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(6.dp),
+                    border = BorderStroke(
+                        1.dp,
+                        if (canOperateMulti && !isRestoring && !isDeleting) MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
+                        else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                    ),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                        disabledContentColor = MaterialTheme.colorScheme.error.copy(alpha = 0.38f),
+                    ),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    if (isDeleting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(12.dp),
+                            strokeWidth = 1.5.dp,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(text = "正在删除...", style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                    } else {
+                        Text(
+                            text = "删除系统",
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                        )
                     }
                 }
             }
