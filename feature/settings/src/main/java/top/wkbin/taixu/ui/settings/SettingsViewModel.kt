@@ -782,6 +782,10 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    suspend fun readModelApiKey(secretRef: String): String {
+        return providerRepository.readModelApiKeys(secretRef).joinToString("\n")
+    }
+
     private fun parseApiKeys(raw: String): List<String> = raw
         .lineSequence()
         .map(String::trim)

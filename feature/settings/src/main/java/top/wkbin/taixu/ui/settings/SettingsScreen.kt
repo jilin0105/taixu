@@ -1009,6 +1009,14 @@ fun ModelEditorScreen(
     val testResult by viewModel.connectionResult.collectAsStateWithLifecycle()
     val existing = models.firstOrNull { it.id == modelId }
 
+    var initialApiKey by remember(modelId) { mutableStateOf("") }
+    LaunchedEffect(modelId, existing?.secretRef) {
+        val secretRef = existing?.secretRef
+        if (!secretRef.isNullOrBlank()) {
+            initialApiKey = viewModel.readModelApiKey(secretRef)
+        }
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = { RuntimeTopBar(if (existing == null) "新增模型" else "编辑模型", onBack) },
@@ -1017,6 +1025,7 @@ fun ModelEditorScreen(
             modifier = Modifier.padding(padding),
             modelId = modelId,
             existing = existing,
+            initialApiKey = initialApiKey,
             providers = viewModel.providerCatalog,
             discovered = discovered,
             discovering = discovering,
@@ -2089,6 +2098,7 @@ private fun ModelEditor(
     modifier: Modifier = Modifier,
     modelId: String?,
     existing: top.wkbin.taixu.core.database.AiModelEntity?,
+    initialApiKey: String = "",
     providers: List<AgentProviderDefinition>,
     discovered: List<String>,
     discovering: Boolean,
@@ -2108,8 +2118,14 @@ private fun ModelEditor(
     var name by remember(modelId) { mutableStateOf(existing?.name.orEmpty()) }
     var model by remember(modelId) { mutableStateOf(existing?.model ?: provider.recommendedModels.firstOrNull().orEmpty()) }
     var url by remember(modelId) { mutableStateOf(existing?.baseUrl ?: provider.baseUrl) }
-    var key by remember(modelId) { mutableStateOf("") }
+    var key by remember(modelId, initialApiKey) { mutableStateOf(initialApiKey) }
     var autoDiscoverEnabled by remember(modelId) { mutableStateOf(false) }
+
+    LaunchedEffect(initialApiKey) {
+        if (key.isBlank() && initialApiKey.isNotBlank()) {
+            key = initialApiKey
+        }
+    }
     var selectFirstDiscoveredModel by remember(modelId) { mutableStateOf(false) }
     var advancedExpanded by remember(modelId) { mutableStateOf(false) }
     var rpmLimitText by remember(modelId) {
