@@ -54,6 +54,10 @@
     <string name="workspace_copy_log">复制日志</string>
     <string name="workspace_build_log_receiving">构建日志正在接收…</string>
     <string name="workspace_no_build_log">暂无可用构建日志</string>
+    <string name="workspace_dependency_activity">依赖解析 / 下载</string>
+    <string name="workspace_dependency_count">已观察 %1$d 项（总数由 Gradle/Flutter 决定）</string>
+    <string name="workspace_dependency_count_total">已完成 %1$d / %2$d 项</string>
+    <string name="workspace_dependency_percent">下载进度 %1$d%%</string>
     <string name="workspace_log_dependencies">拉取依赖</string>
     <string name="workspace_log_compile">编译源码</string>
     <string name="workspace_log_package">打包安装</string>

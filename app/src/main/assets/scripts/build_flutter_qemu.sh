@@ -45,13 +45,13 @@ mv -f "$TMP_PROPERTIES" "$LOCAL_PROPERTIES"
 
 echo "==> [TaiXu QEMU Flutter] 拉取 Dart 依赖"
 if [ "${TAIXU_OFFLINE:-0}" = "1" ]; then
-    "$FLUTTER_HOME/bin/flutter" pub get --offline
+    "$FLUTTER_HOME/bin/flutter" pub get --offline --verbose
 else
-    "$FLUTTER_HOME/bin/flutter" pub get
+    "$FLUTTER_HOME/bin/flutter" pub get --verbose
 fi
 echo "==> [TaiXu QEMU Flutter] 构建 Android ARM64 APK"
 if [ "${TAIXU_OFFLINE:-0}" = "1" ]; then
-    exec "$FLUTTER_HOME/bin/flutter" build apk --debug --target-platform android-arm64 --offline
+    exec "$FLUTTER_HOME/bin/flutter" build apk --debug --target-platform android-arm64 --offline --verbose
 else
-    exec "$FLUTTER_HOME/bin/flutter" build apk --debug --target-platform android-arm64
+    exec "$FLUTTER_HOME/bin/flutter" build apk --debug --target-platform android-arm64 --verbose
 fi

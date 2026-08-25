@@ -82,6 +82,7 @@ class BuildGuardAssetTest {
         val offlineProperties = File("../assets/plugins/android-suite-offline/payload/config/gradle.properties").readText()
 
         listOf(androidBuild, qemuBuild).forEach { script ->
+            assertTrue(script.contains("--info"))
             assertTrue(script.contains("--no-daemon"))
             assertTrue(script.contains("--max-workers=2"))
             assertTrue(script.contains("-Xmx1024m"))
@@ -92,6 +93,18 @@ class BuildGuardAssetTest {
             assertTrue(config.contains("org.gradle.parallel=false"))
             assertTrue(config.contains("org.gradle.workers.max=2"))
             assertTrue(config.contains("org.gradle.jvmargs=-Xmx1024m"))
+        }
+    }
+
+    @Test
+    fun managedFlutterBuildsExposeDependencyActivity() {
+        val flutterBuild = File(assets, "scripts/build_flutter.sh").readText()
+        val qemuFlutterBuild = File(assets, "scripts/build_flutter_qemu.sh").readText()
+
+        listOf(flutterBuild, qemuFlutterBuild).forEach { script ->
+            assertTrue(script.contains("pub get --offline --verbose"))
+            assertTrue(script.contains("pub get --verbose"))
+            assertTrue(script.contains("--verbose"))
         }
     }
 

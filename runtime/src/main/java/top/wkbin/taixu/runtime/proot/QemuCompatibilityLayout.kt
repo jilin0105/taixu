@@ -24,8 +24,6 @@ object QemuCompatibilityLayout {
             File(rootfs, "lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"),
         ).any(File::isFile)
         return qemu.isFile && qemu.canExecute() &&
-            File(rootfs, "bin/sh").isFile && loader &&
-            File(root(taixuRoot), "jdk-17/bin/java").canExecute() &&
-            File(root(taixuRoot), "android-sdk/build-tools/35.0.0/aapt2").canExecute()
+            File(rootfs, "bin/sh").isFile && loader
     }
 }

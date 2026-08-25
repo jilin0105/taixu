@@ -58,7 +58,8 @@ object BuildEnvironmentPreflight {
             }
         } else {
             lines += "ANDROID_HOME=\${ANDROID_HOME:-/opt/android-sdk}"
-            lines += "JAVA_BIN=/opt/taixu/toolchains/android/jdk/bin/java"
+            lines += "# default JAVA_BIN=/opt/taixu/toolchains/android/jdk/bin/java"
+            lines += "JAVA_BIN=\${JAVA_HOME:-/opt/taixu/toolchains/android/jdk}/bin/java"
             lines += "test -x \"\$JAVA_BIN\" || JAVA_BIN=\$(command -v java 2>/dev/null || true)"
             lines += "test -n \"\$JAVA_BIN\" -a -x \"\$JAVA_BIN\" || fail java_missing"
             lines += "JAVA_MACHINE=\$(java_arch_machine \"\$JAVA_BIN\")"
@@ -75,8 +76,9 @@ object BuildEnvironmentPreflight {
             lines += "grep -Fqx 'android.builder.sdkDownload=false' /root/.gradle/gradle.properties 2>/dev/null || fail sdk_download_enabled"
             lines += "test -x /opt/gradle-8.14.2/bin/gradle -o -d /opt/gradle-8.14.2/lib -o -f \"\$PROJECT_PATH/gradle/wrapper/gradle-wrapper.jar\" -o -n \"\$(command -v gradle 2>/dev/null || true)\" || fail gradle_missing"
             if (projectType == ProjectType.FLUTTER) {
-                lines += "FLUTTER=\${FLUTTER_BIN:-/opt/flutter/bin/flutter}"
-                lines += "DART=/opt/flutter/bin/cache/dart-sdk/bin/dart"
+                lines += "# default FLUTTER=/opt/flutter/bin/flutter DART=/opt/flutter/bin/cache/dart-sdk/bin/dart"
+                lines += "FLUTTER=\${FLUTTER_BIN:-\${FLUTTER_HOME:-/opt/flutter}/bin/flutter}"
+                lines += "DART=\${DART_BIN:-\${FLUTTER_HOME:-/opt/flutter}/bin/cache/dart-sdk/bin/dart}"
                 lines += "test -x \"\$FLUTTER\" -a -x \"\$DART\" || fail flutter_missing"
                 lines += "test \"\$(elf_machine \"\$DART\")\" = $ARM64_ELF_MACHINE || fail dart_arch"
             }

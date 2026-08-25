@@ -51,6 +51,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.stringResource
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.model.RuntimeState
@@ -84,7 +86,12 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
     val distribution by viewModel.distribution.collectAsStateWithLifecycle()
     val mirror by viewModel.mirror.collectAsStateWithLifecycle()
     val state by viewModel.runtimeState.collectAsStateWithLifecycle()
-    val installing = state is RuntimeState.Initializing
+    val importing by viewModel.isImporting.collectAsStateWithLifecycle()
+    val importError by viewModel.importError.collectAsStateWithLifecycle()
+    val installing = state is RuntimeState.Initializing || importing
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let(viewModel::importArchive) }
     val mirrorOptions = listOf(
         SetupOption("auto", stringResource(R.string.taixu_onboarding_mirror_auto)),
         SetupOption("official", stringResource(R.string.taixu_onboarding_mirror_official)),
@@ -197,6 +204,31 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
                     fontWeight = FontWeight.Bold,
                 )
             }
+        }
+        importError?.let { error ->
+            item {
+                Text(
+                    error,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
+        item {
+            TextButton(
+                onClick = { importLauncher.launch(arrayOf("application/gzip", "application/x-gzip", "application/x-tar", "application/x-xz", "application/octet-stream")) },
+                enabled = !installing,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.taixu_onboarding_import))
+            }
+        }
+        item {
+            Text(
+                stringResource(R.string.taixu_onboarding_import_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         if (state is RuntimeState.Error) {
             item {

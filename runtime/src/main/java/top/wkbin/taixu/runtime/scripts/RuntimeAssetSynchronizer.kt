@@ -19,6 +19,15 @@ class RuntimeAssetSynchronizer @Inject constructor(
     @ApplicationContext private val context: Context,
     private val pathManager: RuntimePathManager,
 ) {
+    suspend fun syncWorkshopScript(distroId: String, fileName: String, content: String): String = withContext(Dispatchers.IO) {
+        val safeDistro = distroId.lowercase().trim()
+        pathManager.ensureDistroDirectories(safeDistro)
+        val target = File(pathManager.taixuScriptsDir(safeDistro), fileName)
+        target.parentFile?.mkdirs()
+        target.writeText(content.removePrefix("\uFEFF").replace("\r\n", "\n"), Charsets.UTF_8)
+        target.setExecutable(true, false)
+        target.absolutePath
+    }
     /**
      * 同步指定发行版沙箱内的脚本与资产工具
      */

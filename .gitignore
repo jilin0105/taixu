@@ -42,3 +42,7 @@ Desktop.ini
 # Locally downloaded offline-plugin SDK archives (about 1.6 GiB).
 # Keep manifests, scripts, checksums and download instructions versioned.
 assets/plugins/android-suite-offline/payload/archives/
+
+# Locally downloaded QEMU x86_64 user-mode plugin archives (~47 MiB).
+# Keep manifests, scripts, checksums and download instructions versioned.
+assets/plugins/qemu-x86-64-compat/payload/archives/

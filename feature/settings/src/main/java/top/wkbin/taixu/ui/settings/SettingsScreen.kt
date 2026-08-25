@@ -790,6 +790,8 @@ fun SystemDevSettingsScreen(
 ) {
     val developer by viewModel.developerMode.collectAsStateWithLifecycle()
     val qemuCompatibilityEnabled by viewModel.qemuCompatibilityEnabled.collectAsStateWithLifecycle()
+    val qemuCompatibilityReady by viewModel.qemuCompatibilityReady.collectAsStateWithLifecycle()
+    val qemuCompatibilityMessage by viewModel.qemuCompatibilityMessage.collectAsStateWithLifecycle()
     val phantomStatus by viewModel.phantomProcessStatus.collectAsStateWithLifecycle()
     val phantomBusy by viewModel.phantomProcessBusy.collectAsStateWithLifecycle()
     val phantomMessage by viewModel.phantomProcessMessage.collectAsStateWithLifecycle()
@@ -911,18 +913,23 @@ fun SystemDevSettingsScreen(
                     ToggleRow(
                         icon = RuntimeIconName.Cpu,
                         title = "QEMU x86_64 兼容模式",
-                        subtitle = "允许第三方项目使用 x86_64 Linux 构建工具；ARM64 项目仍优先使用 ARM64 工具链",
-                        checked = qemuCompatibilityEnabled,
+                        subtitle = if (qemuCompatibilityReady) {
+                            "允许明确请求的会话使用 QEMU x86_64 user-mode；ARM64 会话不受影响"
+                        } else {
+                            "未检测到 QEMU x86_64 兼容环境，请先在插件中心安装 qemu-x86-64-compat 插件"
+                        },
+                        checked = qemuCompatibilityEnabled && qemuCompatibilityReady,
+                        enabled = qemuCompatibilityReady,
                         change = viewModel::setQemuCompatibilityEnabled,
                     )
                     Text(
-                        text = if (qemuCompatibilityEnabled) {
-                            "已开启，并已请求后台安装 qemu-x86-64-compat。可在插件中心查看下载进度；兼容包包含 ARM64 QEMU、x86_64 RootFS 与用户态库。"
+                        text = qemuCompatibilityMessage ?: if (qemuCompatibilityEnabled) {
+                            "已开启。兼容插件只提供 ARM64 QEMU user-mode 与最小 x86_64 RootFS。"
                         } else {
                             "默认关闭，不会下载或使用 x86_64 工具。开启后仅对明确选择兼容环境的第三方项目生效，不会改变 APK 的 arm64-v8a 默认 ABI。"
                         },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (qemuCompatibilityReady) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
                         modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
                     )
                 }
@@ -1963,6 +1970,7 @@ internal fun ToggleRow(
     subtitle: String,
     checked: Boolean,
     change: (Boolean) -> Unit,
+    enabled: Boolean = true,
 ) {
     Row(
         Modifier
@@ -1988,6 +1996,7 @@ internal fun ToggleRow(
         RuntimeSwitch(
             checked = checked,
             onCheckedChange = change,
+            enabled = enabled,
         )
     }
 }

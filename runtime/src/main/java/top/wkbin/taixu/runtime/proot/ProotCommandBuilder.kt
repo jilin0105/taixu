@@ -68,12 +68,11 @@ class ProotCommandBuilder private constructor(
         add(command.workingDirectory)
         add(GUEST_SHELL)
         add("-lc")
-        add(
-            shellCommand(
-                commandLine = command.commandLine,
-                environment = environmentResolver.merge(provider = command.environment),
-            ),
+        val resolvedCommand = shellCommand(
+            commandLine = command.commandLine,
+            environment = environmentResolver.merge(provider = command.environment),
         )
+        add(if (command.forcePty) wrapInPty(resolvedCommand) else resolvedCommand)
     }
 
     fun buildInteractive(
@@ -152,6 +151,16 @@ class ProotCommandBuilder private constructor(
             )
         }
     }
+
+    /**
+     * Wrap a long-running build command in a Debian `script` PTY. Java/Gradle fully buffer
+     * stdout when it is a pipe (non-TTY), so the app stops receiving logs mid-build.
+     * A real TTY makes the child line-buffer and flush, streaming progress to the UI.
+     */
+    private fun wrapInPty(commandLine: String): String =
+        "if command -v script >/dev/null 2>&1; then " +
+            "exec script -qfec " + shellQuote(commandLine) + " /dev/null; " +
+            "else $commandLine; fi"
 
     private fun shellCommand(
         commandLine: String,

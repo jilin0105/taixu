@@ -4,7 +4,7 @@ set -u
 if test -f /etc/profile.d/taixu-android.sh; then
     . /etc/profile.d/taixu-android.sh
 fi
-if test -x /opt/taixu/toolchains/android/jdk/bin/java; then
+if test -z "${JAVA_HOME:-}" && test -x /opt/taixu/toolchains/android/jdk/bin/java; then
     JAVA_HOME=/opt/taixu/toolchains/android/jdk
 elif test -z "${JAVA_HOME:-}"; then
     JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64

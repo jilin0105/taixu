@@ -24,6 +24,49 @@ class SettingsDataStore @Inject constructor(
     @ApplicationContext private val context: Context,
     private val secretManager: SecretManager,
 ) {
+    // 工坊 Android/Flutter 工具链覆盖配置。空值表示使用当前套件的标准路径。
+    private val workshopAndroidSdkPathKey = stringPreferencesKey("workshop_android_sdk_path")
+    private val workshopNdkPathKey = stringPreferencesKey("workshop_ndk_path")
+    private val workshopFlutterSdkPathKey = stringPreferencesKey("workshop_flutter_sdk_path")
+    private val workshopJavaPathKey = stringPreferencesKey("workshop_java_path")
+    private val workshopAndroidScriptKey = stringPreferencesKey("workshop_android_script")
+    private val workshopFlutterScriptKey = stringPreferencesKey("workshop_flutter_script")
+
+    val workshopAndroidSdkPath: Flow<String> = context.settingsDataStore.data.map { it[workshopAndroidSdkPathKey].orEmpty() }
+    val workshopNdkPath: Flow<String> = context.settingsDataStore.data.map { it[workshopNdkPathKey].orEmpty() }
+    val workshopFlutterSdkPath: Flow<String> = context.settingsDataStore.data.map { it[workshopFlutterSdkPathKey].orEmpty() }
+    val workshopJavaPath: Flow<String> = context.settingsDataStore.data.map { it[workshopJavaPathKey].orEmpty() }
+    val workshopAndroidScript: Flow<String> = context.settingsDataStore.data.map { it[workshopAndroidScriptKey].orEmpty() }
+    val workshopFlutterScript: Flow<String> = context.settingsDataStore.data.map { it[workshopFlutterScriptKey].orEmpty() }
+
+    suspend fun setWorkshopAndroidSdkPath(value: String) = setWorkshopValue(workshopAndroidSdkPathKey, value)
+    suspend fun setWorkshopNdkPath(value: String) = setWorkshopValue(workshopNdkPathKey, value)
+    suspend fun setWorkshopFlutterSdkPath(value: String) = setWorkshopValue(workshopFlutterSdkPathKey, value)
+    suspend fun setWorkshopJavaPath(value: String) = setWorkshopValue(workshopJavaPathKey, value)
+    suspend fun setWorkshopAndroidScript(value: String) = setWorkshopValue(workshopAndroidScriptKey, value)
+    suspend fun setWorkshopFlutterScript(value: String) = setWorkshopValue(workshopFlutterScriptKey, value)
+
+    suspend fun resetWorkshopEnvironment() {
+        context.settingsDataStore.edit {
+            it.remove(workshopAndroidSdkPathKey)
+            it.remove(workshopNdkPathKey)
+            it.remove(workshopFlutterSdkPathKey)
+            it.remove(workshopJavaPathKey)
+        }
+    }
+
+    suspend fun resetWorkshopScripts() {
+        context.settingsDataStore.edit {
+            it.remove(workshopAndroidScriptKey)
+            it.remove(workshopFlutterScriptKey)
+        }
+    }
+
+    private suspend fun setWorkshopValue(key: androidx.datastore.preferences.core.Preferences.Key<String>, value: String) {
+        context.settingsDataStore.edit { prefs ->
+            if (value.isBlank()) prefs.remove(key) else prefs[key] = value
+        }
+    }
     private val developerModeKey = booleanPreferencesKey("developer_mode")
     private val qemuCompatibilityEnabledKey = booleanPreferencesKey("qemu_compatibility_enabled")
     private val themeModeKey = stringPreferencesKey("theme_mode")

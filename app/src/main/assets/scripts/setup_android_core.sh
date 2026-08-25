@@ -461,7 +461,7 @@ if [ -n "$TAIXU_AAPT2_PATH" ] && [ -x "$TAIXU_AAPT2_PATH" ] && \
     else
         : > "$GRADLE_PROPERTIES_TMP"
     fi
-    printf '\n# TaiXu: immutable ARM64 toolchain and mobile-safe build limits.\nandroid.aapt2FromMavenOverride=%s\nandroid.builder.sdkDownload=false\norg.gradle.daemon=false\norg.gradle.parallel=false\norg.gradle.workers.max=2\norg.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+UseSerialGC -Dfile.encoding=UTF-8\nkotlin.daemon.jvmargs=-Xmx512m -XX:MaxMetaspaceSize=256m\n' \
+    printf '\n# TaiXu: immutable ARM64 toolchain and mobile-safe build limits.\nandroid.aapt2FromMavenOverride=%s\nandroid.builder.sdkDownload=false\norg.gradle.daemon=false\norg.gradle.parallel=false\norg.gradle.workers.max=2\norg.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+UseSerialGC -Dfile.encoding=UTF-8\nsystemProp.org.gradle.internal.http.connectionTimeout=30000\nsystemProp.org.gradle.internal.http.socketTimeout=60000\nkotlin.daemon.jvmargs=-Xmx512m -XX:MaxMetaspaceSize=256m\n' \
         "$TAIXU_AAPT2_PATH" >> "$GRADLE_PROPERTIES_TMP"
     mv -f "$GRADLE_PROPERTIES_TMP" "$GRADLE_PROPERTIES"
     echo "==> [TaiXu] Gradle 全局 AAPT2 覆盖: $TAIXU_AAPT2_PATH"

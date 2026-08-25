@@ -28,7 +28,8 @@ flock -s -w 1800 9 || {
 if [ -f /etc/profile.d/taixu-android.sh ]; then
     . /etc/profile.d/taixu-android.sh
 fi
-export PATH="/opt/flutter/bin:/opt/gradle-8.14.2/bin:/opt/gradle-8.7/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+export FLUTTER_HOME="${FLUTTER_HOME:-/opt/flutter}"
+export PATH="$FLUTTER_HOME/bin:/opt/gradle-8.14.2/bin:/opt/gradle-8.7/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 export ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 export PUB_HOSTED_URL="https://pub.flutter-io.cn"
@@ -56,9 +57,9 @@ export TAIXU_LLVM_STRIP_PATH="$LLVM_STRIP"
 echo "==> [TaiXu Build] 固定 ARM64 NDK: $NDK_PATH"
 
 # 2. 自愈软链接
-if [ -d /opt/flutter/bin ] && [ ! -f /usr/local/bin/flutter ]; then
-    ln -sf /opt/flutter/bin/flutter /usr/local/bin/flutter 2>/dev/null || true
-    ln -sf /opt/flutter/bin/dart /usr/local/bin/dart 2>/dev/null || true
+if [ -d "$FLUTTER_HOME/bin" ] && [ ! -f /usr/local/bin/flutter ]; then
+    ln -sf "$FLUTTER_HOME/bin/flutter" /usr/local/bin/flutter 2>/dev/null || true
+    ln -sf "$FLUTTER_HOME/bin/dart" /usr/local/bin/dart 2>/dev/null || true
 fi
 
 cd "$PROJECT_PATH"
@@ -67,7 +68,7 @@ if ! command -v flutter >/dev/null 2>&1; then
     echo "==> [TaiXu Build] ❌ 未找到 Flutter SDK，请安装 Flutter 跨平台开发套件"
     exit 127
 fi
-if [ ! -x /opt/flutter/bin/flutter ] || [ ! -x /opt/flutter/bin/cache/dart-sdk/bin/dart ]; then
+if [ ! -x "$FLUTTER_HOME/bin/flutter" ] || [ ! -x "$FLUTTER_HOME/bin/cache/dart-sdk/bin/dart" ]; then
     echo "==> [TaiXu Build] ❌ Flutter SDK 不是可用的 Linux ARM64 版本，请在工坊重新装配 Flutter 套件"
     exit 126
 fi
@@ -112,7 +113,7 @@ PY
 fi
 
 mkdir -p "$PUB_CACHE" android
-if [ -f /opt/flutter/bin/flutter ]; then
+if [ -f "$FLUTTER_HOME/bin/flutter" ]; then
     LOCAL_PROPERTIES=android/local.properties
     LOCAL_PROPERTIES_TMP="${LOCAL_PROPERTIES}.taixu.tmp"
     if [ -f "$LOCAL_PROPERTIES" ]; then
@@ -125,7 +126,7 @@ if [ -f /opt/flutter/bin/flutter ]; then
     fi
     # NDK 由全局 init policy 的 android.ndkPath 唯一定位。只清理遗留
     # ndk.dir，不写回，避免 AGP 8.11.1 判定两种 NDK locator 冲突。
-    printf 'sdk.dir=%s\nflutter.sdk=/opt/flutter\n' "$ANDROID_HOME" >> "$LOCAL_PROPERTIES_TMP"
+    printf 'sdk.dir=%s\nflutter.sdk=%s\n' "$ANDROID_HOME" "$FLUTTER_HOME" >> "$LOCAL_PROPERTIES_TMP"
     mv -f "$LOCAL_PROPERTIES_TMP" "$LOCAL_PROPERTIES"
 fi
 AAPT2_PATH="${TAIXU_AAPT2_PATH:-$ANDROID_HOME/build-tools/35.0.0/aapt2}"
@@ -156,14 +157,27 @@ if [ ! -f /root/.gradle/init.d/taixu-android-ndk.gradle ] || \
     exit 126
 fi
 
+# TaiXu: 兜底在全局 Gradle 配置注入 HTTP 连接/读超时，避免国内镜像慢或被重置时
+# 依赖解析无限静默阻塞（SocketException: connection abort）。幂等追加，仅补缺失行。
+GRADLE_PROPS=/root/.gradle/gradle.properties
+if [ -f "$GRADLE_PROPS" ]; then
+    for k in \
+        'systemProp.org.gradle.internal.http.connectionTimeout=30000' \
+        'systemProp.org.gradle.internal.http.socketTimeout=60000'; do
+        if ! grep -Fqx "$k" "$GRADLE_PROPS" 2>/dev/null; then
+            printf '%s\n' "$k" >> "$GRADLE_PROPS"
+        fi
+    done
+fi
+
 export GRADLE_OPTS="${GRADLE_OPTS:-} -Dorg.gradle.jvmargs=-Xmx1024m"
 
 if [ "${TAIXU_OFFLINE:-0}" = "1" ]; then
     echo "==> [TaiXu Build] 离线模式：使用本地 Flutter Pub 缓存"
-    flutter pub get --offline
+    flutter pub get --offline --verbose
 else
     echo "==> [TaiXu Build] 正在拉取 Flutter 依赖 (flutter pub get)..."
-    flutter pub get
+    flutter pub get --verbose
 fi
 
 # 3. 确保 Android 宿主使用本地 Gradle 8.14.2 + 国内镜像，避免 Wrapper 从 services.gradle.org
@@ -223,7 +237,7 @@ EOF
 
 echo "==> [TaiXu Build] 正在执行 Flutter 打包编译 (flutter build $TARGET)..."
 if [ "${TAIXU_OFFLINE:-0}" = "1" ]; then
-    exec flutter build $TARGET --offline
+    exec flutter build $TARGET --offline --verbose
 else
-    exec flutter build $TARGET
+    exec flutter build $TARGET --verbose
 fi

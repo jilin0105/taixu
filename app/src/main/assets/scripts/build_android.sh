@@ -52,7 +52,7 @@ export ANDROID_SDK_ROOT="${ANDROID_HOME}"
 
 # The local offline suite is authoritative when present. A distro package may
 # leave an x86_64 Java earlier on PATH, which is unusable in the ARM64 PRoot.
-if [ -x /opt/taixu/toolchains/android/jdk/bin/java ]; then
+if [ -z "${JAVA_HOME:-}" ] && [ -x /opt/taixu/toolchains/android/jdk/bin/java ]; then
     JAVA_HOME=/opt/taixu/toolchains/android/jdk
 fi
 
@@ -188,7 +188,7 @@ export PATH="/opt/gradle-$GRADLE_VER/bin:${TAIXU_TOOL_DIR:-/opt/taixu/tools}/bin
 cd "$PROJECT_PATH"
 
 # 4. 调度 Gradle 构建
-EXTRA_ARGS="--console=plain --stacktrace --no-daemon --max-workers=2 -Dorg.gradle.native=false -Pandroid.builder.sdkDownload=false"
+EXTRA_ARGS="--console=plain --info --stacktrace --no-daemon --max-workers=2 -Dorg.gradle.native=false -Dorg.gradle.internal.http.connectionTimeout=30000 -Dorg.gradle.internal.http.socketTimeout=60000 -Pandroid.builder.sdkDownload=false"
 if [ "${TAIXU_OFFLINE:-0}" = "1" ]; then
     EXTRA_ARGS="$EXTRA_ARGS --offline"
     echo "==> [TaiXu Build] 离线模式：禁止 Gradle 网络请求，仅使用本地缓存"
@@ -208,6 +208,7 @@ GRADLE_JVM_MEMORY_OPTS="-Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+UseSerialGC -Df
 
 if [ -d /opt/gradle-$GRADLE_VER/lib ]; then
     echo "==> [TaiXu Build] 调度官方独立完整版 Gradle $GRADLE_VER 执行构建..."
+    echo "==> [TaiXu Build] 依赖解析与任务执行即将开始；下载项、仓库地址与任务阶段会实时写入构建日志..."
     exec "$JAVA_EXEC" $GRADLE_JVM_MEMORY_OPTS \
         -Dorg.gradle.appname=gradle \
         -Dorg.gradle.installation.dir=/opt/gradle-$GRADLE_VER \

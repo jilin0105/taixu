@@ -14,6 +14,10 @@ import top.wkbin.taixu.runtime.RegistryRoute
 import top.wkbin.taixu.runtime.RuntimeInstallRequest
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.util.UUID
+import android.content.Context
+import android.net.Uri
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -24,6 +28,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -41,6 +46,7 @@ data class StarterPlugin(
 
 @HiltViewModel
 class OnboardingViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val settings: OnboardingPreferences,
     private val linuxRuntime: LinuxRuntime,
     private val providerRepository: ProviderRepository,
@@ -94,6 +100,10 @@ class OnboardingViewModel @Inject constructor(
     private val _modelDiscoveryError = MutableStateFlow<String?>(null)
     val modelDiscoveryError = _modelDiscoveryError.asStateFlow()
     private var discoveryDebounceJob: Job? = null
+    private val _isImporting = MutableStateFlow(false)
+    val isImporting = _isImporting.asStateFlow()
+    private val _importError = MutableStateFlow<String?>(null)
+    val importError = _importError.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -197,6 +207,37 @@ class OnboardingViewModel @Inject constructor(
                 ),
             )
             if (linuxRuntime.state.value is RuntimeState.Ready) _page.value = 1
+        }
+    }
+
+    fun importArchive(uri: Uri) {
+        if (runtimeState.value is RuntimeState.Initializing || _isImporting.value) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val imported = File(context.cacheDir, "rootfs-import-${System.currentTimeMillis()}")
+            _isImporting.value = true
+            _importError.value = null
+            try {
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    imported.outputStream().use { output -> input.copyTo(output) }
+                } ?: error("无法读取所选文件")
+                settings.setSelectedDistribution(_distribution.value)
+                settings.setMirrorPolicy(_mirror.value)
+                val result = linuxRuntime.importDistro(
+                    RuntimeInstallRequest(distributionId = _distribution.value),
+                    imported,
+                )
+                result.errorOrNull()?.let { error ->
+                    _importError.value = error.message
+                }
+                if (linuxRuntime.state.value is RuntimeState.Ready) _page.value = 1
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (throwable: Throwable) {
+                _importError.value = throwable.message ?: "无法导入所选 RootFS 文件"
+            } finally {
+                imported.delete()
+                _isImporting.value = false
+            }
         }
     }
 

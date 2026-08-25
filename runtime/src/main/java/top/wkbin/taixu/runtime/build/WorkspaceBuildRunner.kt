@@ -21,6 +21,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 data class StepDuration(
     val step: String,
@@ -38,9 +41,82 @@ data class BuildRunProgress(
     val suggestedSuiteId: String? = null,
     val stepDurations: List<StepDuration> = emptyList(),
     val totalDurationMs: Long? = null,
+    /** 当前正在下载/解析的 Gradle 或 pub 依赖（若构建工具输出了条目）。 */
+    val currentDependency: String? = null,
+    /** 已观察到的依赖下载/解析条目数；构建工具未提供总数时 total 为 null。 */
+    val dependencyItemsObserved: Int = 0,
+    val dependenciesTotal: Int? = null,
+    /** 构建工具明确输出百分比时才有值，避免用阶段进度冒充下载字节进度。 */
+    val dependencyProgressPercent: Int? = null,
 )
 
 private const val MAX_LOG_CHARS = 60_000 // 日志上限60KB，超限丢弃旧行
+
+// 强制 PTY 后，flutter/gradle 可能输出 ANSI 转义与 \r 进度条；归一化避免日志出现乱码或整行覆盖。
+private val ANSI_ESCAPE_REGEX = Regex("\u001B\\[[0-9;?]*[ -/]*[@-~]")
+private val ANSI_OSC_REGEX = Regex("\u001B\\][^\u0007]*\u0007")
+
+private fun sanitizeBuildLog(raw: String): String {
+    var s = ANSI_ESCAPE_REGEX.replace(raw, "")
+    s = ANSI_OSC_REGEX.replace(s, "")
+    // TTY 行规则会把 \n 转成 \r\n，进度条用 \r 覆盖同一行；统一归一化为换行。
+    return s.replace("\r\n", "\n").replace("\r", "\n")
+}
+
+private data class DependencyObservation(
+    val current: String? = null,
+    val seenItems: Set<String> = emptySet(),
+    val total: Int? = null,
+    val percent: Int? = null,
+)
+
+/**
+ * Gradle 和 Flutter 的下载输出没有统一协议：Gradle 通常打印 URL，pub
+ * 通常打印 package 名称。因此只提取人类可读的当前条目和已观察数量，
+ * 不伪造一个实际上不存在的“总进度”。
+ */
+private fun observeDependencyOutput(raw: String, previous: DependencyObservation): DependencyObservation {
+    var current = previous.current
+    val seenItems = previous.seenItems.toMutableSet()
+    var total = previous.total
+    var percent = previous.percent
+    raw.lineSequence().map { it.trim() }.filter { it.isNotBlank() }.forEach { line ->
+        val lower = line.lowercase()
+        val url = Regex("https?://\\S+").find(line)?.value
+        val isDependencyLine = lower.contains("download ") ||
+            lower.contains("downloading") ||
+            lower.contains("downloaded") ||
+            lower.contains("fetching") ||
+            lower.contains("resolv") ||
+            lower.contains("getting dependencies") ||
+            lower.startsWith("got dependencies") ||
+            url != null
+        if (!isDependencyLine) return@forEach
+
+        // Prefer the URL/artifact name, but remove noisy verbs and byte counts.
+        val candidate = url
+            ?: line.replace(Regex("(?i)^(downloading|downloaded|fetching)\\s*[:：]?\\s*"), "")
+                .replace(Regex("\\s+\\([0-9.,]+\\s*(kb|mb|gb|bytes?)\\)"), "")
+                .trim()
+        if (candidate.isNotBlank() && !candidate.equals("dependencies", ignoreCase = true)) {
+            current = candidate
+            val genericDependencyStatus = candidate.lowercase().matches(Regex(".*(?:resolving|getting|got) dependencies[.!]*"))
+            if (candidate.length > 3 && !genericDependencyStatus) seenItems += candidate
+        }
+
+        // Some wrappers print "12/48" or "12 of 48"; use it when available.
+        Regex("(\\d+)\\s*(?:/|of)\\s*(\\d+)").find(line)?.let {
+            it.groupValues[1].toIntOrNull()?.let { completed ->
+                repeat((completed - seenItems.size).coerceAtLeast(0)) { seenItems += "#observed-${seenItems.size}" }
+            }
+            total = it.groupValues[2].toIntOrNull() ?: total
+        }
+        Regex("(?<!\\d)(\\d{1,3})%").find(line)?.groupValues?.get(1)?.toIntOrNull()?.let {
+            percent = it.coerceIn(0, 100)
+        }
+    }
+    return DependencyObservation(current, seenItems, total, percent)
+}
 
 /**
  * 工作区项目一键构建并安装运行到手机服务。
@@ -52,6 +128,7 @@ class WorkspaceBuildRunner @Inject constructor(
     private val embeddedAdbManager: EmbeddedAdbManager,
     private val assetSynchronizer: top.wkbin.taixu.runtime.scripts.RuntimeAssetSynchronizer,
     private val runtimePreferences: RuntimePreferences,
+    private val workshopPreferences: top.wkbin.taixu.core.datastore.WorkshopPreferences,
     private val logger: AppLogger,
 ) {
     fun launchPackageInstaller(apkFile: File): Boolean {
@@ -91,6 +168,20 @@ class WorkspaceBuildRunner @Inject constructor(
         runCatching {
             assetSynchronizer.syncAssetsToDistro(linuxRuntime.activeDistroId.value)
         }
+        val workshopAndroidScript = workshopPreferences.androidScript.first()
+        val workshopFlutterScript = workshopPreferences.flutterScript.first()
+        val androidScriptPath = workshopAndroidScript.takeIf { it.isNotBlank() }?.let {
+            runCatching { assetSynchronizer.syncWorkshopScript(linuxRuntime.activeDistroId.value, "workshop-build-android.sh", it) }.getOrNull()
+        } ?: "/opt/taixu/scripts/taixu-build.sh"
+        val flutterScriptPath = workshopFlutterScript.takeIf { it.isNotBlank() }?.let {
+            runCatching { assetSynchronizer.syncWorkshopScript(linuxRuntime.activeDistroId.value, "workshop-build-flutter.sh", it) }.getOrNull()
+        } ?: "/opt/taixu/scripts/taixu-build.sh"
+        val workshopEnvironment = buildMap {
+            workshopPreferences.androidSdkPath.first().takeIf { it.isNotBlank() }?.let { put("ANDROID_HOME", it); put("ANDROID_SDK_ROOT", it) }
+            workshopPreferences.ndkPath.first().takeIf { it.isNotBlank() }?.let { put("ANDROID_NDK_HOME", it); put("TAIXU_NDK_PATH", it) }
+            workshopPreferences.flutterSdkPath.first().takeIf { it.isNotBlank() }?.let { put("FLUTTER_HOME", it) }
+            workshopPreferences.javaPath.first().takeIf { it.isNotBlank() }?.let { put("JAVA_HOME", it) }
+        }
 
         // channelFlow 的 Channel 保证多线程 send 的线程安全：
         // 构建输出回调运行在 ProcessShellExecutor 的 stdout/stderr 读取协程中，
@@ -101,6 +192,7 @@ class WorkspaceBuildRunner @Inject constructor(
         val logs = StringBuilder()
         val logBuffer = mutableListOf<String>()
         var lastLogFlush = System.currentTimeMillis()
+        val buildStartedAt = System.currentTimeMillis()
         fun flushLogBuffer() {
             if (logBuffer.isEmpty()) return
             for (line in logBuffer) logs.appendLine(line)
@@ -114,12 +206,36 @@ class WorkspaceBuildRunner @Inject constructor(
             }
         }
         fun log(msg: String) {
-            logBuffer.add(msg)
+            logBuffer.add(sanitizeBuildLog(msg))
             val now = System.currentTimeMillis()
             // 缓冲区满 或 超过 400ms 未刷：批量写入并丢弃超限旧日志
             if (logBuffer.size >= 60 || now - lastLogFlush > 400) {
                 flushLogBuffer()
                 lastLogFlush = now
+            }
+        }
+
+        // 心跳：Gradle/JVM/Flutter 在管道(非TTY)下可能长时间无输出（全缓冲或依赖静默下载），
+        // 周期性向 UI 推送“仍在构建中”进度，避免用户误以为卡死直到超时。
+        var heartbeatStep = "正在构建，请稍候..."
+        var heartbeatProgress = 0.35f
+        var dependencyObservation = DependencyObservation()
+        launch {
+            while (isActive) {
+                delay(4_000L)
+                flushLogBuffer()
+                progressChannel.trySend(
+                    BuildRunProgress(
+                        step = "$heartbeatStep 已运行 ${(System.currentTimeMillis() - buildStartedAt) / 1000}s",
+                        progress = heartbeatProgress,
+                        isRunning = true,
+                        logOutput = logs.toString(),
+                        currentDependency = dependencyObservation.current,
+                        dependencyItemsObserved = dependencyObservation.seenItems.size,
+                        dependenciesTotal = dependencyObservation.total,
+                        dependencyProgressPercent = dependencyObservation.percent,
+                    )
+                )
             }
         }
 
@@ -136,6 +252,7 @@ class WorkspaceBuildRunner @Inject constructor(
                 val probe = linuxRuntime.execute(ShellCommand(
                     commandLine = BuildEnvironmentPreflight.command(project.linuxPath, ProjectType.ANDROID),
                     timeoutMs = 15_000L,
+                    environment = workshopEnvironment,
                 ))
                 var useQemuBuild = false
                 if (!probe.isSuccess && qemuEnabled && shouldRetryWithQemu(probe)) {
@@ -144,6 +261,7 @@ class WorkspaceBuildRunner @Inject constructor(
                             commandLine = BuildEnvironmentPreflight.command(project.linuxPath, ProjectType.ANDROID, qemu = true),
                             timeoutMs = 30_000L,
                             useQemuCompatibility = true,
+                            environment = workshopEnvironment,
                         ))
                     }.getOrNull()
                     if (qemuProbe?.isSuccess == true) {
@@ -187,7 +305,13 @@ class WorkspaceBuildRunner @Inject constructor(
                     lastStepTime = now
                 }
 
-                val buildCmd = "/bin/sh /opt/taixu/scripts/taixu-build.sh android \"${project.linuxPath}\" assembleDebug" +
+                heartbeatStep = "正在执行 Gradle 编译 (assembleDebug)..."
+                heartbeatProgress = 0.35f
+                val buildCmd = if (androidScriptPath.endsWith("taixu-build.sh")) {
+                    "/bin/sh $androidScriptPath android \"${project.linuxPath}\" assembleDebug"
+                } else {
+                    "/bin/sh $androidScriptPath \"${project.linuxPath}\" assembleDebug"
+                } +
                     if (useQemuBuild) " --qemu" else ""
                 var lastEmitTime = System.currentTimeMillis()
                 var currentStep = "正在执行 Gradle 构建任务..."
@@ -196,10 +320,13 @@ class WorkspaceBuildRunner @Inject constructor(
                 var outcome = linuxRuntime.execute(
                     ShellCommand(
                         commandLine = buildCmd,
+                        forcePty = true,
                         timeoutMs = 1800_000L, // 30 分钟充足超时，适配移动端首次下载海量依赖
                         useQemuCompatibility = useQemuBuild,
+                        environment = workshopEnvironment,
                         onOutput = { chunk ->
                             log(chunk.trimEnd())
+                            dependencyObservation = observeDependencyOutput(chunk, dependencyObservation)
                             val lower = chunk.lowercase()
                             when {
                                 lower.contains("downloading") || lower.contains("get ") || lower.contains("fetching") -> {
@@ -233,7 +360,15 @@ class WorkspaceBuildRunner @Inject constructor(
                             if (now - lastEmitTime > 100) {
                                 lastEmitTime = now
                                 progressChannel.trySend(
-                                    BuildRunProgress(step = currentStep, progress = currentProgress, logOutput = logs.toString())
+                                    BuildRunProgress(
+                                        step = currentStep,
+                                        progress = currentProgress,
+                                        logOutput = logs.toString(),
+                                        currentDependency = dependencyObservation.current,
+                                        dependencyItemsObserved = dependencyObservation.seenItems.size,
+                                        dependenciesTotal = dependencyObservation.total,
+                                        dependencyProgressPercent = dependencyObservation.percent,
+                                    )
                                 )
                             }
                         },
@@ -245,15 +380,18 @@ class WorkspaceBuildRunner @Inject constructor(
                     send(BuildRunProgress(step = "正在切换 QEMU x86_64 兼容环境...", progress = 0.25f, logOutput = logs.toString()))
                     outcome = runCatching {
                         linuxRuntime.execute(ShellCommand(
-                            commandLine = "/bin/sh /opt/taixu/scripts/taixu-build.sh android \"${project.linuxPath}\" assembleDebug --qemu",
+                            commandLine = if (androidScriptPath.endsWith("taixu-build.sh")) "/bin/sh $androidScriptPath android \"${project.linuxPath}\" assembleDebug --qemu" else "/bin/sh $androidScriptPath \"${project.linuxPath}\" assembleDebug --qemu",
+                            environment = workshopEnvironment,
+                            forcePty = true,
                             timeoutMs = 1800_000L,
                             useQemuCompatibility = true,
                             onOutput = { chunk ->
                                 log(chunk.trimEnd())
+                                dependencyObservation = observeDependencyOutput(chunk, dependencyObservation)
                                 val now = System.currentTimeMillis()
                                 if (now - lastEmitTime > 100) {
                                     lastEmitTime = now
-                                    progressChannel.trySend(BuildRunProgress(step = "正在执行 QEMU x86_64 Android 构建...", progress = 0.5f, logOutput = logs.toString()))
+                                    progressChannel.trySend(BuildRunProgress(step = "正在执行 QEMU x86_64 Android 构建...", progress = 0.5f, logOutput = logs.toString(), currentDependency = dependencyObservation.current, dependencyItemsObserved = dependencyObservation.seenItems.size, dependenciesTotal = dependencyObservation.total, dependencyProgressPercent = dependencyObservation.percent))
                                 }
                             },
                         ))
@@ -397,6 +535,7 @@ class WorkspaceBuildRunner @Inject constructor(
                 val probeFlutter = linuxRuntime.execute(ShellCommand(
                     commandLine = BuildEnvironmentPreflight.command(project.linuxPath, ProjectType.FLUTTER),
                     timeoutMs = 15_000L,
+                    environment = workshopEnvironment,
                 ))
                 var useQemuBuild = false
                 if (!probeFlutter.isSuccess && qemuEnabled && shouldRetryWithQemu(probeFlutter)) {
@@ -405,6 +544,7 @@ class WorkspaceBuildRunner @Inject constructor(
                             commandLine = BuildEnvironmentPreflight.command(project.linuxPath, ProjectType.FLUTTER, qemu = true),
                             timeoutMs = 30_000L,
                             useQemuCompatibility = true,
+                            environment = workshopEnvironment,
                         ))
                     }.getOrNull()
                     if (qemuProbe?.isSuccess == true) {
@@ -433,23 +573,30 @@ class WorkspaceBuildRunner @Inject constructor(
                 log("[TaiXu Build] 执行 Flutter APK 构建...")
                 send(BuildRunProgress(step = "正在执行 Flutter 构建 (flutter build apk)...", progress = 0.3f, logOutput = logs.toString()))
 
-                val buildCmd = "/bin/sh /opt/taixu/scripts/taixu-build.sh flutter \"${project.linuxPath}\" apk --debug --target-platform android-arm64" +
+                heartbeatStep = "正在执行 Flutter 构建 (flutter build apk)..."
+                heartbeatProgress = 0.5f
+                val buildCmd = if (flutterScriptPath.endsWith("taixu-build.sh")) {
+                    "/bin/sh $flutterScriptPath flutter \"${project.linuxPath}\" apk --debug --target-platform android-arm64"
+                } else {
+                    "/bin/sh $flutterScriptPath \"${project.linuxPath}\" \"apk --debug --target-platform android-arm64\""
+                } +
                     if (useQemuBuild) " --qemu" else ""
                 var lastEmitTime = System.currentTimeMillis()
 
                 var outcome = linuxRuntime.execute(
                     ShellCommand(
                         commandLine = buildCmd,
+                        forcePty = true,
                         timeoutMs = 1800_000L,
                         useQemuCompatibility = useQemuBuild,
+                        environment = workshopEnvironment,
                         onOutput = { chunk ->
                             log(chunk.trimEnd())
+                            dependencyObservation = observeDependencyOutput(chunk, dependencyObservation)
                             val now = System.currentTimeMillis()
                             if (now - lastEmitTime > 100) {
                                 lastEmitTime = now
-                                progressChannel.trySend(
-                                    BuildRunProgress(step = "正在执行 Flutter 构建...", progress = 0.5f, logOutput = logs.toString())
-                                )
+                                progressChannel.trySend(BuildRunProgress(step = "正在执行 Flutter 构建...", progress = 0.5f, logOutput = logs.toString(), currentDependency = dependencyObservation.current, dependencyItemsObserved = dependencyObservation.seenItems.size, dependenciesTotal = dependencyObservation.total, dependencyProgressPercent = dependencyObservation.percent))
                             }
                         },
                     ),
@@ -460,15 +607,18 @@ class WorkspaceBuildRunner @Inject constructor(
                     send(BuildRunProgress(step = "正在切换 QEMU x86_64 Flutter 环境...", progress = 0.25f, logOutput = logs.toString()))
                     outcome = runCatching {
                         linuxRuntime.execute(ShellCommand(
-                            commandLine = "/bin/sh /opt/taixu/scripts/taixu-build.sh flutter \"${project.linuxPath}\" --qemu",
+                            commandLine = if (flutterScriptPath.endsWith("taixu-build.sh")) "/bin/sh $flutterScriptPath flutter \"${project.linuxPath}\" --qemu" else "/bin/sh $flutterScriptPath \"${project.linuxPath}\" --qemu",
+                            environment = workshopEnvironment,
+                            forcePty = true,
                             timeoutMs = 1800_000L,
                             useQemuCompatibility = true,
                             onOutput = { chunk ->
                                 log(chunk.trimEnd())
+                                dependencyObservation = observeDependencyOutput(chunk, dependencyObservation)
                                 val now = System.currentTimeMillis()
                                 if (now - lastEmitTime > 100) {
                                     lastEmitTime = now
-                                    progressChannel.trySend(BuildRunProgress(step = "正在执行 QEMU x86_64 Flutter 构建...", progress = 0.5f, logOutput = logs.toString()))
+                                    progressChannel.trySend(BuildRunProgress(step = "正在执行 QEMU x86_64 Flutter 构建...", progress = 0.5f, logOutput = logs.toString(), currentDependency = dependencyObservation.current, dependencyItemsObserved = dependencyObservation.seenItems.size, dependenciesTotal = dependencyObservation.total, dependencyProgressPercent = dependencyObservation.percent))
                                 }
                             },
                         ))

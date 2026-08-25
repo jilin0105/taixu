@@ -13,6 +13,8 @@
     <string name="taixu_onboarding_preparing">正在准备环境…</string>
     <string name="taixu_onboarding_initialize">一键初始化沙箱</string>
     <string name="taixu_onboarding_recheck">已装过环境？点此重试就绪（不重新下载）</string>
+    <string name="taixu_onboarding_import">从文件导入 Linux 发行版</string>
+    <string name="taixu_onboarding_import_hint">支持 ARM64 RootFS：.tar、.tar.gz、.tgz、.tar.xz、.tar.zst；需包含 Bash、/bin/sh 和 os-release。</string>
     <string name="taixu_onboarding_connect_model">连接 AI 大模型</string>
     <string name="taixu_onboarding_connect_model_description">配置你所喜爱的模型服务商与 API Key，开启智能结对编程。</string>
     <string name="taixu_onboarding_base_url">Base URL（接口地址）</string>

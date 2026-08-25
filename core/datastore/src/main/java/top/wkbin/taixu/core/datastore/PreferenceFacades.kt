@@ -40,6 +40,24 @@ class RuntimePreferences @Inject constructor(private val store: SettingsDataStor
     suspend fun setAdbPairedOnce(value: Boolean) = store.setAdbPairedOnce(value)
 }
 
+@Singleton
+class WorkshopPreferences @Inject constructor(private val store: SettingsDataStore) {
+    val androidSdkPath get() = store.workshopAndroidSdkPath
+    val ndkPath get() = store.workshopNdkPath
+    val flutterSdkPath get() = store.workshopFlutterSdkPath
+    val javaPath get() = store.workshopJavaPath
+    val androidScript get() = store.workshopAndroidScript
+    val flutterScript get() = store.workshopFlutterScript
+    suspend fun setAndroidSdkPath(value: String) = store.setWorkshopAndroidSdkPath(value)
+    suspend fun setNdkPath(value: String) = store.setWorkshopNdkPath(value)
+    suspend fun setFlutterSdkPath(value: String) = store.setWorkshopFlutterSdkPath(value)
+    suspend fun setJavaPath(value: String) = store.setWorkshopJavaPath(value)
+    suspend fun setAndroidScript(value: String) = store.setWorkshopAndroidScript(value)
+    suspend fun setFlutterScript(value: String) = store.setWorkshopFlutterScript(value)
+    suspend fun resetEnvironment() = store.resetWorkshopEnvironment()
+    suspend fun resetScripts() = store.resetWorkshopScripts()
+}
+
 /** Per-distro SSH settings exposed only to the runtime service and its settings UI. */
 @Singleton
 class SshPreferences @Inject constructor(private val store: SettingsDataStore) {

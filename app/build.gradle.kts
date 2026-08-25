@@ -191,6 +191,9 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
 
+val bundledProot = layout.projectDirectory.file(
+    "src/main/jniLibs/arm64-v8a/libproot.so",
+)
 val bundledProotLoader = layout.projectDirectory.file(
     "src/main/jniLibs/arm64-v8a/libproot-loader.so",
 )
@@ -199,6 +202,9 @@ tasks.configureEach {
     if (name == "preBuild") {
         dependsOn(rootProject.tasks.named("architectureCheck"))
         doFirst {
+            check(bundledProot.asFile.isFile && bundledProot.asFile.length() > 4096L) {
+                "Missing ARM64 PRoot tracer. Run tools/prepare-proot-runtime.ps1 before building."
+            }
             check(bundledProotLoader.asFile.isFile && bundledProotLoader.asFile.length() > 4096L) {
                 "Missing ARM64 PRoot loader. Run tools/prepare-proot-runtime.ps1 before building."
             }

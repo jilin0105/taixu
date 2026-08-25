@@ -214,6 +214,7 @@ fun WorkspaceScreen(
     onOpenExplorer: (String) -> Unit,
     onOpenTerminal: (String) -> Unit,
     onOpenToolCenter: () -> Unit = {},
+    onOpenWorkshopSettings: () -> Unit = {},
     viewModel: WorkspaceViewModel = hiltViewModel(),
 ) {
     val projects by viewModel.projects.collectAsStateWithLifecycle()
@@ -227,6 +228,7 @@ fun WorkspaceScreen(
     val context = LocalContext.current
     var showCreate by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
+    var actionsExpanded by remember { mutableStateOf(false) }
     var selectedTemplate by remember { mutableStateOf(top.wkbin.taixu.runtime.ProjectTemplate.ANDROID_COMPOSE) }
     var projectName by remember { mutableStateOf("") }
     var packageName by remember { mutableStateOf("") }
@@ -322,15 +324,15 @@ fun WorkspaceScreen(
                 title = stringResource(R.string.workspace_title),
                 statusText = stringResource(R.string.workspace_active_projects, projects.size),
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onOpenToolCenter, enabled = !busy) {
-                        RuntimeIcon(RuntimeIconName.Package, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                Box {
+                    IconButton(onClick = { actionsExpanded = true }, enabled = !busy) {
+                        RuntimeIcon(RuntimeIconName.More, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                     }
-                    IconButton(onClick = { showImport = true }, enabled = !busy) {
-                        RuntimeIcon(RuntimeIconName.FolderDownload, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-                    }
-                    IconButton(onClick = { showCreate = true }, enabled = !busy) {
-                        RuntimeIcon(RuntimeIconName.Plus, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                    DropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }) {
+                        DropdownMenuItem(text = { Text("创建") }, leadingIcon = { RuntimeIcon(RuntimeIconName.Plus, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; showCreate = true })
+                        DropdownMenuItem(text = { Text("导入") }, leadingIcon = { RuntimeIcon(RuntimeIconName.FolderDownload, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; showImport = true })
+                        DropdownMenuItem(text = { Text("插件") }, leadingIcon = { RuntimeIcon(RuntimeIconName.Package, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; onOpenToolCenter() })
+                        DropdownMenuItem(text = { Text("工坊设置") }, leadingIcon = { RuntimeIcon(RuntimeIconName.Settings, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; onOpenWorkshopSettings() })
                     }
                 }
             }
@@ -577,6 +579,54 @@ fun WorkspaceScreen(
                             progress = { progress.progress },
                             modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
                         )
+                    }
+                    if (progress.currentDependency != null || progress.dependencyItemsObserved > 0) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.workspace_dependency_activity),
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                    val countText = progress.dependenciesTotal?.let { total ->
+                                        stringResource(R.string.workspace_dependency_count_total, progress.dependencyItemsObserved, total)
+                                    } ?: stringResource(R.string.workspace_dependency_count, progress.dependencyItemsObserved)
+                                    Text(countText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                progress.currentDependency?.let { dependency ->
+                                    Text(
+                                        text = dependency,
+                                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                progress.dependencyProgressPercent?.let { percent ->
+                                    LinearProgressIndicator(
+                                        progress = { percent / 100f },
+                                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.workspace_dependency_percent, percent),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
                     }
                     progress.message?.let { msg ->
                         Text(

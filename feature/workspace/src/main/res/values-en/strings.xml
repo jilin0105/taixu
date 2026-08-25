@@ -54,6 +54,10 @@
     <string name="workspace_copy_log">Copy log</string>
     <string name="workspace_build_log_receiving">Receiving build log…</string>
     <string name="workspace_no_build_log">No build log available</string>
+    <string name="workspace_dependency_activity">Dependency resolution / download</string>
+    <string name="workspace_dependency_count">Observed %1$d items (total is determined by Gradle/Flutter)</string>
+    <string name="workspace_dependency_count_total">Completed %1$d / %2$d items</string>
+    <string name="workspace_dependency_percent">Download progress %1$d%%</string>
     <string name="workspace_log_dependencies">Resolve dependencies</string>
     <string name="workspace_log_compile">Compile source</string>
     <string name="workspace_log_package">Package &amp; install</string>
