@@ -1,0 +1,96 @@
+package top.wkbin.taixu.ui.workspace
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import top.wkbin.taixu.core.datastore.WorkshopKeystore
+import top.wkbin.taixu.runtime.build.WorkshopSigningManager
+
+data class WorkshopSigningCreationDraft(
+    val name: String = "",
+    val alias: String = "",
+    val storePassword: String = "",
+    val keyPassword: String = "",
+    val validityYears: Int = WorkshopKeystore.DEFAULT_VALIDITY_YEARS,
+    val organization: String = "",
+)
+
+data class WorkshopSigningImportDraft(
+    val uri: String = "",
+    val displayName: String = "",
+    val name: String = "",
+    val alias: String = "",
+    val storePassword: String = "",
+    val keyPassword: String = "",
+)
+
+@HiltViewModel
+class WorkshopSigningViewModel @Inject constructor(
+    private val signingManager: WorkshopSigningManager,
+) : ViewModel() {
+
+    val keystores: StateFlow<List<WorkshopKeystore>> = signingManager.keystores
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _busy = MutableStateFlow(false)
+    val busy: StateFlow<Boolean> = _busy.asStateFlow()
+
+    private val _message = MutableStateFlow<String?>(null)
+    val message: StateFlow<String?> = _message.asStateFlow()
+
+    fun clearMessage() {
+        _message.value = null
+    }
+
+    fun createKeystore(draft: WorkshopSigningCreationDraft, onDone: () -> Unit = {}) {
+        if (_busy.value) return
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            _busy.value = true
+            val result = signingManager.createKeystore(
+                name = draft.name,
+                alias = draft.alias,
+                storePassword = draft.storePassword,
+                keyPassword = draft.keyPassword,
+                validityYears = draft.validityYears,
+                organization = draft.organization,
+            )
+            _message.value = result.errorOrNull()?.message ?: "签名创建成功：${draft.name.trim()}"
+            _busy.value = false
+            if (result.isSuccess) onDone()
+        }
+    }
+
+    fun importKeystore(draft: WorkshopSigningImportDraft, onDone: () -> Unit = {}) {
+        if (_busy.value) return
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            _busy.value = true
+            val result = signingManager.importKeystore(
+                uri = draft.uri,
+                name = draft.name,
+                alias = draft.alias,
+                storePassword = draft.storePassword,
+                keyPassword = draft.keyPassword,
+            )
+            _message.value = result.errorOrNull()?.message ?: "签名导入成功：${draft.name.trim()}"
+            _busy.value = false
+            if (result.isSuccess) onDone()
+        }
+    }
+
+    fun deleteKeystore(keystore: WorkshopKeystore) {
+        if (_busy.value) return
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            _busy.value = true
+            val result = signingManager.deleteKeystore(keystore.id)
+            _message.value = result.errorOrNull()?.message ?: "已删除签名：${keystore.name}"
+            _busy.value = false
+        }
+    }
+}

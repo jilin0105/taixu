@@ -66,6 +66,13 @@ class BuildGuardAssetTest {
         assertTrue(ndkSetup.contains("androidExtension.ndkPath = taixuNdkPath"))
         assertTrue(managedNdkPolicy.contains("androidExtension.ndkPath = taixuNdkPath"))
         assertTrue(managedNdkPolicy.contains("/opt/taixu/toolchains/android/ndk"))
+        // ARM64-only 沙箱：AAR（如 androidx.graphics.path）自带 x86/x86_64
+        // 原生库，托管策略必须剥离 x86 ABI 并在无过滤时钉住 arm64-v8a，
+        // 否则 APK 会因 x86_abi_present 被产物校验拒绝。
+        assertTrue(managedNdkPolicy.contains("removeAll(['x86', 'x86_64', 'armeabi-v7a'])"))
+        assertTrue(managedNdkPolicy.contains("abiFilters.add('arm64-v8a')"))
+        val androidTemplate = File(assets, "templates/android-compose/app/build.gradle.kts").readText()
+        assertTrue(androidTemplate.contains("abiFilters += \"arm64-v8a\""))
         assertTrue(buildEntry.contains("cp \"${'$'}managed_ndk_policy\" /root/.gradle/init.d/taixu-android-ndk.gradle"))
         listOf(androidBuild, flutterBuild, buildEntry).forEach { script ->
             assertTrue(script.contains("od -An -t x1 -j 18 -N 2"))
@@ -125,6 +132,22 @@ class BuildGuardAssetTest {
     }
 
     @Test
+    fun flutterBuildSelfHealsMissingUnzipViaJdkJar() {
+        // Flutter 工具链解压引擎缓存依赖 unzip；精简 rootfs 没有，安装期的
+        // 临时 shim 又不在构建 PATH 上。构建脚本必须能在调起 flutter 前
+        // 自愈：用 JDK jar 造常驻 /opt/taixu/bin/unzip（PATH 首位）。
+        val flutterBuild = File(assets, "scripts/build_flutter.sh").readText()
+        assertTrue(flutterBuild.contains("if ! command -v unzip >/dev/null 2>&1"))
+        assertTrue(flutterBuild.contains("/opt/taixu/bin/unzip"))
+        assertTrue(flutterBuild.contains("Missing unzip tool"))
+        // 离线套件安装时也应持久化同一兼容层，新装沙箱从源头就有。
+        val installer = offlineAndroidInstaller.readText()
+        assertTrue(installer.contains("/opt/taixu/bin/unzip"))
+        // 构建脚本的 PATH 必须包含 /opt/taixu/bin，自愈 shim 才可见。
+        assertTrue(flutterBuild.contains("export PATH=\"/opt/taixu/bin:"))
+    }
+
+    @Test
     fun offlineAndroidInstallerDoesNotRequireOptionalFileOrXzCommands() {
         val installer = offlineAndroidInstaller.readText()
         val verifier = offlineAndroidVerifier.readText()
@@ -138,6 +161,41 @@ class BuildGuardAssetTest {
         assertFalse(installer.contains("tar -xJ"))
         assertTrue(installer.contains("android-ndk-r29-aarch64.tar.gz"))
         assertTrue(installer.contains("tar -xzf"))
+    }
+
+    @Test
+    fun javaLauncherGuardsRejectWrapperScriptExecLoopsBeforeJvmStart() {
+        // 取证结论：JDK bin/java 被换成 exec 包装脚本、TOOL_DIR bin/java 是
+        // 指回 JDK 的软链 —— 无限互相 exec，每轮过 PRoot ptrace，JVM 零输出、
+        // CPU 满载。所有入口必须在启动 JVM 之前用 ELF 魔数拒绝非 ELF 启动器。
+        val androidBuild = File(assets, "scripts/build_android.sh").readText()
+        val flutterBuild = File(assets, "scripts/build_flutter.sh").readText()
+        val buildEntry = File(assets, "scripts/taixu-build.sh").readText()
+
+        listOf(androidBuild, flutterBuild, buildEntry).forEach { script ->
+            assertTrue(script.contains("7f454c46"))
+        }
+        assertTrue(androidBuild.contains("疑似包装脚本/回环软链"))
+        assertTrue(flutterBuild.contains("疑似包装脚本/回环软链"))
+        assertTrue(buildEntry.contains("not_elf"))
+    }
+
+    @Test
+    fun offlineAndroidInstallerLocksToolchainAndAssertsJdkLauncherElf() {
+        val installer = offlineAndroidInstaller.readText()
+        val verifier = offlineAndroidVerifier.readText()
+
+        // 装配持独占锁、构建持共享锁：杜绝“边构建边改写工具链”。
+        assertTrue(installer.contains("flock -x -w 300 9"))
+        assertTrue(installer.contains("/opt/taixu/locks/android-toolchain.lock"))
+        // JDK 启动器静态断言 + 命令链接链路终验。
+        assertTrue(installer.contains("is_aarch64_elf \"${'$'}JDK_HOME/bin/java\""))
+        assertTrue(installer.contains("readlink -f \"${'$'}chain_entry\""))
+        assertTrue(installer.contains("does not resolve to the JDK launcher"))
+        // 验证脚本先做 ELF 静态断言再执行 -version，避免挂在无限 exec 上。
+        assertTrue(verifier.contains("require_aarch64 /opt/taixu/bin/java"))
+        assertTrue(verifier.indexOf("require_aarch64 /opt/taixu/bin/java") <
+            verifier.indexOf("require_command /opt/taixu/bin/java -version"))
     }
 
     @Test

@@ -204,7 +204,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settingsDataStore.setAutoCheckUpdates(enabled) }
     }
 
-    fun checkForUpdates(currentVersion: String = "0.3.0") {
+    fun checkForUpdates(currentVersion: String) {
         viewModelScope.launch {
             _updateCheckState.value = top.wkbin.taixu.core.model.UpdateCheckState.Checking
             val res = appUpdateManager.checkUpdate(currentVersion)

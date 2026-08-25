@@ -16,6 +16,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -28,6 +29,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -39,6 +44,22 @@ import kotlinx.serialization.json.put
 import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.core.database.AgentSkillRepository
 import top.wkbin.taixu.core.model.AgentSkill
+
+/**
+ * 一条排队等待执行的用户消息。运行中发送的消息进入 FIFO 队列，
+ * 保留文本与图片，避免 Busy 状态下图片消息丢失。
+ */
+data class PendingMessage(
+    val text: String,
+    val imageUrls: List<String> = emptyList(),
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+/** Agent 单次运行的结构化结果，外层据此设置会话状态，避免内部失败被误标为 COMPLETED。 */
+private sealed interface RunResult {
+    data object Completed : RunResult
+    data class Failed(val message: String) : RunResult
+}
 
 /**
  * Harness 多智能体会话并发引擎：
@@ -69,6 +90,9 @@ class HarnessLoop @Inject constructor(
     val currentSessionId: StateFlow<String> = _currentSessionId.asStateFlow()
 
     private val sessionJobs = ConcurrentHashMap<String, Job>()
+    private val sessionMutexes = ConcurrentHashMap<String, Mutex>()
+    /** Sessions being deleted; reject new runs and skip pending drainage. */
+    private val tombstonedSessions = ConcurrentHashMap.newKeySet<String>()
 
     private val _sessionRunStates = MutableStateFlow<Map<String, SessionRunState>>(emptyMap())
     /** 全局所有会话的运行状态映射（供会话抽屉、状态点等观察） */
@@ -79,7 +103,7 @@ class HarnessLoop @Inject constructor(
     val sessionStatuses: StateFlow<Map<String, String>> = _sessionStatuses.asStateFlow()
 
     private val _sessionLiveMessages = ConcurrentHashMap<String, MutableStateFlow<List<HarnessMessage>>>()
-    private val _sessionPendingMessages = ConcurrentHashMap<String, MutableStateFlow<List<String>>>()
+    private val _sessionPendingMessages = ConcurrentHashMap<String, MutableStateFlow<List<PendingMessage>>>()
     private val _sessionThinkingLives = ConcurrentHashMap<String, MutableStateFlow<Boolean>>()
     private val _sessionErrors = ConcurrentHashMap<String, MutableStateFlow<String?>>()
     private val sessionThinkingModes = ConcurrentHashMap<String, Boolean>()
@@ -110,20 +134,32 @@ class HarnessLoop @Inject constructor(
     /** 推理模型思考中（reasoning 正在流式上屏）。开始思考置 true，本回合结束时置 false。 */
     val thinkingLive: StateFlow<Boolean> = _thinkingLive.asStateFlow()
 
-    private val _pendingMessages = MutableStateFlow<List<String>>(emptyList())
+    private val _pendingMessages = MutableStateFlow<List<PendingMessage>>(emptyList())
     /**
      * 运行中排队等待发送的用户消息。当前任务结束后自动按序接续执行；
      * 用户点"停止"时清空。UI 可观察此列表展示排队状态。
      */
-    val pendingMessages: StateFlow<List<String>> = _pendingMessages.asStateFlow()
+    val pendingMessages: StateFlow<List<PendingMessage>> = _pendingMessages.asStateFlow()
 
     private fun getOrCreateLiveMessages(sessId: String): MutableStateFlow<List<HarnessMessage>> {
         return _sessionLiveMessages.getOrPut(sessId) {
             val flow = MutableStateFlow<List<HarnessMessage>>(emptyList())
             loopScope.launch(Dispatchers.IO) {
                 val history = readHistory(sessId)
-                // Do not overwrite messages appended while the asynchronous read was running.
-                if (flow.value.isEmpty()) flow.value = history
+                // Merge history with messages appended while the asynchronous read was running,
+                // instead of discarding the whole history when the flow is no longer empty.
+                flow.update { current ->
+                    if (current.isEmpty()) {
+                        history
+                    } else {
+                        val historyIds = history.mapTo(mutableSetOf()) { it.id }
+                        (history + current.filter { it.id !in historyIds })
+                            .sortedBy { it.createdAt }
+                    }
+                }
+                if (sessId == _currentSessionId.value) {
+                    _messages.value = flow.value
+                }
             }
             flow
         }
@@ -132,7 +168,7 @@ class HarnessLoop @Inject constructor(
     private suspend fun readHistory(sessId: String): List<HarnessMessage> =
         withContext(Dispatchers.IO) { messageStore.load(sessId) }
 
-    private fun getOrCreatePendingFlow(sessId: String): MutableStateFlow<List<String>> {
+    private fun getOrCreatePendingFlow(sessId: String): MutableStateFlow<List<PendingMessage>> {
         return _sessionPendingMessages.getOrPut(sessId) { MutableStateFlow(emptyList()) }
     }
 
@@ -145,12 +181,9 @@ class HarnessLoop @Inject constructor(
     }
 
     private fun setStatus(sessId: String, statusText: String?) {
-        val updated = if (statusText.isNullOrBlank()) {
-            _sessionStatuses.value - sessId
-        } else {
-            _sessionStatuses.value + (sessId to statusText)
+        _sessionStatuses.update { map ->
+            if (statusText.isNullOrBlank()) map - sessId else map + (sessId to statusText)
         }
-        _sessionStatuses.value = updated
         if (sessId == _currentSessionId.value) {
             _status.value = statusText
         }
@@ -164,7 +197,7 @@ class HarnessLoop @Inject constructor(
     }
 
     private fun setSessionState(sessId: String, state: SessionRunState) {
-        _sessionRunStates.value = _sessionRunStates.value + (sessId to state)
+        _sessionRunStates.update { it + (sessId to state) }
         if (sessId == _currentSessionId.value) {
             _running.value = (state == SessionRunState.RUNNING)
         }
@@ -177,6 +210,7 @@ class HarnessLoop @Inject constructor(
     /** 新建会话。workspace 为关联的工作区 Linux 路径（如 /workspace/proj），空串表示不关联。 */
     suspend fun newSession(title: String, workspace: String = "", projectType: String = ""): String {
         val id = UUID.randomUUID().toString()
+        tombstonedSessions.remove(id)
         _currentSessionId.value = id
         _workspace.value = workspace
         _projectType.value = projectType
@@ -244,18 +278,23 @@ class HarnessLoop @Inject constructor(
     }
 
     suspend fun deleteSession(id: String) {
-        sessionJobs[id]?.cancel()
-        sessionJobs.remove(id)
+        // Mark tombstoned first so finishRun on the dying job cannot drain pending
+        // messages and start a fresh run after we have already begun cleanup.
+        tombstonedSessions.add(id)
+        _sessionPendingMessages[id]?.value = emptyList()
+        sessionJobs[id]?.cancelAndJoin()
         _sessionLiveMessages.remove(id)
         _sessionPendingMessages.remove(id)
         _sessionThinkingLives.remove(id)
         _sessionErrors.remove(id)
-        _sessionRunStates.value = _sessionRunStates.value - id
-        _sessionStatuses.value = _sessionStatuses.value - id
+        sessionMutexes.remove(id)
+        _sessionRunStates.update { it - id }
+        _sessionStatuses.update { it - id }
 
         sessionDao.deleteMessages(id)
         approvalRepository.deleteForSession(id)
         sessionDao.deleteSession(id)
+        tombstonedSessions.remove(id)
         if (_currentSessionId.value == id) {
             val remaining = sessionDao.observeAll().first()
             val nextSession = remaining.firstOrNull { it.id != id }
@@ -273,40 +312,9 @@ class HarnessLoop @Inject constructor(
         if (trimmed.isEmpty() && imageUrls.isEmpty()) return
         if (sessId.isBlank()) return
 
-        val pendingFlow = getOrCreatePendingFlow(sessId)
-        if (isSessionBusy(sessId)) {
-            pendingFlow.value = pendingFlow.value + trimmed
-            if (sessId == _currentSessionId.value) {
-                _pendingMessages.value = pendingFlow.value
-            }
-            return
-        }
-
-        val job = loopScope.launch {
-            setSessionState(sessId, SessionRunState.RUNNING)
-            setError(sessId, null)
-            try {
-                runLoop(sessId, trimmed, imageUrls)
-                setSessionState(sessId, SessionRunState.COMPLETED)
-            } catch (cancellation: CancellationException) {
-                withContext(NonCancellable) {
-                    repairDanglingToolCalls(sessId, interrupted = true)
-                }
-                logger.i("Harness loop cancelled for session $sessId")
-                setSessionState(sessId, SessionRunState.IDLE)
-            } catch (_: ApprovalPauseException) {
-                setSessionState(sessId, SessionRunState.WAITING_APPROVAL)
-            } catch (throwable: Throwable) {
-                logger.e("Harness loop failed for session $sessId", throwable)
-                setError(sessId, throwable.message ?: "执行失败")
-                setSessionState(sessId, SessionRunState.FAILED)
-            } finally {
-                finishRun(sessId)
-            }
-        }
-        sessionJobs[sessId] = job
-        if (sessId == _currentSessionId.value) {
-            _running.value = true
+        val pending = PendingMessage(text = trimmed, imageUrls = imageUrls)
+        startSessionRun(sessId, enqueueOnBusy = pending) {
+            runLoop(sessId, pending.text, pending.imageUrls)
         }
         startForegroundServiceSafe()
     }
@@ -316,44 +324,21 @@ class HarnessLoop @Inject constructor(
      */
     fun regenerateLast(targetSessionId: String? = null) {
         val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
-        if (isSessionBusy(sessId) || sessId.isBlank()) return
-        val current = getOrCreateLiveMessages(sessId).value
-        val lastUserIndex = current.indexOfLast { it is UserMessage }
-        if (lastUserIndex < 0) return
-        val lastUserMessage = current[lastUserIndex] as UserMessage
+        if (sessId.isBlank()) return
 
-        val job = loopScope.launch {
-            setSessionState(sessId, SessionRunState.RUNNING)
-            setError(sessId, null)
-            try {
-                val toKeep = current.subList(0, lastUserIndex + 1)
-                val liveFlow = getOrCreateLiveMessages(sessId)
-                liveFlow.value = toKeep
-                if (sessId == _currentSessionId.value) {
-                    _messages.value = toKeep
-                }
-                messageStore.deleteFromTimestamp(sessId, lastUserMessage.createdAt + 1)
-                runLoopInternal(sessId, startedAt = now())
-                setSessionState(sessId, SessionRunState.COMPLETED)
-            } catch (cancellation: CancellationException) {
-                withContext(NonCancellable) {
-                    repairDanglingToolCalls(sessId, interrupted = true)
-                }
-                logger.i("Harness loop cancelled for session $sessId")
-                setSessionState(sessId, SessionRunState.IDLE)
-            } catch (_: ApprovalPauseException) {
-                setSessionState(sessId, SessionRunState.WAITING_APPROVAL)
-            } catch (throwable: Throwable) {
-                logger.e("Harness loop failed for session $sessId", throwable)
-                setError(sessId, throwable.message ?: "执行失败")
-                setSessionState(sessId, SessionRunState.FAILED)
-            } finally {
-                finishRun(sessId)
+        startSessionRun(sessId) {
+            val current = getOrCreateLiveMessages(sessId).value
+            val lastUserIndex = current.indexOfLast { it is UserMessage }
+            if (lastUserIndex < 0) return@startSessionRun RunResult.Completed
+            val lastUserMessage = current[lastUserIndex] as UserMessage
+            val toKeep = current.subList(0, lastUserIndex + 1)
+            val liveFlow = getOrCreateLiveMessages(sessId)
+            liveFlow.value = toKeep
+            if (sessId == _currentSessionId.value) {
+                _messages.value = toKeep
             }
-        }
-        sessionJobs[sessId] = job
-        if (sessId == _currentSessionId.value) {
-            _running.value = true
+            messageStore.deleteFromTimestamp(sessId, lastUserMessage.createdAt + 1)
+            runLoopInternal(sessId, startedAt = now())
         }
         startForegroundServiceSafe()
     }
@@ -364,47 +349,23 @@ class HarnessLoop @Inject constructor(
     fun truncateAndResend(userMessageId: String, newText: String, targetSessionId: String? = null) {
         val trimmed = newText.trim()
         val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
-        if (trimmed.isEmpty() || isSessionBusy(sessId) || sessId.isBlank()) return
-        val current = getOrCreateLiveMessages(sessId).value
-        val targetIndex = current.indexOfFirst { it.id == userMessageId }
-        if (targetIndex < 0) {
-            send(trimmed, sessId)
-            return
-        }
-        val targetMessage = current[targetIndex]
+        if (trimmed.isEmpty() || sessId.isBlank()) return
 
-        val job = loopScope.launch {
-            setSessionState(sessId, SessionRunState.RUNNING)
-            setError(sessId, null)
-            try {
-                val toKeep = current.subList(0, targetIndex)
-                val liveFlow = getOrCreateLiveMessages(sessId)
-                liveFlow.value = toKeep
-                if (sessId == _currentSessionId.value) {
-                    _messages.value = toKeep
-                }
-                messageStore.deleteFromTimestamp(sessId, targetMessage.createdAt)
-                runLoop(sessId, trimmed)
-                setSessionState(sessId, SessionRunState.COMPLETED)
-            } catch (cancellation: CancellationException) {
-                withContext(NonCancellable) {
-                    repairDanglingToolCalls(sessId, interrupted = true)
-                }
-                logger.i("Harness loop cancelled for session $sessId")
-                setSessionState(sessId, SessionRunState.IDLE)
-            } catch (_: ApprovalPauseException) {
-                setSessionState(sessId, SessionRunState.WAITING_APPROVAL)
-            } catch (throwable: Throwable) {
-                logger.e("Harness loop failed for session $sessId", throwable)
-                setError(sessId, throwable.message ?: "执行失败")
-                setSessionState(sessId, SessionRunState.FAILED)
-            } finally {
-                finishRun(sessId)
+        startSessionRun(sessId) {
+            val current = getOrCreateLiveMessages(sessId).value
+            val targetIndex = current.indexOfFirst { it.id == userMessageId }
+            if (targetIndex < 0) {
+                return@startSessionRun runLoop(sessId, trimmed)
             }
-        }
-        sessionJobs[sessId] = job
-        if (sessId == _currentSessionId.value) {
-            _running.value = true
+            val targetMessage = current[targetIndex]
+            val toKeep = current.subList(0, targetIndex)
+            val liveFlow = getOrCreateLiveMessages(sessId)
+            liveFlow.value = toKeep
+            if (sessId == _currentSessionId.value) {
+                _messages.value = toKeep
+            }
+            messageStore.deleteFromTimestamp(sessId, targetMessage.createdAt)
+            runLoop(sessId, trimmed)
         }
         startForegroundServiceSafe()
     }
@@ -462,8 +423,10 @@ class HarnessLoop @Inject constructor(
         val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
         _sessionPendingMessages[sessId]?.value = emptyList()
         setStatus(sessId, "正在停止…")
+        // Do NOT remove the job from the map here: cancellation is asynchronous, and
+        // removing by key would let a dying job's finally later delete a *new* job.
+        // finishRun removes only its own job via sessionJobs.remove(sessId, selfJob).
         sessionJobs[sessId]?.cancel()
-        sessionJobs.remove(sessId)
         setSessionState(sessId, SessionRunState.IDLE)
         if (sessId == _currentSessionId.value) {
             _pendingMessages.value = emptyList()
@@ -476,12 +439,11 @@ class HarnessLoop @Inject constructor(
     fun removePendingMessage(index: Int, targetSessionId: String? = null) {
         val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
         val pendingFlow = getOrCreatePendingFlow(sessId)
-        val current = pendingFlow.value
-        if (index in current.indices) {
-            pendingFlow.value = current.filterIndexed { i, _ -> i != index }
-            if (sessId == _currentSessionId.value) {
-                _pendingMessages.value = pendingFlow.value
-            }
+        pendingFlow.update { current ->
+            if (index in current.indices) current.filterIndexed { i, _ -> i != index } else current
+        }
+        if (sessId == _currentSessionId.value) {
+            _pendingMessages.value = pendingFlow.value
         }
     }
 
@@ -494,8 +456,17 @@ class HarnessLoop @Inject constructor(
         }
     }
 
-    private fun finishRun(sessId: String) {
-        sessionJobs.remove(sessId)
+    private fun enqueuePending(sessId: String, pending: PendingMessage) {
+        val flow = getOrCreatePendingFlow(sessId)
+        flow.update { it + pending }
+        if (sessId == _currentSessionId.value) {
+            _pendingMessages.value = flow.value
+        }
+    }
+
+    private fun finishRun(sessId: String, job: Job) {
+        // Only remove ourselves; never clobber a newer job that started after cancel().
+        sessionJobs.remove(sessId, job)
         _sessionThinkingLives[sessId]?.value = false
         val waitingApproval = _sessionRunStates.value[sessId] == SessionRunState.WAITING_APPROVAL
         if (!waitingApproval) setStatus(sessId, null)
@@ -505,15 +476,14 @@ class HarnessLoop @Inject constructor(
             _thinkingLive.value = false
         }
         if (waitingApproval) return
+        if (tombstonedSessions.contains(sessId)) return
         val pendingFlow = _sessionPendingMessages[sessId]
-        val next = pendingFlow?.value?.firstOrNull()
-        if (next != null) {
-            pendingFlow.value = pendingFlow.value.drop(1)
-            if (sessId == _currentSessionId.value) {
-                _pendingMessages.value = pendingFlow.value
-            }
-            send(next, sessId)
+        val next = pendingFlow?.value?.firstOrNull() ?: return
+        pendingFlow.update { it.drop(1) }
+        if (sessId == _currentSessionId.value) {
+            _pendingMessages.value = pendingFlow.value
         }
+        send(next.text, sessId, next.imageUrls)
     }
 
     fun clearError(targetSessionId: String? = null) {
@@ -521,13 +491,90 @@ class HarnessLoop @Inject constructor(
         setError(sessId, null)
     }
 
-    private suspend fun runLoop(sessId: String, userText: String, imageUrls: List<String> = emptyList()) {
-        logAgentEvent(sessId, "UserPrompt", userText)
-        append(sessId, UserMessage(id = newId(), createdAt = now(), text = userText, imageUrls = imageUrls))
-        runLoopInternal(sessId, startedAt = now())
+    /**
+     * Atomically check-and-occupy the session slot under a per-session Mutex,
+     * then run [block] as the single active run. If the session is busy the
+     * optional [enqueueOnBusy] message is queued for ordered execution.
+     */
+    private fun startSessionRun(
+        sessId: String,
+        enqueueOnBusy: PendingMessage? = null,
+        block: suspend () -> RunResult,
+    ) {
+        if (tombstonedSessions.contains(sessId)) return
+        loopScope.launch {
+            val mutex = sessionMutexes.getOrPut(sessId) { Mutex() }
+            mutex.withLock {
+                if (tombstonedSessions.contains(sessId)) return@withLock
+                if (isSessionBusy(sessId)) {
+                    if (enqueueOnBusy != null) enqueuePending(sessId, enqueueOnBusy)
+                    return@withLock
+                }
+                val job = launch(start = CoroutineStart.LAZY) {
+                    executeSessionRun(sessId, block)
+                }
+                sessionJobs[sessId] = job
+                job.start()
+            }
+        }
     }
 
-    private suspend fun runLoopInternal(sessId: String, startedAt: Long) {
+    /**
+     * Claim the session slot unconditionally. Used by approval resumption, which
+     * already holds an exclusive claim via claimPending() and is the legitimate
+     * successor to a WAITING_APPROVAL run (which still reports busy).
+     */
+    private fun startClaimedSessionRun(sessId: String, block: suspend () -> RunResult) {
+        if (tombstonedSessions.contains(sessId)) return
+        loopScope.launch {
+            val mutex = sessionMutexes.getOrPut(sessId) { Mutex() }
+            mutex.withLock {
+                if (tombstonedSessions.contains(sessId)) return@withLock
+                val job = launch(start = CoroutineStart.LAZY) {
+                    executeSessionRun(sessId, block)
+                }
+                sessionJobs[sessId] = job
+                job.start()
+            }
+        }
+    }
+
+    private suspend fun executeSessionRun(sessId: String, block: suspend () -> RunResult) {
+        val selfJob = currentCoroutineContext()[Job]!!
+        setSessionState(sessId, SessionRunState.RUNNING)
+        setError(sessId, null)
+        try {
+            when (val result = block()) {
+                RunResult.Completed -> setSessionState(sessId, SessionRunState.COMPLETED)
+                is RunResult.Failed -> {
+                    setError(sessId, result.message)
+                    setSessionState(sessId, SessionRunState.FAILED)
+                }
+            }
+        } catch (cancellation: CancellationException) {
+            withContext(NonCancellable) {
+                repairDanglingToolCalls(sessId, interrupted = true)
+            }
+            logger.i("Harness loop cancelled for session $sessId")
+            setSessionState(sessId, SessionRunState.IDLE)
+        } catch (_: ApprovalPauseException) {
+            setSessionState(sessId, SessionRunState.WAITING_APPROVAL)
+        } catch (throwable: Throwable) {
+            logger.e("Harness loop failed for session $sessId", throwable)
+            setError(sessId, throwable.message ?: "执行失败")
+            setSessionState(sessId, SessionRunState.FAILED)
+        } finally {
+            finishRun(sessId, selfJob)
+        }
+    }
+
+    private suspend fun runLoop(sessId: String, userText: String, imageUrls: List<String> = emptyList()): RunResult {
+        logAgentEvent(sessId, "UserPrompt", userText)
+        append(sessId, UserMessage(id = newId(), createdAt = now(), text = userText, imageUrls = imageUrls))
+        return runLoopInternal(sessId, startedAt = now())
+    }
+
+    private suspend fun runLoopInternal(sessId: String, startedAt: Long): RunResult {
         repairDanglingToolCalls(sessId, interrupted = false)
         val maxRounds = runCatching { settingsDataStore.maxToolRounds.first() }.getOrDefault(MAX_ROUNDS)
         val autoCwd = runCatching { settingsDataStore.autoWorkspaceCwd.first() }.getOrDefault(true)
@@ -549,7 +596,7 @@ class HarnessLoop @Inject constructor(
             } catch (throwable: Throwable) {
                 logAgentEvent(sessId, "ModelResolveError", "无法获取模型配置", throwable)
                 appendFatal(sessId, "无法获取模型配置：${friendly(throwable)}", now() - startedAt)
-                return
+                return RunResult.Failed("无法获取模型配置：${friendly(throwable)}")
             }
             logAgentEvent(sessId, "ModelRequest", "Round=$round, Model=${model.name}, Provider=${model.provider}")
             val msgs = getOrCreateLiveMessages(sessId).value
@@ -624,7 +671,7 @@ class HarnessLoop @Inject constructor(
                             "模型服务商额度已耗尽，无法继续执行。请充值、切换可用模型或更新 API Key。\n\n${rateLimit.message}",
                             now() - startedAt,
                         )
-                        return
+                        return RunResult.Failed("模型服务商额度已耗尽，无法继续执行。")
                     }
                     netRetry++
                     if (netRetry > MAX_STREAM_RETRIES) throw rateLimit
@@ -673,7 +720,7 @@ class HarnessLoop @Inject constructor(
                     } else {
                         appendFatal(sessId, "执行遇到问题，已中断：${friendly(throwable)}", now() - startedAt)
                     }
-                    return
+                    return RunResult.Failed(friendly(throwable))
                 }
             }
             val result = streamed
@@ -703,7 +750,7 @@ class HarnessLoop @Inject constructor(
                 _thinkingLive.value = false
             }
             val allCalls = result.toolCalls + jsonCalls
-            if (allCalls.isEmpty()) return
+            if (allCalls.isEmpty()) return RunResult.Completed
             // 单轮工具数上限：超出部分回填空结果并提示模型，避免一次性爆发失控。
             val effectiveCalls = if (allCalls.size > maxToolsPerRound) {
                 val dropped = allCalls.size - maxToolsPerRound
@@ -711,7 +758,7 @@ class HarnessLoop @Inject constructor(
                     append(
                         sessId,
                         ToolCall(
-                            id = newId(),
+                            id = spec.id,
                             createdAt = now(),
                             tool = HarnessApiMapper.toolByName(spec.name),
                             args = buildJsonObject {},
@@ -852,7 +899,7 @@ class HarnessLoop @Inject constructor(
                             totalMs = now() - startedAt,
                         ),
                     )
-                    return
+                    return RunResult.Failed("连续 $consecutiveFailures 轮工具调用均失败，已主动停止")
                 }
             } else {
                 consecutiveFailures = 0
@@ -868,6 +915,7 @@ class HarnessLoop @Inject constructor(
                 totalMs = now() - startedAt,
             ),
         )
+        return RunResult.Completed
     }
 
     /** JSON 文本模式专用调用标记：模型在回复中输出 [[tool_call]]{JSON}[[/tool_call]]。 */
@@ -929,9 +977,9 @@ class HarnessLoop @Inject constructor(
         if (sessId == _currentSessionId.value) {
             _pendingMessages.value = emptyList()
         }
-        queued.forEach { text ->
-            logAgentEvent(sessId, "SteeringMessage", text)
-            append(sessId, UserMessage(id = newId(), createdAt = now(), text = text))
+        queued.forEach { pending ->
+            logAgentEvent(sessId, "SteeringMessage", pending.text)
+            append(sessId, UserMessage(id = newId(), createdAt = now(), text = pending.text, imageUrls = pending.imageUrls))
         }
     }
 
@@ -1212,7 +1260,6 @@ class HarnessLoop @Inject constructor(
 
     private suspend fun apiMessages(sessId: String, model: ModelConfig): List<ApiMessage> {
         val compactionEnabled = runCatching { settingsDataStore.contextCompactionEnabled.first() }.getOrDefault(true)
-        val threshold = runCatching { settingsDataStore.contextCompactionThreshold.first() }.getOrDefault(15)
         val budgetTokens = model.contextTokens
             ?: runCatching { settingsDataStore.contextBudgetTokens.first() }.getOrDefault(128_000)
         val sessionEntity = sessionDao.findById(sessId)
@@ -1234,9 +1281,12 @@ class HarnessLoop @Inject constructor(
                 add(ApiMessage(role = "system", content = systemPrompt))
             }
             val answeredIds = msgs.filterIsInstance<ToolResult>().mapTo(mutableSetOf()) { it.toolCallId }
+            val toolCallDetails = msgs.filterIsInstance<ToolCall>().associate {
+                it.id to ((it.rawToolName ?: HarnessApiMapper.apiName(it.tool)) to it.args)
+            }
 
-            val userIndices = msgs.indices.filter { msgs[it] is UserMessage }
             // 预算驱动的滑动窗口：从最近一轮往回累加 token，超出预算则更早的历史进入压缩态。
+            // 是否裁剪原文只由真实 token 预算决定，不再按用户轮次阈值强制折叠。
             val keepFromIndex = if (compactionEnabled) {
                 ContextWindowPolicy.computeKeepFromIndex(
                     msgs,
@@ -1246,14 +1296,8 @@ class HarnessLoop @Inject constructor(
             } else {
                 0
             }
-            // 兼容旧阈值逻辑：用户轮次未超阈值时不压缩；超阈值时至少保留最近 4 轮无损。
-            val legacyCutoff = if (userIndices.size > threshold && userIndices.size > 4) {
-                userIndices[userIndices.size - 4]
-            } else {
-                0
-            }
-            val shouldCompact = keepFromIndex > 0 || legacyCutoff > 0
-            val recentTurnCutoffIndex = maxOf(keepFromIndex, legacyCutoff)
+            val shouldCompact = keepFromIndex > 0
+            val recentTurnCutoffIndex = keepFromIndex
 
             // JSON 文本模式：工具调用以文本表达，tool 消息需转成 user 文本（API 不认识 tool 角色）
             val toolNames = mutableMapOf<String, String>()
@@ -1261,7 +1305,7 @@ class HarnessLoop @Inject constructor(
             var i = 0
             fun apiToolCall(tc: ToolCall) = ApiToolCall(
                 id = tc.id,
-                function = ApiFunctionCall(name = tc.tool.apiName(), arguments = tc.args.toString()),
+                function = ApiFunctionCall(name = HarnessApiMapper.apiName(tc.tool), arguments = tc.args.toString()),
             )
             val isCollapsed = { index: Int -> shouldCompact && index < recentTurnCutoffIndex }
             while (i < msgs.size) {
@@ -1273,14 +1317,15 @@ class HarnessLoop @Inject constructor(
                 if (toolCallMode == ToolCallMode.JSON_TEXT) {
                     when (message) {
                         is ToolCall -> {
-                            toolNames[message.id] = message.rawToolName ?: message.tool.apiName()
+                            toolNames[message.id] = message.rawToolName ?: HarnessApiMapper.apiName(message.tool)
                             i++
                         }
                         is ToolResult -> {
                             val name = toolNames[message.toolCallId] ?: "工具"
                             val status = if (message.success) "成功" else "失败"
-                            val content = if (isCollapsed(i) && message.output.length > 240) {
-                                ContextWindowPolicy.compactToolOutput(message.output, message.success)
+                            val args = toolCallDetails[message.toolCallId]?.second
+                            val content = if (isCollapsed(i) && message.output.length > ContextWindowPolicy.compactThresholdFor(name)) {
+                                ContextWindowPolicy.compactToolOutput(name, args, message.output, message.success)
                             } else {
                                 "【工具 $name 执行结果·$status】\n${message.output}"
                             }
@@ -1288,7 +1333,23 @@ class HarnessLoop @Inject constructor(
                             i++
                         }
                         else -> {
-                            val mapped = HarnessApiMapper.toApiMessage(message)
+                            val mapped = when {
+                                isCollapsed(i) && message is AssistantText && message.text.length > 120 ->
+                                    ApiMessage(
+                                        role = "assistant",
+                                        content = ContextWindowPolicy.foldMessageText("助手", message.text),
+                                        reasoning_content = null,
+                                    )
+                                isCollapsed(i) && message is UserMessage && message.text.length > 120 ->
+                                    ApiMessage(
+                                        role = "user",
+                                        content = ContextWindowPolicy.foldMessageText("用户", message.text),
+                                        imageUrls = message.imageUrls,
+                                    )
+                                isCollapsed(i) && message is AssistantText ->
+                                    HarnessApiMapper.toApiMessage(message).copy(reasoning_content = null)
+                                else -> HarnessApiMapper.toApiMessage(message)
+                            }
                             add(if (message is UserMessage && !model.visionEnabled) mapped.copy(imageUrls = emptyList()) else mapped)
                             i++
                         }
@@ -1306,7 +1367,8 @@ class HarnessLoop @Inject constructor(
                     } else {
                         (message as? AssistantText)?.text
                     }
-                    val reasoning = when (message) {
+                    // collapsed 历史不携带 reasoning：它是执行过程数据，不应成为长期上下文负担。
+                    val reasoning = if (isCollapsed(i)) null else when (message) {
                         is AssistantText -> message.reasoning
                         is ToolCall -> message.reasoning
                     }
@@ -1322,14 +1384,20 @@ class HarnessLoop @Inject constructor(
                         ApiMessage(
                             role = "assistant",
                             content = text,
-                            reasoning_content = reasoning ?: if (thinkingMode) "" else null,
+                            reasoning_content = when {
+                                isCollapsed(i) -> null
+                                reasoning != null -> reasoning
+                                thinkingMode -> ""
+                                else -> null
+                            },
                             tool_calls = toolCalls.takeIf { it.isNotEmpty() },
                         ),
                     )
                     i = j
                 } else if (message is ToolResult) {
-                    val content = if (isCollapsed(i) && message.output.length > 240) {
-                        ContextWindowPolicy.compactToolOutput(message.output, message.success)
+                    val detail = toolCallDetails[message.toolCallId]
+                    val content = if (isCollapsed(i) && message.output.length > ContextWindowPolicy.compactThresholdFor(detail?.first)) {
+                        ContextWindowPolicy.compactToolOutput(detail?.first, detail?.second, message.output, message.success)
                     } else {
                         message.output
                     }
@@ -1439,20 +1507,6 @@ class HarnessLoop @Inject constructor(
         }
     }
 
-    private fun HarnessTool.apiName(): String = when (this) {
-        HarnessTool.READ -> "read"
-        HarnessTool.WRITE -> "write"
-        HarnessTool.EDIT -> "edit"
-        HarnessTool.BASE -> "base"
-        HarnessTool.PROCESS -> "process"
-        HarnessTool.DOWNLOAD -> "download"
-        HarnessTool.MEMORY -> "memory"
-        HarnessTool.PLAN -> "plan"
-        HarnessTool.SCRATCHPAD -> "scratchpad"
-        HarnessTool.SUBAGENT -> "invoke_subagent"
-        HarnessTool.MCP -> "mcp"
-    }
-
     private fun newId(): String = UUID.randomUUID().toString()
     private fun now(): Long = System.currentTimeMillis()
 
@@ -1463,8 +1517,7 @@ class HarnessLoop @Inject constructor(
             val sessId = request.sessionId
             if (request.status != top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_PENDING) return@launch
             // The original loop may still be unwinding after it persisted the request.
-            // Wait for it before claiming the session slot, otherwise its finally block can
-            // remove this resume job from sessionJobs.
+            // Wait for it before claiming the session slot.
             sessionJobs[sessId]?.takeIf { it.isActive }?.join()
             val claimedStatus = if (approved) {
                 top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_APPROVED
@@ -1472,72 +1525,68 @@ class HarnessLoop @Inject constructor(
                 top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_REJECTED
             }
             if (!approvalRepository.claimPending(request.id, claimedStatus)) return@launch
-            sessionJobs[sessId] = currentCoroutineContext()[Job] ?: return@launch
-            setSessionState(sessId, SessionRunState.RUNNING)
-            setError(sessId, null)
-            var approvalResultPersisted = false
-            try {
-                val result = if (approved) {
-                    val args = json.parseToJsonElement(request.argumentsJson) as? JsonObject
-                        ?: error("审批参数不是 JSON 对象")
-                    val tool = HarnessApiMapper.toolByName(request.toolName)
-                    toolExecutor.execute(
-                        ToolCall(request.toolCallId, request.createdAt, tool, args, rawToolName = request.toolName),
-                        sessId,
-                        request.workspace,
-                        bypassApproval = true,
-                    )
-                } else {
-                    ToolResult(
-                        id = newId(),
-                        createdAt = now(),
-                        toolCallId = request.toolCallId,
-                        success = false,
-                        output = "用户拒绝了该工具操作。请尊重用户决定，并选择不需要该权限的替代方案。",
-                    )
-                }
-                append(sessId, result)
-                approvalRepository.mark(
-                    request.id,
-                    if (approved && result.success) top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_EXECUTED
-                    else if (approved) top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_FAILED
-                    else top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_REJECTED,
-                )
-                approvalResultPersisted = true
-                runLoopInternal(sessId, startedAt = now())
-                setSessionState(sessId, SessionRunState.COMPLETED)
-            } catch (_: ApprovalPauseException) {
-                setSessionState(sessId, SessionRunState.WAITING_APPROVAL)
-            } catch (cancellation: CancellationException) {
-                if (!approvalResultPersisted) {
-                    withContext(NonCancellable) {
-                        approvalRepository.mark(
-                            request.id,
-                            if (approved) top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_FAILED
-                            else top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_REJECTED,
+
+            // Approval resumption is the legitimate successor to a WAITING_APPROVAL run;
+            // claim the slot unconditionally (that state still reports busy to senders).
+            startClaimedSessionRun(sessId) {
+                var approvalResultPersisted = false
+                try {
+                    val result = if (approved) {
+                        val args = json.parseToJsonElement(request.argumentsJson) as? JsonObject
+                            ?: error("审批参数不是 JSON 对象")
+                        val tool = HarnessApiMapper.toolByName(request.toolName)
+                        toolExecutor.execute(
+                            ToolCall(request.toolCallId, request.createdAt, tool, args, rawToolName = request.toolName),
+                            sessId,
+                            request.workspace,
+                            bypassApproval = true,
                         )
-                        repairDanglingToolCalls(sessId, interrupted = true)
-                    }
-                }
-                setSessionState(sessId, SessionRunState.IDLE)
-            } catch (throwable: Throwable) {
-                if (!approvalResultPersisted) {
-                    approvalRepository.mark(request.id, top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_FAILED)
-                    append(
-                        sessId,
+                    } else {
                         ToolResult(
                             id = newId(),
                             createdAt = now(),
                             toolCallId = request.toolCallId,
                             success = false,
-                            output = "批准操作执行失败：${friendly(throwable)}",
-                        ),
+                            output = "用户拒绝了该工具操作。请尊重用户决定，并选择不需要该权限的替代方案。",
+                        )
+                    }
+                    append(sessId, result)
+                    approvalRepository.mark(
+                        request.id,
+                        if (approved && result.success) top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_EXECUTED
+                        else if (approved) top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_FAILED
+                        else top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_REJECTED,
                     )
+                    approvalResultPersisted = true
+                    runLoopInternal(sessId, startedAt = now())
+                } catch (cancellation: CancellationException) {
+                    if (!approvalResultPersisted) {
+                        withContext(NonCancellable) {
+                            approvalRepository.mark(
+                                request.id,
+                                if (approved) top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_FAILED
+                                else top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_REJECTED,
+                            )
+                            repairDanglingToolCalls(sessId, interrupted = true)
+                        }
+                    }
+                    throw cancellation
+                } catch (throwable: Throwable) {
+                    if (!approvalResultPersisted) {
+                        approvalRepository.mark(request.id, top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_FAILED)
+                        append(
+                            sessId,
+                            ToolResult(
+                                id = newId(),
+                                createdAt = now(),
+                                toolCallId = request.toolCallId,
+                                success = false,
+                                output = "批准操作执行失败：${friendly(throwable)}",
+                            ),
+                        )
+                    }
+                    RunResult.Failed(throwable.message ?: "审批操作执行失败")
                 }
-                setError(sessId, throwable.message ?: "审批操作执行失败")
-                setSessionState(sessId, SessionRunState.FAILED)
-            } finally {
-                finishRun(sessId)
             }
         }
     }
@@ -1596,7 +1645,9 @@ class HarnessLoop @Inject constructor(
     companion object {
         const val STREAM_FLUSH_INTERVAL_MS = 80L
         const val MAX_ROUNDS = 200
-        val KNOWN_TOOL_NAMES = setOf("read", "write", "edit", "base", "process", "memory", "plan", "scratchpad", "invoke_subagent", "subagent")
+        val KNOWN_TOOL_NAMES: Set<String> = HarnessTool.entries
+            .map { HarnessApiMapper.apiName(it) }
+            .toSet() + "subagent"
         const val PROJECT_CONTEXT_MAX_BYTES = 16 * 1024
         const val MAX_STREAM_RETRIES = 5
         const val RETRY_BACKOFF_MS = 1_000L

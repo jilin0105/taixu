@@ -13,6 +13,11 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0.0"
+        ndk {
+            // ARM64-only 沙箱：Compose 依赖的 AAR（如 androidx.graphics.path）
+            // 自带 x86/x86_64 原生库，不过滤会打进 APK 导致 ABI 校验失败。
+            abiFilters += "arm64-v8a"
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

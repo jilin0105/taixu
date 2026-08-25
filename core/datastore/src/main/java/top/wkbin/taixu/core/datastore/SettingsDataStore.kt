@@ -31,6 +31,8 @@ class SettingsDataStore @Inject constructor(
     private val workshopJavaPathKey = stringPreferencesKey("workshop_java_path")
     private val workshopAndroidScriptKey = stringPreferencesKey("workshop_android_script")
     private val workshopFlutterScriptKey = stringPreferencesKey("workshop_flutter_script")
+    // 工坊 Android 签名（keystore）注册表；整表 JSON 密文存储，口令不落明文。
+    private val workshopKeystoresKey = stringPreferencesKey("workshop_keystores_ciphertext")
 
     val workshopAndroidSdkPath: Flow<String> = context.settingsDataStore.data.map { it[workshopAndroidSdkPathKey].orEmpty() }
     val workshopNdkPath: Flow<String> = context.settingsDataStore.data.map { it[workshopNdkPathKey].orEmpty() }
@@ -45,6 +47,26 @@ class SettingsDataStore @Inject constructor(
     suspend fun setWorkshopJavaPath(value: String) = setWorkshopValue(workshopJavaPathKey, value)
     suspend fun setWorkshopAndroidScript(value: String) = setWorkshopValue(workshopAndroidScriptKey, value)
     suspend fun setWorkshopFlutterScript(value: String) = setWorkshopValue(workshopFlutterScriptKey, value)
+
+    /** 签名注册表（解密后的明文记录，仅本机内存中使用）。解密失败视为空表。 */
+    val workshopKeystores: Flow<List<WorkshopKeystore>> = context.settingsDataStore.data.map { prefs ->
+        val ciphertext = prefs[workshopKeystoresKey]
+        if (ciphertext.isNullOrBlank()) {
+            emptyList()
+        } else {
+            WorkshopKeystoreCodec.decode(secretManager.decrypt(ciphertext))
+        }
+    }
+
+    suspend fun setWorkshopKeystores(value: List<WorkshopKeystore>) {
+        context.settingsDataStore.edit { prefs ->
+            if (value.isEmpty()) {
+                prefs.remove(workshopKeystoresKey)
+            } else {
+                prefs[workshopKeystoresKey] = secretManager.encrypt(WorkshopKeystoreCodec.encode(value))
+            }
+        }
+    }
 
     suspend fun resetWorkshopEnvironment() {
         context.settingsDataStore.edit {

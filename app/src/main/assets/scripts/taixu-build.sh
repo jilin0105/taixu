@@ -39,11 +39,16 @@ check_elf_machine() {
     test "$machine" = "$expected" || fail "$label ELF 架构不匹配 (machine=$machine, expected=$expected)"
 }
 
-# JDK launcher (bin/java) may be a script/symlink rather than a raw ELF.
-# Verify the actual JVM shared library so the arch check works for any JDK.
+# The JDK launcher must resolve to a real ELF binary. A wrapper script whose
+# exec target points back into the same resolution chain becomes an infinite
+# exec loop under PRoot (every exec goes through ptrace translation and only
+# burns CPU). Reject non-ELF launchers BEFORE the JVM starts, then verify the
+# actual JVM shared library so the arch check works for symlinked JDKs.
 java_arch_machine() {
     bin="$1"
     real=$(readlink -f "$bin" 2>/dev/null || echo "$bin")
+    magic=$(od -An -t x1 -N 4 "$real" 2>/dev/null | tr -d '[:space:]')
+    if [ "$magic" != "7f454c46" ]; then echo not_elf; return 0; fi
     home=$(dirname "$(dirname "$real")")
     jvm_lib=$(find "$home" \( -type f -o -type l \) -name libjvm.so -print -quit 2>/dev/null || true)
     test -n "$jvm_lib" || { echo unreadable; return 0; }
@@ -99,6 +104,10 @@ doctor() {
     need_file "$managed_ndk_policy" "太墟 NDK 构建策略"
     mkdir -p /root/.gradle/init.d
     cp "$managed_ndk_policy" /root/.gradle/init.d/taixu-android-ndk.gradle
+    # Release 签名策略：仅在宿主注入 TAIXU_KEYSTORE_* 环境变量时生效，debug 构建零影响。
+    if test -f /opt/taixu/scripts/taixu-release-signing.gradle; then
+        cp /opt/taixu/scripts/taixu-release-signing.gradle /root/.gradle/init.d/taixu-release-signing.gradle
+    fi
     grep -Fqx 'android.builder.sdkDownload=false' /root/.gradle/gradle.properties 2>/dev/null ||
         fail "Gradle SDK 自动下载未禁用，可能拉取 x86_64 主机工具"
     wrapper_project="$project"

@@ -48,12 +48,14 @@ class WorkshopPreferences @Inject constructor(private val store: SettingsDataSto
     val javaPath get() = store.workshopJavaPath
     val androidScript get() = store.workshopAndroidScript
     val flutterScript get() = store.workshopFlutterScript
+    val keystores get() = store.workshopKeystores
     suspend fun setAndroidSdkPath(value: String) = store.setWorkshopAndroidSdkPath(value)
     suspend fun setNdkPath(value: String) = store.setWorkshopNdkPath(value)
     suspend fun setFlutterSdkPath(value: String) = store.setWorkshopFlutterSdkPath(value)
     suspend fun setJavaPath(value: String) = store.setWorkshopJavaPath(value)
     suspend fun setAndroidScript(value: String) = store.setWorkshopAndroidScript(value)
     suspend fun setFlutterScript(value: String) = store.setWorkshopFlutterScript(value)
+    suspend fun setKeystores(value: List<WorkshopKeystore>) = store.setWorkshopKeystores(value)
     suspend fun resetEnvironment() = store.resetWorkshopEnvironment()
     suspend fun resetScripts() = store.resetWorkshopScripts()
 }

@@ -155,20 +155,16 @@ class ToolManager @Inject constructor(
         _localPluginImportState.value = LocalPluginImportState.Reading(fileName)
         return managerScope.launch {
             val result = toolRepository.inspectLocal(uri)
+            // 同版本已导入也进入确认流程（覆盖导入）：离线包可能被作者重新
+            // 打包过（如修复安装脚本），importLocal 已支持原子替换同版本。
+            // 死路的 AlreadyImported 提示会把修复后的包永远挡在外面。
             _localPluginImportState.value = when (result) {
-                is AppResult.Success -> if (result.data.alreadyImported) {
-                    LocalPluginImportState.AlreadyImported(
-                        pluginName = result.data.manifest.name,
-                        version = result.data.manifest.version,
-                    )
-                } else {
-                    LocalPluginImportState.PendingConfirmation(
-                        uri = uri,
-                        fileName = fileName,
-                        manifest = result.data.manifest,
-                        archiveSizeBytes = result.data.archiveSizeBytes,
-                    )
-                }
+                is AppResult.Success -> LocalPluginImportState.PendingConfirmation(
+                    uri = uri,
+                    fileName = fileName,
+                    manifest = result.data.manifest,
+                    archiveSizeBytes = result.data.archiveSizeBytes,
+                )
                 is AppResult.Failure -> LocalPluginImportState.Failed(result.error.message)
             }
         }.also { localPluginImportJob = it }

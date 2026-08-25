@@ -119,6 +119,7 @@ import top.wkbin.taixu.core.database.HarnessSessionEntity
 import top.wkbin.taixu.core.model.ApprovalMode
 import top.wkbin.taixu.harness.AssistantText
 import top.wkbin.taixu.harness.HarnessMessage
+import top.wkbin.taixu.harness.PendingMessage
 import top.wkbin.taixu.harness.HarnessTool
 import top.wkbin.taixu.harness.CapabilityEvent
 import top.wkbin.taixu.harness.ToolCall
@@ -594,7 +595,7 @@ private fun ChatPaneContent(
     matchingMentions: List<MentionItem> = emptyList(),
     attachedMentions: List<MentionItem> = emptyList(),
     knownMentionNames: List<String> = emptyList(),
-    pendingMessages: List<String>,
+    pendingMessages: List<PendingMessage>,
     onRemovePending: (Int) -> Unit,
     input: String,
     onInputChanged: (String) -> Unit,
@@ -873,7 +874,7 @@ private fun ChatPaneContent(
                                 color = MaterialTheme.colorScheme.primary,
                             )
                             Text(
-                                queued,
+                                queued.text,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,

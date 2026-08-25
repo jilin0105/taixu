@@ -41,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -114,12 +115,28 @@ class MainActivity : AppCompatActivity() {
                 var downloadProgress by remember { mutableStateOf<Float?>(null) }
                 var isDownloading by remember { mutableStateOf(false) }
                 val scope = rememberCoroutineScope()
+                val mainContext = LocalContext.current
+                val currentVersionName = remember {
+                    try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            mainContext.packageManager.getPackageInfo(
+                                mainContext.packageName,
+                                PackageManager.PackageInfoFlags.of(0),
+                            ).versionName
+                        } else {
+                            @Suppress("DEPRECATION")
+                            mainContext.packageManager.getPackageInfo(mainContext.packageName, 0).versionName
+                        }
+                    } catch (_: Exception) {
+                        null
+                    } ?: "0.0.0"
+                }
 
                 LaunchedEffect(onboarding.completed) {
                     if (onboarding.completed) {
                         val autoCheck = settingsDataStore.autoCheckUpdates.first()
                         if (autoCheck) {
-                            val res = appUpdateManager.checkUpdate("0.3.0")
+                            val res = appUpdateManager.checkUpdate(currentVersionName)
                             res.onSuccess { info ->
                                 if (info.hasUpdate) updateInfo = info
                             }

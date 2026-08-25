@@ -171,7 +171,18 @@ class GenericRecipeInstaller(
                 linuxRuntime.execute(ShellCommand(commandLine = verifyCmd, environment = baseEnvironment, timeoutMs = 60_000L)),
             )
             if (!versionResult.isSuccess) {
-                // 兜底检查：如果主要二进制已建立，判定为安装成功并记录告警，避免因单次命令超时粗暴回滚整个事务
+                // 验证命令超时挂死（退出码 124）意味着工具链本身可能已损坏——
+                // 例如 java 启动器陷入 exec 回环：进程只烧 CPU、零输出，60 秒
+                // 后被超时强杀。此时绝不能拿“文件存在/可执行位”当安装成功，
+                // 否则 poisoned 状态会被标记为 INSTALLED 并反复触发重装。
+                if (versionResult.exitCode == VERIFY_TIMEOUT_EXIT_CODE) {
+                    error(
+                        "验证命令超时挂起 ($verifyCmd)，疑似安装产物损坏（如启动器 exec 回环），已回滚整个事务",
+                    )
+                }
+                // 兜底检查：验证命令以真实退出码快速失败（如工具不认识 --version
+                // 参数）时，若主要二进制已建立，判定为安装成功并记录告警，
+                // 避免因单次命令失败粗暴回滚整个事务。
                 val anyBinaryExists = links.any { link ->
                     val checkRes = linuxRuntime.execute(ShellCommand("test -x $toolDir/bin/$link || test -x /opt/taixu/bin/$link || test -x /usr/bin/$link", environment = baseEnvironment, timeoutMs = 5_000L))
                     checkRes.isSuccess
@@ -334,6 +345,9 @@ class GenericRecipeInstaller(
         const val LOCAL_COPY_PROGRESS_SPAN = 0.12f
         const val INSTALLER_PROGRESS_START = 0.55f
         const val INSTALLER_PROGRESS_SPAN = 0.23f
+
+        /** 进程超时强杀的统一退出码（见 ProcessShellExecutor.TIMEOUT_EXIT_CODE）。 */
+        const val VERIFY_TIMEOUT_EXIT_CODE = 124
         val INSTALLER_PROGRESS_PATTERN = Regex("""\[TAIXU_PROGRESS:(\d{1,3})]\s+(.+)""")
     }
 }

@@ -23,7 +23,7 @@ object BuildEnvironmentPreflight {
             "test -x /bin/sh || fail shell",
             "test -d \"\$PROJECT_PATH\" || fail project_missing",
             "elf_machine() { od -An -t x1 -j 18 -N 2 \"\$1\" 2>/dev/null | tr -d '[:space:]'; }",
-            "java_arch_machine() { bin=\"\$1\"; real=\$(readlink -f \"\$bin\" 2>/dev/null || echo \"\$bin\"); home=\$(dirname \"\$(dirname \"\$real\")\"); lib=\$(find \"\$home\" \\( -type f -o -type l \\) -name libjvm.so -print -quit 2>/dev/null || true); if test -z \"\$lib\"; then echo unreadable; return 0; fi; od -An -t x1 -j 18 -N 2 \"\$lib\" 2>/dev/null | tr -d '[:space:]'; }",
+            "java_arch_machine() { bin=\"\$1\"; real=\$(readlink -f \"\$bin\" 2>/dev/null || echo \"\$bin\"); magic=\$(od -An -t x1 -N 4 \"\$real\" 2>/dev/null | tr -d '[:space:]'); if test \"\$magic\" != 7f454c46; then echo not_elf; return 0; fi; home=\$(dirname \"\$(dirname \"\$real\")\"); lib=\$(find \"\$home\" \\( -type f -o -type l \\) -name libjvm.so -print -quit 2>/dev/null || true); if test -z \"\$lib\"; then echo unreadable; return 0; fi; od -An -t x1 -j 18 -N 2 \"\$lib\" 2>/dev/null | tr -d '[:space:]'; }",
         )
         if (projectType == ProjectType.ANDROID) {
             lines += "test -f \"\$PROJECT_PATH/settings.gradle\" -o -f \"\$PROJECT_PATH/settings.gradle.kts\" || fail android_settings"

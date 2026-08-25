@@ -100,6 +100,22 @@ if [ -z "$JAVA_EXEC" ] || [ ! -x "$JAVA_EXEC" ]; then
     echo "==> [TaiXu Build] ❌ 未找到可执行 Java (JAVA_HOME=$JAVA_HOME)"
     exit 127
 fi
+# Java 启动器必须解析到真正的 ELF。包装脚本一旦与其 exec 目标形成回环
+# （脚本 → 软链接 → 脚本），每次 exec 都要过 PRoot 的 ptrace 翻译，
+# 表现为 JVM 零输出、CPU 持续满载的"卡死"。在启动 JVM 之前拒绝，
+# 绝不让它烧满 30 分钟超时。
+JAVA_REAL=$(readlink -f "$JAVA_EXEC" 2>/dev/null || echo "$JAVA_EXEC")
+JAVA_MAGIC=$(od -An -t x1 -N 4 "$JAVA_REAL" 2>/dev/null | tr -d '[:space:]')
+if [ "$JAVA_MAGIC" != "7f454c46" ]; then
+    echo "==> [TaiXu Build] ❌ Java 启动器不是 ELF 二进制（疑似包装脚本/回环软链）: $JAVA_REAL"
+    echo "==> [TaiXu Build] 请在插件中心重新装配【Android 全栈开发套件】以修复 JDK"
+    exit 126
+fi
+JAVA_LAUNCHER_MACHINE=$(od -An -t x1 -j 18 -N 2 "$JAVA_REAL" 2>/dev/null | tr -d '[:space:]')
+if [ "$JAVA_LAUNCHER_MACHINE" != "b700" ]; then
+    echo "==> [TaiXu Build] ❌ Java 启动器不是 AArch64 ELF (machine=$JAVA_LAUNCHER_MACHINE): $JAVA_REAL"
+    exit 126
+fi
 echo "==> [TaiXu Build] Java 执行文件: $JAVA_EXEC"
 
 echo "==> [TaiXu Build] JAVA_HOME: $JAVA_HOME"

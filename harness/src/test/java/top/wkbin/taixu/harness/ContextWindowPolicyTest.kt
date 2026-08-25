@@ -13,14 +13,20 @@ class ContextWindowPolicyTest {
             UserMessage("3", 3, "recent"),
         )
 
-        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 1_000, systemTokens = 10)
+        // Budget must leave room after the input-fraction + output/schema reserves.
+        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 18_000, systemTokens = 10)
 
         assertEquals(1, keepFrom)
     }
 
     @Test
     fun compactsLongToolOutputWithHeadAndTail() {
-        val compacted = ContextWindowPolicy.compactToolOutput((1..10).joinToString("\n") { "line-$it" }, success = true)
+        val compacted = ContextWindowPolicy.compactToolOutput(
+            toolName = null,
+            args = null,
+            output = (1..10).joinToString("\n") { "line-$it" },
+            success = true,
+        )
 
         assertTrue(compacted.contains("line-1"))
         assertTrue(compacted.contains("line-10"))

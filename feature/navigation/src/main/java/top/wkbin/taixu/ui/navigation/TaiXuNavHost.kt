@@ -55,6 +55,7 @@ sealed interface AppDestination : NavKey
 @Serializable data object WorkspaceDestination : AppDestination
 @Serializable data object WorkshopSettingsDestination : AppDestination
 @Serializable data object WorkshopEnvironmentSettingsDestination : AppDestination
+@Serializable data object WorkshopSigningSettingsDestination : AppDestination
 @Serializable data class WorkshopScriptEditorDestination(val type: String) : AppDestination
 @Serializable data class WorkspaceExplorerDestination(val projectName: String, val initialPath: String = "") : AppDestination
 @Serializable data class CodeEditorDestination(val projectName: String, val relativePath: String) : AppDestination
@@ -156,11 +157,15 @@ fun TaiXuNavHost() {
                 top.wkbin.taixu.ui.workspace.WorkshopSettingsScreen(
                     onBack = ::popBack,
                     onOpenEnvironment = { workspaceStack.push(WorkshopEnvironmentSettingsDestination) },
+                    onOpenSigning = { workspaceStack.push(WorkshopSigningSettingsDestination) },
                     onEditScript = { type -> workspaceStack.push(WorkshopScriptEditorDestination(type.name)) },
                 )
             }
             entry<WorkshopEnvironmentSettingsDestination> {
                 top.wkbin.taixu.ui.workspace.WorkshopEnvironmentSettingsScreen(onBack = ::popBack)
+            }
+            entry<WorkshopSigningSettingsDestination> {
+                top.wkbin.taixu.ui.workspace.WorkshopSigningScreen(onBack = ::popBack)
             }
             entry<WorkshopScriptEditorDestination> { destination ->
                 top.wkbin.taixu.ui.workspace.WorkshopScriptEditorScreen(

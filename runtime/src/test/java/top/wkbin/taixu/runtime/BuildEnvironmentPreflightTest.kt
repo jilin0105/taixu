@@ -21,6 +21,11 @@ class BuildEnvironmentPreflightTest {
         assertTrue(command.contains("java_arch_machine"))
         assertTrue(command.contains("libjvm.so"))
         assertTrue(command.contains("readlink -f"))
+        // Java 启动器必须解析为真正的 ELF：包装脚本回环（脚本 exec 软链、
+        // 软链又指回脚本）在 PRoot 下是零输出、CPU 满载的无限 exec 循环，
+        // 预检必须在 JVM 启动前用魔数拦下，而不是只查 libjvm.so。
+        assertTrue(command.contains("7f454c46"))
+        assertTrue(command.contains("not_elf"))
         assertFalse(command.contains("-tu2"))
         assertFalse(command.contains("wrapper_incomplete"))
         assertTrue(command.contains("fail aapt2_arch"))

@@ -15,6 +15,7 @@ import top.wkbin.taixu.core.database.AgentApprovalRequestEntity
 import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.harness.HarnessLoop
 import top.wkbin.taixu.harness.HarnessMessage
+import top.wkbin.taixu.harness.PendingMessage
 import top.wkbin.taixu.harness.mcp.McpManager
 import top.wkbin.taixu.runtime.WorkspaceManager
 import top.wkbin.taixu.runtime.WorkspaceProject
@@ -72,7 +73,7 @@ class ChatViewModel @Inject constructor(
     val workspace: StateFlow<String> = harnessLoop.workspace
     val projectType: StateFlow<String> = harnessLoop.projectType
     /** 运行中排队的待发送消息（当前任务结束后自动接续）。 */
-    val pendingMessages: StateFlow<List<String>> = harnessLoop.pendingMessages
+    val pendingMessages: StateFlow<List<PendingMessage>> = harnessLoop.pendingMessages
 
     /** 当前选中的会话 ID */
     val currentSessionId: StateFlow<String> = harnessLoop.currentSessionId

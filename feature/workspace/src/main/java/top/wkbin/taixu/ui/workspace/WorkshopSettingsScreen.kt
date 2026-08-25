@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -43,13 +42,15 @@ import top.wkbin.taixu.ui.components.RuntimeTopBar
 import top.wkbin.taixu.ui.components.SectionHeader
 
 @Composable
-fun WorkshopSettingsScreen(onBack: () -> Unit, onOpenEnvironment: () -> Unit, onEditScript: (WorkshopScriptType) -> Unit, viewModel: WorkshopSettingsViewModel = hiltViewModel()) {
+fun WorkshopSettingsScreen(onBack: () -> Unit, onOpenEnvironment: () -> Unit, onOpenSigning: () -> Unit = {}, onEditScript: (WorkshopScriptType) -> Unit, viewModel: WorkshopSettingsViewModel = hiltViewModel()) {
     val draft by viewModel.draft.collectAsStateWithLifecycle()
     val customScripts by viewModel.customScripts.collectAsStateWithLifecycle()
-    Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = { RuntimeTopBar("工坊设置", onBack, "构建环境与脚本") }) { padding ->
+    Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = { RuntimeTopBar("工坊设置", onBack, "构建环境、签名与脚本") }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             item { SectionHeader("开发环境", "查看并调整 Android 与 Flutter 工具链") }
             item { SettingEntry(RuntimeIconName.Android, "Android / Flutter 环境", "SDK ${draft.androidSdkPath}\nNDK ${draft.ndkPath}", onOpenEnvironment) }
+            item { SectionHeader("应用签名", "创建或导入签名文件，Release 构建时选用") }
+            item { SettingEntry(RuntimeIconName.Key, "签名管理 (Keystore)", "创建 / 导入 Android 签名文件\n用于 Release 正式包构建", onOpenSigning) }
             item { SectionHeader("构建脚本", "点击脚本进入独立编辑页面") }
             item { RuntimeCard(contentPadding = PaddingValues(0.dp)) {
                 ScriptRow(WorkshopScriptType.ANDROID, WorkshopScriptType.ANDROID in customScripts) { onEditScript(WorkshopScriptType.ANDROID) }

@@ -290,10 +290,22 @@ class ToolRegistry @Inject constructor(
             onProgress(LocalPluginImportProgress(totalBytes ?: bytes, totalBytes, "正在保存插件"))
             val versionDir = File(localRoot, "${manifest.id}/${manifest.version}")
             versionDir.parentFile?.mkdirs()
-            check(!versionDir.exists()) {
-                "插件 ${manifest.name} v${manifest.version} 已导入，无需重复导入"
+            // 同版本覆盖导入：离线包作者经常在不 bump 版本号的情况下重新打包
+            // （修复安装脚本等）。旧逻辑直接拒绝，导致用户被“已导入，无需重复
+            // 导入”挡死、修复后的包永远进不来。payload 在每次安装时才复制进
+            // 沙箱（LocalPluginPayloadManager.prepare），覆盖这里的存储不会
+            // 影响已安装实例；下次安装自动使用新 payload。
+            if (versionDir.exists()) {
+                val legacy = File(versionDir.parentFile, ".legacy-${manifest.version}-${System.nanoTime()}")
+                check(versionDir.renameTo(legacy)) { "无法替换已导入的同版本插件" }
+                if (!staging.renameTo(versionDir)) {
+                    legacy.renameTo(versionDir)
+                    error("无法提交本地插件包")
+                }
+                legacy.deleteRecursively()
+            } else {
+                check(staging.renameTo(versionDir)) { "无法提交本地插件包" }
             }
-            check(staging.renameTo(versionDir)) { "无法提交本地插件包" }
             committed = true
             AppResult.Success(manifest)
         } catch (throwable: Throwable) {

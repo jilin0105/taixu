@@ -29,7 +29,7 @@ if [ -f /etc/profile.d/taixu-android.sh ]; then
     . /etc/profile.d/taixu-android.sh
 fi
 export FLUTTER_HOME="${FLUTTER_HOME:-/opt/flutter}"
-export PATH="$FLUTTER_HOME/bin:/opt/gradle-8.14.2/bin:/opt/gradle-8.7/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+export PATH="/opt/taixu/bin:$FLUTTER_HOME/bin:/opt/gradle-8.14.2/bin:/opt/gradle-8.7/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 export ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 export PUB_HOSTED_URL="https://pub.flutter-io.cn"
@@ -56,6 +56,20 @@ export ANDROID_NDK_ROOT="$NDK_PATH"
 export TAIXU_LLVM_STRIP_PATH="$LLVM_STRIP"
 echo "==> [TaiXu Build] 固定 ARM64 NDK: $NDK_PATH"
 
+# Java 启动器防回环守卫（与 build_android.sh 同一规则）：Flutter 的 Gradle
+# 宿主构建最终经 JAVA_HOME 启动 JVM。包装脚本回环在 PRoot 下是零输出、
+# CPU 满载的死循环，必须在 JVM 启动前拒绝。
+JAVA_GUARD="${JAVA_HOME:-/opt/taixu/toolchains/android/jdk}/bin/java"
+if [ -e "$JAVA_GUARD" ]; then
+    JAVA_GUARD_REAL=$(readlink -f "$JAVA_GUARD" 2>/dev/null || echo "$JAVA_GUARD")
+    JAVA_GUARD_MAGIC=$(od -An -t x1 -N 4 "$JAVA_GUARD_REAL" 2>/dev/null | tr -d '[:space:]')
+    if [ "$JAVA_GUARD_MAGIC" != "7f454c46" ]; then
+        echo "==> [TaiXu Build] ❌ Java 启动器不是 ELF 二进制（疑似包装脚本/回环软链）: $JAVA_GUARD_REAL"
+        echo "==> [TaiXu Build] 请在插件中心重新装配【Android 全栈开发套件】以修复 JDK"
+        exit 126
+    fi
+fi
+
 # 2. 自愈软链接
 if [ -d "$FLUTTER_HOME/bin" ] && [ ! -f /usr/local/bin/flutter ]; then
     ln -sf "$FLUTTER_HOME/bin/flutter" /usr/local/bin/flutter 2>/dev/null || true
@@ -68,6 +82,43 @@ if ! command -v flutter >/dev/null 2>&1; then
     echo "==> [TaiXu Build] ❌ 未找到 Flutter SDK，请安装 Flutter 跨平台开发套件"
     exit 127
 fi
+
+# Flutter 工具链自身依赖 unzip 解压引擎缓存（bin/cache/downloads/*.zip）。
+# 精简 rootfs 没有系统 unzip；安装期的临时 shim 只在 TOOL_DIR/bin 下、
+# 不在构建 PATH 上。这里在调起 flutter 之前自愈：用 JDK 的 jar 造一个
+# 常驻 /opt/taixu/bin/unzip（PATH 首位），避免 "Missing unzip tool" 中断。
+if ! command -v unzip >/dev/null 2>&1; then
+    JAR_BIN=""
+    for candidate in "${JAVA_HOME:-/opt/taixu/toolchains/android/jdk}/bin/jar" /opt/taixu/toolchains/android/jdk/bin/jar /usr/bin/jar /usr/lib/jvm/default-java/bin/jar; do
+        if [ -x "$candidate" ]; then JAR_BIN="$candidate"; break; fi
+    done
+    if [ -n "$JAR_BIN" ]; then
+        mkdir -p /opt/taixu/bin
+        printf '%s\n' \
+            '#!/bin/sh' \
+            'archive=' \
+            'dest=.' \
+            'while [ "$#" -gt 0 ]; do' \
+            '  case "$1" in' \
+            '    -q|-qq|-o) shift ;;' \
+            '    -d) dest="$2"; shift 2 ;;' \
+            '    -*) shift ;;' \
+            '    *) archive="$1"; shift ;;' \
+            '  esac' \
+            'done' \
+            '[ -n "$archive" ] || exit 2' \
+            'mkdir -p "$dest"' \
+            "(cd \"\$dest\" && '$JAR_BIN' xf \"\$archive\")" \
+            > /opt/taixu/bin/unzip
+        chmod 755 /opt/taixu/bin/unzip
+        echo "==> [TaiXu Build] 已部署 unzip 兼容层（基于 JDK jar）：/opt/taixu/bin/unzip"
+    else
+        echo "==> [TaiXu Build] ❌ 缺少 unzip 且无 JDK jar 可用，无法解压 Flutter 引擎缓存"
+        echo "==> [TaiXu Build] 请重新装配【Android 全栈开发套件】"
+        exit 127
+    fi
+fi
+
 if [ ! -x "$FLUTTER_HOME/bin/flutter" ] || [ ! -x "$FLUTTER_HOME/bin/cache/dart-sdk/bin/dart" ]; then
     echo "==> [TaiXu Build] ❌ Flutter SDK 不是可用的 Linux ARM64 版本，请在工坊重新装配 Flutter 套件"
     exit 126

@@ -6,7 +6,9 @@ import android.content.Context
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings as AndroidSettings
 import android.widget.Toast
@@ -134,6 +136,23 @@ fun SettingsScreen(
         else -> "跟随系统"
     }
 
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val appVersionName = remember {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(
+                    context.packageName,
+                    PackageManager.PackageInfoFlags.of(0),
+                ).versionName
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName
+            }
+        } catch (_: Exception) {
+            null
+        } ?: "unknown"
+    }
+
     val glassBackdrop = LocalLiquidGlassBackdrop.current
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -226,7 +245,7 @@ fun SettingsScreen(
                     iconBg = Color(0xFF3B82F6).copy(alpha = 0.12f),
                     title = "关于、更新与官方社区",
                     subtitle = "检查新版本 · GitHub 开源仓库 · 官方 QQ 交流群",
-                    badge = "v0.3.0 稳定版",
+                    badge = "v$appVersionName 稳定版",
                     onClick = onOpenAboutCommunity,
                 )
             }
@@ -988,6 +1007,7 @@ fun ModelEditorScreen(
     ) { padding ->
         ModelEditor(
             modifier = Modifier.padding(padding),
+            modelId = modelId,
             existing = existing,
             providers = viewModel.providerCatalog,
             discovered = discovered,
@@ -1037,6 +1057,21 @@ fun AboutCommunityScreen(
     val isDownloading by viewModel.isDownloading.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
     var showAboutDialog by remember { mutableStateOf(false) }
+    val currentVersion = remember {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(
+                    context.packageName,
+                    PackageManager.PackageInfoFlags.of(0),
+                ).versionName
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName
+            }
+        } catch (_: Exception) {
+            null
+        } ?: "unknown"
+    }
 
     // 版本更新弹窗
     when (val state = updateCheckState) {
@@ -1115,8 +1150,8 @@ fun AboutCommunityScreen(
                         icon = RuntimeIconName.Update,
                         title = "检查新版本",
                         subtitle = "基于 GitHub Releases 自动检测与在线升级",
-                        value = if (updateCheckState is top.wkbin.taixu.core.model.UpdateCheckState.Checking) "检查中…" else "v0.3.0",
-                        onClick = { viewModel.checkForUpdates("0.3.0") },
+                        value = if (updateCheckState is top.wkbin.taixu.core.model.UpdateCheckState.Checking) "检查中…" else "v$currentVersion",
+                        onClick = { viewModel.checkForUpdates(currentVersion) },
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     ToggleRow(
@@ -1632,6 +1667,21 @@ private fun ThemeOptionItem(
 @Composable
 private fun AboutAppDialog(onDismiss: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val appVersion = remember {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(
+                    context.packageName,
+                    PackageManager.PackageInfoFlags.of(0),
+                ).versionName
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName
+            }
+        } catch (_: Exception) {
+            null
+        } ?: "unknown"
+    }
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -1643,7 +1693,7 @@ private fun AboutAppDialog(onDismiss: () -> Unit) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Android 原生 Linux PRoot 沙箱与 AI 结对编程中枢", style = MaterialTheme.typography.bodyMedium)
-                Text("版本: v0.3.0 (Material 3 Expressive)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text("版本: v$appVersion (Material 3 Expressive)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 Text("架构: aarch64 · chroot-less user-space virtualization", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("协议: Apache-2.0 License", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(4.dp))
@@ -1827,57 +1877,81 @@ private fun ModelsPage(
             }
         }
         items(models, key = { it.id }) { model ->
-            RuntimeCard(
-                modifier = Modifier.fillMaxWidth().clickable { edit(model) },
-                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                borderColor = if (model.isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+            // 紧凑小圆角框（对齐首页 DoctorItemRow 的 10dp 风格）：
+            // 三行结构——标题行内联操作、摘要行、BaseURL 行，整体高度比
+            // RuntimeCard 版本矮近一半。
+            val modelCardShape = RoundedCornerShape(10.dp)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(modelCardShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                    .border(
+                        width = 1.dp,
+                        color = if (model.isActive) {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+                        } else {
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+                        },
+                        shape = modelCardShape,
+                    )
+                    .clickable { edit(model) }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        top.wkbin.taixu.ui.components.ProviderBadge(
-                            providerIdOrName = model.provider,
-                            size = 26.dp,
-                        )
-                        Text(model.name, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), modifier = Modifier.weight(1f))
-                        if (model.isActive) {
-                            Surface(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), shape = RoundedCornerShape(6.dp)) {
-                                Text("当前激活", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold), modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
-                            }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    top.wkbin.taixu.ui.components.ProviderBadge(
+                        providerIdOrName = model.provider,
+                        size = 22.dp,
+                    )
+                    Text(
+                        model.name,
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (model.isActive) {
+                        Surface(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), shape = RoundedCornerShape(6.dp)) {
+                            Text("当前激活", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold), modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+                        }
+                    } else {
+                        TextButton(
+                            onClick = { activate(model.id) },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            shape = RoundedCornerShape(8.dp),
+                        ) {
+                            Text("设为激活", style = MaterialTheme.typography.labelMedium)
                         }
                     }
-                    val modelSummary = buildList {
-                        add(model.provider)
-                        add(model.model)
-                        if (model.apiKeyCount > 0) add("${model.apiKeyCount} Key")
-                        if (model.requestsPerMinutePerKey > 0) add("${model.requestsPerMinutePerKey} RPM/Key")
-                    }.joinToString(" • ")
-                    Text(
-                        modelSummary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        model.baseUrl,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                        if (!model.isActive) {
-                            OutlinedButton(onClick = { activate(model.id) }, shape = RoundedCornerShape(8.dp)) { Text("设为激活") }
-                        }
-                        IconButton(onClick = { delete(model.id) }) {
-                            RuntimeIcon(RuntimeIconName.Trash, Modifier.size(18.dp), MaterialTheme.colorScheme.error)
-                        }
+                    IconButton(onClick = { delete(model.id) }, modifier = Modifier.size(30.dp)) {
+                        RuntimeIcon(RuntimeIconName.Trash, Modifier.size(16.dp), MaterialTheme.colorScheme.error)
                     }
                 }
+                val modelSummary = buildList {
+                    add(model.provider)
+                    add(model.model)
+                    if (model.apiKeyCount > 0) add("${model.apiKeyCount} Key")
+                    if (model.requestsPerMinutePerKey > 0) add("${model.requestsPerMinutePerKey} RPM/Key")
+                }.joinToString(" • ")
+                Text(
+                    modelSummary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    model.baseUrl,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -2005,6 +2079,7 @@ internal fun ToggleRow(
 @Composable
 private fun ModelEditor(
     modifier: Modifier = Modifier,
+    modelId: String?,
     existing: top.wkbin.taixu.core.database.AiModelEntity?,
     providers: List<AgentProviderDefinition>,
     discovered: List<String>,
@@ -2016,48 +2091,48 @@ private fun ModelEditor(
     test: (String, String, String) -> Unit,
     save: (String, String, String, String, String, Int, Float?, Int?, Float?, String?, String?, String?, Int?, String, Boolean, Boolean) -> Unit,
 ) {
-    var providerId by remember(existing?.id) {
+    var providerId by remember(modelId) {
         mutableStateOf(providers.firstOrNull { it.name == existing?.provider }?.id ?: providers.first().id)
     }
     val provider = providers.first { it.id == providerId }
     var providerMenu by remember { mutableStateOf(false) }
     var modelMenu by remember { mutableStateOf(false) }
-    var name by remember(existing?.id) { mutableStateOf(existing?.name.orEmpty()) }
-    var model by remember(existing?.id) { mutableStateOf(existing?.model ?: provider.recommendedModels.firstOrNull().orEmpty()) }
-    var url by remember(existing?.id) { mutableStateOf(existing?.baseUrl ?: provider.baseUrl) }
-    var key by remember(existing?.id) { mutableStateOf("") }
-    var autoDiscoverEnabled by remember(existing?.id) { mutableStateOf(false) }
-    var selectFirstDiscoveredModel by remember(existing?.id) { mutableStateOf(false) }
-    var advancedExpanded by remember(existing?.id) { mutableStateOf(false) }
-    var rpmLimitText by remember(existing?.id) {
+    var name by remember(modelId) { mutableStateOf(existing?.name.orEmpty()) }
+    var model by remember(modelId) { mutableStateOf(existing?.model ?: provider.recommendedModels.firstOrNull().orEmpty()) }
+    var url by remember(modelId) { mutableStateOf(existing?.baseUrl ?: provider.baseUrl) }
+    var key by remember(modelId) { mutableStateOf("") }
+    var autoDiscoverEnabled by remember(modelId) { mutableStateOf(false) }
+    var selectFirstDiscoveredModel by remember(modelId) { mutableStateOf(false) }
+    var advancedExpanded by remember(modelId) { mutableStateOf(false) }
+    var rpmLimitText by remember(modelId) {
         mutableStateOf(existing?.requestsPerMinutePerKey?.takeIf { it > 0 }?.toString().orEmpty())
     }
 
     // 推理与上下文参数
-    var temperatureText by remember(existing?.id) { mutableStateOf(existing?.temperature?.toString().orEmpty()) }
-    var maxTokensText by remember(existing?.id) { mutableStateOf(existing?.maxTokens?.toString().orEmpty()) }
-    var contextTokensText by remember(existing?.id) { mutableStateOf(existing?.contextTokens?.toString().orEmpty()) }
-    var topPText by remember(existing?.id) { mutableStateOf(existing?.topP?.toString().orEmpty()) }
+    var temperatureText by remember(modelId) { mutableStateOf(existing?.temperature?.toString().orEmpty()) }
+    var maxTokensText by remember(modelId) { mutableStateOf(existing?.maxTokens?.toString().orEmpty()) }
+    var contextTokensText by remember(modelId) { mutableStateOf(existing?.contextTokens?.toString().orEmpty()) }
+    var topPText by remember(modelId) { mutableStateOf(existing?.topP?.toString().orEmpty()) }
 
     // 推理开关/强度（"auto" = 跟随模型默认）
-    var reasoningModeText by remember(existing?.id) { mutableStateOf(existing?.reasoningMode ?: "auto") }
-    var reasoningEffortText by remember(existing?.id) { mutableStateOf(existing?.reasoningEffort.orEmpty()) }
+    var reasoningModeText by remember(modelId) { mutableStateOf(existing?.reasoningMode ?: "auto") }
+    var reasoningEffortText by remember(modelId) { mutableStateOf(existing?.reasoningEffort.orEmpty()) }
     var reasoningModeMenu by remember { mutableStateOf(false) }
     var reasoningEffortMenu by remember { mutableStateOf(false) }
 
     // 核心功能开关
-    var toolCallEnabled by remember(existing?.id) {
+    var toolCallEnabled by remember(modelId) {
         mutableStateOf(existing?.toolCallMode != "disabled")
     }
-    var pureChatMode by remember(existing?.id) {
+    var pureChatMode by remember(modelId) {
         mutableStateOf(existing?.pureChatMode ?: false)
     }
-    var visionEnabled by remember(existing?.id) {
+    var visionEnabled by remember(modelId) {
         mutableStateOf(existing?.visionEnabled ?: true)
     }
 
     // 自定义请求头
-    var customHeaders by remember(existing?.id) { mutableStateOf(existing?.customHeaders.orEmpty()) }
+    var customHeaders by remember(modelId) { mutableStateOf(existing?.customHeaders.orEmpty()) }
 
     LaunchedEffect(providerId, url, key, autoDiscoverEnabled) {
         if (!autoDiscoverEnabled) return@LaunchedEffect

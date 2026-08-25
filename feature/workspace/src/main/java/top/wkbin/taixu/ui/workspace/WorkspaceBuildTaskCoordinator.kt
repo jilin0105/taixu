@@ -39,7 +39,11 @@ class WorkspaceBuildTaskCoordinator @Inject constructor(
     private var job: Job? = null
 
     @Synchronized
-    fun start(project: WorkspaceProject): Boolean {
+    fun start(
+        project: WorkspaceProject,
+        buildType: top.wkbin.taixu.runtime.build.WorkshopBuildType = top.wkbin.taixu.runtime.build.WorkshopBuildType.DEBUG,
+        keystore: top.wkbin.taixu.core.datastore.WorkshopKeystore? = null,
+    ): Boolean {
         if (job?.isActive == true || _state.value?.progress?.isRunning == true) return false
         val initial = BuildRunProgress(step = context.getString(R.string.workspace_prepare_build))
         _state.value = WorkspaceBuildTaskState(project, initial)
@@ -47,7 +51,7 @@ class WorkspaceBuildTaskCoordinator @Inject constructor(
         notifier.showBuildProgress(project.name, initial.step)
         job = scope.launch {
             try {
-                runner.runProject(project).collect { progress ->
+                runner.runProject(project, buildType, keystore).collect { progress ->
                     _state.value = WorkspaceBuildTaskState(project, progress)
                     if (progress.isRunning) {
                         notifier.showBuildProgress(project.name, progress.step)

@@ -146,7 +146,7 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
                                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                                 modifier = Modifier.weight(1f),
                                 maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                overflow = TextOverflow.Ellipsis,
                             )
                             Text(
                                 text = "${(progress.progress * 100).toInt()}%",
@@ -168,7 +168,7 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 2,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                     }
@@ -293,6 +293,7 @@ private fun ModelSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) {
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text(stringResource(R.string.taixu_onboarding_base_url)) },
                 placeholder = { Text("https://api.openai.com/v1") },
+                shape = RoundedCornerShape(10.dp),
                 trailingIcon = {
                     IconButton(
                         onClick = viewModel::discoverModels,
@@ -315,6 +316,7 @@ private fun ModelSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) {
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text(stringResource(R.string.taixu_onboarding_api_key)) },
                 placeholder = { Text("sk-...") },
+                shape = RoundedCornerShape(10.dp),
                 visualTransformation = PasswordVisualTransformation(),
                 singleLine = true,
             )
@@ -335,6 +337,7 @@ private fun ModelSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) {
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text(stringResource(R.string.taixu_onboarding_model_id)) },
                 placeholder = { Text("gpt-4o / deepseek-chat") },
+                shape = RoundedCornerShape(10.dp),
                 singleLine = true,
             )
         }
@@ -393,6 +396,7 @@ private fun SetupProviderDropdown(
             readOnly = true,
             enabled = enabled,
             label = { Text(stringResource(R.string.taixu_onboarding_provider_preset)) },
+            shape = RoundedCornerShape(10.dp),
             leadingIcon = {
                 ProviderBadge(
                     providerIdOrName = selectedProvider.id,
@@ -446,6 +450,7 @@ private fun SetupDropdown(
             readOnly = true,
             enabled = enabled,
             label = { Text(label) },
+            shape = RoundedCornerShape(10.dp),
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
             modifier = Modifier.fillMaxWidth().menuAnchor(
                 ExposedDropdownMenuAnchorType.PrimaryNotEditable,
