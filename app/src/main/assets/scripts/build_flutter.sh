@@ -103,6 +103,50 @@ fi
 
 cd "$PROJECT_PATH"
 
+# ==============================================================================
+# NDK 版本临时对齐（构建后自动恢复，不修改 NDK 本身）
+# Flutter Gradle 插件默认注入的 ndkVersion（如 27.0.12077973）可能与太墟
+# 实际安装的 NDK 版本（如 29.0.14206865）不一致，AGP 在配置阶段会抛
+# CXX1100 错误终止构建。这里临时在项目 app/build.gradle 里注入实际版本，
+# 构建结束后通过 trap EXIT 自动恢复原文件。不修改 NDK 的 source.properties，
+# 避免影响其他需要特定版本的项目（如 Android 原生工程需要 29）。
+# ==============================================================================
+TAIXU_NDK_ALIGN_BAK=""
+taixu_align_ndk_version() {
+    app_gradle="android/app/build.gradle"
+    [ -f "$app_gradle" ] || return 0
+    ndk_home="${ANDROID_NDK_HOME:-/opt/taixu/toolchains/android/ndk}"
+    [ -f "$ndk_home/source.properties" ] || return 0
+    # NDK source.properties 格式为 "Pkg.Revision = 29.0.14206865"（等号两侧有空格）
+    actual_version=$(sed -n 's/^[[:space:]]*Pkg\.Revision[[:space:]]*=[[:space:]]*//p' "$ndk_home/source.properties" | head -n1 | tr -d '[:space:]')
+    [ -n "$actual_version" ] || { echo "==> [TaiXu Build] ⚠️ 无法从 $ndk_home/source.properties 读取 NDK 版本，跳过对齐"; return 0; }
+    # 检测项目已声明的 ndkVersion（Groovy 格式：ndkVersion "x.y.z"）
+    declared=$(grep -oE 'ndkVersion[[:space:]]*["'"'"'][^"'"'"']*["'"'"']' "$app_gradle" | head -1 | grep -oE '["'"'"'][^"'"'"']*["'"'"']' | tr -d "\"'")
+    if [ -n "$declared" ] && [ "$declared" = "$actual_version" ]; then
+        echo "==> [TaiXu Build] NDK 版本一致：$actual_version，无需对齐"
+        return 0
+    fi
+    echo "==> [TaiXu Build] NDK 版本不一致：项目声明=${declared:-<Flutter插件默认注入>}, 实际=$actual_version"
+    echo "==> [TaiXu Build] 临时将项目 ndkVersion 对齐到实际版本 $actual_version（构建后自动恢复）"
+    TAIXU_NDK_ALIGN_BAK="${app_gradle}.taixu-ndk-align.bak"
+    cp "$app_gradle" "$TAIXU_NDK_ALIGN_BAK"
+    # 在 android { 块的第一行后插入 ndkVersion（用 s 替换，比 a\ 追加更兼容）
+    sed -i "s/^\([[:space:]]*android[[:space:]]*{\)/\1\n    ndkVersion \"$actual_version\"/" "$app_gradle"
+    if grep -q "ndkVersion \"$actual_version\"" "$app_gradle"; then
+        echo "==> [TaiXu Build] ✅ 已确认注入 ndkVersion=$actual_version 到 $app_gradle"
+    else
+        echo "==> [TaiXu Build] ⚠️ ndkVersion 注入失败：未在 $app_gradle 中匹配到 android { 块"
+    fi
+}
+taixu_restore_ndk_version() {
+    if [ -n "$TAIXU_NDK_ALIGN_BAK" ] && [ -f "$TAIXU_NDK_ALIGN_BAK" ]; then
+        mv "$TAIXU_NDK_ALIGN_BAK" "android/app/build.gradle"
+        echo "==> [TaiXu Build] 已恢复 android/app/build.gradle（NDK 版本对齐临时修改已撤销）"
+    fi
+}
+trap taixu_restore_ndk_version EXIT
+taixu_align_ndk_version
+
 if ! command -v flutter >/dev/null 2>&1; then
     echo "==> [TaiXu Build] ❌ 未找到 Flutter SDK，请安装 Flutter 跨平台开发套件"
     exit 127
@@ -331,8 +375,11 @@ gradle.beforeSettings { settings ->
 EOF
 
 echo "==> [TaiXu Build] 正在执行 Flutter 打包编译 (flutter build $TARGET)..."
+# 注意：不能用 exec，否则 trap EXIT 不会触发，NDK 版本对齐的临时修改无法恢复。
 if [ "${TAIXU_OFFLINE:-0}" = "1" ]; then
-    exec flutter build $TARGET --offline --verbose
+    flutter build $TARGET --offline --verbose
 else
-    exec flutter build $TARGET --verbose
+    flutter build $TARGET --verbose
 fi
+build_exit=$?
+exit $build_exit

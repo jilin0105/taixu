@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.runtime.samples
+package top.wkbin.taixu.runtime.samples
 
 import android.content.Context
 import top.wkbin.taixu.core.database.WorkspaceRepository
@@ -103,6 +103,9 @@ object WorkspaceSampleSeeder {
                     targetSdk = 34
                     versionCode = 1
                     versionName = "1.0.0"
+                    ndk {
+                        abiFilters += "arm64-v8a"
+                    }
                 }
 
                 compileOptions {
