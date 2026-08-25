@@ -36,11 +36,15 @@ import androidx.compose.material3.Surface
 import top.wkbin.taixu.ui.settings.LocalizedText as Text
 import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -78,18 +82,22 @@ fun DistroManagementScreen(
     val installedDistros by viewModel.installedDistros.collectAsStateWithLifecycle()
     val activeDistroId by viewModel.activeDistroId.collectAsStateWithLifecycle()
     val runtimeState by viewModel.runtimeState.collectAsStateWithLifecycle()
+    val restoringDistroId by viewModel.restoringDistroId.collectAsStateWithLifecycle()
 
     var showInstallDialog by remember { mutableStateOf(false) }
+    var distroToReset by remember { mutableStateOf<InstalledDistro?>(null) }
     var distroToUninstall by remember { mutableStateOf<InstalledDistro?>(null) }
     var installProgress by remember { mutableStateOf<String?>(null) }
     var installProgressFraction by remember { mutableStateOf(0f) }
     var isInstalling by remember { mutableStateOf(false) }
     var installError by remember { mutableStateOf<String?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
 
     val scope = rememberCoroutineScope()
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             RuntimeTopBar(
                 title = "Linux 发行版管理",
@@ -144,9 +152,13 @@ fun DistroManagementScreen(
                 DistroItemCard(
                     distro = distro,
                     isActive = distro.id.equals(activeDistroId, ignoreCase = true),
+                    isRestoring = distro.id.equals(restoringDistroId, ignoreCase = true),
                     canUninstall = installedDistros.size > 1,
                     onSwitchActive = {
                         viewModel.switchActiveDistro(distro.id)
+                    },
+                    onReset = {
+                        distroToReset = distro
                     },
                     onUninstall = {
                         distroToUninstall = distro
@@ -209,14 +221,31 @@ fun DistroManagementScreen(
         )
     }
 
-    // 卸载确认对话框
+    // 重置沙箱确认对话框（带 3 秒倒计时锁）
+    distroToReset?.let { target ->
+        ResetDistroConfirmDialog(
+            distro = target,
+            onConfirm = {
+                val toReset = target.id
+                distroToReset = null
+                viewModel.resetDistro(toReset) { success, msg ->
+                    scope.launch {
+                        snackbarHostState.showSnackbar(msg)
+                    }
+                }
+            },
+            onDismiss = { distroToReset = null },
+        )
+    }
+
+    // 删除系统确认对话框
     distroToUninstall?.let { target ->
         RuntimeAlertDialog(
             onDismissRequest = { distroToUninstall = null },
-            title = { Text(text = "确认卸载 ${target.displayName}？") },
+            title = { Text(text = "确认删除 ${target.displayName}？") },
             text = {
                 Text(
-                    text = "卸载将清除该发行版沙箱下的根目录文件与独立软件（释放约 ${String.format("%.1f", target.sizeBytes.toDouble() / (1024 * 1024))} MB 空间）。/workspace 工作区中的代码文件不会受到任何影响。",
+                    text = "删除将清除该发行版沙箱下的根目录文件与独立软件（释放约 ${String.format("%.1f", target.sizeBytes.toDouble() / (1024 * 1024))} MB 空间）。/workspace 工作区中的代码文件不会受到任何影响。",
                 )
             },
             confirmButton = {
@@ -228,7 +257,7 @@ fun DistroManagementScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                 ) {
-                    Text(text = "确认卸载", color = MaterialTheme.colorScheme.onError)
+                    Text(text = "确认删除", color = MaterialTheme.colorScheme.onError)
                 }
             },
             dismissButton = {
@@ -241,11 +270,73 @@ fun DistroManagementScreen(
 }
 
 @Composable
+private fun ResetDistroConfirmDialog(
+    distro: InstalledDistro,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var countdown by remember { mutableStateOf(3) }
+
+    LaunchedEffect(distro.id) {
+        while (countdown > 0) {
+            delay(1000)
+            countdown--
+        }
+    }
+
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "重置 ${distro.displayName} 沙箱？",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "• 将清除自行安装的软件包与系统修改",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "• 不会删除 /workspace 中的项目代码",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                enabled = countdown == 0,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    disabledContainerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.3f),
+                ),
+            ) {
+                Text(
+                    text = if (countdown > 0) "确认重置 (${countdown}s)" else "确认重置",
+                    color = if (countdown == 0) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onError.copy(alpha = 0.6f),
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = "取消")
+            }
+        },
+    )
+}
+
+@Composable
 private fun DistroItemCard(
     distro: InstalledDistro,
     isActive: Boolean,
+    isRestoring: Boolean,
     canUninstall: Boolean,
     onSwitchActive: () -> Unit,
+    onReset: () -> Unit,
     onUninstall: () -> Unit,
 ) {
     RuntimeCard(
@@ -319,24 +410,48 @@ private fun DistroItemCard(
                     fontFamily = FontFamily.Monospace,
                 )
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     if (!isActive) {
                         OutlinedButton(
                             onClick = onSwitchActive,
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            enabled = !isRestoring,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                             shape = RoundedCornerShape(6.dp),
                         ) {
                             Text(text = "设为主系统", style = MaterialTheme.typography.labelSmall)
                         }
                     }
 
+                    OutlinedButton(
+                        onClick = onReset,
+                        enabled = !isRestoring,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        shape = RoundedCornerShape(6.dp),
+                    ) {
+                        if (isRestoring) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(12.dp),
+                                strokeWidth = 1.5.dp,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(text = "正在还原...", style = MaterialTheme.typography.labelSmall)
+                        } else {
+                            Text(text = "重置沙箱", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+
                     if (canUninstall) {
                         TextButton(
                             onClick = onUninstall,
+                            enabled = !isRestoring,
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                         ) {
                             Text(
-                                text = "卸载",
+                                text = "删除系统",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.error,
                             )

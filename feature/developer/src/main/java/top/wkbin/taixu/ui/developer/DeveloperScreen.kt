@@ -26,10 +26,12 @@ import top.wkbin.taixu.ui.components.RuntimeSwitch as Switch
 import top.wkbin.taixu.ui.developer.LocalizedText as Text
 import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -349,13 +351,31 @@ fun DeveloperScreen(
         )
     }
     if (showResetConfirmation) {
+        var countdown by remember { mutableStateOf(3) }
+        LaunchedEffect(Unit) {
+            while (countdown > 0) {
+                delay(1000)
+                countdown--
+            }
+        }
         RuntimeAlertDialog(
             onDismissRequest = { showResetConfirmation = false },
-            title = { Text("恢复 Linux 初始状态？") },
-            text = { Text("将删除当前 Linux RootFS、已安装工具和沙箱缓存，但保留 /workspace 工程和手机共享存储。此操作不可撤销。") },
+            title = { Text("重置当前沙箱？") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("• 将清除自行安装的软件包与系统修改", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("• 不会删除 /workspace 中的项目代码", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                }
+            },
             confirmButton = {
-                TextButton(onClick = { showResetConfirmation = false; viewModel.resetLinuxEnvironment() }) {
-                    Text("确认重置", color = MaterialTheme.colorScheme.error)
+                TextButton(
+                    onClick = { showResetConfirmation = false; viewModel.resetLinuxEnvironment() },
+                    enabled = countdown == 0,
+                ) {
+                    Text(
+                        if (countdown > 0) "确认重置 (${countdown}s)" else "确认重置",
+                        color = if (countdown == 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.error.copy(alpha = 0.4f),
+                    )
                 }
             },
             dismissButton = { TextButton(onClick = { showResetConfirmation = false }) { Text("取消") } },

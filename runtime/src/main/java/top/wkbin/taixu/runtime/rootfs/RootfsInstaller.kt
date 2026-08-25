@@ -170,12 +170,43 @@ class RootfsInstaller @Inject constructor(
         return staging
     }
 
-    private suspend fun pullInto(
+    suspend fun resetDistro(
+        distribution: DistributionSpec,
+        route: RegistryRoute = RegistryRoute.AUTO,
+        onProgress: suspend (DownloadProgress) -> Unit = {},
+    ): AppResult<File> = withContext(Dispatchers.IO) {
+        val distroId = distribution.id.lowercase().trim()
+        val distroTargetDir = pathManager.rootfsDir(distroId)
+        val staging = prepareStaging(distroId)
+        recoverInterruptedUpdate(distroId)
+        try {
+            val image = restoreFromCacheOrPull(distribution, route, staging, onProgress)
+            rootfsValidator.validate(staging)
+            replaceRootfs(distroId, staging, retainBackup = false)
+            markInstalled(distroId, image)
+            SafeFileTree.delete(pathManager.homeDir(distroId))
+            pathManager.homeDir(distroId).mkdirs()
+            pathManager.ensureDistroDirectories(distroId)
+            pathManager.cleanupStalePtyMarkers(distroId)
+            logger.i("Reset distro ${distribution.displayName} ($distroId) to pristine state at $distroTargetDir")
+            AppResult.Success(distroTargetDir)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (throwable: Throwable) {
+            SafeFileTree.delete(pathManager.stagingRootfsDir(distroId))
+            logger.e("Failed to reset rootfs for $distroId", throwable)
+            failure("重置沙箱 ($distroId) 失败", throwable)
+        }
+    }
+
+    private suspend fun restoreFromCacheOrPull(
         distribution: DistributionSpec,
         route: RegistryRoute,
         staging: File,
         onProgress: suspend (DownloadProgress) -> Unit,
     ): OciRegistryClient.ImageInfo {
+        val distroId = distribution.id.lowercase().trim()
+        val layersMarker = pathManager.distroLayersFile(distroId)
         val applyLayer: suspend (File, String) -> Unit = { layer, mediaType ->
             layer.inputStream().use { raw ->
                 val stream = when {
@@ -187,13 +218,66 @@ class RootfsInstaller @Inject constructor(
                 stream.use { tarStreamExtractor.extract(it, staging, handleWhiteouts = true) }
             }
         }
-        return try {
+        if (layersMarker.isFile) {
+            val lines = layersMarker.readLines().map { it.trim() }.filter { it.isNotEmpty() }
+            val cachedLayers = lines.mapNotNull { line ->
+                val parts = line.split(":", limit = 3)
+                if (parts.size >= 3) {
+                    val type = parts[0]
+                    val fileName = parts[1]
+                    val mediaType = parts[2]
+                    val folder = if (type == "lxc") File(pathManager.cacheDir, "lxc_images") else File(pathManager.cacheDir, "oci_layers")
+                    val file = File(folder, fileName)
+                    if (file.isFile && file.length() > 0) Pair(file, mediaType) else null
+                } else null
+            }
+            if (cachedLayers.size == lines.size && cachedLayers.isNotEmpty()) {
+                logger.i("Found ${cachedLayers.size} cached layers for $distroId, restoring offline in 0-traffic mode")
+                val totalBytes = cachedLayers.sumOf { it.first.length() }
+                var unpackedBytes = 0L
+                cachedLayers.forEachIndexed { index, (file, mediaType) ->
+                    applyLayer(file, mediaType)
+                    unpackedBytes += file.length()
+                    onProgress(DownloadProgress(unpackedBytes, totalBytes))
+                    logger.i("Extracted cached layer ${index + 1}/${cachedLayers.size}: ${file.name}")
+                }
+                val version = pathManager.rootfsVersion(distroId) ?: "oci-cached-${distribution.id}"
+                val digest = pathManager.rootfsDigest(distroId) ?: "cached"
+                return OciRegistryClient.ImageInfo(version, digest)
+            }
+        }
+        return pullInto(distribution, route, staging, onProgress)
+    }
+
+    private suspend fun pullInto(
+        distribution: DistributionSpec,
+        route: RegistryRoute,
+        staging: File,
+        onProgress: suspend (DownloadProgress) -> Unit,
+    ): OciRegistryClient.ImageInfo {
+        val distroId = distribution.id.lowercase().trim()
+        val recordedLayers = mutableListOf<String>()
+        val applyLayer: suspend (File, String) -> Unit = { layer, mediaType ->
+            val type = if (mediaType.contains("lxc")) "lxc" else "oci"
+            recordedLayers.add("$type:${layer.name}:$mediaType")
+            layer.inputStream().use { raw ->
+                val stream = when {
+                    mediaType.contains("zstd") -> ZstdInputStream(raw)
+                    mediaType.contains("gzip") -> GZIPInputStream(raw)
+                    mediaType.contains("xz") -> XZInputStream(raw)
+                    else -> raw
+                }
+                stream.use { tarStreamExtractor.extract(it, staging, handleWhiteouts = true) }
+            }
+        }
+        val info = try {
             ociRegistryClient.pull(
                 distribution,
                 route,
                 File(pathManager.cacheDir, "oci_layers"),
                 onProgress,
                 resetDestination = {
+                    recordedLayers.clear()
                     SafeFileTree.delete(staging)
                     staging.mkdirs()
                 },
@@ -210,6 +294,7 @@ class RootfsInstaller @Inject constructor(
                     "minimal rootfs (不含 buildpack-deps 工具链)",
                 ociFailure,
             )
+            recordedLayers.clear()
             SafeFileTree.delete(staging)
             staging.mkdirs()
             val version = lxcImagesClient.pull(
@@ -220,6 +305,13 @@ class RootfsInstaller @Inject constructor(
             )
             OciRegistryClient.ImageInfo(version, "lxc-$version")
         }
+        if (recordedLayers.isNotEmpty()) {
+            runCatching {
+                pathManager.metadataDir(distroId).mkdirs()
+                pathManager.distroLayersFile(distroId).writeText(recordedLayers.joinToString("\n") + "\n")
+            }
+        }
+        return info
     }
 
     private fun replaceRootfs(distroId: String, staging: File, retainBackup: Boolean) {

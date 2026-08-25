@@ -165,24 +165,39 @@ class LinuxRuntimeImpl @Inject constructor(
     override suspend fun resetSandbox(distroId: String?): AppResult<Unit> = initializeMutex.withLock {
         withContext(Dispatchers.IO) {
             val safeId = (distroId ?: _activeDistroId.value).lowercase().trim()
+            val wasActive = _activeDistroId.value == safeId
             try {
                 closeInteractiveSessions(safeId)
                 processRegistry.stopAll()
-                hostBridge.stop()
-                val result = rootfsInstaller.uninstallDistro(safeId)
+                if (wasActive) {
+                    hostBridge.stop()
+                }
+                val distribution = DistributionCatalog.require(safeId)
+                val result = rootfsInstaller.resetDistro(distribution)
                 if (result is AppResult.Success) {
-                    _activeDistroId.value = "ubuntu"
-                    settingsDataStore.setSelectedDistribution("ubuntu")
+                    configureRootfs(safeId)
+                    configureDns(safeId)
+                    configureEnvironment(safeId)
                     refreshInstalledDistros()
-                    _state.value = RuntimeState.NotInitialized
+                    if (wasActive) {
+                        if (!hostBridge.isRunning.value) {
+                            hostBridge.start()
+                        }
+                        _state.value = RuntimeState.Ready
+                    }
+                    logger.i("Reset sandbox distro $safeId successfully")
+                    AppResult.Success(Unit)
                 } else {
                     val error = result.errorOrNull()
-                    _state.value = RuntimeState.Error(
-                        error?.cause ?: IllegalStateException(error?.message ?: "Linux 环境重置失败"),
-                    )
+                    if (wasActive) {
+                        _state.value = RuntimeState.Error(
+                            error?.cause ?: IllegalStateException(error?.message ?: "Linux 环境重置失败"),
+                        )
+                    }
+                    AppResult.Failure(error ?: AppError(ErrorCode.INSTALLATION_FAILED, "重置 Linux 环境失败"))
                 }
-                result
             } catch (throwable: Throwable) {
+                logger.e("Failed to reset sandbox distro $safeId", throwable)
                 AppResult.Failure(AppError(ErrorCode.IO, "重置 Linux 环境失败：${throwable.message}", throwable))
             }
         }
