@@ -70,6 +70,21 @@ class GenericRecipeInstaller(
 
             val baseEnvironment = runtimeEnvironment(localPayload)
 
+            // Older offline Android-suite packages called `unzip` directly before
+            // the package itself had a chance to install a ZIP extractor. Provide
+            // a compatibility shim from the already-installed JDK so those
+            // packages remain installable on minimal rootfs images. New packages
+            // use the same fallback internally, so this is harmless when unused.
+            if (manifest.source == "LOCAL") {
+                val unzipShim = localUnzipCompatibilityCommand()
+                val shimResult = linuxRuntime.execute(
+                    ShellCommand(commandLine = unzipShim, environment = baseEnvironment),
+                )
+                if (!shimResult.isSuccess) {
+                    error(shimResult.stderr.ifBlank { shimResult.stdout }.ifBlank { "无法准备 ZIP 解压兼容层" })
+                }
+            }
+
             // 2.5 预检与自愈基础系统包管理状态 (清理残留锁、已损坏的 updates 事务与未配置的 dpkg 状态)
             val preflightCmd = "rm -rf /var/lib/dpkg/updates/* /var/lib/dpkg/lock* /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null || true; DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>/dev/null || true"
             linuxRuntime.execute(ShellCommand(commandLine = preflightCmd, environment = baseEnvironment))
@@ -232,6 +247,36 @@ class GenericRecipeInstaller(
                 "PATH" to "$toolDir/bin:$effectivePath",
             ) + payloadPath?.let { mapOf("TAIXU_PLUGIN_PAYLOAD" to it) }.orEmpty()
     }
+
+    private fun localUnzipCompatibilityCommand(): String = """
+        if ! command -v unzip >/dev/null 2>&1; then
+            printf '%s\n' \
+                '#!/bin/sh' \
+                'set -eu' \
+                'archive=' \
+                'dest=.' \
+                'jar_bin="${'$'}{JAVA_HOME:-}/bin/jar"' \
+                'if [ ! -x "${'$'}{jar_bin}" ]; then' \
+                '  for candidate in /opt/taixu/toolchains/android/jdk/bin/jar /usr/bin/jar /usr/lib/jvm/default-java/bin/jar; do' \
+                '    if [ -x "${'$'}{candidate}" ]; then jar_bin="${'$'}{candidate}"; break; fi' \
+                '  done' \
+                'fi' \
+                'while [ "${'$'}#" -gt 0 ]; do' \
+                '  case "${'$'}1" in' \
+                '    -q|-qq|-o) shift ;;' \
+                '    -d) dest="${'$'}2"; shift 2 ;;' \
+                '    -*) shift ;;' \
+                '    *) archive="${'$'}1"; shift ;;' \
+                '  esac' \
+                'done' \
+                '[ -n "${'$'}archive" ] || exit 2' \
+                '[ -x "${'$'}{jar_bin}" ] || { echo "JDK jar unavailable for ZIP extraction" >&2; exit 127; }' \
+                'mkdir -p "${'$'}dest"' \
+                '(cd "${'$'}dest" && "${'$'}{jar_bin}" xf "${'$'}archive")' \
+                > "${'$'}TAIXU_TOOL_DIR/bin/unzip"
+            chmod 755 "${'$'}TAIXU_TOOL_DIR/bin/unzip"
+        fi
+    """.trimIndent()
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<InstallEvent>.executeAndReport(
         result: CommandResult,

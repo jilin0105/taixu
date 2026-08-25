@@ -60,4 +60,13 @@ class BuildGuardAssetTest {
         assertTrue(script.contains("extract_zip \"${'$'}ARCHIVES/android-sdk-tools-static-aarch64.zip\""))
         assertTrue(script.contains("extract_zip \"${'$'}ARCHIVES/ninja-linux-aarch64.zip\""))
     }
+
+    @Test
+    fun offlinePluginCompatibilityShimUsesJdkJar() {
+        val installer = File("../tools/src/main/java/top/wkbin/taixu/runtime/tools/GenericRecipeInstaller.kt").readText()
+        assertTrue(installer.contains("localUnzipCompatibilityCommand"))
+        assertTrue(installer.contains("/opt/taixu/toolchains/android/jdk/bin/jar"))
+        assertTrue(installer.contains("jar_bin"))
+        assertTrue(installer.contains("TAIXU_TOOL_DIR/bin/unzip"))
+    }
 }
