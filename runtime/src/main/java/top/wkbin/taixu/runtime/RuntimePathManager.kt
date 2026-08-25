@@ -85,6 +85,7 @@ class RuntimePathManager @Inject constructor(
     fun rootfsPreviousDir(distroId: String): File = File(distroDir(distroId), "rootfs.previous")
     fun rootfsInstalledMarker(distroId: String): File = File(metadataDir(distroId), "rootfs.installed")
     fun rootfsUpdatePendingMarker(distroId: String): File = File(metadataDir(distroId), "rootfs.update.pending")
+    fun distroLayersFile(distroId: String): File = File(metadataDir(distroId), "layers.txt")
 
     fun isDistroInstalled(distroId: String): Boolean =
         rootfsInstalledMarker(distroId).isFile && rootfsValidator.isValid(rootfsDir(distroId))

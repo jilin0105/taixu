@@ -245,6 +245,26 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    private val _restoringDistroId = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    val restoringDistroId: StateFlow<String?> = _restoringDistroId.asStateFlow()
+
+    fun resetDistro(distroId: String, onResult: ((Boolean, String) -> Unit)? = null) {
+        if (_restoringDistroId.value != null) return
+        _restoringDistroId.value = distroId
+        viewModelScope.launch {
+            val res = linuxRuntime.resetSandbox(distroId)
+            if (res is top.wkbin.taixu.core.common.result.AppResult.Success) {
+                toolManager.resetDistroState(distroId)
+            }
+            _restoringDistroId.value = null
+            if (res is top.wkbin.taixu.core.common.result.AppResult.Success) {
+                onResult?.invoke(true, "已恢复初始状态")
+            } else {
+                onResult?.invoke(false, res.errorOrNull()?.message ?: "重置失败")
+            }
+        }
+    }
+
     fun uninstallDistro(distroId: String) {
         viewModelScope.launch {
             linuxRuntime.uninstallDistro(distroId)
