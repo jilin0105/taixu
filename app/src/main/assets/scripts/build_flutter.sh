@@ -123,6 +123,27 @@ if [ ! -x "$FLUTTER_HOME/bin/flutter" ] || [ ! -x "$FLUTTER_HOME/bin/cache/dart-
     echo "==> [TaiXu Build] ❌ Flutter SDK 不是可用的 Linux ARM64 版本，请在工坊重新装配 Flutter 套件"
     exit 126
 fi
+# Flutter 工具的 locateAndroidSdk 需要 $ANDROID_HOME/platform-tools/adb 存在
+# 才认这个 SDK（套件历史版本只装 build-tools + platform，adb 在 TOOL_DIR/bin）。
+# 缺了会报 "No Android SDK found. Try setting the ANDROID_HOME"，这里自愈补齐
+# platform-tools 布局与 licenses，存量沙箱无需重装插件。
+if [ ! -e "$ANDROID_HOME/platform-tools/adb" ]; then
+    ADB_CANDIDATE=""
+    for candidate in "${TAIXU_TOOL_DIR:-/opt/taixu/tools/android-suite-offline}/bin/adb" /opt/taixu/bin/adb; do
+        if [ -x "$candidate" ]; then ADB_CANDIDATE="$candidate"; break; fi
+    done
+    mkdir -p "$ANDROID_HOME/platform-tools"
+    if [ -n "$ADB_CANDIDATE" ]; then
+        ln -sfn "$ADB_CANDIDATE" "$ANDROID_HOME/platform-tools/adb"
+        echo "==> [TaiXu Build] 已补齐 Flutter SDK 布局：$ANDROID_HOME/platform-tools/adb -> $ADB_CANDIDATE"
+    fi
+fi
+mkdir -p "$ANDROID_HOME/licenses"
+if [ ! -f "$ANDROID_HOME/licenses/android-sdk-license" ]; then
+    printf '\x89\x50\x41\x59\x0d\x0a\x1a\x0a\xd0\x4a\x87\x95\x6d\x7d\x3c\xcf\x9d\nd56f5187d9450ff8409f4ab7c8ab84e9\n' \
+        > "$ANDROID_HOME/licenses/android-sdk-license"
+fi
+
 if [ ! -f "${ANDROID_HOME}/platforms/android-34/android.jar" ]; then
     echo "==> [TaiXu Build] ❌ 缺少 Android SDK Platform 34，请同时安装 Android 核心基础环境"
     exit 126

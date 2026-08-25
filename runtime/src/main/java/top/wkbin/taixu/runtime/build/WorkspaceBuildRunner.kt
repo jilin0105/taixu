@@ -299,7 +299,12 @@ class WorkspaceBuildRunner @Inject constructor(
         var heartbeatStep = "正在构建，请稍候..."
         var heartbeatProgress = 0.35f
         var dependencyObservation = DependencyObservation()
-        launch {
+        // ⚠️ 必须持有心跳 Job 并在 finally 里 cancel：channelFlow 要等所有子协程
+        // 结束才关闭通道。无限心跳不取消 → flow 永不完成 → 协调器永远收不到
+        // “构建结束”，UI 停留在“正在构建”转圈、后台任务标记永不清理；且终态
+        // （成功/失败）发出 4 秒后就被心跳覆盖回运行态——成功时看不到安装
+        // 提示、失败时看不到错误，都是这个无限子协程造成的。
+        val heartbeatJob = launch {
             while (isActive) {
                 delay(4_000L)
                 flushLogBuffer()
@@ -533,11 +538,17 @@ class WorkspaceBuildRunner @Inject constructor(
                 log("[TaiXu Build] 检索 APK 产物...")
                 send(BuildRunProgress(step = "编译成功，正在检索 APK 产物...", progress = 0.9f, logOutput = snapshotLogs()))
 
+                // 取最新 mtime 的 APK：目录里可能残留历史构建的旧 APK（目录序
+                // firstOrNull 会任意挑），产物校验必须对准本次构建刚写出的文件。
                 val apkDir = File(project.path, "app/build/outputs/apk/${if (isRelease) "release" else "debug"}")
                 val candidateApk = if (apkDir.isDirectory) {
-                    apkDir.listFiles()?.firstOrNull { it.extension.equals("apk", ignoreCase = true) }
+                    apkDir.listFiles()
+                        ?.filter { it.isFile && it.extension.equals("apk", ignoreCase = true) }
+                        ?.maxByOrNull { it.lastModified() }
                 } else null
-                val apkFile = candidateApk ?: File(project.path).walkTopDown().firstOrNull { it.isFile && it.extension.equals("apk", ignoreCase = true) && !it.name.contains("unaligned") }
+                val apkFile = candidateApk ?: File(project.path).walkTopDown()
+                    .filter { it.isFile && it.extension.equals("apk", ignoreCase = true) && !it.name.contains("unaligned") }
+                    .maxByOrNull { it.lastModified() }
 
                 if (apkFile == null || !apkFile.exists()) {
                     log("[TaiXu Build] ❌ 未在 outputs 目录找到 APK 产物")
@@ -553,6 +564,7 @@ class WorkspaceBuildRunner @Inject constructor(
                     return@channelFlow
                 }
 
+                log("[TaiXu Build] 校验 APK 产物: ${apkFile.absolutePath} (${apkFile.length() / 1024} KB)")
                 val artifactVerification = ApkArtifactVerifier.verify(apkFile)
                 log("[TaiXu Build] APK 产物校验: ${artifactVerification.message}")
                 if (!artifactVerification.isValid) {
@@ -761,11 +773,17 @@ class WorkspaceBuildRunner @Inject constructor(
                 log("[TaiXu Build] ✅ Flutter 编译完成，耗时: ${outcome.durationMs}ms")
                 send(BuildRunProgress(step = "编译成功，正在导出 APK...", progress = 0.8f, logOutput = snapshotLogs()))
 
+                // 取最新 mtime 的 APK（理由同 Android 路径）：flutter-apk 目录可能
+                // 残留旧构建的胖 APK，目录序 firstOrNull 会任意挑导致误判。
                 val apkDir = File(project.path, "build/app/outputs/flutter-apk")
                 val candidateApk = if (apkDir.isDirectory) {
-                    apkDir.listFiles()?.firstOrNull { it.extension.equals("apk", ignoreCase = true) }
+                    apkDir.listFiles()
+                        ?.filter { it.isFile && it.extension.equals("apk", ignoreCase = true) }
+                        ?.maxByOrNull { it.lastModified() }
                 } else null
-                val apkFile = candidateApk ?: File(project.path).walkTopDown().firstOrNull { it.isFile && it.extension.equals("apk", ignoreCase = true) }
+                val apkFile = candidateApk ?: File(project.path).walkTopDown()
+                    .filter { it.isFile && it.extension.equals("apk", ignoreCase = true) }
+                    .maxByOrNull { it.lastModified() }
 
                 if (apkFile == null || !apkFile.exists()) {
                     log("[TaiXu Build] ❌ 未在 outputs 目录找到 Flutter APK 产物")
@@ -781,6 +799,7 @@ class WorkspaceBuildRunner @Inject constructor(
                     return@channelFlow
                 }
 
+                log("[TaiXu Build] 校验 Flutter APK 产物: ${apkFile.absolutePath} (${apkFile.length() / 1024} KB)")
                 val artifactVerification = ApkArtifactVerifier.verify(apkFile)
                 log("[TaiXu Build] Flutter APK 产物校验: ${artifactVerification.message}")
                 if (!artifactVerification.isValid) {
@@ -865,6 +884,8 @@ class WorkspaceBuildRunner @Inject constructor(
             }
         }
         } finally {
+            // 先停心跳再收尾：保证终态是通道里最后一条消息（见 heartbeatJob 声明处说明）。
+            heartbeatJob.cancel()
             log("[TaiXu Build] 📄 构建结束，完整日志已保存至: ${project.linuxPath}/.taixu/logs/${buildLogFile.name}")
             runCatching {
                 flushLogBuffer()

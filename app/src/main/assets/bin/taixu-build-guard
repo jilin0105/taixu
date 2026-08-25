@@ -42,7 +42,7 @@ exec_fixed_gradle() {
 verify_recent_apk() {
     verifier=/opt/taixu/scripts/taixu-build-verify.sh
     [ -x "$verifier" ] || fail "缺少 APK ABI 验证器"
-    apk=$(find "$PWD" -type f -name '*.apk' ! -name '*unaligned*' 2>/dev/null | head -n 1)
+    apk=$(find "$PWD" -type f -name '*.apk' ! -name '*unaligned*' -exec ls -t {} + 2>/dev/null | head -n 1)
     [ -n "$apk" ] || fail "构建完成但未找到 APK 产物"
     /bin/sh "$verifier" "$apk" || fail "APK 产物验证失败，拒绝继续"
 }

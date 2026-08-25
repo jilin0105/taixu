@@ -148,6 +148,18 @@ class BuildGuardAssetTest {
     }
 
     @Test
+    fun flutterSdkLayoutIncludesPlatformToolsForLocateAndroidSdk() {
+        // Flutter 的 locateAndroidSdk 只认含 platform-tools/adb 的 SDK 目录；
+        // 缺了报 "No Android SDK found"。安装器与构建脚本都要补齐该布局。
+        val flutterBuild = File(assets, "scripts/build_flutter.sh").readText()
+        val installer = offlineAndroidInstaller.readText()
+        listOf(flutterBuild, installer).forEach { script ->
+            assertTrue(script.contains("platform-tools/adb"))
+            assertTrue(script.contains("licenses/android-sdk-license"))
+        }
+    }
+
+    @Test
     fun offlineAndroidInstallerDoesNotRequireOptionalFileOrXzCommands() {
         val installer = offlineAndroidInstaller.readText()
         val verifier = offlineAndroidVerifier.readText()

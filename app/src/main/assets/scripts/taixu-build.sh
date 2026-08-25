@@ -210,7 +210,7 @@ run_android() {
         if test "$offline" = 1; then export TAIXU_OFFLINE=1; fi
         /bin/sh /opt/taixu/scripts/build_android_qemu.sh "$project" "$task"; status=$?
         test "$status" -eq 0 || return "$status"
-        apk=$(find "$project" -type f -name '*.apk' ! -name '*unaligned*' | head -n 1)
+        apk=$(find "$project" -type f -name '*.apk' ! -name '*unaligned*' -exec ls -t {} + 2>/dev/null | head -n 1)
         test -n "$apk" || fail "QEMU 构建完成但未找到 APK"
         verify_artifact "$apk"
         return 0
@@ -221,7 +221,7 @@ run_android() {
     if test "$offline" = 1; then export TAIXU_OFFLINE=1; fi
     /bin/sh /opt/taixu/scripts/build_android.sh "$project" "$task"; status=$?
     test "$status" -eq 0 || return "$status"
-    apk=$(find "$project" -type f -name '*.apk' ! -name '*unaligned*' | head -n 1)
+    apk=$(find "$project" -type f -name '*.apk' ! -name '*unaligned*' -exec ls -t {} + 2>/dev/null | head -n 1)
     test -n "$apk" || fail "构建完成但未找到 APK"
     verify_artifact "$apk"
 }
@@ -243,7 +243,7 @@ run_flutter() {
         if test "$offline" = 1; then export TAIXU_OFFLINE=1; fi
         /bin/sh /opt/taixu/scripts/build_flutter_qemu.sh "$project"; status=$?
         test "$status" -eq 0 || return "$status"
-        apk=$(find "$project" -type f -name '*.apk' ! -name '*unaligned*' | head -n 1)
+        apk=$(find "$project" -type f -name '*.apk' ! -name '*unaligned*' -exec ls -t {} + 2>/dev/null | head -n 1)
         test -n "$apk" || fail "QEMU Flutter 构建完成但未找到 APK"
         verify_artifact "$apk"
         return 0
@@ -253,7 +253,7 @@ run_flutter() {
     if test "$offline" = 1; then export TAIXU_OFFLINE=1; fi
     /bin/sh /opt/taixu/scripts/build_flutter.sh "$project" "$target"; status=$?
     test "$status" -eq 0 || return "$status"
-    apk=$(find "$project" -type f -name '*.apk' ! -name '*unaligned*' | head -n 1)
+    apk=$(find "$project" -type f -name '*.apk' ! -name '*unaligned*' -exec ls -t {} + 2>/dev/null | head -n 1)
     test -n "$apk" || fail "Flutter 构建完成但未找到 APK"
     verify_artifact "$apk"
 }

@@ -248,6 +248,24 @@ if [ -s "$ARCHIVES/android-tools_aarch64.deb" ]; then
 fi
 progress 80 "[VERIFY] ADB ARM64 校验完成"
 
+# Flutter 工具的 locateAndroidSdk 只有在 $ANDROID_HOME/platform-tools/adb
+# （或 cmdline-tools/sdkmanager）存在时才认这个 SDK，缺了直接报
+# "No Android SDK found. Try setting the ANDROID_HOME environment variable"。
+# 套件只装了 build-tools + platform，这里补齐 platform-tools 布局与 licenses。
+mkdir -p "$ANDROID_HOME/platform-tools" "$ANDROID_HOME/licenses"
+if [ -x "$TOOL_DIR/bin/adb" ] && [ ! -e "$ANDROID_HOME/platform-tools/adb" ]; then
+    ln -sfn "$TOOL_DIR/bin/adb" "$ANDROID_HOME/platform-tools/adb"
+fi
+# 常规 SDK 许可签名（Android SDK License r8+），Gradle/Flutter 静默检查用。
+if [ ! -f "$ANDROID_HOME/licenses/android-sdk-license" ]; then
+    printf '\x89\x50\x41\x59\x0d\x0a\x1a\x0a\xd0\x4a\x87\x95\x6d\x7d\x3c\xcf\x9d\nd56f5187d9450ff8409f4ab7c8ab84e9\n' \
+        > "$ANDROID_HOME/licenses/android-sdk-license"
+fi
+if [ ! -f "$ANDROID_HOME/licenses/android-sdk-preview-license" ]; then
+    printf '\x89\x50\x41\x59\x0d\x0a\x1a\x0a\xd0\x4a\x87\x95\x6d\x7d\x3c\xcf\x9d\n84831b9409646a918db3050d3fba6e9c\n' \
+        > "$ANDROID_HOME/licenses/android-sdk-preview-license"
+fi
+
 progress 82 "[EXTRACT] 正在解压 Flutter Android ARM64 SDK"
 need "$ARCHIVES/flutter-linux-arm64-android-only-slim.tar.gz"
 if [ -s "$ARCHIVES/flutter-linux-arm64-android-only-slim.tar.gz" ]; then
