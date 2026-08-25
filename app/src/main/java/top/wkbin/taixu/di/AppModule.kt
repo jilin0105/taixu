@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import top.wkbin.taixu.core.database.AppDatabase
 import top.wkbin.taixu.core.database.MIGRATION_27_28
+import top.wkbin.taixu.core.database.MIGRATION_28_29
 import top.wkbin.taixu.core.database.ToolDao
 import top.wkbin.taixu.core.database.InstallLogDao
 import top.wkbin.taixu.core.database.InstallTaskDao
@@ -19,6 +20,7 @@ import top.wkbin.taixu.core.database.McpServerDao
 import top.wkbin.taixu.core.database.StorageMountBindingDao
 import top.wkbin.taixu.core.database.ToolSettingsDao
 import top.wkbin.taixu.core.database.AgentApprovalDao
+import top.wkbin.taixu.core.database.QuickPhraseDao
 import top.wkbin.taixu.harness.WorkspaceFileAccess
 import top.wkbin.taixu.core.tools.RuntimeManager
 import top.wkbin.taixu.core.tools.RuntimeManagerImpl
@@ -65,7 +67,7 @@ object AppModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase {
         return Room.databaseBuilder(context, AppDatabase::class.java, "taixu.db")
-            .addMigrations(MIGRATION_27_28)
+            .addMigrations(MIGRATION_27_28, MIGRATION_28_29)
             .fallbackToDestructiveMigration()
             .build()
     }
@@ -133,6 +135,10 @@ object AppModule {
     @Provides
     @Singleton
     fun provideAgentApprovalDao(database: AppDatabase): AgentApprovalDao = database.agentApprovalDao()
+
+    @Provides
+    @Singleton
+    fun provideQuickPhraseDao(database: AppDatabase): QuickPhraseDao = database.quickPhraseDao()
 
     @Provides
     @Singleton

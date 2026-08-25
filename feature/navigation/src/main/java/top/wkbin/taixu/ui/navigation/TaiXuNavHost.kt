@@ -76,6 +76,7 @@ sealed interface AppDestination : NavKey
 @Serializable data object ModelProfilesDestination : AppDestination
 @Serializable data object LocalLlmDestination : AppDestination
 @Serializable data class ModelEditorDestination(val modelId: String? = null) : AppDestination
+@Serializable data object QuickPhrasesDestination : AppDestination
 @Serializable data object StatsDestination : AppDestination
 @Serializable data object DeveloperDestination : AppDestination
 @Serializable data object CustomIterationDestination : AppDestination
@@ -219,6 +220,7 @@ fun TaiXuNavHost() {
                     onOpenToolCenter = { settingsStack.push(ToolCenterDestination) },
                     onOpenAgentSettings = { settingsStack.push(AgentSettingsDestination) },
                     onOpenMcpSettings = { settingsStack.push(McpSettingsDestination) },
+                    onOpenQuickPhrases = { settingsStack.push(QuickPhrasesDestination) },
                     onOpenStats = { settingsStack.push(StatsDestination) },
                     viewModel = settingsViewModel,
                 )
@@ -323,6 +325,12 @@ fun TaiXuNavHost() {
                     modelId = destination.modelId,
                     onBack = ::popBack,
                     onSaved = ::popBack,
+                    viewModel = settingsViewModel,
+                )
+            }
+            entry<QuickPhrasesDestination> {
+                top.wkbin.taixu.ui.settings.QuickPhrasesScreen(
+                    onBack = ::popBack,
                     viewModel = settingsViewModel,
                 )
             }

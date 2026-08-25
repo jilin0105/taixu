@@ -342,11 +342,13 @@ fun AgentEcoSettingsScreen(
     onOpenToolCenter: () -> Unit,
     onOpenAgentSettings: () -> Unit,
     onOpenMcpSettings: () -> Unit,
+    onOpenQuickPhrases: () -> Unit,
     onOpenStats: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val models by viewModel.models.collectAsStateWithLifecycle()
     val skills by viewModel.allSkills.collectAsStateWithLifecycle()
+    val phrases by viewModel.quickPhrases.collectAsStateWithLifecycle()
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -378,6 +380,14 @@ fun AgentEcoSettingsScreen(
                         title = "本地 LLM",
                         subtitle = "导入或下载 GGUF，在 ARM64 设备端通过 llama.cpp 离线推理",
                         onClick = onOpenLocalLlm,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(
+                        icon = RuntimeIconName.Chat,
+                        title = "快捷短语与常用指令",
+                        subtitle = "自定义智枢空白页快捷开始卡片与高频提示词模板",
+                        value = "${phrases.count { it.isEnabled }} 条已启用",
+                        onClick = onOpenQuickPhrases,
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     SettingsRow(

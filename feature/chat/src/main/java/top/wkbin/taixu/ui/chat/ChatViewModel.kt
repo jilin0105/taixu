@@ -53,7 +53,17 @@ class ChatViewModel @Inject constructor(
     private val agentSkillRepository: AgentSkillRepository,
     private val mcpServerRepository: McpServerRepository,
     private val approvalRepository: AgentApprovalRepository,
+    private val quickPhraseRepository: top.wkbin.taixu.core.database.QuickPhraseRepository,
 ) : ViewModel() {
+
+    init {
+        viewModelScope.launch {
+            quickPhraseRepository.ensureInitialized()
+        }
+    }
+
+    val quickPhrases: StateFlow<List<top.wkbin.taixu.core.model.QuickPhrase>> = quickPhraseRepository.observeAll()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val activeDistroId: StateFlow<String> = linuxRuntime.activeDistroId
     val installedDistros: StateFlow<List<top.wkbin.taixu.core.model.InstalledDistro>> = linuxRuntime.installedDistros
@@ -304,6 +314,15 @@ class ChatViewModel @Inject constructor(
             _input.value = ""
         } else {
             _input.value = command.template
+        }
+    }
+
+    fun applyQuickPhrase(phrase: top.wkbin.taixu.core.model.QuickPhrase) {
+        if (phrase.content.trim() == "/clear") {
+            createSession(context.getString(R.string.chat_new_session))
+            _input.value = ""
+        } else {
+            _input.value = phrase.content
         }
     }
 
