@@ -46,6 +46,9 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.material3.HorizontalDivider
 import top.wkbin.taixu.ui.components.RuntimeIconButton as IconButton
 import androidx.compose.material3.MaterialTheme
@@ -99,14 +102,6 @@ import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
 import top.wkbin.taixu.ui.components.SectionHeader
 import top.wkbin.taixu.ui.theme.LocalLiquidGlassBackdrop
-
-/** 密钥按圆点显示，但保留换行，便于可靠输入一行一个 Key。 */
-private object MultiLinePasswordVisualTransformation : VisualTransformation {
-    override fun filter(text: AnnotatedString): TransformedText = TransformedText(
-        AnnotatedString(text.text.map { if (it == '\n') '\n' else '•' }.joinToString("")),
-        OffsetMapping.Identity,
-    )
-}
 
 /**
  * 太墟 · 乾坤配置 (TaiXu Settings & Models)
@@ -2118,14 +2113,32 @@ private fun ModelEditor(
     var name by remember(modelId) { mutableStateOf(existing?.name.orEmpty()) }
     var model by remember(modelId) { mutableStateOf(existing?.model ?: provider.recommendedModels.firstOrNull().orEmpty()) }
     var url by remember(modelId) { mutableStateOf(existing?.baseUrl ?: provider.baseUrl) }
-    var key by remember(modelId, initialApiKey) { mutableStateOf(initialApiKey) }
+    var keyList by remember(modelId, initialApiKey) {
+        mutableStateOf(
+            initialApiKey.lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .toList()
+                .ifEmpty { listOf("") }
+        )
+    }
+    var revealedKeyIndices by remember { mutableStateOf(setOf<Int>()) }
     var autoDiscoverEnabled by remember(modelId) { mutableStateOf(false) }
 
     LaunchedEffect(initialApiKey) {
-        if (key.isBlank() && initialApiKey.isNotBlank()) {
-            key = initialApiKey
+        if (keyList.all { it.isBlank() } && initialApiKey.isNotBlank()) {
+            keyList = initialApiKey.lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .toList()
+                .ifEmpty { listOf("") }
         }
     }
+
+    val combinedKey = remember(keyList) {
+        keyList.map { it.trim() }.filter { it.isNotEmpty() }.joinToString("\n")
+    }
+
     var selectFirstDiscoveredModel by remember(modelId) { mutableStateOf(false) }
     var advancedExpanded by remember(modelId) { mutableStateOf(false) }
     var rpmLimitText by remember(modelId) {
@@ -2158,11 +2171,11 @@ private fun ModelEditor(
     // 自定义请求头
     var customHeaders by remember(modelId) { mutableStateOf(existing?.customHeaders.orEmpty()) }
 
-    LaunchedEffect(providerId, url, key, autoDiscoverEnabled) {
+    LaunchedEffect(providerId, url, combinedKey, autoDiscoverEnabled) {
         if (!autoDiscoverEnabled) return@LaunchedEffect
         delay(600)
         if (ProviderEndpointPolicy.isSafeBaseUrl(url)) {
-            discover(providerId, url, key)
+            discover(providerId, url, combinedKey)
             selectFirstDiscoveredModel = true
         }
     }
@@ -2267,7 +2280,7 @@ private fun ModelEditor(
                 trailingIcon = {
                     IconButton(
                         onClick = {
-                            discover(providerId, url, key)
+                            discover(providerId, url, combinedKey)
                             selectFirstDiscoveredModel = true
                         },
                         enabled = !discovering && url.isNotBlank(),
@@ -2283,25 +2296,114 @@ private fun ModelEditor(
             )
         }
 
-        // API Key 池
+        // API Key 池 (独立单行输入框 + 加号添加 + 密文输入展示)
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                OutlinedTextField(
-                    value = key,
-                    onValueChange = { key = it },
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("API Key 池（每行一个）") },
-                    placeholder = { Text("sk-key-1\nsk-key-2") },
-                    visualTransformation = MultiLinePasswordVisualTransformation,
-                    minLines = 3,
-                    maxLines = 6,
-                )
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "API Key 池",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = "${keyList.count { it.isNotBlank() }} 个已配置",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+
+                keyList.forEachIndexed { index, currentKey ->
+                    var isFocused by remember { mutableStateOf(false) }
+                    val isRevealed = revealedKeyIndices.contains(index)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedTextField(
+                            value = currentKey,
+                            onValueChange = { newVal ->
+                                keyList = keyList.toMutableList().also { it[index] = newVal }
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .onFocusChanged { isFocused = it.isFocused },
+                            label = { Text("API Key ${if (keyList.size > 1) "#${index + 1}" else ""}") },
+                            placeholder = { Text("sk-...") },
+                            singleLine = true,
+                            visualTransformation = if (isRevealed) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                if (currentKey.isNotEmpty()) {
+                                    IconButton(
+                                        onClick = {
+                                            revealedKeyIndices = if (isRevealed) {
+                                                revealedKeyIndices - index
+                                            } else {
+                                                revealedKeyIndices + index
+                                            }
+                                        },
+                                        modifier = Modifier.size(24.dp),
+                                    ) {
+                                        RuntimeIcon(
+                                            name = if (isRevealed) RuntimeIconName.Brain else RuntimeIconName.Key,
+                                            modifier = Modifier.size(16.dp),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                        )
+                                    }
+                                }
+                            },
+                        )
+
+                        // 按钮组：+号新增 key，多于1个时提供删除按钮
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            if (index == keyList.size - 1) {
+                                FilledTonalIconButton(
+                                    onClick = { keyList = keyList + "" },
+                                    modifier = Modifier.size(40.dp),
+                                    shape = RoundedCornerShape(10.dp),
+                                ) {
+                                    RuntimeIcon(
+                                        name = RuntimeIconName.Plus,
+                                        modifier = Modifier.size(18.dp),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            }
+
+                            if (keyList.size > 1) {
+                                IconButton(
+                                    onClick = {
+                                        keyList = keyList.toMutableList().also { it.removeAt(index) }
+                                        revealedKeyIndices = revealedKeyIndices.mapNotNull {
+                                            when {
+                                                it < index -> it
+                                                it > index -> it - 1
+                                                else -> null
+                                            }
+                                        }.toSet()
+                                    },
+                                    modifier = Modifier.size(40.dp),
+                                ) {
+                                    RuntimeIcon(
+                                        name = RuntimeIconName.Close,
+                                        modifier = Modifier.size(18.dp),
+                                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.75f),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Text(
-                    text = if ((existing?.apiKeyCount ?: 0) > 0) {
-                        "已安全保存 ${existing?.apiKeyCount} 个 Key；留空将保留原 Key 池"
-                    } else {
-                        "同一接口地址的多个 Key 将按请求自动轮询并在 429 时切换"
-                    },
+                    text = "同一接口地址的多个 Key 将按请求自动轮询并在 429 时自动切换",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -2591,14 +2693,14 @@ private fun ModelEditor(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = {
-                        discover(providerId, url, key)
+                        discover(providerId, url, combinedKey)
                         selectFirstDiscoveredModel = true
                     },
                     enabled = !discovering,
                 ) {
                     Text(if (discovering) "刷新中…" else "刷新在线模型")
                 }
-                OutlinedButton(onClick = { test(url, model, key) }, enabled = !testing) {
+                OutlinedButton(onClick = { test(url, model, combinedKey) }, enabled = !testing) {
                     Text(if (testing) "测试中…" else "测试连接")
                 }
             }
@@ -2634,7 +2736,7 @@ private fun ModelEditor(
                         provider.name,
                         model,
                         url,
-                        key,
+                        combinedKey,
                         parsedRpmLimit,
                         parsedTemperature,
                         parsedMaxTokens,
