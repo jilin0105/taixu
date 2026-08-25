@@ -49,6 +49,11 @@ class BuildGuardAssetTest {
         assertTrue(engine.contains("普通 ARM64 终端不能直接切换"))
         assertTrue(engine.contains("analyze"))
         assertTrue(engine.contains("TAIXU_OFFLINE"))
+        assertTrue(engine.contains("keep_project_arm64_only"))
+        assertTrue(engine.contains("armeabi-v7a|x86|x86_64"))
+        val analyzer = File(assets, "scripts/taixu-build-analyze.sh").readText()
+        assertFalse(analyzer.contains("lib/(x86_64|x86)/"))
+        assertTrue(analyzer.contains("non_arm64_abi=declared"))
     }
 
     @Test
@@ -71,14 +76,19 @@ class BuildGuardAssetTest {
         // 否则 APK 会因 x86_abi_present 被产物校验拒绝。
         assertTrue(managedNdkPolicy.contains("removeAll(['x86', 'x86_64', 'armeabi-v7a'])"))
         assertTrue(managedNdkPolicy.contains("abiFilters.add('arm64-v8a')"))
+        assertTrue(managedNdkPolicy.contains("aligning project NDK version"))
         val androidTemplate = File(assets, "templates/android-compose/app/build.gradle.kts").readText()
         assertTrue(androidTemplate.contains("abiFilters += \"arm64-v8a\""))
-        assertTrue(buildEntry.contains("cp \"${'$'}managed_ndk_policy\" /root/.gradle/init.d/taixu-android-ndk.gradle"))
+        assertTrue(buildEntry.contains("cp \"${'$'}managed_ndk_policy\" \"${'$'}GRADLE_USER_HOME/init.d/taixu-android-ndk.gradle\""))
         listOf(androidBuild, flutterBuild, buildEntry).forEach { script ->
             assertTrue(script.contains("od -An -t x1 -j 18 -N 2"))
             assertTrue(script.contains("b700"))
             assertFalse(script.contains("-tu2"))
         }
+        assertTrue(androidBuild.contains("GRADLE_HOME"))
+        assertTrue(androidBuild.contains("TAIXU_CMAKE_HOME"))
+        assertTrue(androidBuild.contains("TAIXU_NINJA_HOME"))
+        assertTrue(flutterBuild.contains("GRADLE_HOME"))
     }
 
     @Test

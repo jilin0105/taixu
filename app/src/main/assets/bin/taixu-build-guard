@@ -4,13 +4,46 @@
 set -u
 command_name="${1:-help}"
 [ "$#" -gt 0 ] && shift
-GRADLE_HOME=/opt/gradle-8.14.2
+GRADLE_HOME="${GRADLE_HOME:-/opt/gradle-8.14.2}"
 BUILD_ENGINE=/opt/taixu/scripts/taixu-build.sh
 fail() { printf '%s\n' "==> [TaiXu Guard] ❌ $*" >&2; exit "${2:-125}"; }
 load_android_environment() {
+    requested_java_home="${JAVA_HOME:-}"
+    requested_android_home="${ANDROID_HOME:-}"
+    requested_android_sdk_root="${ANDROID_SDK_ROOT:-}"
+    requested_gradle_home="${GRADLE_HOME:-}"
+    requested_flutter_home="${FLUTTER_HOME:-}"
+    requested_ndk_path="${TAIXU_NDK_PATH:-}"
+    requested_android_ndk_home="${ANDROID_NDK_HOME:-}"
+    requested_aapt2_path="${TAIXU_AAPT2_PATH:-}"
+    requested_cmake_home="${TAIXU_CMAKE_HOME:-}"
+    requested_ninja_home="${TAIXU_NINJA_HOME:-}"
+    requested_gradle_user_home="${GRADLE_USER_HOME:-}"
+    requested_pub_cache="${PUB_CACHE:-}"
+    requested_tool_dir="${TAIXU_TOOL_DIR:-}"
     if [ -f /etc/profile.d/taixu-android.sh ]; then . /etc/profile.d/taixu-android.sh; fi
+    [ -z "$requested_java_home" ] || JAVA_HOME="$requested_java_home"
+    [ -z "$requested_android_home" ] || ANDROID_HOME="$requested_android_home"
+    [ -z "$requested_android_sdk_root" ] || ANDROID_SDK_ROOT="$requested_android_sdk_root"
+    [ -z "$requested_gradle_home" ] || GRADLE_HOME="$requested_gradle_home"
+    [ -z "$requested_flutter_home" ] || FLUTTER_HOME="$requested_flutter_home"
+    [ -z "$requested_ndk_path" ] || TAIXU_NDK_PATH="$requested_ndk_path"
+    [ -z "$requested_android_ndk_home" ] || ANDROID_NDK_HOME="$requested_android_ndk_home"
+    [ -z "$requested_aapt2_path" ] || TAIXU_AAPT2_PATH="$requested_aapt2_path"
+    [ -z "$requested_cmake_home" ] || TAIXU_CMAKE_HOME="$requested_cmake_home"
+    [ -z "$requested_ninja_home" ] || TAIXU_NINJA_HOME="$requested_ninja_home"
+    [ -z "$requested_gradle_user_home" ] || GRADLE_USER_HOME="$requested_gradle_user_home"
+    [ -z "$requested_pub_cache" ] || PUB_CACHE="$requested_pub_cache"
+    [ -z "$requested_tool_dir" ] || TAIXU_TOOL_DIR="$requested_tool_dir"
     export ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
     export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+    export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-${TAIXU_NDK_PATH:-/opt/taixu/toolchains/android/ndk}}"
+    export ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-$ANDROID_NDK_HOME}"
+    export TAIXU_NDK_PATH="${TAIXU_NDK_PATH:-$ANDROID_NDK_HOME}"
+    export FLUTTER_HOME="${FLUTTER_HOME:-/opt/flutter}"
+    export TAIXU_CMAKE_HOME="${TAIXU_CMAKE_HOME:-/opt/taixu/tools/android-suite-offline/cmake}"
+    export TAIXU_NINJA_HOME="${TAIXU_NINJA_HOME:-/opt/taixu/tools/android-suite-offline/bin}"
+    export TAIXU_TOOL_DIR="${TAIXU_TOOL_DIR:-/opt/taixu/tools}"
     export TAIXU_AAPT2_PATH="${TAIXU_AAPT2_PATH:-$ANDROID_HOME/build-tools/35.0.0/aapt2}"
 }
 is_android_project() {
@@ -35,7 +68,7 @@ doctor_arm_project() {
     load_android_environment
 }
 exec_fixed_gradle() {
-    [ -x "$GRADLE_HOME/bin/gradle" ] || fail "缺少 TaiXu Gradle 8.14.2"
+    [ -x "$GRADLE_HOME/bin/gradle" ] || [ -d "$GRADLE_HOME/lib" ] || fail "缺少 Gradle: $GRADLE_HOME"
     export TAIXU_BUILD_GUARD_BYPASS=1
     "$GRADLE_HOME/bin/gradle" "$@"
 }
@@ -74,7 +107,9 @@ run_flutter() {
     for argument in "$@"; do
         [ "$argument" = "--offline" ] && export TAIXU_OFFLINE=1
     done
-    [ -x /opt/flutter/bin/flutter ] || fail "Flutter SDK 未安装"
+    load_android_environment
+    flutter_bin="$FLUTTER_HOME/bin/flutter"
+    [ -x "$flutter_bin" ] || fail "Flutter SDK 未安装: $FLUTTER_HOME"
     if [ "${1:-}" = build ]; then
         case "${2:-}" in
             apk|appbundle)
@@ -84,9 +119,9 @@ run_flutter() {
                 export TAIXU_BUILD_GUARD_BYPASS=1
                 if [ "$has_target" -eq 0 ]; then
                     printf '%s\n' '==> [TaiXu Guard] 未指定 APK ABI，强制使用 android-arm64'
-                    /opt/flutter/bin/flutter "$@" --target-platform android-arm64
+                    "$flutter_bin" "$@" --target-platform android-arm64
                 else
-                    /opt/flutter/bin/flutter "$@"
+                    "$flutter_bin" "$@"
                 fi
                 status=$?
                 [ "$status" -eq 0 ] || exit "$status"
@@ -96,7 +131,7 @@ run_flutter() {
         esac
     fi
     export TAIXU_BUILD_GUARD_BYPASS=1
-    exec /opt/flutter/bin/flutter "$@"
+    exec "$flutter_bin" "$@"
 }
 case "$command_name" in
     gradle|gradlew) run_gradle "$command_name" "$@" ;;

@@ -3,6 +3,12 @@
 def taixuNdkPath = System.getenv('TAIXU_NDK_PATH') ?:
     System.getenv('ANDROID_NDK_HOME') ?:
     '/opt/taixu/toolchains/android/ndk'
+def taixuNdkProperties = new Properties()
+def taixuNdkSourceProperties = new File(taixuNdkPath, 'source.properties')
+if (taixuNdkSourceProperties.isFile()) {
+    taixuNdkSourceProperties.withInputStream { taixuNdkProperties.load(it) }
+}
+def taixuNdkVersion = taixuNdkProperties.getProperty('Pkg.Revision', '').trim()
 def taixuAndroidPluginIds = [
     'com.android.application',
     'com.android.library',
@@ -34,6 +40,13 @@ gradle.projectsEvaluated {
                 throw new GradleException(
                     'TaiXu blocked Android NDK path drift: ' + effective + ' != ' + expected
                 )
+            }
+            if (taixuNdkVersion && androidExtension.hasProperty('ndkVersion')) {
+                def declared = androidExtension.ndkVersion == null ? '' : androidExtension.ndkVersion.toString()
+            if (declared && taixuNdkVersion && declared != taixuNdkVersion) {
+                project.logger.warn('TaiXu aligning project NDK version ' + declared + ' -> ' + taixuNdkVersion)
+                androidExtension.ndkVersion = taixuNdkVersion
+            }
             }
             // ARM64-only sandbox: AAR dependencies (e.g. androidx.graphics.path)
             // bundle x86/x86_64 native libraries and AGP packages every ABI

@@ -764,7 +764,9 @@ class WorkspaceManager @Inject constructor(
         File(androidDir, "settings.gradle").writeText(
             """
             pluginManagement {
-                def flutterSdkPath = "/opt/flutter"
+                def flutterProperties = new Properties()
+                file("local.properties").withInputStream { flutterProperties.load(it) }
+                def flutterSdkPath = flutterProperties.getProperty("flutter.sdk", "/opt/flutter")
                 includeBuild("${'$'}{flutterSdkPath}/packages/flutter_tools/gradle")
                 repositories { google(); mavenCentral(); gradlePluginPortal() }
             }
@@ -800,6 +802,9 @@ class WorkspaceManager @Inject constructor(
                     targetSdk 34
                     versionCode 1
                     versionName "1.0"
+                    ndk {
+                        abiFilters "arm64-v8a"
+                    }
                 }
                 compileOptions {
                     sourceCompatibility JavaVersion.VERSION_17

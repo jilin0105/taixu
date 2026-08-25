@@ -48,7 +48,7 @@ fun WorkshopSettingsScreen(onBack: () -> Unit, onOpenEnvironment: () -> Unit, on
     Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = { RuntimeTopBar("工坊设置", onBack, "构建环境、签名与脚本") }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             item { SectionHeader("开发环境", "查看并调整 Android 与 Flutter 工具链") }
-            item { SettingEntry(RuntimeIconName.Android, "Android / Flutter 环境", "SDK ${draft.androidSdkPath}\nNDK ${draft.ndkPath}", onOpenEnvironment) }
+            item { SettingEntry(RuntimeIconName.Android, "Android / Flutter 环境", "SDK ${draft.androidSdkPath}\nNDK ${draft.ndkPath}\nGradle ${draft.gradlePath}\nCMake ${draft.cmakePath}", onOpenEnvironment) }
             item { SectionHeader("应用签名", "创建或导入签名文件，Release 构建时选用") }
             item { SettingEntry(RuntimeIconName.Key, "签名管理 (Keystore)", "创建 / 导入 Android 签名文件\n用于 Release 正式包构建", onOpenSigning) }
             item { SectionHeader("构建脚本", "点击脚本进入独立编辑页面") }
@@ -72,6 +72,13 @@ fun WorkshopEnvironmentSettingsScreen(onBack: () -> Unit, viewModel: WorkshopSet
                 PathField("Android NDK", draft.ndkPath) { viewModel.update(draft.copy(ndkPath = it)) }
                 PathField("Flutter SDK", draft.flutterSdkPath) { viewModel.update(draft.copy(flutterSdkPath = it)) }
                 PathField("Java / JDK", draft.javaPath) { viewModel.update(draft.copy(javaPath = it)) }
+                PathField("Gradle", draft.gradlePath) { viewModel.update(draft.copy(gradlePath = it)) }
+                PathField("CMake", draft.cmakePath) { viewModel.update(draft.copy(cmakePath = it)) }
+                PathField("Ninja", draft.ninjaPath) { viewModel.update(draft.copy(ninjaPath = it)) }
+                PathField("AAPT2", draft.aapt2Path) { viewModel.update(draft.copy(aapt2Path = it)) }
+                PathField("Gradle 缓存", draft.gradleUserHome) { viewModel.update(draft.copy(gradleUserHome = it)) }
+                PathField("Flutter Pub 缓存", draft.pubCache) { viewModel.update(draft.copy(pubCache = it)) }
+                PathField("Android 工具目录 / ADB", draft.toolDir) { viewModel.update(draft.copy(toolDir = it)) }
             } } }
             item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 RuntimeOutlinedButton(onClick = viewModel::resetEnvironment, modifier = Modifier.weight(1f)) { Text("重置") }

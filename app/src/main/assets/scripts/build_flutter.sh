@@ -25,11 +25,36 @@ flock -s -w 1800 9 || {
 }
 
 # 1. 注入 Flutter 与 Gradle PATH (优先加载插件装配期固化的环境变量)
-if [ -f /etc/profile.d/taixu-android.sh ]; then
-    . /etc/profile.d/taixu-android.sh
-fi
+workshop_java_home="${JAVA_HOME:-}"
+workshop_android_home="${ANDROID_HOME:-}"
+workshop_gradle_home="${GRADLE_HOME:-}"
+workshop_flutter_home="${FLUTTER_HOME:-}"
+workshop_ndk_path="${TAIXU_NDK_PATH:-}"
+workshop_android_ndk_home="${ANDROID_NDK_HOME:-}"
+workshop_aapt2_path="${TAIXU_AAPT2_PATH:-}"
+workshop_cmake_home="${TAIXU_CMAKE_HOME:-}"
+workshop_ninja_home="${TAIXU_NINJA_HOME:-}"
+workshop_gradle_user_home="${GRADLE_USER_HOME:-}"
+workshop_pub_cache="${PUB_CACHE:-}"
+workshop_tool_dir="${TAIXU_TOOL_DIR:-}"
+if [ -f /etc/profile.d/taixu-android.sh ]; then . /etc/profile.d/taixu-android.sh; fi
+[ -z "$workshop_java_home" ] || JAVA_HOME="$workshop_java_home"
+[ -z "$workshop_android_home" ] || ANDROID_HOME="$workshop_android_home"
+[ -z "$workshop_gradle_home" ] || GRADLE_HOME="$workshop_gradle_home"
+[ -z "$workshop_flutter_home" ] || FLUTTER_HOME="$workshop_flutter_home"
+[ -z "$workshop_ndk_path" ] || TAIXU_NDK_PATH="$workshop_ndk_path"
+[ -z "$workshop_android_ndk_home" ] || ANDROID_NDK_HOME="$workshop_android_ndk_home"
+[ -z "$workshop_aapt2_path" ] || TAIXU_AAPT2_PATH="$workshop_aapt2_path"
+[ -z "$workshop_cmake_home" ] || TAIXU_CMAKE_HOME="$workshop_cmake_home"
+[ -z "$workshop_ninja_home" ] || TAIXU_NINJA_HOME="$workshop_ninja_home"
+[ -z "$workshop_gradle_user_home" ] || GRADLE_USER_HOME="$workshop_gradle_user_home"
+[ -z "$workshop_pub_cache" ] || PUB_CACHE="$workshop_pub_cache"
+[ -z "$workshop_tool_dir" ] || TAIXU_TOOL_DIR="$workshop_tool_dir"
 export FLUTTER_HOME="${FLUTTER_HOME:-/opt/flutter}"
-export PATH="/opt/taixu/bin:$FLUTTER_HOME/bin:/opt/gradle-8.14.2/bin:/opt/gradle-8.7/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+export GRADLE_HOME="${GRADLE_HOME:-/opt/gradle-$GRADLE_VER}"
+export GRADLE_USER_HOME="${GRADLE_USER_HOME:-/root/.gradle}"
+export TAIXU_TOOL_DIR="${TAIXU_TOOL_DIR:-/opt/taixu/tools}"
+export PATH="/opt/taixu/bin:$FLUTTER_HOME/bin:$GRADLE_HOME/bin:${TAIXU_CMAKE_HOME:-/opt/taixu/tools/android-suite-offline/cmake}/bin:${TAIXU_NINJA_HOME:-/opt/taixu/tools/android-suite-offline/bin}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 export ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 export PUB_HOSTED_URL="https://pub.flutter-io.cn"
@@ -196,10 +221,9 @@ if [ -f "$FLUTTER_HOME/bin/flutter" ]; then
     else
         : > "$LOCAL_PROPERTIES_TMP"
     fi
-    # NDK 由全局 init policy 的 android.ndkPath 唯一定位。只清理遗留
-    # ndk.dir，不写回，避免 AGP 8.11.1 判定两种 NDK locator 冲突。
     printf 'sdk.dir=%s\nflutter.sdk=%s\n' "$ANDROID_HOME" "$FLUTTER_HOME" >> "$LOCAL_PROPERTIES_TMP"
     mv -f "$LOCAL_PROPERTIES_TMP" "$LOCAL_PROPERTIES"
+    echo "==> [TaiXu Build] 绑定 ANDROID_HOME/Flutter SDK: $ANDROID_HOME / $FLUTTER_HOME"
 fi
 AAPT2_PATH="${TAIXU_AAPT2_PATH:-$ANDROID_HOME/build-tools/35.0.0/aapt2}"
 case "$AAPT2_PATH" in
@@ -219,19 +243,19 @@ else
     exit 126
 fi
 
-if ! grep -Fqx 'android.builder.sdkDownload=false' /root/.gradle/gradle.properties 2>/dev/null; then
+if ! grep -Fqx 'android.builder.sdkDownload=false' "$GRADLE_USER_HOME/gradle.properties" 2>/dev/null; then
     echo "==> [TaiXu Build] ❌ Gradle SDK 自动下载未禁用，拒绝构建以防官方 x86_64 工具覆盖"
     exit 126
 fi
-if [ ! -f /root/.gradle/init.d/taixu-android-ndk.gradle ] || \
-   ! grep -Fq 'androidExtension.ndkPath = taixuNdkPath' /root/.gradle/init.d/taixu-android-ndk.gradle; then
+if [ ! -f "$GRADLE_USER_HOME/init.d/taixu-android-ndk.gradle" ] || \
+   ! grep -Fq 'androidExtension.ndkPath = taixuNdkPath' "$GRADLE_USER_HOME/init.d/taixu-android-ndk.gradle"; then
     echo "==> [TaiXu Build] ❌ 固定 NDK 路径注入缺失"
     exit 126
 fi
 
 # TaiXu: 兜底在全局 Gradle 配置注入 HTTP 连接/读超时，避免国内镜像慢或被重置时
 # 依赖解析无限静默阻塞（SocketException: connection abort）。幂等追加，仅补缺失行。
-GRADLE_PROPS=/root/.gradle/gradle.properties
+GRADLE_PROPS="$GRADLE_USER_HOME/gradle.properties"
 if [ -f "$GRADLE_PROPS" ]; then
     for k in \
         'systemProp.org.gradle.internal.http.connectionTimeout=30000' \
@@ -266,8 +290,8 @@ cat > android/gradlew <<'EOF'
 #!/bin/sh
 # 优先复用插件装配期已装好的本地 Gradle 8.14.2，避免 Wrapper 重新下载发行版。
 DIR="$(cd "$(dirname "$0")" && pwd)"
-if [ -x /opt/gradle-8.14.2/bin/gradle ]; then
-    exec /opt/gradle-8.14.2/bin/gradle "$@"
+if [ -x "$GRADLE_HOME/bin/gradle" ]; then
+    exec "$GRADLE_HOME/bin/gradle" "$@"
 elif [ -x /opt/gradle-8.7/bin/gradle ]; then
     exec /opt/gradle-8.7/bin/gradle "$@"
 elif [ -f "$DIR/gradle/wrapper/gradle-wrapper.jar" ]; then
@@ -284,7 +308,6 @@ chmod +x android/gradlew
 
 # 4. 全局强制阿里云镜像：Flutter 每次会重写工程文件，这里兜底写入全局 init 脚本，
 #    并把 GRADLE_USER_HOME 固定到 /root/.gradle，确保依赖解析一定走国内源。
-export GRADLE_USER_HOME="/root/.gradle"
 mkdir -p "$GRADLE_USER_HOME"
 cat > "$GRADLE_USER_HOME/init.gradle" <<'EOF'
 // TaiXu: 全局强制阿里云镜像。

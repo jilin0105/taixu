@@ -29,6 +29,13 @@ class SettingsDataStore @Inject constructor(
     private val workshopNdkPathKey = stringPreferencesKey("workshop_ndk_path")
     private val workshopFlutterSdkPathKey = stringPreferencesKey("workshop_flutter_sdk_path")
     private val workshopJavaPathKey = stringPreferencesKey("workshop_java_path")
+    private val workshopGradlePathKey = stringPreferencesKey("workshop_gradle_path")
+    private val workshopCmakePathKey = stringPreferencesKey("workshop_cmake_path")
+    private val workshopNinjaPathKey = stringPreferencesKey("workshop_ninja_path")
+    private val workshopAapt2PathKey = stringPreferencesKey("workshop_aapt2_path")
+    private val workshopGradleUserHomeKey = stringPreferencesKey("workshop_gradle_user_home")
+    private val workshopPubCacheKey = stringPreferencesKey("workshop_pub_cache")
+    private val workshopToolDirKey = stringPreferencesKey("workshop_tool_dir")
     private val workshopAndroidScriptKey = stringPreferencesKey("workshop_android_script")
     private val workshopFlutterScriptKey = stringPreferencesKey("workshop_flutter_script")
     // 工坊 Android 签名（keystore）注册表；整表 JSON 密文存储，口令不落明文。
@@ -38,6 +45,13 @@ class SettingsDataStore @Inject constructor(
     val workshopNdkPath: Flow<String> = context.settingsDataStore.data.map { it[workshopNdkPathKey].orEmpty() }
     val workshopFlutterSdkPath: Flow<String> = context.settingsDataStore.data.map { it[workshopFlutterSdkPathKey].orEmpty() }
     val workshopJavaPath: Flow<String> = context.settingsDataStore.data.map { it[workshopJavaPathKey].orEmpty() }
+    val workshopGradlePath: Flow<String> = context.settingsDataStore.data.map { it[workshopGradlePathKey].orEmpty() }
+    val workshopCmakePath: Flow<String> = context.settingsDataStore.data.map { it[workshopCmakePathKey].orEmpty() }
+    val workshopNinjaPath: Flow<String> = context.settingsDataStore.data.map { it[workshopNinjaPathKey].orEmpty() }
+    val workshopAapt2Path: Flow<String> = context.settingsDataStore.data.map { it[workshopAapt2PathKey].orEmpty() }
+    val workshopGradleUserHome: Flow<String> = context.settingsDataStore.data.map { it[workshopGradleUserHomeKey].orEmpty() }
+    val workshopPubCache: Flow<String> = context.settingsDataStore.data.map { it[workshopPubCacheKey].orEmpty() }
+    val workshopToolDir: Flow<String> = context.settingsDataStore.data.map { it[workshopToolDirKey].orEmpty() }
     val workshopAndroidScript: Flow<String> = context.settingsDataStore.data.map { it[workshopAndroidScriptKey].orEmpty() }
     val workshopFlutterScript: Flow<String> = context.settingsDataStore.data.map { it[workshopFlutterScriptKey].orEmpty() }
 
@@ -45,6 +59,13 @@ class SettingsDataStore @Inject constructor(
     suspend fun setWorkshopNdkPath(value: String) = setWorkshopValue(workshopNdkPathKey, value)
     suspend fun setWorkshopFlutterSdkPath(value: String) = setWorkshopValue(workshopFlutterSdkPathKey, value)
     suspend fun setWorkshopJavaPath(value: String) = setWorkshopValue(workshopJavaPathKey, value)
+    suspend fun setWorkshopGradlePath(value: String) = setWorkshopValue(workshopGradlePathKey, value)
+    suspend fun setWorkshopCmakePath(value: String) = setWorkshopValue(workshopCmakePathKey, value)
+    suspend fun setWorkshopNinjaPath(value: String) = setWorkshopValue(workshopNinjaPathKey, value)
+    suspend fun setWorkshopAapt2Path(value: String) = setWorkshopValue(workshopAapt2PathKey, value)
+    suspend fun setWorkshopGradleUserHome(value: String) = setWorkshopValue(workshopGradleUserHomeKey, value)
+    suspend fun setWorkshopPubCache(value: String) = setWorkshopValue(workshopPubCacheKey, value)
+    suspend fun setWorkshopToolDir(value: String) = setWorkshopValue(workshopToolDirKey, value)
     suspend fun setWorkshopAndroidScript(value: String) = setWorkshopValue(workshopAndroidScriptKey, value)
     suspend fun setWorkshopFlutterScript(value: String) = setWorkshopValue(workshopFlutterScriptKey, value)
 
@@ -74,6 +95,13 @@ class SettingsDataStore @Inject constructor(
             it.remove(workshopNdkPathKey)
             it.remove(workshopFlutterSdkPathKey)
             it.remove(workshopJavaPathKey)
+            it.remove(workshopGradlePathKey)
+            it.remove(workshopCmakePathKey)
+            it.remove(workshopNinjaPathKey)
+            it.remove(workshopAapt2PathKey)
+            it.remove(workshopGradleUserHomeKey)
+            it.remove(workshopPubCacheKey)
+            it.remove(workshopToolDirKey)
         }
     }
 

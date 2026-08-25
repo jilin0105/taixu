@@ -82,23 +82,21 @@ class WorkshopSigningManager @Inject constructor(
             if (organization.isNotBlank()) append(", O=").append(organization.trim())
             append(", C=CN")
         }
-        val command = buildString {
-            append('\'').append(javaHome()).append("/bin/keytool' -genkeypair -v")
-            append(" -keystore '").append(sandboxFile.absolutePath).append('\'')
-            append(" -storetype PKCS12")
-            append(" -alias '").append(safeAlias.replace('\'', ' ')).append('\'')
-            append(" -keyalg RSA -keysize 2048")
-            append(" -validity ").append(validityYears.coerceIn(1, 100)).append(" * 365")
-            append(" -storepass '").append(storePassword.replace('\'', ' ')).append('\'')
-            append(" -keypass '").append(keyPassword.ifBlank { storePassword }.replace('\'', ' ')).append('\'')
-            append(" -dname \"").append(dname.replace('\"', ' ')).append('\"')
-        }
+        val command = buildCreateKeystoreCommand(
+            javaHome = javaHome(),
+            keystorePath = sandboxFile.absolutePath,
+            alias = safeAlias,
+            storePassword = storePassword,
+            keyPassword = keyPassword.ifBlank { storePassword },
+            validityYears = validityYears,
+            dname = dname,
+        )
         val result = linuxRuntime.execute(
             ShellCommand(commandLine = command, timeoutMs = 120_000L),
         )
         if (!result.isSuccess || !sandboxFile.isFile || sandboxFile.length() == 0L) {
             sandboxFile.delete()
-            val reason = (result.stderr + "\n" + result.stdout).trim().takeLast(500)
+            val reason = (result.stderr + "\n" + result.stdout).trim().take(500)
             return@withContext AppResult.Failure(
                 AppError(ErrorCode.UNKNOWN, "生成签名失败：${reason.ifBlank { "keytool 执行失败 (exit ${result.exitCode})" }}"),
             )
@@ -275,4 +273,24 @@ class WorkshopSigningManager @Inject constructor(
     private companion object {
         const val SIGNING_INIT_SCRIPT_NAME = "taixu-release-signing.gradle"
     }
+}
+
+internal fun buildCreateKeystoreCommand(
+    javaHome: String,
+    keystorePath: String,
+    alias: String,
+    storePassword: String,
+    keyPassword: String,
+    validityYears: Int,
+    dname: String,
+): String = buildString {
+    append('\'').append(javaHome).append("/bin/keytool' -genkeypair -v")
+    append(" -keystore '").append(keystorePath).append('\'')
+    append(" -storetype PKCS12")
+    append(" -alias '").append(alias.replace('\'', ' ')).append('\'')
+    append(" -keyalg RSA -keysize 2048")
+    append(" -validity ").append(validityYears.coerceIn(1, 100) * 365)
+    append(" -storepass '").append(storePassword.replace('\'', ' ')).append('\'')
+    append(" -keypass '").append(keyPassword.replace('\'', ' ')).append('\'')
+    append(" -dname \"").append(dname.replace('\"', ' ')).append('\"')
 }

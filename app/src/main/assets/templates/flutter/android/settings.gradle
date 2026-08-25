@@ -4,8 +4,7 @@ pluginManagement {
     def flutterSdkPath = {
         def properties = new Properties()
         file("local.properties").withInputStream { properties.load(it) }
-        def path = properties.getProperty("flutter.sdk")
-        assert path != null : "flutter.sdk is missing in android/local.properties"
+        def path = properties.getProperty("flutter.sdk") ?: System.getenv("FLUTTER_HOME") ?: "/opt/flutter"
         return path
     }()
     includeBuild("${flutterSdkPath}/packages/flutter_tools/gradle")

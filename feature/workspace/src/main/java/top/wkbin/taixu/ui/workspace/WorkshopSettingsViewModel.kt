@@ -27,6 +27,13 @@ data class WorkshopEnvironmentDraft(
     val ndkPath: String = "",
     val flutterSdkPath: String = "",
     val javaPath: String = "",
+    val gradlePath: String = "",
+    val cmakePath: String = "",
+    val ninjaPath: String = "",
+    val aapt2Path: String = "",
+    val gradleUserHome: String = "",
+    val pubCache: String = "",
+    val toolDir: String = "",
     val androidScript: String = "",
     val flutterScript: String = "",
 )
@@ -49,6 +56,13 @@ class WorkshopSettingsViewModel @Inject constructor(
         ndkPath = "/opt/taixu/toolchains/android/ndk",
         flutterSdkPath = "/opt/flutter",
         javaPath = "/opt/taixu/toolchains/android/jdk",
+        gradlePath = "/opt/gradle-8.14.2",
+        cmakePath = "/opt/taixu/tools/android-suite-offline/cmake",
+        ninjaPath = "/opt/taixu/tools/android-suite-offline/bin",
+        aapt2Path = "/opt/android-sdk/build-tools/35.0.0/aapt2",
+        gradleUserHome = "/root/.gradle",
+        pubCache = "/opt/taixu/cache/flutter-pub",
+        toolDir = "/opt/taixu/tools",
         androidScript = readDefaultScript("build_android.sh"),
         flutterScript = readDefaultScript("build_flutter.sh"),
     )
@@ -79,6 +93,13 @@ class WorkshopSettingsViewModel @Inject constructor(
             preferences.ndkPath.first().ifBlank { defaults.ndkPath },
             preferences.flutterSdkPath.first().ifBlank { defaults.flutterSdkPath },
             preferences.javaPath.first().ifBlank { defaults.javaPath },
+            preferences.gradlePath.first().ifBlank { defaults.gradlePath },
+            preferences.cmakePath.first().ifBlank { defaults.cmakePath },
+            preferences.ninjaPath.first().ifBlank { defaults.ninjaPath },
+            preferences.aapt2Path.first().ifBlank { defaults.aapt2Path },
+            preferences.gradleUserHome.first().ifBlank { defaults.gradleUserHome },
+            preferences.pubCache.first().ifBlank { defaults.pubCache },
+            preferences.toolDir.first().ifBlank { defaults.toolDir },
             storedAndroidScript.ifBlank { defaults.androidScript },
             storedFlutterScript.ifBlank { defaults.flutterScript },
         )
@@ -93,6 +114,13 @@ class WorkshopSettingsViewModel @Inject constructor(
         preferences.setNdkPath(d.ndkPath)
         preferences.setFlutterSdkPath(d.flutterSdkPath)
         preferences.setJavaPath(d.javaPath)
+        preferences.setGradlePath(d.gradlePath)
+        preferences.setCmakePath(d.cmakePath)
+        preferences.setNinjaPath(d.ninjaPath)
+        preferences.setAapt2Path(d.aapt2Path)
+        preferences.setGradleUserHome(d.gradleUserHome)
+        preferences.setPubCache(d.pubCache)
+        preferences.setToolDir(d.toolDir)
     }
 
     fun saveScripts() = viewModelScope.launch {
@@ -158,6 +186,13 @@ class WorkshopSettingsViewModel @Inject constructor(
                 d.ndkPath.takeIf(String::isNotBlank)?.let { put("ANDROID_NDK_HOME", it); put("TAIXU_NDK_PATH", it) }
                 d.flutterSdkPath.takeIf(String::isNotBlank)?.let { put("FLUTTER_HOME", it) }
                 d.javaPath.takeIf(String::isNotBlank)?.let { put("JAVA_HOME", it) }
+                d.gradlePath.takeIf(String::isNotBlank)?.let { put("GRADLE_HOME", it) }
+                d.cmakePath.takeIf(String::isNotBlank)?.let { put("TAIXU_CMAKE_HOME", it) }
+                d.ninjaPath.takeIf(String::isNotBlank)?.let { put("TAIXU_NINJA_HOME", it) }
+                d.aapt2Path.takeIf(String::isNotBlank)?.let { put("TAIXU_AAPT2_PATH", it) }
+                d.gradleUserHome.takeIf(String::isNotBlank)?.let { put("GRADLE_USER_HOME", it) }
+                d.pubCache.takeIf(String::isNotBlank)?.let { put("PUB_CACHE", it) }
+                d.toolDir.takeIf(String::isNotBlank)?.let { put("TAIXU_TOOL_DIR", it) }
             }
             val result = linuxRuntime.execute(ShellCommand(command, environment = env, forcePty = true, timeoutMs = 1_800_000L, onOutput = ::appendOutput))
             appendOutput("\n\n退出码: ${result.exitCode}\n${result.stderr}")

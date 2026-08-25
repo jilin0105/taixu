@@ -1,9 +1,33 @@
 #!/bin/sh
 set -u
 
-if test -f /etc/profile.d/taixu-android.sh; then
-    . /etc/profile.d/taixu-android.sh
-fi
+workshop_java_home="${JAVA_HOME:-}"
+workshop_android_home="${ANDROID_HOME:-}"
+workshop_android_sdk_root="${ANDROID_SDK_ROOT:-}"
+workshop_gradle_home="${GRADLE_HOME:-}"
+workshop_flutter_home="${FLUTTER_HOME:-}"
+workshop_ndk_path="${TAIXU_NDK_PATH:-}"
+workshop_android_ndk_home="${ANDROID_NDK_HOME:-}"
+workshop_aapt2_path="${TAIXU_AAPT2_PATH:-}"
+workshop_cmake_home="${TAIXU_CMAKE_HOME:-}"
+workshop_ninja_home="${TAIXU_NINJA_HOME:-}"
+workshop_gradle_user_home="${GRADLE_USER_HOME:-}"
+workshop_pub_cache="${PUB_CACHE:-}"
+workshop_tool_dir="${TAIXU_TOOL_DIR:-}"
+if test -f /etc/profile.d/taixu-android.sh; then . /etc/profile.d/taixu-android.sh; fi
+test -z "$workshop_java_home" || JAVA_HOME="$workshop_java_home"
+test -z "$workshop_android_home" || ANDROID_HOME="$workshop_android_home"
+test -z "$workshop_android_sdk_root" || ANDROID_SDK_ROOT="$workshop_android_sdk_root"
+test -z "$workshop_gradle_home" || GRADLE_HOME="$workshop_gradle_home"
+test -z "$workshop_flutter_home" || FLUTTER_HOME="$workshop_flutter_home"
+test -z "$workshop_ndk_path" || TAIXU_NDK_PATH="$workshop_ndk_path"
+test -z "$workshop_android_ndk_home" || ANDROID_NDK_HOME="$workshop_android_ndk_home"
+test -z "$workshop_aapt2_path" || TAIXU_AAPT2_PATH="$workshop_aapt2_path"
+test -z "$workshop_cmake_home" || TAIXU_CMAKE_HOME="$workshop_cmake_home"
+test -z "$workshop_ninja_home" || TAIXU_NINJA_HOME="$workshop_ninja_home"
+test -z "$workshop_gradle_user_home" || GRADLE_USER_HOME="$workshop_gradle_user_home"
+test -z "$workshop_pub_cache" || PUB_CACHE="$workshop_pub_cache"
+test -z "$workshop_tool_dir" || TAIXU_TOOL_DIR="$workshop_tool_dir"
 if test -z "${JAVA_HOME:-}" && test -x /opt/taixu/toolchains/android/jdk/bin/java; then
     JAVA_HOME=/opt/taixu/toolchains/android/jdk
 elif test -z "${JAVA_HOME:-}"; then
@@ -13,8 +37,13 @@ ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
 ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
 GRADLE_HOME="${GRADLE_HOME:-/opt/gradle-8.14.2}"
 FLUTTER_HOME="${FLUTTER_HOME:-/opt/flutter}"
-export ANDROID_HOME ANDROID_SDK_ROOT GRADLE_HOME JAVA_HOME FLUTTER_HOME
-export PATH="/opt/taixu/bin:$JAVA_HOME/bin:$GRADLE_HOME/bin:$FLUTTER_HOME/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+TAIXU_CMAKE_HOME="${TAIXU_CMAKE_HOME:-/opt/taixu/tools/android-suite-offline/cmake}"
+TAIXU_NINJA_HOME="${TAIXU_NINJA_HOME:-/opt/taixu/tools/android-suite-offline/bin}"
+GRADLE_USER_HOME="${GRADLE_USER_HOME:-/root/.gradle}"
+TAIXU_TOOL_DIR="${TAIXU_TOOL_DIR:-/opt/taixu/tools}"
+export ANDROID_HOME ANDROID_SDK_ROOT GRADLE_HOME JAVA_HOME FLUTTER_HOME TAIXU_CMAKE_HOME TAIXU_NINJA_HOME TAIXU_TOOL_DIR
+export GRADLE_USER_HOME
+export PATH="/opt/taixu/bin:$JAVA_HOME/bin:$GRADLE_HOME/bin:$FLUTTER_HOME/bin:$TAIXU_CMAKE_HOME/bin:$TAIXU_NINJA_HOME:$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
 # Internal build scripts may call `gradle`/`flutter` by name. Mark this
 # process so the console wrappers pass those calls to the already-validated
 # fixed toolchain instead of recursively invoking this entrypoint.
@@ -71,17 +100,58 @@ detect_project() {
     echo unknown
 }
 
+keep_project_arm64_only() {
+    project="$1"
+    lib_root="$project/lib"
+    test -d "$lib_root" || return 0
+    for abi_dir in "$lib_root"/*; do
+        test -d "$abi_dir" || continue
+        abi=$(basename "$abi_dir")
+        case "$abi" in
+            arm64-v8a) ;;
+            armeabi-v7a|x86|x86_64)
+                echo "[TaiXu Build] 清理非 ARM64 生成目录: lib/$abi"
+                rm -rf -- "$abi_dir"
+                ;;
+        esac
+    done
+}
+
+check_project_toolchain_declarations() {
+    project="$1"
+    files="$project"/*.gradle
+    files="$files $project"/*.gradle.kts "$project"/app/*.gradle "$project"/app/*.gradle.kts "$project"/android/app/*.gradle "$project"/android/app/*.gradle.kts
+    ndk_home="${TAIXU_NDK_PATH:-${ANDROID_NDK_HOME:-/opt/taixu/toolchains/android/ndk}}"
+    expected_ndk=$(sed -n 's/^[[:space:]]*Pkg\.Revision[[:space:]]*=[[:space:]]*//p' "$ndk_home/source.properties" 2>/dev/null | head -n 1 || true)
+    declared_ndk=$(grep -RhsE 'ndkVersion[^0-9]*[0-9]+(\.[0-9]+)+' $files 2>/dev/null |
+        sed -n 's/.*ndkVersion[^0-9]*\([0-9][0-9.]*\).*/\1/p' | head -n 1 || true)
+    if test -n "$declared_ndk" && test -n "$expected_ndk" && test "$declared_ndk" != "$expected_ndk"; then
+        warn "项目声明 NDK $declared_ndk，构建将按工坊当前 NDK $expected_ndk 执行"
+    fi
+    declared_cmake=$(grep -RhsE 'cmake[^\n]*version[^0-9]*[0-9]+(\.[0-9]+)+' $files 2>/dev/null |
+        sed -n 's/.*version[^0-9]*\([0-9][0-9.]*\).*/\1/p' | head -n 1 || true)
+    expected_cmake=$(${TAIXU_CMAKE_HOME:-/opt/taixu/tools/android-suite-offline/cmake}/bin/cmake --version 2>/dev/null |
+        sed -n 's/^cmake version[[:space:]]*//p' | head -n 1 || true)
+    if test -n "$declared_cmake" && test -n "$expected_cmake" && test "$declared_cmake" != "$expected_cmake"; then
+        warn "项目声明 CMake $declared_cmake，构建将按工坊当前 CMake $expected_cmake 执行"
+    fi
+}
+
 doctor() {
     project="${1:-}"
     test -n "$project" || fail "用法: taixu-build doctor <项目目录>"
     test -d "$project" || fail "项目目录不存在: $project"
+    keep_project_arm64_only "$project"
     need_exec /bin/sh "POSIX Shell"
     need_exec "$JAVA_HOME/bin/java" "JDK 17"
     kind=$(detect_project "$project")
+    check_project_toolchain_declarations "$project"
     analyze_args=""
     test "${TAIXU_OFFLINE:-0}" = 1 && analyze_args="--offline"
     need_file "$ANDROID_HOME/platforms/android-34/android.jar" "Android Platform 34"
     need_file "$ANDROID_HOME/build-tools/35.0.0/lib/d8.jar" "Android Build-Tools 35"
+    need_exec "$TAIXU_CMAKE_HOME/bin/cmake" "CMake"
+    need_exec "$TAIXU_NINJA_HOME/ninja" "Ninja"
     aapt2="${TAIXU_AAPT2_PATH:-$ANDROID_HOME/build-tools/35.0.0/aapt2}"
     need_exec "$aapt2" "ARM64 AAPT2"
     check_java_arch "$JAVA_HOME/bin/java" b700 "JDK 17"
@@ -102,13 +172,17 @@ doctor() {
     export TAIXU_NDK_PATH ANDROID_NDK_HOME ANDROID_NDK_ROOT
     managed_ndk_policy=/opt/taixu/scripts/taixu-android-ndk.gradle
     need_file "$managed_ndk_policy" "太墟 NDK 构建策略"
-    mkdir -p /root/.gradle/init.d
-    cp "$managed_ndk_policy" /root/.gradle/init.d/taixu-android-ndk.gradle
+    mkdir -p "$GRADLE_USER_HOME/init.d"
+    cp "$managed_ndk_policy" "$GRADLE_USER_HOME/init.d/taixu-android-ndk.gradle"
+    gradle_properties="$GRADLE_USER_HOME/gradle.properties"
+    touch "$gradle_properties"
+    grep -Fqx 'android.builder.sdkDownload=false' "$gradle_properties" 2>/dev/null ||
+        printf '%s\n' 'android.builder.sdkDownload=false' >> "$gradle_properties"
     # Release 签名策略：仅在宿主注入 TAIXU_KEYSTORE_* 环境变量时生效，debug 构建零影响。
     if test -f /opt/taixu/scripts/taixu-release-signing.gradle; then
-        cp /opt/taixu/scripts/taixu-release-signing.gradle /root/.gradle/init.d/taixu-release-signing.gradle
+        cp /opt/taixu/scripts/taixu-release-signing.gradle "$GRADLE_USER_HOME/init.d/taixu-release-signing.gradle"
     fi
-    grep -Fqx 'android.builder.sdkDownload=false' /root/.gradle/gradle.properties 2>/dev/null ||
+    grep -Fqx 'android.builder.sdkDownload=false' "$gradle_properties" 2>/dev/null ||
         fail "Gradle SDK 自动下载未禁用，可能拉取 x86_64 主机工具"
     wrapper_project="$project"
     test "$kind" = flutter && wrapper_project="$project/android"
@@ -204,6 +278,7 @@ run_android() {
     for arg in "$@"; do
         if test "$arg" = "--qemu"; then qemu=1; elif test "$arg" = "--offline"; then offline=1; else task="$arg"; fi
     done
+    keep_project_arm64_only "$project"
     if test "$qemu" = 1; then
         qemu_doctor "$project" || return $?
         export TAIXU_BUILD_ENGINE=1
@@ -237,6 +312,7 @@ run_flutter() {
         if test "$arg" = "--qemu"; then qemu=1; elif test "$arg" = "--offline"; then offline=1; else custom="$custom $arg"; fi
     done
     test -z "$custom" || target=$(printf '%s' "$custom" | sed 's/^ //')
+    keep_project_arm64_only "$project"
     if test "$qemu" = 1; then
         qemu_doctor "$project" || return $?
         export TAIXU_BUILD_ENGINE=1

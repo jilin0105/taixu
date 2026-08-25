@@ -44,6 +44,8 @@ object ProjectCompatibilityAnalyzer {
     private val gradleVersionPattern = Regex("gradle-([0-9]+(?:\\.[0-9]+)*)-(?:bin|all)\\.zip")
     private val agpPattern = Regex("(?:com\\.android\\.tools\\.build:gradle|com\\.android\\.application)[:\\\"' =]+(?:[\\\"']?)([0-9]+(?:\\.[0-9]+)*)")
     private val kotlinPattern = Regex("(?:kotlin(?:Version)?|org\\.jetbrains\\.kotlin\\.android)[^0-9]*([0-9]+(?:\\.[0-9]+){1,2})")
+    private val ndkVersionPattern = Regex("ndkVersion[^0-9]*(\\d+(?:\\.\\d+)+)")
+    private val cmakeVersionPattern = Regex("cmake[^\\n]*version[^0-9]*(\\d+(?:\\.\\d+)+)", RegexOption.IGNORE_CASE)
 
     fun analyze(projectDir: File, offline: Boolean = false): ProjectCompatibilityReport {
         val root = projectDir.canonicalFile
@@ -111,13 +113,32 @@ object ProjectCompatibilityAnalyzer {
             )
         }
 
-        if (Regex("lib/(x86_64|x86)(?:/|\\\\)|abiFilters[^\\n]*(x86_64|x86)", RegexOption.IGNORE_CASE).containsMatchIn(allText)) {
+        ndkVersionPattern.find(allText)?.groupValues?.getOrNull(1)?.let { version ->
+            findings += CompatibilityFinding(
+                id = "ndk_version",
+                severity = CompatibilitySeverity.INFO,
+                message = "项目显式声明了 NDK 版本",
+                current = version,
+                remediation = "构建时与工坊所选 NDK 的 source.properties 比对；不自动修改项目",
+            )
+        }
+        cmakeVersionPattern.find(allText)?.groupValues?.getOrNull(1)?.let { version ->
+            findings += CompatibilityFinding(
+                id = "cmake_version",
+                severity = CompatibilitySeverity.INFO,
+                message = "项目显式声明了 CMake 版本",
+                current = version,
+                remediation = "构建时与工坊所选 CMake 比对；不自动修改项目",
+            )
+        }
+
+        if (Regex("abiFilters[^\\n]*(x86_64|x86|armeabi-v7a)", RegexOption.IGNORE_CASE).containsMatchIn(allText)) {
             findings += CompatibilityFinding(
                 id = "x86_abi",
                 severity = CompatibilitySeverity.ERROR,
-                message = "项目声明或包含 x86/x86_64 ABI",
+                message = "项目显式声明了非 ARM64 ABI",
                 expected = "arm64-v8a only",
-                remediation = "先移除 x86 ABI；若是第三方主机工具错误，再显式使用 QEMU",
+                remediation = "将 abiFilters 对齐为仅 arm64-v8a；生成的 lib/<abi> 目录由构建入口自动清理",
             )
         }
 
