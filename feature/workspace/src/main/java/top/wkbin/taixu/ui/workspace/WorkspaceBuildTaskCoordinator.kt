@@ -39,7 +39,11 @@ class WorkspaceBuildTaskCoordinator @Inject constructor(
     private var job: Job? = null
 
     @Synchronized
-    fun start(project: WorkspaceProject): Boolean {
+    fun start(
+        project: WorkspaceProject,
+        buildType: top.wkbin.taixu.runtime.build.WorkshopBuildType = top.wkbin.taixu.runtime.build.WorkshopBuildType.DEBUG,
+        keystore: top.wkbin.taixu.core.datastore.WorkshopKeystore? = null,
+    ): Boolean {
         if (job?.isActive == true || _state.value?.progress?.isRunning == true) return false
         val initial = BuildRunProgress(step = context.getString(R.string.workspace_prepare_build))
         _state.value = WorkspaceBuildTaskState(project, initial)
@@ -47,7 +51,13 @@ class WorkspaceBuildTaskCoordinator @Inject constructor(
         notifier.showBuildProgress(project.name, initial.step)
         job = scope.launch {
             try {
-                runner.runProject(project).collect { progress ->
+                // 终态保护：终态（isRunning=false）一旦到达，后续任何 isRunning=true
+                // 的消息都是心跳协程在 cancel 前挤进通道的孤儿，直接丢弃——绝不允许
+                // 把已呈现的“运行就绪/编译失败”覆盖回“正在构建”转圈态。
+                var finished = false
+                runner.runProject(project, buildType, keystore).collect { progress ->
+                    if (finished && progress.isRunning) return@collect
+                    if (!progress.isRunning) finished = true
                     _state.value = WorkspaceBuildTaskState(project, progress)
                     if (progress.isRunning) {
                         notifier.showBuildProgress(project.name, progress.step)

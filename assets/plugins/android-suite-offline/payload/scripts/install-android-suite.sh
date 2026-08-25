@@ -36,6 +36,18 @@ is_aarch64_elf() { test "$(elf_bytes -j 18 -N 2 "$1")" = "b700"; }
 mkdir -p "$TOOL_DIR/bin" "$ANDROID_HOME" "$TOOLCHAIN_ROOT" /opt/taixu/bin /opt/taixu/locks
 need "$CHECKSUMS"
 
+# 构建进程持有本锁的共享端 (flock -s)，装配必须持有独占端：杜绝“边构建边
+# 改写工具链目录”造成的 JDK 目录闪断、半成品状态与运行中 JVM 文件被删。
+command -v flock >/dev/null 2>&1 || {
+    echo "missing flock: refusing to mutate the toolchain without a lock" >&2
+    exit 8
+}
+exec 9>/opt/taixu/locks/android-toolchain.lock
+flock -x -w 300 9 || {
+    echo "android toolchain is busy (a build may be running); lock wait timed out" >&2
+    exit 8
+}
+
 # Validate every bundled archive before changing the runtime.
 progress 2 "[VERIFY] 正在校验全部离线归档：sha256sum -c checksums/SHA256SUMS"
 (cd "$PAYLOAD" && sha256sum -c checksums/SHA256SUMS)
@@ -53,6 +65,17 @@ JDK_SOURCE=$(dirname "$(dirname "$JDK_BIN")")
 rm -rf "$JDK_HOME"
 mv "$JDK_SOURCE" "$JDK_HOME"
 rm -rf "$JDK_HOME.staging"
+# 启动器必须是真正的 AArch64 ELF。包装脚本一旦与其 exec 目标形成回环
+# （脚本 → 软链接 → 脚本），PRoot 下每轮 exec 都要过 ptrace 翻译，
+# java 进程只烧 CPU、零输出。在跑 -version 之前先做静态断言。
+is_aarch64_elf "$JDK_HOME/bin/java" || {
+    echo "JDK java launcher is not an ARM64 ELF: $JDK_HOME/bin/java" >&2
+    exit 7
+}
+is_aarch64_elf "$JDK_HOME/bin/javac" || {
+    echo "JDK javac launcher is not an ARM64 ELF: $JDK_HOME/bin/javac" >&2
+    exit 7
+}
 "$JDK_HOME/bin/java" -version >/dev/null 2>&1
 progress 15 "[COMMAND] JDK 17 安装完成：java -version"
 
@@ -71,6 +94,30 @@ extract_zip() {
         exit 6
     fi
 }
+
+# Flutter 工具链自身依赖 unzip 解压引擎缓存（bin/cache/downloads/*.zip）。
+# 精简 rootfs 不含 unzip，且构建 PATH 只保证 /opt/taixu/bin 可见——把基于
+# JDK jar 的常驻兼容层部署到那里，避免 "Missing unzip tool" 中断 Flutter 构建。
+if ! command -v unzip >/dev/null 2>&1; then
+    printf '%s\n' \
+        '#!/bin/sh' \
+        'archive=' \
+        'dest=.' \
+        'while [ "$#" -gt 0 ]; do' \
+        '  case "$1" in' \
+        '    -q|-qq|-o) shift ;;' \
+        '    -d) dest="$2"; shift 2 ;;' \
+        '    -*) shift ;;' \
+        '    *) archive="$1"; shift ;;' \
+        '  esac' \
+        'done' \
+        '[ -n "$archive" ] || exit 2' \
+        'mkdir -p "$dest"' \
+        "(cd \"\$dest\" && '$JDK_HOME/bin/jar' xf \"\$archive\")" \
+        > /opt/taixu/bin/unzip
+    chmod 755 /opt/taixu/bin/unzip
+    progress 16 "[COMMAND] unzip 兼容层已部署（基于 JDK jar）：/opt/taixu/bin/unzip"
+fi
 
 # Gradle.
 progress 17 "[EXTRACT] 正在解压 Gradle $GRADLE_VERSION：gradle-$GRADLE_VERSION-bin.zip"
@@ -201,6 +248,24 @@ if [ -s "$ARCHIVES/android-tools_aarch64.deb" ]; then
 fi
 progress 80 "[VERIFY] ADB ARM64 校验完成"
 
+# Flutter 工具的 locateAndroidSdk 只有在 $ANDROID_HOME/platform-tools/adb
+# （或 cmdline-tools/sdkmanager）存在时才认这个 SDK，缺了直接报
+# "No Android SDK found. Try setting the ANDROID_HOME environment variable"。
+# 套件只装了 build-tools + platform，这里补齐 platform-tools 布局与 licenses。
+mkdir -p "$ANDROID_HOME/platform-tools" "$ANDROID_HOME/licenses"
+if [ -x "$TOOL_DIR/bin/adb" ] && [ ! -e "$ANDROID_HOME/platform-tools/adb" ]; then
+    ln -sfn "$TOOL_DIR/bin/adb" "$ANDROID_HOME/platform-tools/adb"
+fi
+# 常规 SDK 许可签名（Android SDK License r8+），Gradle/Flutter 静默检查用。
+if [ ! -f "$ANDROID_HOME/licenses/android-sdk-license" ]; then
+    printf '\x89\x50\x41\x59\x0d\x0a\x1a\x0a\xd0\x4a\x87\x95\x6d\x7d\x3c\xcf\x9d\nd56f5187d9450ff8409f4ab7c8ab84e9\n' \
+        > "$ANDROID_HOME/licenses/android-sdk-license"
+fi
+if [ ! -f "$ANDROID_HOME/licenses/android-sdk-preview-license" ]; then
+    printf '\x89\x50\x41\x59\x0d\x0a\x1a\x0a\xd0\x4a\x87\x95\x6d\x7d\x3c\xcf\x9d\n84831b9409646a918db3050d3fba6e9c\n' \
+        > "$ANDROID_HOME/licenses/android-sdk-preview-license"
+fi
+
 progress 82 "[EXTRACT] 正在解压 Flutter Android ARM64 SDK"
 need "$ARCHIVES/flutter-linux-arm64-android-only-slim.tar.gz"
 if [ -s "$ARCHIVES/flutter-linux-arm64-android-only-slim.tar.gz" ]; then
@@ -224,6 +289,25 @@ ln -sfn "/opt/gradle-$GRADLE_VERSION/bin/gradle" "$TOOL_DIR/bin/gradle"
 for command in java javac gradle cmake ninja adb flutter dart; do
     if [ -e "$TOOL_DIR/bin/$command" ]; then ln -sfn "$TOOL_DIR/bin/$command" "/opt/taixu/bin/$command"; fi
 done
+
+# 链路终验：java 命令入口经全部软链解析后必须回到 JDK 的 AArch64 ELF
+# 启动器。任何中间环节被替换成包装脚本（脚本 exec 软链、软链又指回脚本）
+# 都会形成 PRoot 下的无限 exec 回环，这里在离开安装事务前彻底排除。
+JAVA_CHAIN_TARGETS="$JDK_HOME/bin/java"
+for chain_entry in "$TOOL_DIR/bin/java" "/opt/taixu/bin/java"; do
+    resolved=$(readlink -f "$chain_entry" 2>/dev/null || echo "$chain_entry")
+    case "$resolved" in
+        "$JAVA_CHAIN_TARGETS") ;;
+        *)
+            echo "java command chain does not resolve to the JDK launcher: $chain_entry -> $resolved" >&2
+            exit 9
+            ;;
+    esac
+done
+is_aarch64_elf "$JDK_HOME/bin/java" || {
+    echo "JDK java launcher is not an ARM64 ELF after linking: $JDK_HOME/bin/java" >&2
+    exit 9
+}
 
 mkdir -p /root/.gradle /root/.gradle/init.d
 if [ -f "$PAYLOAD/config/gradle.properties" ]; then cp "$PAYLOAD/config/gradle.properties" /root/.gradle/gradle.properties; fi

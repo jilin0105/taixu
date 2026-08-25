@@ -25,6 +25,11 @@ interface LinuxRuntime {
 
     suspend fun switchActiveDistro(distroId: String): AppResult<Unit>
     suspend fun installDistro(request: RuntimeInstallRequest, onProgress: suspend (DownloadProgress) -> Unit = {}): AppResult<Unit>
+    suspend fun importDistro(request: RuntimeInstallRequest, archive: File): AppResult<Unit> =
+        AppResult.Failure(top.wkbin.taixu.core.common.result.AppError(
+            top.wkbin.taixu.core.common.result.ErrorCode.INSTALLATION_FAILED,
+            "当前运行时不支持导入 RootFS",
+        ))
     suspend fun uninstallDistro(distroId: String): AppResult<Unit>
     /** Remove the active distro and its installed tools while preserving /workspace. */
     suspend fun resetSandbox(distroId: String? = null): AppResult<Unit>

@@ -53,6 +53,10 @@ sealed interface AppDestination : NavKey
 @Serializable data object HomeDestination : AppDestination
 @Serializable data object AgentDestination : AppDestination
 @Serializable data object WorkspaceDestination : AppDestination
+@Serializable data object WorkshopSettingsDestination : AppDestination
+@Serializable data object WorkshopEnvironmentSettingsDestination : AppDestination
+@Serializable data object WorkshopSigningSettingsDestination : AppDestination
+@Serializable data class WorkshopScriptEditorDestination(val type: String) : AppDestination
 @Serializable data class WorkspaceExplorerDestination(val projectName: String, val initialPath: String = "") : AppDestination
 @Serializable data class CodeEditorDestination(val projectName: String, val relativePath: String) : AppDestination
 @Serializable data object SettingsDestination : AppDestination
@@ -146,6 +150,27 @@ fun TaiXuNavHost() {
                     onOpenExplorer = { projectName -> workspaceStack.push(WorkspaceExplorerDestination(projectName)) },
                     onOpenTerminal = { project -> workspaceStack.push(TerminalDestination(project = project)) },
                     onOpenToolCenter = { workspaceStack.push(ToolCenterDestination) },
+                    onOpenWorkshopSettings = { workspaceStack.push(WorkshopSettingsDestination) },
+                )
+            }
+            entry<WorkshopSettingsDestination> {
+                top.wkbin.taixu.ui.workspace.WorkshopSettingsScreen(
+                    onBack = ::popBack,
+                    onOpenEnvironment = { workspaceStack.push(WorkshopEnvironmentSettingsDestination) },
+                    onOpenSigning = { workspaceStack.push(WorkshopSigningSettingsDestination) },
+                    onEditScript = { type -> workspaceStack.push(WorkshopScriptEditorDestination(type.name)) },
+                )
+            }
+            entry<WorkshopEnvironmentSettingsDestination> {
+                top.wkbin.taixu.ui.workspace.WorkshopEnvironmentSettingsScreen(onBack = ::popBack)
+            }
+            entry<WorkshopSigningSettingsDestination> {
+                top.wkbin.taixu.ui.workspace.WorkshopSigningScreen(onBack = ::popBack)
+            }
+            entry<WorkshopScriptEditorDestination> { destination ->
+                top.wkbin.taixu.ui.workspace.WorkshopScriptEditorScreen(
+                    type = top.wkbin.taixu.ui.workspace.WorkshopScriptType.valueOf(destination.type),
+                    onBack = ::popBack,
                 )
             }
             entry<WorkspaceExplorerDestination> { destination ->

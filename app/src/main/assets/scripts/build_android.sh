@@ -32,9 +32,27 @@ flock -s -w 1800 9 || {
 }
 
 # 1. 加载插件装配期固化的环境变量
-if [ -f /etc/profile.d/taixu-android.sh ]; then
-    . /etc/profile.d/taixu-android.sh
-fi
+workshop_java_home="${JAVA_HOME:-}"
+workshop_android_home="${ANDROID_HOME:-}"
+workshop_gradle_home="${GRADLE_HOME:-}"
+workshop_ndk_path="${TAIXU_NDK_PATH:-}"
+workshop_android_ndk_home="${ANDROID_NDK_HOME:-}"
+workshop_aapt2_path="${TAIXU_AAPT2_PATH:-}"
+workshop_cmake_home="${TAIXU_CMAKE_HOME:-}"
+workshop_ninja_home="${TAIXU_NINJA_HOME:-}"
+workshop_gradle_user_home="${GRADLE_USER_HOME:-}"
+workshop_tool_dir="${TAIXU_TOOL_DIR:-}"
+if [ -f /etc/profile.d/taixu-android.sh ]; then . /etc/profile.d/taixu-android.sh; fi
+[ -z "$workshop_java_home" ] || JAVA_HOME="$workshop_java_home"
+[ -z "$workshop_android_home" ] || ANDROID_HOME="$workshop_android_home"
+[ -z "$workshop_gradle_home" ] || GRADLE_HOME="$workshop_gradle_home"
+[ -z "$workshop_ndk_path" ] || TAIXU_NDK_PATH="$workshop_ndk_path"
+[ -z "$workshop_android_ndk_home" ] || ANDROID_NDK_HOME="$workshop_android_ndk_home"
+[ -z "$workshop_aapt2_path" ] || TAIXU_AAPT2_PATH="$workshop_aapt2_path"
+[ -z "$workshop_cmake_home" ] || TAIXU_CMAKE_HOME="$workshop_cmake_home"
+[ -z "$workshop_ninja_home" ] || TAIXU_NINJA_HOME="$workshop_ninja_home"
+[ -z "$workshop_gradle_user_home" ] || GRADLE_USER_HOME="$workshop_gradle_user_home"
+[ -z "$workshop_tool_dir" ] || TAIXU_TOOL_DIR="$workshop_tool_dir"
 # /etc/environment 由插件装配期写入，PRoot 非登录 shell 场景下兜底
 if [ -f /etc/environment ]; then
     while IFS= read -r line; do
@@ -49,10 +67,13 @@ if [ -f /etc/environment ]; then
 fi
 export ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
 export ANDROID_SDK_ROOT="${ANDROID_HOME}"
+export GRADLE_HOME="${GRADLE_HOME:-/opt/gradle-$GRADLE_VER}"
+export GRADLE_USER_HOME="${GRADLE_USER_HOME:-/root/.gradle}"
+export TAIXU_TOOL_DIR="${TAIXU_TOOL_DIR:-/opt/taixu/tools}"
 
 # The local offline suite is authoritative when present. A distro package may
 # leave an x86_64 Java earlier on PATH, which is unusable in the ARM64 PRoot.
-if [ -x /opt/taixu/toolchains/android/jdk/bin/java ]; then
+if [ -z "${JAVA_HOME:-}" ] && [ -x /opt/taixu/toolchains/android/jdk/bin/java ]; then
     JAVA_HOME=/opt/taixu/toolchains/android/jdk
 fi
 
@@ -100,6 +121,22 @@ if [ -z "$JAVA_EXEC" ] || [ ! -x "$JAVA_EXEC" ]; then
     echo "==> [TaiXu Build] ❌ 未找到可执行 Java (JAVA_HOME=$JAVA_HOME)"
     exit 127
 fi
+# Java 启动器必须解析到真正的 ELF。包装脚本一旦与其 exec 目标形成回环
+# （脚本 → 软链接 → 脚本），每次 exec 都要过 PRoot 的 ptrace 翻译，
+# 表现为 JVM 零输出、CPU 持续满载的"卡死"。在启动 JVM 之前拒绝，
+# 绝不让它烧满 30 分钟超时。
+JAVA_REAL=$(readlink -f "$JAVA_EXEC" 2>/dev/null || echo "$JAVA_EXEC")
+JAVA_MAGIC=$(od -An -t x1 -N 4 "$JAVA_REAL" 2>/dev/null | tr -d '[:space:]')
+if [ "$JAVA_MAGIC" != "7f454c46" ]; then
+    echo "==> [TaiXu Build] ❌ Java 启动器不是 ELF 二进制（疑似包装脚本/回环软链）: $JAVA_REAL"
+    echo "==> [TaiXu Build] 请在插件中心重新装配【Android 全栈开发套件】以修复 JDK"
+    exit 126
+fi
+JAVA_LAUNCHER_MACHINE=$(od -An -t x1 -j 18 -N 2 "$JAVA_REAL" 2>/dev/null | tr -d '[:space:]')
+if [ "$JAVA_LAUNCHER_MACHINE" != "b700" ]; then
+    echo "==> [TaiXu Build] ❌ Java 启动器不是 AArch64 ELF (machine=$JAVA_LAUNCHER_MACHINE): $JAVA_REAL"
+    exit 126
+fi
 echo "==> [TaiXu Build] Java 执行文件: $JAVA_EXEC"
 
 echo "==> [TaiXu Build] JAVA_HOME: $JAVA_HOME"
@@ -145,16 +182,15 @@ if [ "$STRIP_MACHINE" != "b700" ] || [ "$CLANG_MACHINE" != "b700" ] || \
     exit 126
 fi
 echo "==> [TaiXu Build] 固定 ARM64 NDK: $NDK_PATH"
-if ! grep -Fqx 'android.builder.sdkDownload=false' /root/.gradle/gradle.properties 2>/dev/null; then
+if ! grep -Fqx 'android.builder.sdkDownload=false' "$GRADLE_USER_HOME/gradle.properties" 2>/dev/null; then
     echo "==> [TaiXu Build] ❌ Gradle SDK 自动下载未禁用，拒绝构建以防官方 x86_64 工具覆盖"
     exit 2
 fi
-if [ ! -f /root/.gradle/init.d/taixu-android-ndk.gradle ] || \
-   ! grep -Fq 'androidExtension.ndkPath = taixuNdkPath' /root/.gradle/init.d/taixu-android-ndk.gradle; then
+if [ ! -f "$GRADLE_USER_HOME/init.d/taixu-android-ndk.gradle" ] || \
+   ! grep -Fq 'androidExtension.ndkPath = taixuNdkPath' "$GRADLE_USER_HOME/init.d/taixu-android-ndk.gradle"; then
     echo "==> [TaiXu Build] ❌ 固定 NDK 路径注入缺失"
     exit 2
 fi
-
 # 2. 绑定 SDK 到当前工程。保留用户的其他 local.properties 键。
 # NDK 路径由 taixu-android-ndk.gradle 通过 android.ndkPath 唯一注入。
 # 清理旧 ndk.dir 但不再写回，避免 AGP 8.11.1 拒绝两种 locator 并存。
@@ -183,12 +219,12 @@ if [ -n "$CACERTS_PATH" ]; then
     SSL_OPTS="-Djavax.net.ssl.trustStore=$CACERTS_PATH -Djavax.net.ssl.trustStoreType=PKCS12 -Djavax.net.ssl.trustStorePassword=changeit"
 fi
 
-export PATH="/opt/gradle-$GRADLE_VER/bin:${TAIXU_TOOL_DIR:-/opt/taixu/tools}/bin:$PATH"
+export PATH="$GRADLE_HOME/bin:${TAIXU_CMAKE_HOME:-/opt/taixu/tools/android-suite-offline/cmake}/bin:${TAIXU_NINJA_HOME:-/opt/taixu/tools/android-suite-offline/bin}:${TAIXU_TOOL_DIR:-/opt/taixu/tools}/bin:$PATH"
 
 cd "$PROJECT_PATH"
 
 # 4. 调度 Gradle 构建
-EXTRA_ARGS="--console=plain --stacktrace --no-daemon --max-workers=2 -Dorg.gradle.native=false -Pandroid.builder.sdkDownload=false"
+EXTRA_ARGS="--console=plain --info --stacktrace --no-daemon --max-workers=2 -Dorg.gradle.native=false -Dorg.gradle.internal.http.connectionTimeout=30000 -Dorg.gradle.internal.http.socketTimeout=60000 -Pandroid.builder.sdkDownload=false"
 if [ "${TAIXU_OFFLINE:-0}" = "1" ]; then
     EXTRA_ARGS="$EXTRA_ARGS --offline"
     echo "==> [TaiXu Build] 离线模式：禁止 Gradle 网络请求，仅使用本地缓存"
@@ -206,13 +242,14 @@ JAVA_RUNTIME_OPTS="-Djava.security.egd=file:/dev/urandom"
 export GRADLE_OPTS="${GRADLE_OPTS:-} $JAVA_RUNTIME_OPTS"
 GRADLE_JVM_MEMORY_OPTS="-Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+UseSerialGC -Dfile.encoding=UTF-8"
 
-if [ -d /opt/gradle-$GRADLE_VER/lib ]; then
-    echo "==> [TaiXu Build] 调度官方独立完整版 Gradle $GRADLE_VER 执行构建..."
+if [ -d "$GRADLE_HOME/lib" ]; then
+    echo "==> [TaiXu Build] 调度 Gradle: $GRADLE_HOME"
+    echo "==> [TaiXu Build] 依赖解析与任务执行即将开始；下载项、仓库地址与任务阶段会实时写入构建日志..."
     exec "$JAVA_EXEC" $GRADLE_JVM_MEMORY_OPTS \
         -Dorg.gradle.appname=gradle \
-        -Dorg.gradle.installation.dir=/opt/gradle-$GRADLE_VER \
+        -Dorg.gradle.installation.dir="$GRADLE_HOME" \
         $JAVA_RUNTIME_OPTS \
-        -classpath "/opt/gradle-$GRADLE_VER/lib/*" \
+        -classpath "$GRADLE_HOME/lib/*" \
         org.gradle.launcher.GradleMain $TASK $EXTRA_ARGS
 elif [ -d /opt/gradle-8.7/lib ]; then
     echo "==> [TaiXu Build] 调度官方独立完整版 Gradle 8.7 执行构建..."
@@ -222,9 +259,9 @@ elif [ -d /opt/gradle-8.7/lib ]; then
         $JAVA_RUNTIME_OPTS \
         -classpath "/opt/gradle-8.7/lib/*" \
         org.gradle.launcher.GradleMain $TASK $EXTRA_ARGS
-elif [ -x /opt/gradle-$GRADLE_VER/bin/gradle ]; then
-    echo "==> [TaiXu Build] 调度 /opt/gradle-$GRADLE_VER/bin/gradle 执行构建..."
-    exec /opt/gradle-$GRADLE_VER/bin/gradle $TASK $EXTRA_ARGS
+elif [ -x "$GRADLE_HOME/bin/gradle" ]; then
+    echo "==> [TaiXu Build] 调度 $GRADLE_HOME/bin/gradle 执行构建..."
+    exec "$GRADLE_HOME/bin/gradle" $TASK $EXTRA_ARGS
 elif [ -f ./gradlew ] && [ -f ./gradle/wrapper/gradle-wrapper.jar ]; then
     echo "==> [TaiXu Build] 调度项目本地 Gradle Wrapper 执行构建..."
     chmod +x ./gradlew

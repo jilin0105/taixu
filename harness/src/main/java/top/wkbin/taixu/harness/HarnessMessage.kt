@@ -16,6 +16,8 @@ enum class HarnessTool {
     @SerialName("memory") MEMORY,
     @SerialName("plan") PLAN,
     @SerialName("scratchpad") SCRATCHPAD,
+    @SerialName("history_search") HISTORY_SEARCH,
+    @SerialName("history_read") HISTORY_READ,
     @SerialName("invoke_subagent") SUBAGENT,
     @SerialName("mcp") MCP,
 }

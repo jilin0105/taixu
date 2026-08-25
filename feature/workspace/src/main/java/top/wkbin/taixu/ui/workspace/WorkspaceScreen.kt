@@ -214,6 +214,7 @@ fun WorkspaceScreen(
     onOpenExplorer: (String) -> Unit,
     onOpenTerminal: (String) -> Unit,
     onOpenToolCenter: () -> Unit = {},
+    onOpenWorkshopSettings: () -> Unit = {},
     viewModel: WorkspaceViewModel = hiltViewModel(),
 ) {
     val projects by viewModel.projects.collectAsStateWithLifecycle()
@@ -223,10 +224,12 @@ fun WorkspaceScreen(
     val activeBuildingProjectName by viewModel.activeBuildingProjectName.collectAsStateWithLifecycle()
     val isBuildDialogVisible by viewModel.isBuildDialogVisible.collectAsStateWithLifecycle()
     val installedComponentIds by viewModel.installedComponentIds.collectAsStateWithLifecycle()
+    val keystores by viewModel.keystores.collectAsStateWithLifecycle()
     val loadingProjects by viewModel.loadingProjects.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showCreate by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
+    var actionsExpanded by remember { mutableStateOf(false) }
     var selectedTemplate by remember { mutableStateOf(top.wkbin.taixu.runtime.ProjectTemplate.ANDROID_COMPOSE) }
     var projectName by remember { mutableStateOf("") }
     var packageName by remember { mutableStateOf("") }
@@ -247,6 +250,7 @@ fun WorkspaceScreen(
     var importGitUrl by remember { mutableStateOf("") }
     var gitTransport by remember { mutableStateOf(GitTransport.HTTP) }
     var pendingExportProject by remember { mutableStateOf<WorkspaceProject?>(null) }
+    var buildConfigTarget by remember { mutableStateOf<WorkspaceProject?>(null) }
 
     val legacyStoragePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         permissionRefresh++
@@ -322,15 +326,15 @@ fun WorkspaceScreen(
                 title = stringResource(R.string.workspace_title),
                 statusText = stringResource(R.string.workspace_active_projects, projects.size),
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onOpenToolCenter, enabled = !busy) {
-                        RuntimeIcon(RuntimeIconName.Package, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                Box {
+                    IconButton(onClick = { actionsExpanded = true }, enabled = !busy) {
+                        RuntimeIcon(RuntimeIconName.More, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                     }
-                    IconButton(onClick = { showImport = true }, enabled = !busy) {
-                        RuntimeIcon(RuntimeIconName.FolderDownload, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-                    }
-                    IconButton(onClick = { showCreate = true }, enabled = !busy) {
-                        RuntimeIcon(RuntimeIconName.Plus, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                    DropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }) {
+                        DropdownMenuItem(text = { Text("创建") }, leadingIcon = { RuntimeIcon(RuntimeIconName.Plus, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; showCreate = true })
+                        DropdownMenuItem(text = { Text("导入") }, leadingIcon = { RuntimeIcon(RuntimeIconName.FolderDownload, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; showImport = true })
+                        DropdownMenuItem(text = { Text("插件") }, leadingIcon = { RuntimeIcon(RuntimeIconName.Package, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; onOpenToolCenter() })
+                        DropdownMenuItem(text = { Text("工坊设置") }, leadingIcon = { RuntimeIcon(RuntimeIconName.Settings, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; onOpenWorkshopSettings() })
                     }
                 }
             }
@@ -526,7 +530,7 @@ fun WorkspaceScreen(
                         onOpenExplorer = { onOpenExplorer(project.name) },
                         onOpenTerminal = { onOpenTerminal(project.name) },
                         onOpenAgent = { onNavigate(MainDestination.Agent) },
-                        onRunProject = { viewModel.runProject(project) },
+                        onRunProject = { buildConfigTarget = project },
                         onShowBuildLog = { viewModel.showBuildDialog() },
                         onExport = {
                             pendingExportProject = project
@@ -577,6 +581,54 @@ fun WorkspaceScreen(
                             progress = { progress.progress },
                             modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
                         )
+                    }
+                    if (progress.currentDependency != null || progress.dependencyItemsObserved > 0) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.workspace_dependency_activity),
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                    val countText = progress.dependenciesTotal?.let { total ->
+                                        stringResource(R.string.workspace_dependency_count_total, progress.dependencyItemsObserved, total)
+                                    } ?: stringResource(R.string.workspace_dependency_count, progress.dependencyItemsObserved)
+                                    Text(countText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                progress.currentDependency?.let { dependency ->
+                                    Text(
+                                        text = dependency,
+                                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                progress.dependencyProgressPercent?.let { percent ->
+                                    LinearProgressIndicator(
+                                        progress = { percent / 100f },
+                                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.workspace_dependency_percent, percent),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
                     }
                     progress.message?.let { msg ->
                         Text(
@@ -1510,6 +1562,115 @@ fun WorkspaceScreen(
             },
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text(stringResource(R.string.workspace_cancel)) } },
         )
+    }
+
+    // 构建类型选择：Debug 直接构建；Release 需选择已登记签名，没有签名则引导去创建
+    buildConfigTarget?.let { target ->
+        BuildTypePickerDialog(
+            project = target,
+            keystores = keystores,
+            onDismiss = { buildConfigTarget = null },
+            onConfirm = { type, keystore ->
+                buildConfigTarget = null
+                viewModel.runProject(target, type, keystore)
+            },
+            onManageSigning = {
+                buildConfigTarget = null
+                onOpenWorkshopSettings()
+            },
+        )
+    }
+}
+
+@Composable
+private fun BuildTypePickerDialog(
+    project: WorkspaceProject,
+    keystores: List<top.wkbin.taixu.core.datastore.WorkshopKeystore>,
+    onDismiss: () -> Unit,
+    onConfirm: (top.wkbin.taixu.runtime.build.WorkshopBuildType, top.wkbin.taixu.core.datastore.WorkshopKeystore?) -> Unit,
+    onManageSigning: () -> Unit,
+) {
+    var selectedType by remember { mutableStateOf(top.wkbin.taixu.runtime.build.WorkshopBuildType.DEBUG) }
+    var selectedKeystoreId by remember { mutableStateOf(keystores.firstOrNull()?.id.orEmpty()) }
+    val isRelease = selectedType == top.wkbin.taixu.runtime.build.WorkshopBuildType.RELEASE
+    val selectedKeystore = keystores.firstOrNull { it.id == selectedKeystoreId }
+
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.workspace_build_type_title, project.name), fontWeight = FontWeight.Bold) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                BuildTypeOption(
+                    title = stringResource(R.string.workspace_build_type_debug),
+                    description = stringResource(R.string.workspace_build_type_debug_description),
+                    selected = !isRelease,
+                    onClick = { selectedType = top.wkbin.taixu.runtime.build.WorkshopBuildType.DEBUG },
+                )
+                BuildTypeOption(
+                    title = stringResource(R.string.workspace_build_type_release),
+                    description = stringResource(R.string.workspace_build_type_release_description),
+                    selected = isRelease,
+                    onClick = { selectedType = top.wkbin.taixu.runtime.build.WorkshopBuildType.RELEASE },
+                )
+                if (isRelease) {
+                    if (keystores.isEmpty()) {
+                        Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(10.dp)) {
+                            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(stringResource(R.string.workspace_build_no_keystore), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                                Button(onClick = onManageSigning) { Text(stringResource(R.string.workspace_build_go_create_keystore)) }
+                            }
+                        }
+                    } else {
+                        Text(stringResource(R.string.workspace_build_pick_keystore), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        keystores.forEach { keystore ->
+                            BuildTypeOption(
+                                title = keystore.name,
+                                description = "alias ${keystore.alias}",
+                                selected = keystore.id == selectedKeystoreId,
+                                onClick = { selectedKeystoreId = keystore.id },
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(selectedType, if (isRelease) selectedKeystore else null) },
+                enabled = !isRelease || selectedKeystore != null,
+            ) { Text(stringResource(R.string.workspace_build_start)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.workspace_cancel)) }
+        },
+    )
+}
+
+@Composable
+private fun BuildTypeOption(
+    title: String,
+    description: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val borderColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+    Surface(
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = RoundedCornerShape(12.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, borderColor),
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick),
+    ) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            RuntimeIcon(
+                if (selected) RuntimeIconName.Check else RuntimeIconName.Key,
+                Modifier.size(18.dp),
+                if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
     }
 }
 

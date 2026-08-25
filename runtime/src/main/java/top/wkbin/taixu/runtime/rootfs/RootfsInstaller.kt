@@ -12,6 +12,7 @@ import top.wkbin.taixu.runtime.DownloadProgress
 import top.wkbin.taixu.runtime.RegistryRoute
 import top.wkbin.taixu.runtime.RuntimePathManager
 import top.wkbin.taixu.runtime.RootfsUpdateInfo
+import java.io.BufferedInputStream
 import java.io.File
 import java.util.zip.GZIPInputStream
 import javax.inject.Inject
@@ -75,6 +76,62 @@ class RootfsInstaller @Inject constructor(
             logger.e("Failed to install OCI rootfs for $distroId", throwable)
             failure("OCI RootFS ($distroId) 安装失败", throwable)
         }
+    }
+
+    suspend fun importArchive(distroId: String, archive: File): AppResult<File> = withContext(Dispatchers.IO) {
+        val safeId = distroId.lowercase().trim()
+        require(safeId.matches(Regex("[a-z0-9][a-z0-9_-]{0,31}"))) { "Linux 发行版 ID 无效" }
+        require(archive.isFile) { "导入文件不存在" }
+        val staging = prepareStaging(safeId)
+        try {
+            BufferedInputStream(archive.inputStream()).use { buffered ->
+                buffered.mark(8)
+                val magic = ByteArray(4)
+                buffered.read(magic)
+                buffered.reset()
+                require(!(magic[0] == 'P'.code.toByte() && magic[1] == 'K'.code.toByte())) {
+                    "ZIP 无法可靠保留 Linux 权限与符号链接，请使用 tar、tar.gz、tar.xz 或 tar.zst"
+                }
+                val stream = when {
+                    magic[0] == 0x1f.toByte() && magic[1] == 0x8b.toByte() -> GZIPInputStream(buffered)
+                    magic[0] == 0x28.toByte() && magic[1] == 0xb5.toByte() -> ZstdInputStream(buffered)
+                    magic[0] == 0xfd.toByte() && magic[1] == 0x37.toByte() -> XZInputStream(buffered)
+                    else -> buffered
+                }
+                stream.use { tarStreamExtractor.extract(it, staging, handleWhiteouts = false) }
+            }
+            val actualRoot = normalizeImportedRoot(staging)
+            if (actualRoot != staging) {
+                val normalized = File(staging.parentFile, "rootfs.normalized")
+                SafeFileTree.delete(normalized)
+                check(actualRoot.renameTo(normalized)) { "无法整理导入 RootFS" }
+                SafeFileTree.delete(staging)
+                check(normalized.renameTo(staging)) { "无法提交导入 RootFS" }
+            }
+            rootfsValidator.validate(staging)
+            val target = pathManager.rootfsDir(safeId)
+            if (pathManager.isDistroInstalled(safeId)) preserveUserDirectories(target, staging)
+            replaceRootfs(safeId, staging, retainBackup = false)
+            markInstalled(safeId, OciRegistryClient.ImageInfo("local-import", "local-${archive.length()}-${archive.lastModified()}"))
+            pathManager.homeDir(safeId).mkdirs()
+            AppResult.Success(target)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (throwable: Throwable) {
+            SafeFileTree.delete(staging)
+            logger.e("Failed to import rootfs archive for $safeId", throwable)
+            failure("导入 RootFS（$safeId）失败", throwable)
+        }
+    }
+
+    private fun normalizeImportedRoot(staging: File): File {
+        val children = staging.listFiles().orEmpty().filterNot { it.name == ".taixu" }
+        if (children.size == 1 && children[0].isDirectory) {
+            val nested = children[0]
+            val hasRootMarker = File(nested, "etc/os-release").isFile || File(nested, "usr/lib/os-release").isFile
+            if (hasRootMarker) return nested
+        }
+        return staging
     }
 
     suspend fun updateOci(

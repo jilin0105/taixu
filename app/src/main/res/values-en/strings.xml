@@ -13,6 +13,8 @@
     <string name="taixu_onboarding_preparing">Preparing environment…</string>
     <string name="taixu_onboarding_initialize">Initialize sandbox</string>
     <string name="taixu_onboarding_recheck">Already installed? Recheck without downloading again</string>
+    <string name="taixu_onboarding_import">Import a Linux distribution from a file</string>
+    <string name="taixu_onboarding_import_hint">Supports ARM64 RootFS archives: .tar, .tar.gz, .tgz, .tar.xz, and .tar.zst. Bash, /bin/sh, and os-release are required.</string>
     <string name="taixu_onboarding_connect_model">Connect an AI model</string>
     <string name="taixu_onboarding_connect_model_description">Configure your preferred model provider and API key to start AI pair programming.</string>
     <string name="taixu_onboarding_base_url">Base URL</string>

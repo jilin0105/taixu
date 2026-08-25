@@ -27,6 +27,7 @@ class WorkspaceViewModel @Inject constructor(
     private val buildCoordinator: WorkspaceBuildTaskCoordinator,
     private val toolManager: top.wkbin.taixu.core.tools.ToolManager,
     private val linuxRuntime: top.wkbin.taixu.runtime.LinuxRuntime,
+    private val workshopPreferences: top.wkbin.taixu.core.datastore.WorkshopPreferences,
 ) : ViewModel() {
 
     // ==================== 聚合开发套件与子组件状态 ====================
@@ -155,6 +156,10 @@ class WorkspaceViewModel @Inject constructor(
     private val _isBuildDialogVisible = MutableStateFlow<Boolean>(false)
     val isBuildDialogVisible: StateFlow<Boolean> = _isBuildDialogVisible.asStateFlow()
 
+    /** 工坊已登记的 Android 签名（Release 构建时选择）。 */
+    val keystores: StateFlow<List<top.wkbin.taixu.core.datastore.WorkshopKeystore>> = workshopPreferences.keystores
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     // ==================== 文件浏览器状态 ====================
     private val _selectedProject = MutableStateFlow<String?>(null)
     val selectedProject: StateFlow<String?> = _selectedProject.asStateFlow()
@@ -279,13 +284,17 @@ class WorkspaceViewModel @Inject constructor(
         }
     }
 
-    fun runProject(project: WorkspaceProject) {
+    fun runProject(
+        project: WorkspaceProject,
+        buildType: top.wkbin.taixu.runtime.build.WorkshopBuildType = top.wkbin.taixu.runtime.build.WorkshopBuildType.DEBUG,
+        keystore: top.wkbin.taixu.core.datastore.WorkshopKeystore? = null,
+    ) {
         if (buildCoordinator.state.value?.progress?.isRunning == true) {
             _isBuildDialogVisible.value = true
             return
         }
         _isBuildDialogVisible.value = true
-        buildCoordinator.start(project)
+        buildCoordinator.start(project, buildType, keystore)
     }
 
     /** 用户主动取消编译任务 */

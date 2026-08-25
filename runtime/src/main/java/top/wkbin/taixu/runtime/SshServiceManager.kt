@@ -5,7 +5,9 @@ import android.net.wifi.WifiManager
 import android.os.PowerManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.net.Inet4Address
+import java.net.InetSocketAddress
 import java.net.NetworkInterface
+import java.net.Socket
 import java.util.Base64
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
@@ -28,6 +30,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import top.wkbin.taixu.core.datastore.SshPreferences
 import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.runtime.service.LocalServiceLauncher
@@ -81,6 +85,7 @@ class SshServiceManager @Inject constructor(
     private var serviceProcess: ManagedProcess? = null
     private var serviceDistroId: String? = null
     private var monitorJob: Job? = null
+    private var activePort: Int? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
@@ -214,6 +219,7 @@ class SshServiceManager @Inject constructor(
         check(authorizedKeys.isNotBlank() || password != null) {
             "请先设置 SSH 登录密码或添加至少一个公钥"
         }
+        val lanAddress = if (config.allowLan) localIpv4Address() else null
 
         try {
             val installed = linuxRuntime.execute(
@@ -240,6 +246,7 @@ class SshServiceManager @Inject constructor(
                     commandLine = SshCommandFactory.configureCommand(
                         config.copy(authorizedKeys = authorizedKeys),
                         password,
+                        listenAddress = if (config.allowLan) lanAddress ?: "0.0.0.0" else "127.0.0.1",
                     ),
                     timeoutMs = CONFIGURE_TIMEOUT_MS,
                 ),
@@ -248,6 +255,11 @@ class SshServiceManager @Inject constructor(
             check(configure.isSuccess) {
                 (configure.stderr.ifBlank { configure.stdout }).trim().ifBlank { "SSH 配置校验失败" }
             }
+
+            // 停止可能残留、仍占用端口的旧 sshd（主机 proot 被杀后，沙盒内的
+            // sshd 可能成为孤儿继续监听），待端口真正释放后再绑定，避免
+            // “Address already in use”。
+            cleanupStaleSshd(distroId, config.port)
 
             val handle = serviceLauncher.start(
                 LocalServiceSpec(
@@ -269,7 +281,8 @@ class SshServiceManager @Inject constructor(
             }
             serviceProcess = handle.process
             serviceDistroId = distroId
-            val host = if (config.allowLan) localIpv4Address() ?: "设备局域网 IP" else "127.0.0.1"
+            activePort = config.port
+            val host = if (config.allowLan) lanAddress ?: "设备局域网 IP" else "127.0.0.1"
             _state.value = SshServiceState.Running(distroId, config.port, config.allowLan, host)
             acquireWakeLock()
             acquireWifiLock()
@@ -303,10 +316,17 @@ class SshServiceManager @Inject constructor(
     private suspend fun stopLocked() {
         monitorJob?.cancel()
         monitorJob = null
-        serviceLauncher.stop(SERVICE_ID)
-        serviceProcess = null
-        serviceDistroId = null
-        releaseWakeLock()
+        val distroId = serviceDistroId
+        val port = activePort
+        try {
+            serviceLauncher.stop(SERVICE_ID)
+            if (distroId != null && port != null) cleanupStaleSshd(distroId, port)
+        } finally {
+            serviceProcess = null
+            serviceDistroId = null
+            activePort = null
+            releaseWakeLock()
+        }
     }
 
     private suspend fun readConfig(distroId: String) = SshRuntimeConfig(
@@ -331,6 +351,34 @@ class SshServiceManager @Inject constructor(
                 )
             }
         }
+    }
+
+    /** 清除可能残留、仍占用端口的旧 sshd，并等待端口真正释放。 */
+    private suspend fun cleanupStaleSshd(distroId: String, port: Int) {
+        try {
+            linuxRuntime.execute(
+                ShellCommand(
+                    commandLine = KILL_STALE_SSHD_COMMAND,
+                    timeoutMs = KILL_STALE_TIMEOUT_MS,
+                ),
+                distroId,
+            )
+        } catch (_: Throwable) {
+            // 运行时可正处于关闭中；尽力而为，下面的端口释放等待兜底。
+        }
+        val freed = withTimeoutOrNull(PORT_FREE_TIMEOUT_MS) {
+            while (isPortBusy(port)) delay(PORT_POLL_INTERVAL_MS)
+            true
+        }
+        check(freed == true) { "SSH 端口 $port 仍被旧进程占用，无法启动" }
+    }
+
+    private suspend fun isPortBusy(port: Int): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress("127.0.0.1", port), PORT_CONNECT_TIMEOUT_MS)
+            }
+        }.isSuccess
     }
 
     private fun acquireWakeLock() {
@@ -377,9 +425,29 @@ class SshServiceManager @Inject constructor(
         private const val PROBE_TIMEOUT_MS = 15_000L
         private const val INSTALL_TIMEOUT_MS = 10 * 60 * 1000L
         private const val CONFIGURE_TIMEOUT_MS = 30_000L
-        private const val STARTUP_TIMEOUT_MS = 15_000L
+        // PRoot 首次拉起 sshd 在慢速设备上可能超过 15 秒；进程提前退出时
+        // LocalServiceLauncher 仍会立即失败，因此放宽端口就绪等待不会掩盖崩溃。
+        private const val STARTUP_TIMEOUT_MS = 60_000L
         private const val PROCESS_POLL_INTERVAL_MS = 1_000L
+        private const val KILL_STALE_TIMEOUT_MS = 5_000L
+        private const val PORT_FREE_TIMEOUT_MS = 5_000L
+        private const val PORT_POLL_INTERVAL_MS = 100L
+        private const val PORT_CONNECT_TIMEOUT_MS = 250
         private const val WAKE_LOCK_TIMEOUT_MS = 12 * 60 * 60 * 1000L
+
+        // 结束一个 sshd 会话：先优雅终止，稍等回落，再强制终止；同时按 pidfile 兜底。
+        val KILL_STALE_SSHD_COMMAND = """
+            if command -v pkill >/dev/null 2>&1; then
+              pkill -f 'ssh[d] .*taixu_sshd_config' 2>/dev/null || true
+            fi
+            if test -f /tmp/taixu-sshd.pid; then
+              kill "${'$'}(cat /tmp/taixu-sshd.pid 2>/dev/null)" 2>/dev/null || true
+            fi
+            sleep 0.2
+            if command -v pkill >/dev/null 2>&1; then
+              pkill -9 -f 'ssh[d] .*taixu_sshd_config' 2>/dev/null || true
+            fi
+        """.trimIndent()
 
         fun localIpv4Address(): String? = runCatching {
             NetworkInterface.getNetworkInterfaces().toList()
@@ -421,7 +489,11 @@ internal object SshCommandFactory {
     const val startCommand: String =
         "SSHD=\$(command -v sshd); exec \"\$SSHD\" -D -e -f /etc/ssh/taixu_sshd_config"
 
-    fun configureCommand(config: SshRuntimeConfig, password: String? = null): String {
+    fun configureCommand(
+        config: SshRuntimeConfig,
+        password: String? = null,
+        listenAddress: String? = null,
+    ): String {
         val keys = normalizeAuthorizedKeys(config.authorizedKeys)
         val normalizedPassword = if (config.passwordAuthEnabled) {
             normalizePassword(password ?: error("请先设置 SSH 登录密码"))
@@ -429,12 +501,13 @@ internal object SshCommandFactory {
             null
         }
         check(keys.isNotBlank() || normalizedPassword != null) { "请先设置 SSH 登录密码或添加至少一个公钥" }
-        val listenAddress = if (config.allowLan) "0.0.0.0" else "127.0.0.1"
+        val resolvedListenAddress = listenAddress
+            ?: if (config.allowLan) "0.0.0.0" else "127.0.0.1"
         val passwordAuth = if (normalizedPassword != null) "yes" else "no"
         val permitRootLogin = if (normalizedPassword != null) "yes" else "prohibit-password"
         val sshdConfig = """
             Port ${config.port}
-            ListenAddress $listenAddress
+            ListenAddress $resolvedListenAddress
             Protocol 2
             HostKey /etc/ssh/ssh_host_ed25519_key
             HostKey /etc/ssh/ssh_host_rsa_key

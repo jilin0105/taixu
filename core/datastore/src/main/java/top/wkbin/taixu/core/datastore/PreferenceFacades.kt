@@ -40,6 +40,40 @@ class RuntimePreferences @Inject constructor(private val store: SettingsDataStor
     suspend fun setAdbPairedOnce(value: Boolean) = store.setAdbPairedOnce(value)
 }
 
+@Singleton
+class WorkshopPreferences @Inject constructor(private val store: SettingsDataStore) {
+    val androidSdkPath get() = store.workshopAndroidSdkPath
+    val ndkPath get() = store.workshopNdkPath
+    val flutterSdkPath get() = store.workshopFlutterSdkPath
+    val javaPath get() = store.workshopJavaPath
+    val gradlePath get() = store.workshopGradlePath
+    val cmakePath get() = store.workshopCmakePath
+    val ninjaPath get() = store.workshopNinjaPath
+    val aapt2Path get() = store.workshopAapt2Path
+    val gradleUserHome get() = store.workshopGradleUserHome
+    val pubCache get() = store.workshopPubCache
+    val toolDir get() = store.workshopToolDir
+    val androidScript get() = store.workshopAndroidScript
+    val flutterScript get() = store.workshopFlutterScript
+    val keystores get() = store.workshopKeystores
+    suspend fun setAndroidSdkPath(value: String) = store.setWorkshopAndroidSdkPath(value)
+    suspend fun setNdkPath(value: String) = store.setWorkshopNdkPath(value)
+    suspend fun setFlutterSdkPath(value: String) = store.setWorkshopFlutterSdkPath(value)
+    suspend fun setJavaPath(value: String) = store.setWorkshopJavaPath(value)
+    suspend fun setGradlePath(value: String) = store.setWorkshopGradlePath(value)
+    suspend fun setCmakePath(value: String) = store.setWorkshopCmakePath(value)
+    suspend fun setNinjaPath(value: String) = store.setWorkshopNinjaPath(value)
+    suspend fun setAapt2Path(value: String) = store.setWorkshopAapt2Path(value)
+    suspend fun setGradleUserHome(value: String) = store.setWorkshopGradleUserHome(value)
+    suspend fun setPubCache(value: String) = store.setWorkshopPubCache(value)
+    suspend fun setToolDir(value: String) = store.setWorkshopToolDir(value)
+    suspend fun setAndroidScript(value: String) = store.setWorkshopAndroidScript(value)
+    suspend fun setFlutterScript(value: String) = store.setWorkshopFlutterScript(value)
+    suspend fun setKeystores(value: List<WorkshopKeystore>) = store.setWorkshopKeystores(value)
+    suspend fun resetEnvironment() = store.resetWorkshopEnvironment()
+    suspend fun resetScripts() = store.resetWorkshopScripts()
+}
+
 /** Per-distro SSH settings exposed only to the runtime service and its settings UI. */
 @Singleton
 class SshPreferences @Inject constructor(private val store: SettingsDataStore) {

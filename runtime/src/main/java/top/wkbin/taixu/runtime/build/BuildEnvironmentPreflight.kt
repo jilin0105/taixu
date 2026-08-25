@@ -23,7 +23,7 @@ object BuildEnvironmentPreflight {
             "test -x /bin/sh || fail shell",
             "test -d \"\$PROJECT_PATH\" || fail project_missing",
             "elf_machine() { od -An -t x1 -j 18 -N 2 \"\$1\" 2>/dev/null | tr -d '[:space:]'; }",
-            "java_arch_machine() { bin=\"\$1\"; real=\$(readlink -f \"\$bin\" 2>/dev/null || echo \"\$bin\"); home=\$(dirname \"\$(dirname \"\$real\")\"); lib=\$(find \"\$home\" \\( -type f -o -type l \\) -name libjvm.so -print -quit 2>/dev/null || true); if test -z \"\$lib\"; then echo unreadable; return 0; fi; od -An -t x1 -j 18 -N 2 \"\$lib\" 2>/dev/null | tr -d '[:space:]'; }",
+            "java_arch_machine() { bin=\"\$1\"; real=\$(readlink -f \"\$bin\" 2>/dev/null || echo \"\$bin\"); magic=\$(od -An -t x1 -N 4 \"\$real\" 2>/dev/null | tr -d '[:space:]'); if test \"\$magic\" != 7f454c46; then echo not_elf; return 0; fi; home=\$(dirname \"\$(dirname \"\$real\")\"); lib=\$(find \"\$home\" \\( -type f -o -type l \\) -name libjvm.so -print -quit 2>/dev/null || true); if test -z \"\$lib\"; then echo unreadable; return 0; fi; od -An -t x1 -j 18 -N 2 \"\$lib\" 2>/dev/null | tr -d '[:space:]'; }",
         )
         if (projectType == ProjectType.ANDROID) {
             lines += "test -f \"\$PROJECT_PATH/settings.gradle\" -o -f \"\$PROJECT_PATH/settings.gradle.kts\" || fail android_settings"
@@ -58,7 +58,8 @@ object BuildEnvironmentPreflight {
             }
         } else {
             lines += "ANDROID_HOME=\${ANDROID_HOME:-/opt/android-sdk}"
-            lines += "JAVA_BIN=/opt/taixu/toolchains/android/jdk/bin/java"
+            lines += "# default JAVA_BIN=/opt/taixu/toolchains/android/jdk/bin/java"
+            lines += "JAVA_BIN=\${JAVA_HOME:-/opt/taixu/toolchains/android/jdk}/bin/java"
             lines += "test -x \"\$JAVA_BIN\" || JAVA_BIN=\$(command -v java 2>/dev/null || true)"
             lines += "test -n \"\$JAVA_BIN\" -a -x \"\$JAVA_BIN\" || fail java_missing"
             lines += "JAVA_MACHINE=\$(java_arch_machine \"\$JAVA_BIN\")"
@@ -72,11 +73,18 @@ object BuildEnvironmentPreflight {
             lines += "NDK_STRIP=\$(find \"\$NDK_PATH/toolchains/llvm/prebuilt\" \\( -type f -o -type l \\) -name llvm-strip -print -quit 2>/dev/null)"
             lines += "test -f \"\$NDK_PATH/source.properties\" -a -x \"\$NDK_CLANG\" -a -x \"\$NDK_STRIP\" || fail ndk_missing"
             lines += "test \"\$(elf_machine \"\$NDK_CLANG\")\" = $ARM64_ELF_MACHINE -a \"\$(elf_machine \"\$NDK_STRIP\")\" = $ARM64_ELF_MACHINE || fail ndk_arch"
-            lines += "grep -Fqx 'android.builder.sdkDownload=false' /root/.gradle/gradle.properties 2>/dev/null || fail sdk_download_enabled"
-            lines += "test -x /opt/gradle-8.14.2/bin/gradle -o -d /opt/gradle-8.14.2/lib -o -f \"\$PROJECT_PATH/gradle/wrapper/gradle-wrapper.jar\" -o -n \"\$(command -v gradle 2>/dev/null || true)\" || fail gradle_missing"
+            lines += "CMAKE_HOME=\${TAIXU_CMAKE_HOME:-/opt/taixu/tools/android-suite-offline/cmake}"
+            lines += "NINJA_HOME=\${TAIXU_NINJA_HOME:-/opt/taixu/tools/android-suite-offline/bin}"
+            lines += "test -x \"\$CMAKE_HOME/bin/cmake\" || fail cmake_missing"
+            lines += "test -x \"\$NINJA_HOME/ninja\" || fail ninja_missing"
+            lines += "GRADLE_USER_HOME=\${GRADLE_USER_HOME:-/root/.gradle}"
+            lines += "grep -Fqx 'android.builder.sdkDownload=false' \"\$GRADLE_USER_HOME/gradle.properties\" 2>/dev/null || fail sdk_download_enabled"
+            lines += "GRADLE_HOME=\${GRADLE_HOME:-/opt/gradle-8.14.2}"
+            lines += "test -x \"\$GRADLE_HOME/bin/gradle\" -o -d \"\$GRADLE_HOME/lib\" -o -f \"\$PROJECT_PATH/gradle/wrapper/gradle-wrapper.jar\" -o -n \"\$(command -v gradle 2>/dev/null || true)\" || fail gradle_missing"
             if (projectType == ProjectType.FLUTTER) {
-                lines += "FLUTTER=\${FLUTTER_BIN:-/opt/flutter/bin/flutter}"
-                lines += "DART=/opt/flutter/bin/cache/dart-sdk/bin/dart"
+                lines += "# default FLUTTER=/opt/flutter/bin/flutter DART=/opt/flutter/bin/cache/dart-sdk/bin/dart"
+                lines += "FLUTTER=\${FLUTTER_BIN:-\${FLUTTER_HOME:-/opt/flutter}/bin/flutter}"
+                lines += "DART=\${DART_BIN:-\${FLUTTER_HOME:-/opt/flutter}/bin/cache/dart-sdk/bin/dart}"
                 lines += "test -x \"\$FLUTTER\" -a -x \"\$DART\" || fail flutter_missing"
                 lines += "test \"\$(elf_machine \"\$DART\")\" = $ARM64_ELF_MACHINE || fail dart_arch"
             }

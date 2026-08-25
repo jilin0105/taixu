@@ -42,7 +42,7 @@ printf 'sdk.dir=%s\n' "$ANDROID_HOME" >> "$TMP_PROPERTIES"
 mv -f "$TMP_PROPERTIES" "$LOCAL_PROPERTIES"
 
 cd "$PROJECT_PATH"
-EXTRA_ARGS="--console=plain --stacktrace --no-daemon --max-workers=2 -Dorg.gradle.native=false -Pandroid.builder.sdkDownload=false -Pandroid.aapt2FromMavenOverride=$ANDROID_HOME/build-tools/35.0.0/aapt2"
+EXTRA_ARGS="--console=plain --info --stacktrace --no-daemon --max-workers=2 -Dorg.gradle.native=false -Dorg.gradle.internal.http.connectionTimeout=30000 -Dorg.gradle.internal.http.socketTimeout=60000 -Pandroid.builder.sdkDownload=false -Pandroid.aapt2FromMavenOverride=$ANDROID_HOME/build-tools/35.0.0/aapt2"
 [ "${TAIXU_OFFLINE:-0}" = "1" ] && EXTRA_ARGS="$EXTRA_ARGS --offline"
 echo "==> [TaiXu QEMU Build] 使用 x86_64 JDK/SDK 执行 $TASK；APK ABI 仍由项目配置决定"
 if [ -f "$GRADLE_HOME/lib/gradle-launcher-8.14.2.jar" ] || [ -d "$GRADLE_HOME/lib" ]; then

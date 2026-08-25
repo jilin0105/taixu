@@ -108,15 +108,34 @@ class ProcessShellExecutor @Inject constructor(
             val kept = ByteArrayOutputStream(MAX_CAPTURE_BYTES)
             val buffer = ByteArray(READ_BUFFER_BYTES)
             var totalBytes = 0L
+            // 🔒 排水循环绝不能被消费端异常杀死：stdout/stderr 两个读取协程并发调用
+            // 同一个 onOutput，若回调内部抛出未捕获异常（例如共享 StringBuilder 的数据
+            // 竞争），本协程死亡后宿主管道无人读取，子进程写满内核管道缓冲（约 64KB）
+            // 后 write() 永久阻塞，整棵构建进程树随之挂死、日志冻结在一半。
+            // 因此回调异常在此兜底捕获：连续失败仅停用回调，排水必须继续。
+            var callback = onOutput
+            var consecutiveCallbackFailures = 0
             while (true) {
                 val read = input.read(buffer)
                 if (read < 0) break
                 totalBytes += read
                 val remaining = MAX_CAPTURE_BYTES - kept.size()
                 if (remaining > 0) kept.write(buffer, 0, minOf(read, remaining))
-                if (onOutput != null && read > 0) {
+                if (callback != null && read > 0) {
                     val chunk = String(buffer, 0, read, Charsets.UTF_8)
-                    onOutput(chunk)
+                    try {
+                        callback(chunk)
+                        consecutiveCallbackFailures = 0
+                    } catch (cancellation: kotlinx.coroutines.CancellationException) {
+                        throw cancellation
+                    } catch (t: Throwable) {
+                        consecutiveCallbackFailures++
+                        if (consecutiveCallbackFailures >= MAX_CALLBACK_FAILURES) {
+                            // 回调持续崩溃时放弃流式转发（CommandResult 仍保留完整输出），
+                            // 但绝不能停止读管道——那会把正在运行的 Gradle/Flutter 卡死。
+                            callback = null
+                        }
+                    }
                 }
             }
             buildString {
@@ -146,5 +165,8 @@ class ProcessShellExecutor @Inject constructor(
         const val PROCESS_TEARDOWN_TIMEOUT_MS = 1_000L
         const val MAX_CAPTURE_BYTES = 4 * 1024 * 1024
         const val READ_BUFFER_BYTES = 16 * 1024
+
+        /** onOutput 连续抛异常达到该次数后停用流式回调，仅保留排水与完整输出捕获。 */
+        const val MAX_CALLBACK_FAILURES = 8
     }
 }

@@ -43,6 +43,7 @@ import top.wkbin.taixu.ui.components.NoticeBanner
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 import top.wkbin.taixu.ui.components.RuntimeButton
 import top.wkbin.taixu.ui.components.RuntimeCard
+import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeOutlinedButton
@@ -85,7 +86,7 @@ fun SshSettingsScreen(
             onDismissRequest = { showLanWarning = false },
             title = { Text("允许局域网访问？") },
             text = {
-                Text("SSH 将监听所有网络接口，同一局域网内的设备都能尝试连接。请只在可信 Wi-Fi 下开启，并妥善保管对应私钥。")
+                Text("SSH 将只监听当前手机的局域网 IP（例如 192.168.*.*），同一局域网内的设备都能尝试连接。请只在可信 Wi-Fi 下开启，并妥善保管对应私钥。")
             },
             confirmButton = {
                 RuntimeButton(
@@ -147,23 +148,37 @@ fun SshSettingsScreen(
                         icon = RuntimeIconName.Server,
                         title = "启用 SSH 服务",
                         subtitle = "保持启用并随 Linux 运行时自动启动",
-                        value = when (serviceState) {
-                            is SshServiceState.Running -> "运行中"
-                            is SshServiceState.Installing -> "安装中"
-                            is SshServiceState.Starting -> "启动中"
-                            is SshServiceState.Failed -> "失败"
-                            is SshServiceState.Stopped -> if ((serviceState as SshServiceState.Stopped).installed) "已安装" else "未安装"
+                        value = if (busy) {
+                            when (serviceState) {
+                                is SshServiceState.Installing -> "正在安装 OpenSSH"
+                                is SshServiceState.Starting -> "正在等待 SSH 服务就绪"
+                                else -> "正在处理"
+                            }
+                        } else {
+                            when (serviceState) {
+                                is SshServiceState.Running -> "运行中"
+                                is SshServiceState.Installing -> "安装中"
+                                is SshServiceState.Starting -> "启动中"
+                                is SshServiceState.Failed -> "失败"
+                                is SshServiceState.Stopped -> if ((serviceState as SshServiceState.Stopped).installed) "已安装" else "未安装"
+                            }
                         },
                         trailing = {
-                            RuntimeSwitch(
-                                checked = settings.enabled,
-                                onCheckedChange = viewModel::toggleEnabled,
-                                enabled = !busy,
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                ),
-                            )
+                            if (busy) {
+                                RuntimeCircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    strokeWidth = 2.5.dp,
+                                )
+                            } else {
+                                RuntimeSwitch(
+                                    checked = settings.enabled,
+                                    onCheckedChange = viewModel::toggleEnabled,
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                        checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    ),
+                                )
+                            }
                         },
                     )
                 }
@@ -284,7 +299,7 @@ fun SshSettingsScreen(
                     SettingsRow(
                         icon = RuntimeIconName.Globe,
                         title = "允许局域网访问",
-                        subtitle = if (settings.allowLan) "监听 0.0.0.0，请只在可信网络使用" else "仅监听 127.0.0.1（推荐）",
+                        subtitle = if (settings.allowLan) "监听当前局域网 IP，请只在可信网络使用" else "仅监听 127.0.0.1（推荐）",
                         trailing = {
                             RuntimeSwitch(
                                 checked = settings.allowLan,

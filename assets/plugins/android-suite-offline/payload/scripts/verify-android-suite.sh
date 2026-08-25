@@ -29,6 +29,11 @@ require_executable /opt/taixu/bin/javac
 require_executable /opt/taixu/bin/gradle
 require_executable /opt/taixu/bin/cmake
 require_executable /opt/taixu/bin/ninja
+# 静态断言先于任何 -version 执行：java 启动器若被换成包装脚本并与软链
+# 形成回环，require_command 会挂死在无限 exec 上；先用 ELF 魔数拦下。
+# od 会跟随软链，符号链接链最终必须落在 JDK 的 AArch64 ELF 上。
+require_aarch64 /opt/taixu/bin/java
+require_aarch64 /opt/taixu/bin/javac
 require_file /opt/android-sdk/platforms/android-34/android.jar
 require_file /opt/android-sdk/build-tools/35.0.0/lib/d8.jar
 require_executable /opt/android-sdk/build-tools/35.0.0/aapt2

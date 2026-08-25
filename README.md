@@ -241,7 +241,8 @@ cat /etc/os-release
 - Gradle 9.7（项目 Wrapper）
 - PowerShell（运行项目辅助脚本）
 
-仓库不把 Linux RootFS 打进 APK；PRoot ARM64 loader 需要先准备：
+仓库不把 Linux RootFS 打进 APK；PRoot ARM64 tracer 与 loader 需要从同一个
+官方 Termux 包准备：
 
 ```powershell
 .\tools\prepare-proot-runtime.ps1

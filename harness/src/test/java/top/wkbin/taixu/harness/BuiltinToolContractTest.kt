@@ -30,4 +30,13 @@ class BuiltinToolContractTest {
         }
         assertTrue(process.function.description.contains("不要使用 nohup"))
     }
+
+    @Test
+    fun historyToolsExposeSearchAndReadContracts() {
+        val search = ProviderClient.TOOLS.single { it.function.name == "history.search" }
+        val read = ProviderClient.TOOLS.single { it.function.name == "history.read" }
+        assertTrue(search.function.parameters.toString().contains("query"))
+        assertTrue(read.function.parameters.toString().contains("message_id"))
+        assertTrue(read.function.parameters.toString().contains("index"))
+    }
 }

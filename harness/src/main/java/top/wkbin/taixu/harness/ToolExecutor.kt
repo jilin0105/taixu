@@ -43,6 +43,7 @@ class ToolExecutor @Inject constructor(
     private val subagentOrchestrator: SubagentOrchestrator? = null,
     private val mcpManager: top.wkbin.taixu.harness.mcp.McpManager? = null,
     private val contextExecutor: AgentContextExecutor? = null,
+    private val messageStore: HarnessMessageStore? = null,
 ) {
     @Inject
     lateinit var settingsDataStore: AgentPreferences
@@ -152,9 +153,40 @@ class ToolExecutor @Inject constructor(
             HarnessTool.MEMORY -> contextExecutor?.executeMemory(args, sessionId, "") ?: (false to "未初始化记忆执行器")
             HarnessTool.PLAN -> contextExecutor?.executePlan(args, sessionId) ?: (false to "未初始化计划执行器")
             HarnessTool.SCRATCHPAD -> contextExecutor?.executeScratchpad(args, sessionId) ?: (false to "未初始化草稿执行器")
+            HarnessTool.HISTORY_SEARCH -> executeHistorySearch(args, sessionId)
+            HarnessTool.HISTORY_READ -> executeHistoryRead(args, sessionId)
             HarnessTool.SUBAGENT -> subagentOrchestrator?.executeSubagents(args, sessionId) ?: (false to "未初始化子智能体编排器")
             HarnessTool.MCP -> mcpManager?.executeTool(rawToolName ?: "mcp", args) ?: (false to "未初始化 MCP 管理器")
         }
+    }
+
+    private suspend fun executeHistorySearch(args: JsonObject, sessionId: String): Pair<Boolean, String> {
+        val query = requireString(args, "query")
+        val limit = optionalLong(args, "limit", 8L, 1L, 20L).toInt()
+        val matches = messageStore?.search(sessionId, query, limit).orEmpty()
+        if (matches.isEmpty()) return true to "未找到匹配历史：$query"
+        return true to matches.mapIndexed { index, message ->
+            "[$index] id=${message.id} time=${message.createdAt} ${historyLabel(message)}"
+        }.joinToString("\n")
+    }
+
+    private suspend fun executeHistoryRead(args: JsonObject, sessionId: String): Pair<Boolean, String> {
+        val messageId = args["message_id"]?.jsonPrimitive?.content?.trim()?.takeIf { it.isNotBlank() }
+        val index = args["index"]?.jsonPrimitive?.content?.trim()?.toIntOrNull()
+        require(messageId != null || index != null) { "history.read 需要 message_id 或 index" }
+        val message = messageStore?.read(sessionId, messageId, index)
+            ?: return false to "未找到指定历史消息"
+        return true to historyLabel(message, full = true).take(MAX_HISTORY_READ_OUTPUT)
+    }
+
+    private fun historyLabel(message: HarnessMessage, full: Boolean = false): String = when (message) {
+        is CapabilityEvent -> "能力事件 ${message.name}: ${message.details}"
+        is UserMessage -> "用户：${message.text.take(if (full) MAX_HISTORY_READ_OUTPUT else 240)}"
+        is AssistantText -> "助手：${message.text.take(if (full) MAX_HISTORY_READ_OUTPUT else 240)}" +
+            if (full && !message.reasoning.isNullOrBlank()) "\nreasoning:\n${message.reasoning.take(MAX_HISTORY_READ_OUTPUT)}" else ""
+        is ToolCall -> "工具调用 ${message.rawToolName ?: message.tool}: ${message.args}" +
+            if (full) "\nreasoning:\n${message.reasoning.orEmpty().take(MAX_HISTORY_READ_OUTPUT)}" else ""
+        is ToolResult -> "工具结果：${message.output.take(if (full) MAX_HISTORY_READ_OUTPUT else 240)}"
     }
 
     private suspend fun executeBase(args: JsonObject, workspace: String): Pair<Boolean, String> {
@@ -383,6 +415,7 @@ class ToolExecutor @Inject constructor(
         const val TRUNCATE_KEEP_LENGTH = 60 * 1024
         const val MAX_COMMAND_LENGTH = 32 * 1024
         const val MAX_ARG_LENGTH = 1024 * 1024
+        const val MAX_HISTORY_READ_OUTPUT = 48 * 1024
         const val DEFAULT_CWD = "/root"
         const val DEFAULT_DOWNLOAD_ATTEMPTS = 3L
         const val MAX_DOWNLOAD_ATTEMPTS = 10L
