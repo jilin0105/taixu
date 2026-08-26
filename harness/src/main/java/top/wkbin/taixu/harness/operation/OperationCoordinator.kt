@@ -10,7 +10,10 @@ import top.wkbin.taixu.core.database.HarnessLaneResultEntity
 import top.wkbin.taixu.core.database.HarnessOperationEntity
 import top.wkbin.taixu.core.database.HarnessRuntimeRepository
 import top.wkbin.taixu.core.database.HarnessUsageEntity
+import top.wkbin.taixu.harness.ChatUsage
 import top.wkbin.taixu.harness.HarnessMessage
+import top.wkbin.taixu.harness.events.HarnessEvent
+import top.wkbin.taixu.harness.events.HarnessEventBus
 import top.wkbin.taixu.harness.session.SessionTreeStore
 
 /** Owns all durable operation transitions and their transaction boundaries. */
@@ -18,9 +21,10 @@ import top.wkbin.taixu.harness.session.SessionTreeStore
 class OperationCoordinator @Inject constructor(
     private val repository: HarnessRuntimeRepository,
     private val json: Json,
+    private val eventBus: HarnessEventBus,
 ) {
     suspend fun acceptRun(sessionId: String, userMessage: HarnessMessage, laneName: String = SessionTreeStore.MAIN_LANE): String {
-        val lane = repository.ensureLane(sessionId, laneName)
+        val lane = reclaimInterruptedLane(sessionId, laneName)
         check(lane.currentOperationId == null) { "Lane ${lane.name} is busy" }
         val now = System.currentTimeMillis()
         val operationId = UUID.randomUUID().toString()
@@ -31,11 +35,12 @@ class OperationCoordinator @Inject constructor(
             lane = lane.copy(leafId = entry.id, currentOperationId = operationId, updatedAt = now),
             operation = operation,
         )
+        eventBus.emit(HarnessEvent.OperationStarted(sessionId, now, operationId, laneName))
         return operationId
     }
 
     suspend fun acceptQueuedRun(sessionId: String, queueItemId: String, userMessage: HarnessMessage): String {
-        val lane = repository.ensureLane(sessionId, SessionTreeStore.MAIN_LANE)
+        val lane = reclaimInterruptedLane(sessionId, SessionTreeStore.MAIN_LANE)
         check(lane.currentOperationId == null) { "Lane ${lane.name} is busy" }
         val now = System.currentTimeMillis()
         val operationId = UUID.randomUUID().toString()
@@ -47,6 +52,7 @@ class OperationCoordinator @Inject constructor(
             lane = lane.copy(leafId = entry.id, currentOperationId = operationId, updatedAt = now),
             operation = operation,
         )
+        eventBus.emit(HarnessEvent.OperationStarted(sessionId, now, operationId, SessionTreeStore.MAIN_LANE))
         return operationId
     }
 
@@ -59,6 +65,7 @@ class OperationCoordinator @Inject constructor(
             lane.copy(currentOperationId = operationId, updatedAt = now),
             newOperation(operationId, sessionId, lane, now),
         )
+        eventBus.emit(HarnessEvent.OperationStarted(sessionId, now, operationId, laneName))
         return operationId
     }
 
@@ -77,6 +84,9 @@ class OperationCoordinator @Inject constructor(
             ),
             ReplayPolicy.NEVER,
         )
+        emitFor(operationId) { sessionId, timestamp, _ ->
+            HarnessEvent.ProviderRoundStarted(sessionId, timestamp, operationId, round, attempt)
+        }
     }
 
     suspend fun providerSettled(operationId: String, message: HarnessMessage?, usage: HarnessUsageEntity? = null, round: Int) {
@@ -86,6 +96,14 @@ class OperationCoordinator @Inject constructor(
             usage = usage,
             snapshot = OperationSnapshot(phase = OperationPhase.PROVIDER_SETTLED.id, round = round),
         )
+        emitFor(operationId) { sessionId, timestamp, _ ->
+            HarnessEvent.ProviderRoundSettled(
+                sessionId, timestamp, operationId, round,
+                entryId = message?.id,
+                inputTokens = usage?.inputTokens ?: 0,
+                outputTokens = usage?.outputTokens ?: 0,
+            )
+        }
     }
 
     suspend fun toolIntent(operationId: String, message: HarnessMessage, payloadJson: String, replay: ReplayPolicy, round: Int) {
@@ -98,6 +116,14 @@ class OperationCoordinator @Inject constructor(
             replayPolicy = replay.id,
         )
         settle(operationId, message, null, snapshot, replay)
+        emitFor(operationId) { sessionId, timestamp, _ ->
+            val toolCall = message as? top.wkbin.taixu.harness.ToolCall
+            HarnessEvent.ToolCallStarted(
+                sessionId, timestamp, operationId,
+                toolCallId = message.id,
+                toolName = toolCall?.rawToolName ?: "tool",
+            )
+        }
     }
 
     suspend fun toolSettled(operationId: String, message: HarnessMessage, round: Int) {
@@ -107,6 +133,16 @@ class OperationCoordinator @Inject constructor(
             usage = null,
             snapshot = OperationSnapshot(phase = OperationPhase.TOOL_SETTLED.id, round = round),
         )
+        emitFor(operationId) { sessionId, timestamp, _ ->
+            val result = message as? top.wkbin.taixu.harness.ToolResult
+            HarnessEvent.ToolCallSettled(
+                sessionId, timestamp, operationId,
+                toolCallId = result?.toolCallId ?: message.id,
+                toolName = result?.toolCallId ?: "tool",
+                success = result?.success ?: true,
+                durationMs = result?.durationMs,
+            )
+        }
     }
 
     suspend fun waitingApproval(operationId: String) {
@@ -117,7 +153,11 @@ class OperationCoordinator @Inject constructor(
 
     suspend fun suspendOperation(operationId: String, reason: String) {
         val current = requireOperation(operationId)
-        val snapshot = decode(current).copy(lastError = reason)
+        // 状态 JSON 可能已损坏（半截写入）；损坏时保留原 stateJson，只更新 lastError 不可行
+        // （snapshot 序列化字段固定），因此降级为携带 reason 的最小快照，保证挂起事务总能落盘。
+        val snapshot = runCatching { decode(current) }
+            .getOrElse { OperationSnapshot(phase = current.phase, lastError = reason) }
+            .copy(lastError = reason)
         transition(operationId, OperationStatus.SUSPENDED, snapshot, current.replayPolicy?.let(::replayPolicy))
     }
 
@@ -129,10 +169,72 @@ class OperationCoordinator @Inject constructor(
             HarnessLaneResultEntity(sessionId, lane.name, operationId, outcome, finalEntryId, details, now),
             lane.copy(currentOperationId = null, updatedAt = now),
         )
+        eventBus.emit(HarnessEvent.OperationFinished(sessionId, now, operationId, laneName, outcome, details))
     }
 
-    suspend fun active(sessionId: String, laneName: String = SessionTreeStore.MAIN_LANE): HarnessOperationEntity? =
-        repository.listActiveOperations(sessionId).firstOrNull { it.laneName == laneName }
+    suspend fun active(sessionId: String, laneName: String = SessionTreeStore.MAIN_LANE): HarnessOperationEntity? {
+        // lane 指针是权威来源：优先取 currentOperationId 指向的操作，
+        // 避免历史遗留的活动行（如等待审批期间被接管的旧操作）抢占判定。
+        val lane = repository.findLane(sessionId, laneName) ?: return null
+        lane.currentOperationId?.let { id -> repository.findOperation(id)?.let { return it } }
+        return repository.listActiveOperations(sessionId).firstOrNull { it.laneName == laneName }
+    }
+
+    suspend fun operationExists(operationId: String): Boolean = repository.findOperation(operationId) != null
+
+    /**
+     * A lane whose current operation is no longer attached to a live in-process run is a
+     * leftover: the process died mid-run (recovery suspended it), or its approval wait was
+     * abandoned. Finish it as aborted so the next send can start a new operation instead of
+     * failing with "lane busy" and silently dropping the message.
+     *
+     * In normal operation a waiting-approval lane is never reached here: the run state gate
+     * routes sends to the queue while an approval is pending.
+     */
+    private suspend fun reclaimInterruptedLane(sessionId: String, laneName: String): HarnessLaneEntity {
+        val lane = repository.ensureLane(sessionId, laneName)
+        val staleOperationId = lane.currentOperationId ?: return lane
+        val staleOperation = repository.findOperation(staleOperationId)
+        return when {
+            // Dangling pointer without a live operation row: just clear it.
+            staleOperation == null -> {
+                repository.clearLaneOperation(sessionId, laneName)
+                lane.copy(currentOperationId = null)
+            }
+            else -> {
+                finish(
+                    sessionId,
+                    "aborted",
+                    details = "上次运行未完成（进程中断或审批等待失效），已被新请求接管",
+                    laneName = laneName,
+                )
+                repository.ensureLane(sessionId, laneName)
+            }
+        }
+    }
+
+    /** Builds an append-only ledger row from provider-reported usage. */
+    fun usageEntity(
+        sessionId: String,
+        operationId: String,
+        entryId: String?,
+        provider: String?,
+        modelId: String?,
+        usage: ChatUsage,
+    ): HarnessUsageEntity = HarnessUsageEntity(
+        id = UUID.randomUUID().toString(),
+        sessionId = sessionId,
+        operationId = operationId,
+        entryId = entryId,
+        provider = provider,
+        modelId = modelId,
+        inputTokens = usage.inputTokens,
+        outputTokens = usage.outputTokens,
+        reasoningTokens = usage.reasoningTokens,
+        cacheReadTokens = usage.cacheReadTokens,
+        cacheWriteTokens = usage.cacheWriteTokens,
+        createdAt = System.currentTimeMillis(),
+    )
 
     private suspend fun settle(
         operationId: String,
@@ -176,6 +278,12 @@ class OperationCoordinator @Inject constructor(
 
     private suspend fun requireOperation(operationId: String) =
         repository.findOperation(operationId) ?: error("Missing harness operation $operationId")
+
+    /** 从 operation 行补齐事件路由键；operation 已被清理时静默跳过（事件尽力投递）。 */
+    private suspend fun emitFor(operationId: String, build: (sessionId: String, timestamp: Long, laneName: String) -> HarnessEvent) {
+        val operation = repository.findOperation(operationId) ?: return
+        eventBus.emit(build(operation.sessionId, System.currentTimeMillis(), operation.laneName))
+    }
 
     private fun newOperation(id: String, sessionId: String, lane: HarnessLaneEntity, now: Long): HarnessOperationEntity {
         val snapshot = OperationSnapshot(phase = OperationPhase.CHECKPOINT.id)

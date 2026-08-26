@@ -45,6 +45,7 @@ class ToolExecutor @Inject constructor(
     private val mcpManager: top.wkbin.taixu.harness.mcp.McpManager? = null,
     private val contextExecutor: AgentContextExecutor? = null,
     private val messageStore: SessionTreeStore? = null,
+    private val eventBus: top.wkbin.taixu.harness.events.HarnessEventBus? = null,
 ) {
     @Inject
     lateinit var settingsDataStore: AgentPreferences
@@ -55,6 +56,7 @@ class ToolExecutor @Inject constructor(
         workspace: String = "",
         bypassApproval: Boolean = false,
         progressReporter: (suspend (String) -> Unit)? = null,
+        operationId: String? = null,
     ): ToolResult {
         val now = System.currentTimeMillis()
         val outcome = try {
@@ -65,8 +67,18 @@ class ToolExecutor @Inject constructor(
                 val decision = ApprovalPolicyEngine().decide(mode, toolCall.tool, toolCall.args, workspace)
                 if (decision.required) {
                     checkNotNull(repository) { "审批仓库未初始化" }
-                    val request = ApprovalPolicyEngine().createRequest(sessionId, toolCall, workspace, decision)
+                    val request = ApprovalPolicyEngine().createRequest(sessionId, toolCall, workspace, decision, operationId)
                     repository.create(request)
+                    eventBus?.emit(
+                        top.wkbin.taixu.harness.events.HarnessEvent.ApprovalRequested(
+                            sessionId = sessionId,
+                            timestamp = now,
+                            operationId = operationId,
+                            approvalRequestId = request.id,
+                            toolName = request.toolName,
+                            riskLevel = request.riskLevel,
+                        ),
+                    )
                     return ToolResult(
                         id = UUID.randomUUID().toString(),
                         createdAt = now,

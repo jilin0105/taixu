@@ -45,4 +45,14 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.kotlinx.coroutines.core)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    // 集成测试需要直接构建 in-memory Room 数据库（core:database 是 implementation 依赖不传递 Room）
+    testImplementation(libs.androidx.room.runtime)
+    testImplementation(libs.androidx.room.ktx)
+    testImplementation(libs.asm)
+    testImplementation(libs.asm.commons)
+    testImplementation(libs.asm.util)
+    testImplementation(libs.asm.tree)
+    testImplementation(libs.asm.analysis)
 }
