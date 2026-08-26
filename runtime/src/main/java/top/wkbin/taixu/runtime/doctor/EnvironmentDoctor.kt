@@ -20,7 +20,7 @@ import kotlinx.coroutines.withContext
 
 @Singleton
 class EnvironmentDoctor @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @ApplicationContext private val context: Context? = null,
     private val linuxRuntime: LinuxRuntime,
 ) {
     suspend fun check(): DoctorReport = withContext(Dispatchers.IO) {
@@ -90,7 +90,9 @@ class EnvironmentDoctor @Inject constructor(
     }
 
     private fun checkAllFilesAccess(): DoctorItem {
-        val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        val granted = if (context == null) {
+            true
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Environment.isExternalStorageManager()
         } else {
             context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) ==

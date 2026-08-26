@@ -18,11 +18,13 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -308,11 +310,11 @@ fun ChatScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        Box(Modifier.size(6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
+                        val activeSub = activeModel?.let { entity ->
+                            entity.model.split(",").firstOrNull()?.trim().takeUnless { it.isNullOrBlank() } ?: entity.name
+                        }
                         Text(
-                            text = activeModel?.model?.takeIf { it.isNotBlank() }
-                                ?: activeModel?.name
-                                ?: stringResource(R.string.chat_no_model_selected),
+                            text = activeSub ?: stringResource(R.string.chat_no_model_selected),
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                             color = MaterialTheme.colorScheme.onSecondaryContainer,
                             maxLines = 1,
@@ -597,6 +599,7 @@ fun ChatScreen(
                 showModels = false
             },
             onSelectProfile = { id -> viewModel.setActiveModel(id) },
+            onSelectSubModel = { id, subModel -> viewModel.selectModel(id, subModel) },
             onOpenModelPicker = viewModel::openProviderModelPicker,
             onCloseModelPicker = viewModel::closeProviderModelPicker,
             onRefreshModels = viewModel::discoverProviderModels,
@@ -2730,6 +2733,7 @@ private fun ModelDialog(
     modelPickerProfileId: String?,
     onDismiss: () -> Unit,
     onSelectProfile: (String) -> Unit,
+    onSelectSubModel: (profileId: String, subModel: String) -> Unit,
     onOpenModelPicker: (String) -> Unit,
     onCloseModelPicker: () -> Unit,
     onRefreshModels: (String) -> Unit,
@@ -2771,6 +2775,7 @@ private fun ModelDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 models.forEach { model ->
+                    val subModels = model.model.split(",").map { it.trim() }.filter { it.isNotEmpty() }.ifEmpty { listOf(model.model) }
                     Column(
                         Modifier
                             .fillMaxWidth()
@@ -2830,24 +2835,59 @@ private fun ModelDialog(
                                 RuntimeIcon(RuntimeIconName.Trash, Modifier.size(15.dp), MaterialTheme.colorScheme.error)
                             }
                         }
+
+                        if (subModels.size > 1) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                subModels.forEachIndexed { subIndex, subModel ->
+                                    val isSubActive = model.isActive && (subIndex == 0)
+                                    Surface(
+                                        color = if (isSubActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceContainerHighest,
+                                        shape = RoundedCornerShape(8.dp),
+                                        border = if (isSubActive) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
+                                        modifier = Modifier.clickable {
+                                            onSelectSubModel(model.id, subModel)
+                                            onDismiss()
+                                        },
+                                    ) {
+                                        Text(
+                                            subModel,
+                                            style = MaterialTheme.typography.labelMedium.copy(
+                                                fontFamily = FontFamily.Monospace,
+                                                fontWeight = if (isSubActive) FontWeight.Bold else FontWeight.Normal,
+                                            ),
+                                            color = if (isSubActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
                         Row(
                             Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            Surface(
-                                color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text(
-                                    model.model.ifBlank { stringResource(R.string.chat_model_not_set) },
-                                    style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                                )
+                            if (subModels.size <= 1) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Text(
+                                        model.model.ifBlank { stringResource(R.string.chat_model_not_set) },
+                                        style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                    )
+                                }
+                            } else {
+                                Spacer(Modifier.weight(1f))
                             }
                             Surface(
                                 onClick = { onOpenModelPicker(model.id) },

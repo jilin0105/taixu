@@ -589,7 +589,7 @@ class ProviderClient @Inject constructor(
             return ModelConfig(
                 name = name,
                 provider = provider,
-                model = model,
+                model = model.split(",").firstOrNull()?.trim().takeUnless { it.isNullOrBlank() } ?: model.trim(),
                 baseUrl = baseUrl,
                 apiKey = effectiveKeys.firstOrNull(),
                 apiKeys = effectiveKeys,

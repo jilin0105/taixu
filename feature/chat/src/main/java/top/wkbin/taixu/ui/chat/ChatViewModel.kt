@@ -547,8 +547,21 @@ class ChatViewModel @Inject constructor(
     }
 
     fun setActiveModel(id: String) {
+        selectModel(id)
+    }
+
+    fun selectModel(id: String, subModel: String? = null) {
         viewModelScope.launch {
+            val entity = aiModelDao.findById(id) ?: return@launch
             aiModelDao.clearActive()
+            if (!subModel.isNullOrBlank()) {
+                val models = entity.model.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                if (models.contains(subModel) && models.firstOrNull() != subModel) {
+                    val reordered = listOf(subModel) + models.filter { it != subModel }
+                    aiModelDao.upsert(entity.copy(model = reordered.joinToString(", "), isActive = true))
+                    return@launch
+                }
+            }
             aiModelDao.setActive(id)
         }
     }
