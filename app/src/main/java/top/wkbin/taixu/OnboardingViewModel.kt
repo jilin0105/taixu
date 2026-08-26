@@ -136,12 +136,10 @@ class OnboardingViewModel @Inject constructor(
 
     fun setBaseUrl(url: String) {
         _baseUrl.value = url
-        scheduleModelDiscovery()
     }
 
     fun setApiKey(key: String) {
         _apiKey.value = key
-        scheduleModelDiscovery()
     }
 
     fun selectProvider(id: String) {
@@ -151,9 +149,6 @@ class OnboardingViewModel @Inject constructor(
         _modelId.value = preset.recommendedModels.firstOrNull().orEmpty()
         _discoveredModels.value = emptyList()
         _modelDiscoveryError.value = null
-        if (preset.baseUrl.isNotBlank() && ProviderEndpointPolicy.isSafeBaseUrl(preset.baseUrl)) {
-            scheduleModelDiscovery(delayMillis = 0)
-        }
     }
 
     private fun scheduleModelDiscovery(delayMillis: Long = 600) {

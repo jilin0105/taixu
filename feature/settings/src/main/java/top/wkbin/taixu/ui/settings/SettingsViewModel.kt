@@ -788,6 +788,68 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun saveModels(
+        id: String? = null,
+        models: List<String>,
+        name: String = "",
+        provider: String,
+        baseUrl: String,
+        apiKey: String,
+        requestsPerMinutePerKey: Int = 0,
+        temperature: Float? = null,
+        maxTokens: Int? = null,
+        topP: Float? = null,
+        reasoningMode: String? = null,
+        reasoningEffort: String? = null,
+        toolCallMode: String? = null,
+        contextTokens: Int? = null,
+        customHeaders: String = "",
+        pureChatMode: Boolean = false,
+        visionEnabled: Boolean = true,
+    ) {
+        viewModelScope.launch {
+            val existing = aiModelDao.observeAll().first()
+            val old: AiModelEntity? = if (id == null) null else aiModelDao.findById(id)
+            val modelId = id ?: java.util.UUID.randomUUID().toString()
+            val secretRef = old?.secretRef?.takeIf { it.isNotBlank() } ?: "model_${modelId.replace("-", "")}"
+            val submittedKeys = parseApiKeys(apiKey)
+            val existingKeys = old?.let { providerRepository.readModelApiKeys(secretRef) }.orEmpty()
+            if (existing.none { it.isActive } || old?.isActive == true) aiModelDao.clearActive()
+
+            val cleanModels = models.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+            val modelString = cleanModels.joinToString(", ")
+            val profileName = name.trim().ifBlank {
+                if (cleanModels.size == 1) cleanModels.first() else provider.trim()
+            }
+
+            aiModelDao.upsert(
+                AiModelEntity(
+                    id = modelId,
+                    name = profileName,
+                    provider = provider.trim(),
+                    model = modelString,
+                    baseUrl = baseUrl.trim(),
+                    secretRef = secretRef,
+                    isActive = old?.isActive ?: existing.none { it.isActive },
+                    createdAt = old?.createdAt ?: System.currentTimeMillis(),
+                    temperature = temperature,
+                    maxTokens = maxTokens,
+                    topP = topP,
+                    reasoningMode = reasoningMode?.ifBlank { null },
+                    reasoningEffort = reasoningEffort?.ifBlank { null },
+                    toolCallMode = toolCallMode?.ifBlank { null },
+                    contextTokens = contextTokens,
+                    customHeaders = customHeaders.trim(),
+                    pureChatMode = pureChatMode,
+                    visionEnabled = visionEnabled,
+                    apiKeyCount = submittedKeys.ifEmpty { existingKeys }.size,
+                    requestsPerMinutePerKey = requestsPerMinutePerKey.coerceAtLeast(0),
+                ),
+            )
+            if (submittedKeys.isNotEmpty()) providerRepository.setModelApiKeys(secretRef, submittedKeys)
+        }
+    }
+
     suspend fun readModelApiKey(secretRef: String): String {
         return providerRepository.readModelApiKeys(secretRef).joinToString("\n")
     }

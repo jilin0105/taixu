@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -1049,12 +1050,12 @@ fun ModelEditorScreen(
             result = testResult,
             discover = { provider, url, key -> viewModel.discoverModels(provider, url, key) },
             test = viewModel::testConnection,
-            save = { name, provider, model, url, key, rpmLimit, temperature, maxTokens, topP, reasoningMode, reasoningEffort, toolCallMode, contextTokens, customHeaders, pureChatMode, visionEnabled ->
-                viewModel.saveModel(
+            save = { name, provider, modelsList, url, key, rpmLimit, temperature, maxTokens, topP, reasoningMode, reasoningEffort, toolCallMode, contextTokens, customHeaders, pureChatMode, visionEnabled ->
+                viewModel.saveModels(
                     id = modelId,
+                    models = modelsList,
                     name = name,
                     provider = provider,
-                    model = model,
                     baseUrl = url,
                     apiKey = key,
                     requestsPerMinutePerKey = rpmLimit,
@@ -1964,21 +1965,28 @@ private fun ModelsPage(
                         RuntimeIcon(RuntimeIconName.Trash, Modifier.size(16.dp), MaterialTheme.colorScheme.error)
                     }
                 }
-                val modelSummary = buildList {
-                    add(model.provider)
-                    add(model.model)
+                val modelList = remember(model.model) {
+                    model.model.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                }
+                val modelDisplay = if (modelList.size <= 3) {
+                    modelList.joinToString(", ")
+                } else {
+                    "${modelList.take(3).joinToString(", ")} 等 ${modelList.size} 个模型"
+                }
+                Text(
+                    text = "模型: $modelDisplay",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                val metadataSummary = buildList {
+                    if (model.baseUrl.isNotBlank()) add(model.baseUrl)
                     if (model.apiKeyCount > 0) add("${model.apiKeyCount} Key")
                     if (model.requestsPerMinutePerKey > 0) add("${model.requestsPerMinutePerKey} RPM/Key")
                 }.joinToString(" • ")
                 Text(
-                    modelSummary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    model.baseUrl,
+                    text = metadataSummary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
@@ -2122,16 +2130,27 @@ private fun ModelEditor(
     result: String?,
     discover: (String, String, String) -> Unit,
     test: (String, String, String) -> Unit,
-    save: (String, String, String, String, String, Int, Float?, Int?, Float?, String?, String?, String?, Int?, String, Boolean, Boolean) -> Unit,
+    save: (String, String, List<String>, String, String, Int, Float?, Int?, Float?, String?, String?, String?, Int?, String, Boolean, Boolean) -> Unit,
 ) {
     var providerId by remember(modelId) {
         mutableStateOf(providers.firstOrNull { it.name == existing?.provider }?.id ?: providers.first().id)
     }
     val provider = providers.first { it.id == providerId }
     var providerMenu by remember { mutableStateOf(false) }
-    var modelMenu by remember { mutableStateOf(false) }
     var name by remember(modelId) { mutableStateOf(existing?.name.orEmpty()) }
-    var model by remember(modelId) { mutableStateOf(existing?.model ?: provider.recommendedModels.firstOrNull().orEmpty()) }
+    val existingModelList = remember(existing?.model) {
+        existing?.model?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet().orEmpty()
+    }
+    var selectedModels by remember(modelId, providerId) {
+        mutableStateOf(
+            if (existing != null) {
+                existingModelList
+            } else {
+                provider.recommendedModels.take(1).toSet()
+            }
+        )
+    }
+    var customModelInput by remember(modelId, providerId) { mutableStateOf("") }
     var url by remember(modelId) { mutableStateOf(existing?.baseUrl ?: provider.baseUrl) }
     var keyList by remember(modelId, initialApiKey) {
         mutableStateOf(
@@ -2143,7 +2162,6 @@ private fun ModelEditor(
         )
     }
     var revealedKeyIndices by remember { mutableStateOf(setOf<Int>()) }
-    var autoDiscoverEnabled by remember(modelId) { mutableStateOf(false) }
 
     LaunchedEffect(initialApiKey) {
         if (keyList.all { it.isBlank() } && initialApiKey.isNotBlank()) {
@@ -2159,7 +2177,10 @@ private fun ModelEditor(
         keyList.map { it.trim() }.filter { it.isNotEmpty() }.joinToString("\n")
     }
 
-    var selectFirstDiscoveredModel by remember(modelId) { mutableStateOf(false) }
+    val candidateModels = remember(discovered, provider) {
+        (discovered + provider.recommendedModels).distinct().filter { it.isNotBlank() }
+    }
+
     var advancedExpanded by remember(modelId) { mutableStateOf(false) }
     var rpmLimitText by remember(modelId) {
         mutableStateOf(existing?.requestsPerMinutePerKey?.takeIf { it > 0 }?.toString().orEmpty())
@@ -2175,7 +2196,6 @@ private fun ModelEditor(
     var reasoningModeText by remember(modelId) { mutableStateOf(existing?.reasoningMode ?: "auto") }
     var reasoningEffortText by remember(modelId) { mutableStateOf(existing?.reasoningEffort.orEmpty()) }
     var reasoningModeMenu by remember { mutableStateOf(false) }
-    var reasoningEffortMenu by remember { mutableStateOf(false) }
 
     // 核心功能开关
     var toolCallEnabled by remember(modelId) {
@@ -2191,26 +2211,6 @@ private fun ModelEditor(
     // 自定义请求头
     var customHeaders by remember(modelId) { mutableStateOf(existing?.customHeaders.orEmpty()) }
 
-    LaunchedEffect(providerId, url, combinedKey, autoDiscoverEnabled) {
-        if (!autoDiscoverEnabled) return@LaunchedEffect
-        delay(600)
-        if (ProviderEndpointPolicy.isSafeBaseUrl(url)) {
-            discover(providerId, url, combinedKey)
-            selectFirstDiscoveredModel = true
-        }
-    }
-
-    LaunchedEffect(discovered, selectFirstDiscoveredModel) {
-        if (selectFirstDiscoveredModel && discovered.isNotEmpty()) {
-            model = discovered.first()
-            selectFirstDiscoveredModel = false
-        }
-    }
-
-    LaunchedEffect(error) {
-        if (error != null) selectFirstDiscoveredModel = false
-    }
-
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -2223,7 +2223,7 @@ private fun ModelEditor(
             )
         }
 
-        // 服务商预设选择
+        // 服务商预设选择（切换预设不发起自动请求）
         item {
             ExposedDropdownMenuBox(
                 expanded = providerMenu,
@@ -2264,8 +2264,12 @@ private fun ModelEditor(
                             onClick = {
                                 providerId = option.id
                                 url = option.baseUrl
-                                model = option.recommendedModels.firstOrNull().orEmpty()
-                                autoDiscoverEnabled = true
+                                if (existing == null) {
+                                    selectedModels = option.recommendedModels.take(1).toSet()
+                                    customModelInput = ""
+                                } else {
+                                    customModelInput = option.recommendedModels.firstOrNull().orEmpty()
+                                }
                                 providerMenu = false
                             },
                         )
@@ -2280,8 +2284,8 @@ private fun ModelEditor(
                 value = name,
                 onValueChange = { name = it },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("档案名称") },
-                placeholder = { Text(model.ifBlank { "My Model" }) },
+                label = { Text("档案名称（可选，留空按模型名命名）") },
+                placeholder = { Text(if (selectedModels.isNotEmpty()) selectedModels.first() else "My Model") },
                 singleLine = true,
             )
         }
@@ -2290,10 +2294,7 @@ private fun ModelEditor(
         item {
             OutlinedTextField(
                 value = url,
-                onValueChange = {
-                    url = it
-                    autoDiscoverEnabled = true
-                },
+                onValueChange = { url = it },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Base URL（接口地址）") },
                 placeholder = { Text("https://api.openai.com/v1") },
@@ -2301,7 +2302,6 @@ private fun ModelEditor(
                     IconButton(
                         onClick = {
                             discover(providerId, url, combinedKey)
-                            selectFirstDiscoveredModel = true
                         },
                         enabled = !discovering && url.isNotBlank(),
                     ) {
@@ -2316,7 +2316,7 @@ private fun ModelEditor(
             )
         }
 
-        // API Key 池 (独立单行输入框 + 加号添加 + 密文输入展示)
+        // API Key 池
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
@@ -2378,7 +2378,6 @@ private fun ModelEditor(
                             },
                         )
 
-                        // 按钮组：+号新增 key，多于1个时提供删除按钮
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -2430,32 +2429,83 @@ private fun ModelEditor(
             }
         }
 
-        // 模型 ID
+        // 模型选择区域（展开点击即勾选多选）
         item {
-            ExposedDropdownMenuBox(
-                expanded = modelMenu,
-                onExpandedChange = { modelMenu = !modelMenu },
-            ) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
-                    value = model,
-                    onValueChange = { model = it },
-                    modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable).fillMaxWidth(),
-                    label = { Text("模型 ID（可选择或输入）") },
-                    placeholder = { Text("gpt-4o / deepseek-chat") },
+                    value = customModelInput,
+                    onValueChange = { customModelInput = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("自定义模型 ID（可选，输入额外模型）") },
+                    placeholder = { Text("例如：gpt-4.5-preview / claude-3-7-sonnet") },
                     singleLine = true,
                 )
-                ExposedDropdownMenu(
-                    expanded = modelMenu,
-                    onDismissRequest = { modelMenu = false },
-                ) {
-                    (discovered + provider.recommendedModels).distinct().forEach { option ->
-                        DropdownMenuItem(
-                            text = { Text(option) },
-                            onClick = {
-                                model = option
-                                modelMenu = false
-                            },
+
+                if (candidateModels.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "候选模型（展开点击即可勾选多个）",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onSurface,
                         )
+                        val totalSelectedCount = (selectedModels + customModelInput.split(",").map { it.trim() }).filter { it.isNotBlank() }.distinct().size
+                        if (totalSelectedCount > 0) {
+                            Text(
+                                text = "已选择 $totalSelectedCount 个模型",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    }
+
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        candidateModels.forEach { option ->
+                            val isSelected = selectedModels.contains(option)
+                            Surface(
+                                color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                                ),
+                                modifier = Modifier.clickable {
+                                    selectedModels = if (isSelected) {
+                                        selectedModels - option
+                                    } else {
+                                        selectedModels + option
+                                    }
+                                },
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    if (isSelected) {
+                                        RuntimeIcon(
+                                            name = RuntimeIconName.Check,
+                                            modifier = Modifier.size(14.dp),
+                                            tint = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                    Text(
+                                        text = option,
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                        ),
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -2494,233 +2544,236 @@ private fun ModelEditor(
         }
 
         if (advancedExpanded) {
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                OutlinedTextField(
-                    value = rpmLimitText,
-                    onValueChange = { rpmLimitText = it.filter(Char::isDigit) },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("单 Key 每分钟请求上限") },
-                    placeholder = { Text("8") },
-                    singleLine = true,
-                )
-                Text(
-                    text = "0 或留空表示不限制；达到上限时优先轮换其他 Key",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-
-        // 双列紧凑参数：Temperature 与 Max Tokens
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                OutlinedTextField(
-                    value = temperatureText,
-                    onValueChange = { temperatureText = it },
-                    modifier = Modifier.weight(1f),
-                    label = { Text("Temperature") },
-                    placeholder = { Text("0.7") },
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = maxTokensText,
-                    onValueChange = { maxTokensText = it },
-                    modifier = Modifier.weight(1f),
-                    label = { Text("Max Tokens") },
-                    placeholder = { Text("8000") },
-                    singleLine = true,
-                )
-            }
-        }
-
-        // 上下文 Token 上限
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                OutlinedTextField(
-                    value = contextTokensText,
-                    onValueChange = { contextTokensText = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("上下文 Token 上限") },
-                    placeholder = { Text("128000") },
-                    singleLine = true,
-                )
-                Text(
-                    text = "超出时自动压缩旧消息（滑动窗口+摘要记忆）",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-
-        // 功能开关组
-        item {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                // 1. 支持函数调用 (Tool Call)
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "支持函数调用 (Tool Call)",
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                            )
-                            Text(
-                                "使用 OpenAI 标准函数调用执行沙箱与扩展命令",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(
-                            checked = toolCallEnabled,
-                            onCheckedChange = { toolCallEnabled = it },
-                        )
-                    }
-                }
-
-                // 2. 不注入工具和提示词 (纯净排查模式)
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "不注入工具和提示词",
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                            )
-                            Text(
-                                "关闭系统提示词和工具定义注入，仅发送用户消息（用于排查问题）",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(
-                            checked = pureChatMode,
-                            onCheckedChange = { pureChatMode = it },
-                        )
-                    }
-                }
-
-                // 3. 支持识图 (Vision)
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "支持识图",
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                            )
-                            Text(
-                                "开启后图片直接发送给 AI 识别；关闭后自动调用工具读取图片",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(
-                            checked = visionEnabled,
-                            onCheckedChange = { visionEnabled = it },
-                        )
-                    }
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    OutlinedTextField(
+                        value = rpmLimitText,
+                        onValueChange = { rpmLimitText = it.filter(Char::isDigit) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("单 Key 每分钟请求上限") },
+                        placeholder = { Text("8") },
+                        singleLine = true,
+                    )
+                    Text(
+                        text = "0 或留空表示不限制；达到上限时优先轮换其他 Key",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
-        }
 
-        // 自定义请求头
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                OutlinedTextField(
-                    value = customHeaders,
-                    onValueChange = { customHeaders = it },
+            // 双列紧凑参数：Temperature 与 Max Tokens
+            item {
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("自定义请求头（可选）") },
-                    placeholder = { Text("HTTP-Referer: https://taixu.ai\nX-Title: TaiXu") },
-                    minLines = 2,
-                    maxLines = 4,
-                )
-                Text(
-                    text = "每行一个请求头，格式 \"Key: Value\"，会追加到 API 请求中",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    OutlinedTextField(
+                        value = temperatureText,
+                        onValueChange = { temperatureText = it },
+                        modifier = Modifier.weight(1f),
+                        label = { Text("Temperature") },
+                        placeholder = { Text("0.7") },
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = maxTokensText,
+                        onValueChange = { maxTokensText = it },
+                        modifier = Modifier.weight(1f),
+                        label = { Text("Max Tokens") },
+                        placeholder = { Text("8000") },
+                        singleLine = true,
+                    )
+                }
             }
-        }
 
-        // 推理深度设置
-        item {
-            ExposedDropdownMenuBox(
-                expanded = reasoningModeMenu,
-                onExpandedChange = { reasoningModeMenu = !reasoningModeMenu },
-            ) {
-                OutlinedTextField(
-                    value = when (reasoningModeText) {
-                        "enabled" -> "开启深度推理（更深入思考）"
-                        else -> "跟随模型默认"
-                    },
-                    onValueChange = {},
-                    modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
-                    readOnly = true,
-                    label = { Text("推理思考模式") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(reasoningModeMenu) },
-                )
-                ExposedDropdownMenu(
+            // 上下文 Token 上限
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    OutlinedTextField(
+                        value = contextTokensText,
+                        onValueChange = { contextTokensText = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("上下文 Token 上限") },
+                        placeholder = { Text("128000") },
+                        singleLine = true,
+                    )
+                    Text(
+                        text = "超出时自动压缩旧消息（滑动窗口+摘要记忆）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            // 功能开关组
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    // 1. 支持函数调用 (Tool Call)
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "支持函数调用 (Tool Call)",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                )
+                                Text(
+                                    "使用 OpenAI 标准函数调用执行沙箱与扩展命令",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = toolCallEnabled,
+                                onCheckedChange = { toolCallEnabled = it },
+                            )
+                        }
+                    }
+
+                    // 2. 不注入工具和提示词 (纯净排查模式)
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "不注入工具和提示词",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                )
+                                Text(
+                                    "关闭系统提示词和工具定义注入，仅发送用户消息（用于排查问题）",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = pureChatMode,
+                                onCheckedChange = { pureChatMode = it },
+                            )
+                        }
+                    }
+
+                    // 3. 支持识图 (Vision)
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "支持识图",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                )
+                                Text(
+                                    "直接向模型发送图片；关闭后由工具读取图片内容",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = visionEnabled,
+                                onCheckedChange = { visionEnabled = it },
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 自定义请求头
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    OutlinedTextField(
+                        value = customHeaders,
+                        onValueChange = { customHeaders = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("自定义请求头（多行 Key: Value）") },
+                        placeholder = { Text("HTTP-Referer: https://taixu.app\nX-Title: TaiXu") },
+                        minLines = 2,
+                        maxLines = 4,
+                    )
+                    Text(
+                        text = "每行一个 Header，格式为 Header-Name: Header-Value",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            // 推理思考模式
+            item {
+                ExposedDropdownMenuBox(
                     expanded = reasoningModeMenu,
-                    onDismissRequest = { reasoningModeMenu = false },
+                    onExpandedChange = { reasoningModeMenu = !reasoningModeMenu },
                 ) {
-                    DropdownMenuItem(text = { Text("跟随模型默认") }, onClick = {
-                        reasoningModeText = "auto"
-                        reasoningModeMenu = false
-                    })
-                    DropdownMenuItem(text = { Text("开启深度推理（更深入思考）") }, onClick = {
-                        reasoningModeText = "enabled"
-                        reasoningModeMenu = false
-                    })
+                    OutlinedTextField(
+                        value = when (reasoningModeText) {
+                            "enabled" -> "开启深度推理（更深入思考）"
+                            else -> "跟随模型默认"
+                        },
+                        onValueChange = {},
+                        modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+                        readOnly = true,
+                        label = { Text("推理思考模式") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(reasoningModeMenu) },
+                    )
+                    ExposedDropdownMenu(
+                        expanded = reasoningModeMenu,
+                        onDismissRequest = { reasoningModeMenu = false },
+                    ) {
+                        DropdownMenuItem(text = { Text("跟随模型默认") }, onClick = {
+                            reasoningModeText = "auto"
+                            reasoningModeMenu = false
+                        })
+                        DropdownMenuItem(text = { Text("开启深度推理（更深入思考）") }, onClick = {
+                            reasoningModeText = "enabled"
+                            reasoningModeMenu = false
+                        })
+                    }
                 }
             }
-        }
         }
 
         // 测试与刷新按钮
         item {
+            val testModelTarget = (if (existing != null) customModelInput.trim() else (selectedModels.firstOrNull() ?: customModelInput.trim())).ifBlank { provider.recommendedModels.firstOrNull().orEmpty() }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = {
                         discover(providerId, url, combinedKey)
-                        selectFirstDiscoveredModel = true
                     },
-                    enabled = !discovering,
+                    enabled = !discovering && url.isNotBlank(),
                 ) {
                     Text(if (discovering) "刷新中…" else "刷新在线模型")
                 }
-                OutlinedButton(onClick = { test(url, model, combinedKey) }, enabled = !testing) {
+                OutlinedButton(
+                    onClick = { test(url, testModelTarget, combinedKey) },
+                    enabled = !testing && testModelTarget.isNotBlank() && url.isNotBlank(),
+                ) {
                     Text(if (testing) "测试中…" else "测试连接")
                 }
             }
@@ -2736,6 +2789,10 @@ private fun ModelEditor(
             }
         }
         item {
+            val effectiveModels = remember(selectedModels, customModelInput) {
+                val customList = customModelInput.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                (selectedModels + customList).filter { it.isNotBlank() }.distinct()
+            }
             val parsedTemperature = temperatureText.trim().toFloatOrNull()
             val parsedMaxTokens = maxTokensText.trim().toIntOrNull()
             val parsedContextTokens = contextTokensText.trim().toIntOrNull()
@@ -2749,13 +2806,20 @@ private fun ModelEditor(
                 if (rpmLimitText.isNotBlank() && rpmLimitText.toIntOrNull() == null) add("单 Key RPM 需为非负整数")
             }.joinToString("；").ifBlank { null }
             invalid?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+
+            val buttonText = if (effectiveModels.size > 1) {
+                "保存已勾选的 ${effectiveModels.size} 个模型"
+            } else {
+                "保存模型配置"
+            }
+
             Button(
                 onClick = {
                     save(
-                        name.ifBlank { model },
+                        name.trim(),
                         provider.name,
-                        model,
-                        url,
+                        effectiveModels,
+                        url.trim(),
                         combinedKey,
                         parsedRpmLimit,
                         parsedTemperature,
@@ -2773,9 +2837,9 @@ private fun ModelEditor(
                 modifier = Modifier.fillMaxWidth().height(48.dp),
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary),
-                enabled = model.isNotBlank() && url.isNotBlank() && invalid == null,
+                enabled = effectiveModels.isNotEmpty() && url.isNotBlank() && invalid == null,
             ) {
-                Text("保存模型配置", fontWeight = FontWeight.Bold)
+                Text(buttonText, fontWeight = FontWeight.Bold)
             }
         }
     }

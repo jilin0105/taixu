@@ -18,7 +18,7 @@ class EnvironmentDoctorTest {
     fun reportsUnreadyWhenSandboxNotInitialized() = runBlocking {
         val runtime = FakeLinuxRuntime()
         runtime.state.value = RuntimeState.NotInitialized
-        val doctor = EnvironmentDoctor(runtime)
+        val doctor = EnvironmentDoctor(linuxRuntime = runtime)
 
         val report = doctor.check()
 
@@ -46,11 +46,11 @@ class EnvironmentDoctorTest {
         runtime.commandResults["node --version 2>/dev/null || /opt/taixu/bin/node --version 2>/dev/null || /usr/bin/node --version 2>/dev/null"] =
             CommandResult(0, "v22.22.3\n", "", 1)
 
-        val doctor = EnvironmentDoctor(runtime)
+        val doctor = EnvironmentDoctor(linuxRuntime = runtime)
         val report = doctor.check()
 
         assertEquals(DoctorStatus.HEALTHY, report.overallStatus)
-        assertEquals(6, report.healthyCount)
+        assertEquals(7, report.healthyCount)
         assertEquals(0, report.warningCount)
         assertEquals(0, report.errorCount)
         assertTrue(report.isAllHealthy)
@@ -75,11 +75,11 @@ class EnvironmentDoctorTest {
         runtime.commandResults["node --version 2>/dev/null || /opt/taixu/bin/node --version 2>/dev/null || /usr/bin/node --version 2>/dev/null"] =
             CommandResult(1, "", "not found", 1) // 缺失 node
 
-        val doctor = EnvironmentDoctor(runtime)
+        val doctor = EnvironmentDoctor(linuxRuntime = runtime)
         val report = doctor.check()
 
         assertEquals(DoctorStatus.WARNING, report.overallStatus)
-        assertEquals(1, report.healthyCount) // 只有 sandbox_storage healthy
+        assertEquals(2, report.healthyCount) // sandbox_storage 与 allFilesAccessItem healthy
         assertEquals(5, report.warningCount)
         assertTrue(report.needsFix)
     }
@@ -103,7 +103,7 @@ class EnvironmentDoctorTest {
         runtime.commandResults["node --version 2>/dev/null || /opt/taixu/bin/node --version 2>/dev/null || /usr/bin/node --version 2>/dev/null"] =
             CommandResult(0, "v22.22.3\n", "", 1)
 
-        val doctor = EnvironmentDoctor(runtime)
+        val doctor = EnvironmentDoctor(linuxRuntime = runtime)
         val report = doctor.check()
 
         assertEquals(DoctorStatus.WARNING, report.overallStatus)
@@ -116,7 +116,7 @@ class EnvironmentDoctorTest {
     fun environmentRepairerEmitsAllProgressStepsToCompletion() = runBlocking {
         val runtime = FakeLinuxRuntime()
         runtime.state.value = RuntimeState.Ready
-        val doctor = EnvironmentDoctor(runtime)
+        val doctor = EnvironmentDoctor(linuxRuntime = runtime)
         val repairer = EnvironmentRepairer(runtime, doctor)
 
         val progresses = repairer.repair().toList()
