@@ -57,6 +57,7 @@ class SettingsViewModel @Inject constructor(
     private val storageMountBindingRepository: StorageMountBindingRepository,
     private val approvalRepository: top.wkbin.taixu.core.database.AgentApprovalRepository,
     private val toolManager: ToolManager,
+    private val quickPhraseRepository: top.wkbin.taixu.core.database.QuickPhraseRepository,
 ) : ViewModel() {
     val installedDistros = linuxRuntime.installedDistros
     val activeDistroId = linuxRuntime.activeDistroId
@@ -77,6 +78,7 @@ class SettingsViewModel @Inject constructor(
             subagentRepository.ensureInitialized()
             agentSkillRepository.ensureInitialized()
             mcpServerRepository.ensureInitialized()
+            quickPhraseRepository.ensureInitialized()
         }
         viewModelScope.launch {
             combine(linuxRuntime.state, linuxRuntime.activeDistroId) { state, distroId ->
@@ -782,6 +784,10 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    suspend fun readModelApiKey(secretRef: String): String {
+        return providerRepository.readModelApiKeys(secretRef).joinToString("\n")
+    }
+
     private fun parseApiKeys(raw: String): List<String> = raw
         .lineSequence()
         .map(String::trim)
@@ -846,5 +852,53 @@ class SettingsViewModel @Inject constructor(
 
     fun toggleCustomMountBinding(bindingId: String, enabled: Boolean) {
         viewModelScope.launch { storageMountBindingRepository.setEnabled(bindingId, enabled) }
+    }
+
+    // ---- 快捷短语与常用指令 ----
+    val quickPhrases: StateFlow<List<top.wkbin.taixu.core.model.QuickPhrase>> = quickPhraseRepository.observeAll()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun saveQuickPhrase(
+        id: String?,
+        title: String,
+        content: String,
+        description: String = "",
+        iconName: String = "Play",
+        targetProjectType: String? = null,
+        isEnabled: Boolean = true,
+    ) {
+        viewModelScope.launch {
+            val existing = if (id != null) quickPhraseRepository.findById(id) else null
+            val phrase = top.wkbin.taixu.core.model.QuickPhrase(
+                id = id ?: java.util.UUID.randomUUID().toString(),
+                title = title.trim(),
+                content = content.trim(),
+                description = description.trim(),
+                iconName = iconName.ifBlank { "Play" },
+                targetProjectType = targetProjectType?.ifBlank { null },
+                isEnabled = isEnabled,
+                sortOrder = existing?.sortOrder ?: 99,
+                isBuiltin = existing?.isBuiltin ?: false,
+            )
+            quickPhraseRepository.upsert(phrase)
+        }
+    }
+
+    fun deleteQuickPhrase(id: String) {
+        viewModelScope.launch {
+            quickPhraseRepository.delete(id)
+        }
+    }
+
+    fun toggleQuickPhrase(id: String, enabled: Boolean) {
+        viewModelScope.launch {
+            quickPhraseRepository.setEnabled(id, enabled)
+        }
+    }
+
+    fun resetQuickPhrasesToDefault() {
+        viewModelScope.launch {
+            quickPhraseRepository.resetToDefault()
+        }
     }
 }

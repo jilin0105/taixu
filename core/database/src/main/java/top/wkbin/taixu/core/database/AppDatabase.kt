@@ -26,8 +26,9 @@ import androidx.room.RoomDatabase
         ToolSettingsEntity::class,
         AgentApprovalRequestEntity::class,
         AgentApprovalSettingsEntity::class,
+        QuickPhraseEntity::class,
     ],
-    version = 28,
+    version = 29,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -47,4 +48,5 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun storageMountBindingDao(): StorageMountBindingDao
     abstract fun toolSettingsDao(): ToolSettingsDao
     abstract fun agentApprovalDao(): AgentApprovalDao
+    abstract fun quickPhraseDao(): QuickPhraseDao
 }

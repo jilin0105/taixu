@@ -185,6 +185,7 @@ fun ChatScreen(
     val initializing by viewModel.initializing.collectAsStateWithLifecycle()
     val pendingApprovals by viewModel.pendingApprovals.collectAsStateWithLifecycle()
     val contextUsage by viewModel.contextUsage.collectAsStateWithLifecycle()
+    val quickPhrases by viewModel.quickPhrases.collectAsStateWithLifecycle()
 
     var showSessions by remember { mutableStateOf(false) }
     var showNewSession by remember { mutableStateOf(false) }
@@ -423,6 +424,8 @@ fun ChatScreen(
                         pendingApprovals = pendingApprovals,
                         onResolveApproval = viewModel::resolveApproval,
                         contextUsage = contextUsage,
+                        quickPhrases = quickPhrases,
+                        onSelectPhrase = viewModel::applyQuickPhrase,
                     )
 
                     VerticalDivider(
@@ -492,6 +495,8 @@ fun ChatScreen(
                     contextUsage = contextUsage,
                     activeModel = activeModel,
                     onUpdateReasoning = viewModel::updateActiveModelReasoning,
+                    quickPhrases = quickPhrases,
+                    onSelectPhrase = viewModel::applyQuickPhrase,
                 )
             }
 
@@ -614,6 +619,8 @@ private fun ChatPaneContent(
     pendingApprovals: List<top.wkbin.taixu.core.database.AgentApprovalRequestEntity> = emptyList(),
     onResolveApproval: (String, Boolean) -> Unit = { _, _ -> },
     contextUsage: ContextUsage = ContextUsage(),
+    quickPhrases: List<top.wkbin.taixu.core.model.QuickPhrase> = emptyList(),
+    onSelectPhrase: (top.wkbin.taixu.core.model.QuickPhrase) -> Unit = {},
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var attachments by remember { mutableStateOf<List<ChatAttachment>>(emptyList()) }
@@ -723,6 +730,8 @@ private fun ChatPaneContent(
                     item {
                         EmptyChatGuidance(
                             workspaceProject = workspaceProject,
+                            quickPhrases = quickPhrases,
+                            onSelectPhrase = onSelectPhrase,
                             onSelectCommand = onApplyCommand,
                         )
                     }
@@ -1265,26 +1274,46 @@ private fun formatContextTokens(tokens: Int): String = when {
 @Composable
 private fun EmptyChatGuidance(
     workspaceProject: WorkspaceProject? = null,
+    quickPhrases: List<top.wkbin.taixu.core.model.QuickPhrase> = emptyList(),
+    onSelectPhrase: (top.wkbin.taixu.core.model.QuickPhrase) -> Unit = {},
     onSelectCommand: (SlashCommandItem) -> Unit,
 ) {
     val context = LocalContext.current
-    val quickCommands = when (workspaceProject?.projectType) {
+    val enabledPhrases = remember(quickPhrases, workspaceProject) {
+        val active = quickPhrases.filter { it.isEnabled }
+        if (active.isEmpty()) emptyList()
+        else {
+            val projectType = workspaceProject?.projectType
+            val matched = when (projectType) {
+                top.wkbin.taixu.runtime.ProjectType.ANDROID -> active.filter { it.targetProjectType == "ANDROID" || it.targetProjectType == null }
+                top.wkbin.taixu.runtime.ProjectType.FLUTTER -> active.filter { it.targetProjectType == "FLUTTER" || it.targetProjectType == null }
+                top.wkbin.taixu.runtime.ProjectType.REVERSE -> active.filter { it.targetProjectType == "REVERSE" || it.targetProjectType == null }
+                else -> active.filter { it.targetProjectType == null }
+            }
+            if (matched.isNotEmpty()) matched else active.take(4)
+        }
+    }
+
+    val quickCommands = remember(workspaceProject) {
+        when (workspaceProject?.projectType) {
             top.wkbin.taixu.runtime.ProjectType.ANDROID -> listOf(
-                SlashCommandItem("/android-check", stringResource(R.string.chat_android_check), stringResource(R.string.chat_android_check_description), stringResource(R.string.chat_android_check_prompt), RuntimeIconName.Check),
-                SlashCommandItem("/android-build-install", stringResource(R.string.chat_android_build), stringResource(R.string.chat_android_build_description), stringResource(R.string.chat_android_build_prompt), RuntimeIconName.Play),
-                SlashCommandItem("/android-debug", stringResource(R.string.chat_android_debug), stringResource(R.string.chat_android_debug_description), stringResource(R.string.chat_android_debug_prompt), RuntimeIconName.Alert),
+                SlashCommandItem("/android-check", context.getString(R.string.chat_android_check), context.getString(R.string.chat_android_check_description), context.getString(R.string.chat_android_check_prompt), RuntimeIconName.Check),
+                SlashCommandItem("/android-build-install", context.getString(R.string.chat_android_build), context.getString(R.string.chat_android_build_description), context.getString(R.string.chat_android_build_prompt), RuntimeIconName.Play),
+                SlashCommandItem("/android-debug", context.getString(R.string.chat_android_debug), context.getString(R.string.chat_android_debug_description), context.getString(R.string.chat_android_debug_prompt), RuntimeIconName.Alert),
             )
             top.wkbin.taixu.runtime.ProjectType.FLUTTER -> listOf(
-                SlashCommandItem("/flutter-check", stringResource(R.string.chat_flutter_check), stringResource(R.string.chat_flutter_check_description), stringResource(R.string.chat_flutter_check_prompt), RuntimeIconName.Check),
-                SlashCommandItem("/flutter-build-install", stringResource(R.string.chat_flutter_build), stringResource(R.string.chat_flutter_build_description), stringResource(R.string.chat_flutter_build_prompt), RuntimeIconName.Play),
-                SlashCommandItem("/flutter-debug", stringResource(R.string.chat_flutter_debug), stringResource(R.string.chat_flutter_debug_description), stringResource(R.string.chat_flutter_debug_prompt), RuntimeIconName.Alert),
+                SlashCommandItem("/flutter-check", context.getString(R.string.chat_flutter_check), context.getString(R.string.chat_flutter_check_description), context.getString(R.string.chat_flutter_check_prompt), RuntimeIconName.Check),
+                SlashCommandItem("/flutter-build-install", context.getString(R.string.chat_flutter_build), context.getString(R.string.chat_flutter_build_description), context.getString(R.string.chat_flutter_build_prompt), RuntimeIconName.Play),
+                SlashCommandItem("/flutter-debug", context.getString(R.string.chat_flutter_debug), context.getString(R.string.chat_flutter_debug_description), context.getString(R.string.chat_flutter_debug_prompt), RuntimeIconName.Alert),
             )
             top.wkbin.taixu.runtime.ProjectType.REVERSE -> listOf(
-                SlashCommandItem("/reverse-analyze", stringResource(R.string.chat_reverse_analyze), stringResource(R.string.chat_reverse_analyze_description), stringResource(R.string.chat_reverse_analyze_prompt), RuntimeIconName.Search),
-                SlashCommandItem("/reverse-decode", stringResource(R.string.chat_reverse_decode), stringResource(R.string.chat_reverse_decode_description), stringResource(R.string.chat_reverse_decode_prompt), RuntimeIconName.Code),
+                SlashCommandItem("/reverse-analyze", context.getString(R.string.chat_reverse_analyze), context.getString(R.string.chat_reverse_analyze_description), context.getString(R.string.chat_reverse_analyze_prompt), RuntimeIconName.Search),
+                SlashCommandItem("/reverse-decode", context.getString(R.string.chat_reverse_decode), context.getString(R.string.chat_reverse_decode_description), context.getString(R.string.chat_reverse_decode_prompt), RuntimeIconName.Code),
             )
             else -> SlashCommands.presetCommands(context).take(4)
+        }
     }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1302,34 +1331,89 @@ private fun EmptyChatGuidance(
             color = MaterialTheme.colorScheme.primary,
         )
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            quickCommands.forEach { cmd ->
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    shape = RoundedCornerShape(10.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onSelectCommand(cmd) },
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+            if (enabledPhrases.isNotEmpty()) {
+                enabledPhrases.forEach { phrase ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        shape = RoundedCornerShape(10.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelectPhrase(phrase) },
                     ) {
-                        RuntimeIcon(cmd.icon, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                cmd.command,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontFamily = FontFamily.Monospace,
-                            )
-                            Text(cmd.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            RuntimeIcon(parseIconName(phrase.iconName), Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    phrase.title,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    phrase.description.ifBlank { phrase.content },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                quickCommands.forEach { cmd ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        shape = RoundedCornerShape(10.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelectCommand(cmd) },
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            RuntimeIcon(cmd.icon, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    cmd.command,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontFamily = FontFamily.Monospace,
+                                )
+                                Text(cmd.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+private fun parseIconName(name: String): RuntimeIconName {
+    return when (name.lowercase()) {
+        "play" -> RuntimeIconName.Play
+        "check" -> RuntimeIconName.Check
+        "alert" -> RuntimeIconName.Alert
+        "code" -> RuntimeIconName.Code
+        "plus" -> RuntimeIconName.Plus
+        "package" -> RuntimeIconName.Package
+        "search" -> RuntimeIconName.Search
+        "brain" -> RuntimeIconName.Brain
+        "bot" -> RuntimeIconName.Bot
+        "chat" -> RuntimeIconName.Chat
+        "refresh" -> RuntimeIconName.Refresh
+        "terminal" -> RuntimeIconName.Terminal
+        "tool", "wrench" -> RuntimeIconName.Wrench
+        else -> RuntimeIconName.Play
     }
 }
 

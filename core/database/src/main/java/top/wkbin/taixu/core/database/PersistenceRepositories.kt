@@ -7,6 +7,8 @@ import dagger.hilt.components.SingletonComponent
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import top.wkbin.taixu.core.model.QuickPhrase
 
 /** Stable persistence ports consumed by feature, harness, and runtime layers. */
 interface AiModelRepository {
@@ -29,6 +31,8 @@ interface HarnessSessionRepository {
     suspend fun setApprovalMode(id: String, approvalMode: String, updatedAt: Long)
     suspend fun deleteMessages(sessionId: String)
     suspend fun deleteSession(id: String)
+    suspend fun countInRange(start: Long?, end: Long?): Int
+    suspend fun listAll(): List<HarnessSessionEntity>
 }
 
 interface HarnessMessageRepository {
@@ -40,6 +44,10 @@ interface HarnessMessageRepository {
     suspend fun deleteById(id: String)
     suspend fun deleteByIds(ids: List<String>)
     suspend fun clear()
+    suspend fun countInRange(start: Long?, end: Long?): Int
+    suspend fun queryHeatmap(start: Long): List<StatsDayCountResult>
+    suspend fun queryTopicRank(start: Long?, end: Long?, limit: Int = 20): List<StatsTopicRankResult>
+    suspend fun listInRange(start: Long?, end: Long?): List<HarnessMessageEntity>
 }
 
 interface WorkspaceRepository {
@@ -101,6 +109,8 @@ class RoomHarnessSessionRepository @Inject constructor(private val dao: HarnessS
     override suspend fun setApprovalMode(id: String, approvalMode: String, updatedAt: Long) = dao.setApprovalMode(id, approvalMode, updatedAt)
     override suspend fun deleteMessages(sessionId: String) = dao.deleteMessages(sessionId)
     override suspend fun deleteSession(id: String) = dao.deleteSession(id)
+    override suspend fun countInRange(start: Long?, end: Long?) = dao.countInRange(start, end)
+    override suspend fun listAll() = dao.listAll()
 }
 
 @Singleton
@@ -113,6 +123,10 @@ class RoomHarnessMessageRepository @Inject constructor(private val dao: HarnessM
     override suspend fun deleteById(id: String) = dao.deleteById(id)
     override suspend fun deleteByIds(ids: List<String>) = dao.deleteByIds(ids)
     override suspend fun clear() = dao.clear()
+    override suspend fun countInRange(start: Long?, end: Long?) = dao.countInRange(start, end)
+    override suspend fun queryHeatmap(start: Long) = dao.queryHeatmap(start)
+    override suspend fun queryTopicRank(start: Long?, end: Long?, limit: Int) = dao.queryTopicRank(start, end, limit)
+    override suspend fun listInRange(start: Long?, end: Long?) = dao.listInRange(start, end)
 }
 
 @Singleton
@@ -155,6 +169,210 @@ class RoomAgentContextRepository @Inject constructor(private val dao: AgentConte
     override suspend fun clearScratchpads(sessionId: String) = dao.clearScratchpads(sessionId)
 }
 
+interface QuickPhraseRepository {
+    fun observeAll(): Flow<List<QuickPhrase>>
+    suspend fun getAll(): List<QuickPhrase>
+    suspend fun findById(id: String): QuickPhrase?
+    suspend fun upsert(phrase: QuickPhrase)
+    suspend fun setEnabled(id: String, enabled: Boolean)
+    suspend fun delete(id: String)
+    suspend fun resetToDefault()
+    suspend fun ensureInitialized()
+}
+
+@Singleton
+class RoomQuickPhraseRepository @Inject constructor(
+    private val dao: QuickPhraseDao,
+) : QuickPhraseRepository {
+    override fun observeAll(): Flow<List<QuickPhrase>> =
+        dao.observeAll().map { list -> list.map { it.toDomain() } }
+
+    override suspend fun getAll(): List<QuickPhrase> =
+        dao.getAll().map { it.toDomain() }
+
+    override suspend fun findById(id: String): QuickPhrase? =
+        dao.findById(id)?.toDomain()
+
+    override suspend fun upsert(phrase: QuickPhrase) =
+        dao.upsert(QuickPhraseEntity.fromDomain(phrase))
+
+    override suspend fun setEnabled(id: String, enabled: Boolean) =
+        dao.setEnabled(id, enabled)
+
+    override suspend fun delete(id: String) =
+        dao.delete(id)
+
+    override suspend fun resetToDefault() {
+        dao.clearAll()
+        dao.upsertAll(defaultQuickPhrases.map { QuickPhraseEntity.fromDomain(it) })
+    }
+
+    override suspend fun ensureInitialized() {
+        if (dao.count() == 0) {
+            dao.upsertAll(defaultQuickPhrases.map { QuickPhraseEntity.fromDomain(it) })
+        }
+    }
+
+    companion object {
+        val defaultQuickPhrases = listOf(
+            QuickPhrase(
+                id = "builtin_run",
+                title = "运行代码",
+                content = "/run ",
+                description = "执行当前工作区的入口代码（如 python main.py / npm start）",
+                iconName = "Play",
+                targetProjectType = null,
+                isEnabled = true,
+                sortOrder = 1,
+                isBuiltin = true,
+            ),
+            QuickPhrase(
+                id = "builtin_install",
+                title = "安装依赖",
+                content = "/install ",
+                description = "在 Linux 沙箱中安装系统或语言依赖（apt / pip / npm）",
+                iconName = "Package",
+                targetProjectType = null,
+                isEnabled = true,
+                sortOrder = 2,
+                isBuiltin = true,
+            ),
+            QuickPhrase(
+                id = "builtin_init",
+                title = "初始化项目",
+                content = "/init ",
+                description = "创建新的项目骨架模板（Python, Node.js, C/C++, HTML）",
+                iconName = "Plus",
+                targetProjectType = null,
+                isEnabled = true,
+                sortOrder = 3,
+                isBuiltin = true,
+            ),
+            QuickPhrase(
+                id = "builtin_git",
+                title = "Git 状态",
+                content = "/git status",
+                description = "查看状态、提交或拉取版本控制仓库",
+                iconName = "Code",
+                targetProjectType = null,
+                isEnabled = true,
+                sortOrder = 4,
+                isBuiltin = true,
+            ),
+            QuickPhrase(
+                id = "builtin_test",
+                title = "运行测试",
+                content = "/test ",
+                description = "执行单元测试与代码验证",
+                iconName = "Check",
+                targetProjectType = null,
+                isEnabled = true,
+                sortOrder = 5,
+                isBuiltin = true,
+            ),
+            QuickPhrase(
+                id = "builtin_help",
+                title = "环境与帮助",
+                content = "/help",
+                description = "查看当前 Linux PRoot 沙箱环境与 Agent 工具说明",
+                iconName = "Alert",
+                targetProjectType = null,
+                isEnabled = true,
+                sortOrder = 6,
+                isBuiltin = true,
+            ),
+            QuickPhrase(
+                id = "builtin_android_check",
+                title = "检查 Android 工程",
+                content = "请检查当前 Android 工程结构、Gradle 配置、Manifest、包名和构建环境；发现问题直接编辑文件修复并验证。",
+                description = "检查 Gradle、Manifest、包名和当前构建环境",
+                iconName = "Check",
+                targetProjectType = "ANDROID",
+                isEnabled = true,
+                sortOrder = 10,
+                isBuiltin = true,
+            ),
+            QuickPhrase(
+                id = "builtin_android_build",
+                title = "编译并安装到手机",
+                content = "请构建当前 Android 工程，成功后将 APK 导出到手机并调起安装器；优先使用当前工作区的构建脚本和 taixu-host install-apk。",
+                description = "构建 Debug APK，导出并调起手机安装器",
+                iconName = "Play",
+                targetProjectType = "ANDROID",
+                isEnabled = true,
+                sortOrder = 11,
+                isBuiltin = true,
+            ),
+            QuickPhrase(
+                id = "builtin_android_debug",
+                title = "排查 Android 构建",
+                content = "请读取最近一次 Android 构建日志，定位真实错误并直接编辑脚本或工程文件修复，然后重新验证。",
+                description = "定位 Gradle、Kotlin、AAPT2 或安装问题",
+                iconName = "Alert",
+                targetProjectType = "ANDROID",
+                isEnabled = true,
+                sortOrder = 12,
+                isBuiltin = true,
+            ),
+            QuickPhrase(
+                id = "builtin_flutter_check",
+                title = "检查 Flutter 工程",
+                content = "请检查当前 Flutter 工程的 pubspec.yaml、Dart 入口和 Android Gradle 配置，发现问题直接修复并验证。",
+                description = "检查 pubspec、Dart 入口和 Android 宿主配置",
+                iconName = "Check",
+                targetProjectType = "FLUTTER",
+                isEnabled = true,
+                sortOrder = 20,
+                isBuiltin = true,
+            ),
+            QuickPhrase(
+                id = "builtin_flutter_build",
+                title = "编译并安装 Flutter",
+                content = "请执行 Flutter 依赖检查和 Debug APK 构建，成功后将 APK 导出到手机并调起 taixu-host install-apk。",
+                description = "拉取依赖、构建 APK 并调起安装器",
+                iconName = "Play",
+                targetProjectType = "FLUTTER",
+                isEnabled = true,
+                sortOrder = 21,
+                isBuiltin = true,
+            ),
+            QuickPhrase(
+                id = "builtin_flutter_debug",
+                title = "排查 Flutter 构建",
+                content = "请读取 Flutter 最近一次构建错误，定位依赖、Gradle 或 AAPT2 根因，直接修改工程并重新验证。",
+                description = "定位依赖、Gradle 或 AAPT2 错误",
+                iconName = "Alert",
+                targetProjectType = "FLUTTER",
+                isEnabled = true,
+                sortOrder = 22,
+                isBuiltin = true,
+            ),
+            QuickPhrase(
+                id = "builtin_reverse_analyze",
+                title = "分析 APK 工程",
+                content = "请读取当前逆向工程的 apk-info.properties 和 REVERSE.md，使用 jadx/apktool 分析 APK 并汇报关键发现。",
+                description = "读取清单、DEX、资源和加固特征",
+                iconName = "Search",
+                targetProjectType = "REVERSE",
+                isEnabled = true,
+                sortOrder = 30,
+                isBuiltin = true,
+            ),
+            QuickPhrase(
+                id = "builtin_reverse_decode",
+                title = "解包并反编译",
+                content = "请对当前工程内的原始 APK 执行安全解包和反编译，保留原始文件并把产物写入新的输出目录。",
+                description = "执行 JADX 或 apktool 解包流程",
+                iconName = "Code",
+                targetProjectType = "REVERSE",
+                isEnabled = true,
+                sortOrder = 31,
+                isBuiltin = true,
+            ),
+        )
+    }
+}
+
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class PersistenceRepositoryModule {
@@ -164,4 +382,5 @@ abstract class PersistenceRepositoryModule {
     @Binds abstract fun bindWorkspaceRepository(impl: RoomWorkspaceRepository): WorkspaceRepository
     @Binds abstract fun bindTerminalSessionRepository(impl: RoomTerminalSessionRepository): TerminalSessionRepository
     @Binds abstract fun bindAgentContextRepository(impl: RoomAgentContextRepository): AgentContextRepository
+    @Binds abstract fun bindQuickPhraseRepository(impl: RoomQuickPhraseRepository): QuickPhraseRepository
 }
