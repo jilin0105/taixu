@@ -1,13 +1,9 @@
 package top.wkbin.taixu.harness
 
-import top.wkbin.taixu.core.database.HarnessMessageRepository
 import top.wkbin.taixu.core.database.HarnessSessionRepository
-import top.wkbin.taixu.core.database.HarnessSessionEntity
 import top.wkbin.taixu.core.model.SubagentTaskSpec
 import top.wkbin.taixu.core.model.AgentSubagent
-import java.util.UUID
 import javax.inject.Inject
-import javax.inject.Provider
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -19,6 +15,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import top.wkbin.taixu.harness.session.LaneManager
+import top.wkbin.taixu.harness.subagent.SubagentLaneRunner
 
 /**
  * Subagent 子智能体任务编排器：
@@ -28,8 +26,8 @@ import kotlinx.serialization.json.jsonPrimitive
 @Singleton
 class SubagentOrchestrator @Inject constructor(
     private val sessionDao: HarnessSessionRepository,
-    private val messageDao: HarnessMessageRepository,
-    private val harnessLoopProvider: Provider<HarnessLoop>,
+    private val laneManager: LaneManager,
+    private val laneRunner: SubagentLaneRunner,
     private val subagentRepository: top.wkbin.taixu.core.database.AgentSubagentRepository,
 ) {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -42,10 +40,6 @@ class SubagentOrchestrator @Inject constructor(
         val workspace = parentSession?.workspace.orEmpty()
         val modelId = parentSession?.modelId
         val projectType = parentSession?.projectType.orEmpty()
-        if (parentSession?.title?.startsWith(SUBAGENT_SESSION_PREFIX) == true) {
-            return@withContext false to "子智能体会话禁止再次派发子智能体，请直接完成当前子任务"
-        }
-
         val specs = parseSubagentSpecs(args)
         if (specs.isEmpty()) {
             return@withContext false to "未解析到有效的 subagents 任务列表，请检查参数"
@@ -55,7 +49,7 @@ class SubagentOrchestrator @Inject constructor(
         if (profiles.isEmpty()) {
             return@withContext false to "当前没有启用的子智能体角色，请先在 Agent 设置中添加或启用角色"
         }
-        val harnessLoop = harnessLoopProvider.get()
+        val parentLeaf = laneManager.get(parentSessionId, "main")?.leafId
 
         val results = specs.map { spec ->
             async {
@@ -72,48 +66,19 @@ class SubagentOrchestrator @Inject constructor(
                         toolCallCount = 0,
                     )
                 }
-                val now = System.currentTimeMillis()
-                val subSessionId = UUID.randomUUID().toString()
-                val subSessionTitle = "$SUBAGENT_SESSION_PREFIX ${spec.taskName} (${profile.name})"
-                val subSession = HarnessSessionEntity(
-                    id = subSessionId,
-                    title = subSessionTitle,
-                    createdAt = now,
-                    updatedAt = now,
-                    modelId = modelId,
-                    workspace = workspace,
-                    projectType = projectType,
-                    approvalMode = parentSession?.approvalMode ?: top.wkbin.taixu.core.model.ApprovalMode.ASSISTED.id,
-                )
-                sessionDao.upsert(subSession)
-
-                // 启动子智能体
+                val laneName = "subagent:${profile.id}:${java.util.UUID.randomUUID()}"
+                laneManager.create(parentSessionId, laneName, parentLeaf)
                 val prompt = buildSubagentPrompt(spec, profile, workspace)
-                harnessLoop.send(prompt, subSessionId)
-
-                // 等待子智能体执行收尾（最长等待 3 分钟）
-                val completed = withTimeoutOrNull(180_000L) {
-                    while (true) {
-                        val isRunning = harnessLoop.sessionRunStates.value[subSessionId] == top.wkbin.taixu.core.model.SessionRunState.RUNNING
-                        if (!isRunning) break
-                        kotlinx.coroutines.delay(500)
-                    }
-                    true
-                } ?: false
-
-                // 获取子智能体生成的最新回复和工具执行情况
-                val messages = messageDao.listForSession(subSessionId)
-                val lastAssistant = messages.lastOrNull { it.type == "assistant" }?.let {
-                    runCatching { json.decodeFromString<AssistantText>(it.payloadJson) }.getOrNull()
+                val laneResult = withTimeoutOrNull(180_000L) {
+                    laneRunner.run(parentSessionId, laneName, prompt, workspace)
                 }
-                val toolCallCount = messages.count { it.type == "tool_call" }
 
                 SubagentExecutionOutcome(
                     spec = spec,
-                    subSessionId = subSessionId,
-                    isSuccess = completed && lastAssistant != null,
-                    summary = lastAssistant?.text ?: if (!completed) "执行超时 (3 分钟)" else "无返回结果",
-                    toolCallCount = toolCallCount,
+                    subSessionId = laneName,
+                    isSuccess = laneResult?.success == true,
+                    summary = laneResult?.summary ?: "执行超时 (3 分钟)",
+                    toolCallCount = laneResult?.toolCallCount ?: 0,
                 )
             }
         }.awaitAll()
@@ -183,6 +148,5 @@ class SubagentOrchestrator @Inject constructor(
 
     private companion object {
         const val MAX_SUBAGENTS = 6
-        const val SUBAGENT_SESSION_PREFIX = "子任务:"
     }
 }

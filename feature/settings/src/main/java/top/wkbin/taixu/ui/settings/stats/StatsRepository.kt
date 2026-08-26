@@ -7,7 +7,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import top.wkbin.taixu.core.database.AiModelRepository
-import top.wkbin.taixu.core.database.HarnessMessageRepository
+import top.wkbin.taixu.core.database.HarnessRuntimeRepository
 import top.wkbin.taixu.core.database.HarnessSessionRepository
 import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.core.model.StatsDateRange
@@ -25,7 +25,7 @@ import javax.inject.Singleton
 
 @Singleton
 class StatsRepository @Inject constructor(
-    private val messageRepository: HarnessMessageRepository,
+    private val runtimeRepository: HarnessRuntimeRepository,
     private val sessionRepository: HarnessSessionRepository,
     private val aiModelRepository: AiModelRepository,
     private val settingsDataStore: SettingsDataStore,
@@ -42,7 +42,7 @@ class StatsRepository @Inject constructor(
 
         // 1. 基础汇总
         val totalSessions = sessionRepository.countInRange(startEpochMs, endEpochMs)
-        val totalMessages = messageRepository.countInRange(startEpochMs, endEpochMs)
+        val totalMessages = runtimeRepository.countEntriesInRange(startEpochMs, endEpochMs)
         val launchCount = settingsDataStore.appLaunchCount.first()
 
         // 2. 所有模型与会话缓存
@@ -50,7 +50,7 @@ class StatsRepository @Inject constructor(
         val allSessions = sessionRepository.listAll().associateBy { it.id }
 
         // 3. 消息详情拉取以做 Token 与 Provider 聚合
-        val messagesInRange = messageRepository.listInRange(startEpochMs, endEpochMs)
+        val messagesInRange = runtimeRepository.listEntriesInRange(startEpochMs, endEpochMs)
 
         var totalInputTokens = 0L
         var totalOutputTokens = 0L
@@ -87,7 +87,7 @@ class StatsRepository @Inject constructor(
                 ?: "默认工程"
             assistantUsageCounts[workspaceLabel] = (assistantUsageCounts[workspaceLabel] ?: 0) + 1
 
-            when (msg.type) {
+            when (msg.customType) {
                 "user" -> {
                     val userText = runCatching {
                         json.parseToJsonElement(msg.payloadJson).jsonObject["text"]?.jsonPrimitive?.content
@@ -140,24 +140,27 @@ class StatsRepository @Inject constructor(
 
         // 4. 热力图（近 180 天打卡矩阵）
         val heatmapStartEpoch = now.minusDays(180).atStartOfDay(zone).toInstant().toEpochMilli()
-        val rawHeatmapRows = messageRepository.queryHeatmap(heatmapStartEpoch).associateBy { it.day }
+        val rawHeatmapRows = runtimeRepository.listEntriesInRange(heatmapStartEpoch, null)
+            .groupingBy { Instant.ofEpochMilli(it.createdAt).atZone(zone).toLocalDate().toString() }
+            .eachCount()
 
         val heatmapDays = mutableListOf<StatsHeatmapDay>()
         var hCursor = now.minusDays(180)
         while (!hCursor.isAfter(now)) {
             val dateStr = hCursor.toString()
-            val count = rawHeatmapRows[dateStr]?.count ?: 0
+            val count = rawHeatmapRows[dateStr] ?: 0
             heatmapDays.add(StatsHeatmapDay(date = hCursor, count = count))
             hCursor = hCursor.plusDays(1)
         }
 
         // 5. 话题会话排行
-        val topicRankRows = messageRepository.queryTopicRank(startEpochMs, endEpochMs, limit = 20)
+        val topicRankRows = messagesInRange.groupingBy { it.sessionId }.eachCount()
+            .entries.sortedByDescending { it.value }.take(20)
         val topicRank = topicRankRows.map {
             StatsRankItem(
-                id = it.id,
-                label = it.label.ifBlank { "未命名会话" },
-                value = it.count,
+                id = it.key,
+                label = allSessions[it.key]?.title?.ifBlank { "未命名会话" } ?: "未命名会话",
+                value = it.value,
             )
         }
 

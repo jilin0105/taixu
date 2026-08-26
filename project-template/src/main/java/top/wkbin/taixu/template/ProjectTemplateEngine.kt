@@ -201,7 +201,7 @@ class ProjectTemplateEngine @Inject constructor(
         const val ANDROID_NO_ACTIVITY_ID = "builtin.android-no-activity"
         const val ANDROID_XPOSED_ID = "builtin.android-xposed"
         const val FLUTTER_ID = "builtin.flutter"
-        private val PLACEHOLDER = Regex("\\{\\{[A-Za-z][A-Za-z0-9_]*}}")
+        private val PLACEHOLDER = Regex("\\{\\{[A-Za-z][A-Za-z0-9_]*\\}\\}")
         private val WINDOWS_ABSOLUTE_PATH = Regex("^[A-Za-z]:/")
         private val TEXT_EXTENSIONS = setOf(
             "c", "cc", "cpp", "css", "dart", "gradle", "h", "hpp", "html", "java", "js", "json",

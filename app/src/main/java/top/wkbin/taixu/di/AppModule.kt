@@ -9,7 +9,6 @@ import top.wkbin.taixu.core.database.ToolDao
 import top.wkbin.taixu.core.database.InstallLogDao
 import top.wkbin.taixu.core.database.InstallTaskDao
 import top.wkbin.taixu.core.database.RuntimeDao
-import top.wkbin.taixu.core.database.HarnessMessageDao
 import top.wkbin.taixu.core.database.HarnessSessionDao
 import top.wkbin.taixu.core.database.AiModelDao
 import top.wkbin.taixu.core.database.WorkspaceDao
@@ -21,6 +20,7 @@ import top.wkbin.taixu.core.database.StorageMountBindingDao
 import top.wkbin.taixu.core.database.ToolSettingsDao
 import top.wkbin.taixu.core.database.AgentApprovalDao
 import top.wkbin.taixu.core.database.QuickPhraseDao
+import top.wkbin.taixu.core.database.HarnessRuntimeDao
 import top.wkbin.taixu.harness.WorkspaceFileAccess
 import top.wkbin.taixu.core.tools.RuntimeManager
 import top.wkbin.taixu.core.tools.RuntimeManagerImpl
@@ -90,10 +90,6 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideHarnessMessageDao(database: AppDatabase): HarnessMessageDao = database.harnessMessageDao()
-
-    @Provides
-    @Singleton
     fun provideHarnessSessionDao(database: AppDatabase): HarnessSessionDao = database.harnessSessionDao()
 
     @Provides
@@ -139,6 +135,10 @@ object AppModule {
     @Provides
     @Singleton
     fun provideQuickPhraseDao(database: AppDatabase): QuickPhraseDao = database.quickPhraseDao()
+
+    @Provides
+    @Singleton
+    fun provideHarnessRuntimeDao(database: AppDatabase): HarnessRuntimeDao = database.harnessRuntimeDao()
 
     @Provides
     @Singleton

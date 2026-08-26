@@ -29,25 +29,9 @@ interface HarnessSessionRepository {
     suspend fun touch(id: String, updatedAt: Long)
     suspend fun rename(id: String, title: String, updatedAt: Long)
     suspend fun setApprovalMode(id: String, approvalMode: String, updatedAt: Long)
-    suspend fun deleteMessages(sessionId: String)
     suspend fun deleteSession(id: String)
     suspend fun countInRange(start: Long?, end: Long?): Int
     suspend fun listAll(): List<HarnessSessionEntity>
-}
-
-interface HarnessMessageRepository {
-    fun observeForSession(sessionId: String): Flow<List<HarnessMessageEntity>>
-    suspend fun listForSession(sessionId: String): List<HarnessMessageEntity>
-    suspend fun insert(message: HarnessMessageEntity)
-    suspend fun insertAll(messages: List<HarnessMessageEntity>)
-    suspend fun deleteFromTimestamp(sessionId: String, createdAt: Long)
-    suspend fun deleteById(id: String)
-    suspend fun deleteByIds(ids: List<String>)
-    suspend fun clear()
-    suspend fun countInRange(start: Long?, end: Long?): Int
-    suspend fun queryHeatmap(start: Long): List<StatsDayCountResult>
-    suspend fun queryTopicRank(start: Long?, end: Long?, limit: Int = 20): List<StatsTopicRankResult>
-    suspend fun listInRange(start: Long?, end: Long?): List<HarnessMessageEntity>
 }
 
 interface WorkspaceRepository {
@@ -107,26 +91,9 @@ class RoomHarnessSessionRepository @Inject constructor(private val dao: HarnessS
     override suspend fun touch(id: String, updatedAt: Long) = dao.touch(id, updatedAt)
     override suspend fun rename(id: String, title: String, updatedAt: Long) = dao.rename(id, title, updatedAt)
     override suspend fun setApprovalMode(id: String, approvalMode: String, updatedAt: Long) = dao.setApprovalMode(id, approvalMode, updatedAt)
-    override suspend fun deleteMessages(sessionId: String) = dao.deleteMessages(sessionId)
     override suspend fun deleteSession(id: String) = dao.deleteSession(id)
     override suspend fun countInRange(start: Long?, end: Long?) = dao.countInRange(start, end)
     override suspend fun listAll() = dao.listAll()
-}
-
-@Singleton
-class RoomHarnessMessageRepository @Inject constructor(private val dao: HarnessMessageDao) : HarnessMessageRepository {
-    override fun observeForSession(sessionId: String) = dao.observeForSession(sessionId)
-    override suspend fun listForSession(sessionId: String) = dao.listForSession(sessionId)
-    override suspend fun insert(message: HarnessMessageEntity) = dao.insert(message)
-    override suspend fun insertAll(messages: List<HarnessMessageEntity>) = dao.insertAll(messages)
-    override suspend fun deleteFromTimestamp(sessionId: String, createdAt: Long) = dao.deleteFromTimestamp(sessionId, createdAt)
-    override suspend fun deleteById(id: String) = dao.deleteById(id)
-    override suspend fun deleteByIds(ids: List<String>) = dao.deleteByIds(ids)
-    override suspend fun clear() = dao.clear()
-    override suspend fun countInRange(start: Long?, end: Long?) = dao.countInRange(start, end)
-    override suspend fun queryHeatmap(start: Long) = dao.queryHeatmap(start)
-    override suspend fun queryTopicRank(start: Long?, end: Long?, limit: Int) = dao.queryTopicRank(start, end, limit)
-    override suspend fun listInRange(start: Long?, end: Long?) = dao.listInRange(start, end)
 }
 
 @Singleton
@@ -378,9 +345,9 @@ class RoomQuickPhraseRepository @Inject constructor(
 abstract class PersistenceRepositoryModule {
     @Binds abstract fun bindAiModelRepository(impl: RoomAiModelRepository): AiModelRepository
     @Binds abstract fun bindHarnessSessionRepository(impl: RoomHarnessSessionRepository): HarnessSessionRepository
-    @Binds abstract fun bindHarnessMessageRepository(impl: RoomHarnessMessageRepository): HarnessMessageRepository
     @Binds abstract fun bindWorkspaceRepository(impl: RoomWorkspaceRepository): WorkspaceRepository
     @Binds abstract fun bindTerminalSessionRepository(impl: RoomTerminalSessionRepository): TerminalSessionRepository
     @Binds abstract fun bindAgentContextRepository(impl: RoomAgentContextRepository): AgentContextRepository
     @Binds abstract fun bindQuickPhraseRepository(impl: RoomQuickPhraseRepository): QuickPhraseRepository
+    @Binds abstract fun bindHarnessRuntimeRepository(impl: RoomHarnessRuntimeRepository): HarnessRuntimeRepository
 }

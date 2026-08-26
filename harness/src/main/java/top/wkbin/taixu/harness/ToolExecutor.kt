@@ -2,6 +2,7 @@ package top.wkbin.taixu.harness
 
 import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.database.HarnessSessionRepository
+import top.wkbin.taixu.harness.session.SessionTreeStore
 import top.wkbin.taixu.core.security.SecretRedactor
 import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.core.datastore.SettingsDataStore
@@ -43,7 +44,7 @@ class ToolExecutor @Inject constructor(
     private val subagentOrchestrator: SubagentOrchestrator? = null,
     private val mcpManager: top.wkbin.taixu.harness.mcp.McpManager? = null,
     private val contextExecutor: AgentContextExecutor? = null,
-    private val messageStore: HarnessMessageStore? = null,
+    private val messageStore: SessionTreeStore? = null,
 ) {
     @Inject
     lateinit var settingsDataStore: AgentPreferences
