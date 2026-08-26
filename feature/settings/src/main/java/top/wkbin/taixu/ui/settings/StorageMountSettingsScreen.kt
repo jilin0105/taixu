@@ -90,7 +90,7 @@ fun StorageMountSettingsScreen(
         ) {
             item {
                 NoticeBanner(
-                    text = "开启挂载后，无需手动复制文件即可在沙箱（如 /sdcard/Download）与 Android 宿主应用间双向读写共享。",
+                    text = "开启挂载后，无需手动复制文件即可在沙箱（如 /sdcard/Download）与 Android 宿主应用间双向读写共享。挂载在会话启动时注入，修改后新建的终端 / 构建任务 / 服务进程才会应用。",
                 )
             }
 

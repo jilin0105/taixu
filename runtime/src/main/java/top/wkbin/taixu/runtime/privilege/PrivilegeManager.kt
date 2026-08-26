@@ -46,10 +46,6 @@ class PrivilegeManager @Inject constructor(
             ExecutionMode.SHIZUKU -> {
                 checkShizukuPrivilege()
             }
-
-            ExecutionMode.ADB -> {
-                checkAdbPrivilege()
-            }
         }
     }
 
@@ -173,34 +169,6 @@ class PrivilegeManager @Inject constructor(
     }
 
     /**
-     * 探测无线 ADB 连通性
-     */
-    private fun checkAdbPrivilege(): PrivilegeCheckResult {
-        return try {
-            val process = ProcessBuilder("sh", "-c", "which adb || echo ''").start()
-            val adbPath = process.inputStream.bufferedReader().readText().trim()
-            process.waitFor(2, TimeUnit.SECONDS)
-
-            if (adbPath.isNotBlank()) {
-                PrivilegeCheckResult.Authorized(
-                    ExecutionMode.ADB,
-                    "本地 ADB 调试工具链已就绪。",
-                )
-            } else {
-                PrivilegeCheckResult.Authorized(
-                    ExecutionMode.ADB,
-                    "无线 ADB 模式已就绪，可通过配对码或本地端口连接调试守护进程。",
-                )
-            }
-        } catch (e: Exception) {
-            PrivilegeCheckResult.Unauthorized(
-                ExecutionMode.ADB,
-                "ADB 探测失败: ${e.message}",
-            )
-        }
-    }
-
-    /**
      * 在授权成功后应用系统级特权优化（如解除 Android 12+ 幽灵进程 32 限制等）
      */
     private fun applyPrivilegeOptimizations(mode: ExecutionMode) {
@@ -222,11 +190,6 @@ class PrivilegeManager @Inject constructor(
                     .onFailure {
                         logger.w("通过 Shizuku 解除幽灵进程限制失败", it)
                     }
-            }
-            ExecutionMode.ADB -> {
-                runCatching {
-                    ProcessBuilder("sh", "-c", PHANTOM_PROCESS_REMOVE_COMMAND).start().waitFor(3, TimeUnit.SECONDS)
-                }
             }
             ExecutionMode.PROOT -> Unit
         }
@@ -280,11 +243,15 @@ class PrivilegeManager @Inject constructor(
 
     // ============================ HostBridge 支持 ============================
 
+    /** 读取当前持久化的运行模式；读取失败时回退 PRoot。 */
+    private suspend fun currentMode(): ExecutionMode = runCatching { settingsDataStore.executionMode.first() }
+        .getOrDefault(ExecutionMode.PROOT)
+
     /**
      * 在宿主侧以当前特权模式执行 Shell 命令。
      * - SHIZUKU 模式：通过 Shizuku Binder 以 ADB 级别 (shell uid) 执行
      * - ROOT 模式：通过 su 以 root uid 执行
-     * - PROOT / ADB 模式：不支持，返回错误
+     * - PROOT 模式：不支持，返回错误
      *
      * 这是打破"循环权限依赖"的关键能力：
      * 沙箱内无法直接执行需要 shell/root 权限的 Android 命令（如 settings put、pm grant、appops set），
@@ -292,17 +259,16 @@ class PrivilegeManager @Inject constructor(
      * 在宿主侧以特权身份执行。
      */
     suspend fun executeShellCommand(command: String): ShellExecResult = withContext(Dispatchers.IO) {
-        val mode = runCatching { settingsDataStore.executionMode.first() }
-            .getOrDefault(ExecutionMode.PROOT)
+        val mode = currentMode()
 
         when (mode) {
             ExecutionMode.SHIZUKU -> executeViaShizuku(command)
             ExecutionMode.ROOT -> executeViaRoot(command)
-            ExecutionMode.PROOT, ExecutionMode.ADB -> ShellExecResult(
+            ExecutionMode.PROOT -> ShellExecResult(
                 success = false,
                 exitCode = -1,
                 stdout = "",
-                stderr = "当前运行模式 ($mode) 不支持宿主 Shell 执行。请在设置中切换到 Shizuku 或 Root 模式。",
+                stderr = "当前运行模式 (PRoot) 不支持宿主 Shell 执行。请在设置中切换到 Shizuku 或 Root 模式。",
             )
         }
     }

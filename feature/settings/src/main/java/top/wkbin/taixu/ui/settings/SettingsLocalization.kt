@@ -511,7 +511,7 @@ private fun legacyStringResource(source: String): Int? = when (source) {
         "太墟在 Agent 执行期间会启动前台服务并持有 CPU 进程锁，但系统电池优化仍可能在息屏后" -> R.string.settings_long_007
         "太墟支持多套 Linux 系统并存。所有系统均自动挂载 /workspace 代码工程与 /sdcard 外部存储，各发行版软件生态与包管理器完全独立隔离。" -> R.string.settings_long_008
         "尚未配置任何模型档案，可前往【设置 → 模型档案管理】添加 Claude、OpenAI 或 DeepSeek 模型" -> R.string.settings_long_009
-        "开启挂载后，无需手动复制文件即可在沙箱（如 /sdcard/Download）与 Android 宿主应用间双向读写共享。" -> R.string.settings_long_010
+        "开启挂载后，无需手动复制文件即可在沙箱（如 /sdcard/Download）与 Android 宿主应用间双向读写共享。挂载在会话启动时注入，修改后新建的终端 / 构建任务 / 服务进程才会应用。" -> R.string.settings_long_010
         "强约束模型思考过程全程使用中文（解决 DeepSeek/Claude 思考总跑英文的问题）" -> R.string.settings_long_011
         "提示：小米/华为/OPPO 等厂商系统还需在应用详情中手动允许「自启动」与「后台运行」，" -> R.string.settings_long_012
         "服务尚未启动，请先在【网关服务】卡片中点击启动，启动成功后将在此展示可访问链接。Token 可提前生成，启动时自动注入。" -> R.string.settings_long_013

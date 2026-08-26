@@ -5,6 +5,7 @@ package top.wkbin.taixu.core.model
  */
 enum class ExecutionMode(
     val id: String,
+    val shortLabel: String,
     val title: String,
     val summary: String,
     val requiredPrivilege: String,
@@ -12,6 +13,7 @@ enum class ExecutionMode(
 ) {
     PROOT(
         id = "PROOT",
+        shortLabel = "PRoot",
         title = "PRoot 用户态沙箱 (默认)",
         summary = "无需任何特殊权限，开箱即用。通过 PRoot 模拟 Linux 用户态环境。",
         requiredPrivilege = "无（普通应用权限）",
@@ -23,6 +25,7 @@ enum class ExecutionMode(
     ),
     SHIZUKU(
         id = "SHIZUKU",
+        shortLabel = "Shizuku",
         title = "Shizuku / ADB 提权模式",
         summary = "通过 Shizuku 服务获得 ADB 权限，解除 Android 系统限制并开启整机自动化。",
         requiredPrivilege = "Shizuku 服务授权 (UID 2000 shell)",
@@ -35,6 +38,7 @@ enum class ExecutionMode(
     ),
     ROOT(
         id = "ROOT",
+        shortLabel = "Root",
         title = "Root 原生性能模式",
         summary = "请求 SU 权限，释放 100% 硬件算力，彻底避免 PRoot 系统调用拦截损耗。",
         requiredPrivilege = "Root 权限 (Magisk / KernelSU / APatch / UID 0)",
@@ -45,20 +49,10 @@ enum class ExecutionMode(
             "直接访问 GPU/NPU 节点 (/dev/kgsl-3d0 等) 硬件加速",
             "支持监听 80/443 特权端口与 iptables",
         ),
-    ),
-    ADB(
-        id = "ADB",
-        title = "无线 ADB 调试模式",
-        summary = "通过本地或无线 ADB 端口连接调试守护进程执行特权任务。",
-        requiredPrivilege = "本地无线 ADB 配对或 USB 调试授权",
-        capabilities = listOf(
-            "无需电脑，本机无线调试授权",
-            "执行特权 shell 命令与性能调优",
-            "辅助维持长任务与后台保活",
-        ),
     );
 
     companion object {
+        /** 兼容历史持久化值：已下线的 ADB 等未知 id 会安全回落到 PROOT。 */
         fun fromId(id: String): ExecutionMode =
             entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: PROOT
     }
