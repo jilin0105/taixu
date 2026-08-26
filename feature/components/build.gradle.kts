@@ -31,7 +31,7 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
-    implementation(libs.kotlinx.coroutines.core.jvm)
+    implementation(libs.kotlinx.coroutines.core)
     implementation(project(":feature:theme"))
     // 澄明(液态玻璃)主题：底部导航毛玻璃折射
     implementation(libs.backdrop)

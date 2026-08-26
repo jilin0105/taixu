@@ -7,6 +7,7 @@ import org.junit.Test
 
 class BuildGuardAssetTest {
     private val assets = File("../app/src/main/assets")
+    private val templateAssets = File("../project-template/src/main/assets")
     private val offlineAndroidInstaller =
         File("../assets/plugins/android-suite-offline/payload/scripts/install-android-suite.sh")
     private val offlineAndroidVerifier =
@@ -77,7 +78,7 @@ class BuildGuardAssetTest {
         assertTrue(managedNdkPolicy.contains("removeAll(['x86', 'x86_64', 'armeabi-v7a'])"))
         assertTrue(managedNdkPolicy.contains("abiFilters.add('arm64-v8a')"))
         assertTrue(managedNdkPolicy.contains("aligning project NDK version"))
-        val androidTemplate = File(assets, "templates/android-compose/app/build.gradle.kts").readText()
+        val androidTemplate = File(templateAssets, "templates/android/jetpack-compose/app/build.gradle.kts").readText()
         assertTrue(androidTemplate.contains("abiFilters += \"arm64-v8a\""))
         assertTrue(buildEntry.contains("cp \"${'$'}managed_ndk_policy\" \"${'$'}GRADLE_USER_HOME/init.d/taixu-android-ndk.gradle\""))
         listOf(androidBuild, flutterBuild, buildEntry).forEach { script ->

@@ -41,6 +41,7 @@ LinuxAIRuntime/
 │   ├── network/         # OkHttp 网络客户端、SSE 流式解析器、超时策略
 │   └── security/        # API Key 本地安全加解密
 ├── runtime/              # Linux 沙箱与 PRoot 核心：命令/进程注册、PTY、工作区导入导出与构建
+├── project-template/     # 标准化项目模板：manifest、变量表单协议、导入导出、物化与内置模板资产
 ├── harness/              # Agent 智能体核心：Agent 循环、流式推理、内置工具/审批、MCP
 ├── tools/                # 工具生态中心：Registry、本地插件、安装事务、批量组件安装、Provider 安全
 └── feature/              # Compose UI 业务特性层

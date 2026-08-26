@@ -22,14 +22,14 @@ kotlin {
 
 dependencies {
     implementation(project(":core:model"))
-    implementation(libs.kotlinx.serialization.json.jvm)
+    implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.okhttp)
     implementation(libs.androidx.core.ktx)
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
-    implementation(libs.kotlinx.coroutines.core.jvm)
+    implementation(libs.kotlinx.coroutines.core)
     testImplementation(libs.junit)
-    testImplementation(libs.kotlinx.coroutines.core.jvm)
+    testImplementation(libs.kotlinx.coroutines.core)
 }

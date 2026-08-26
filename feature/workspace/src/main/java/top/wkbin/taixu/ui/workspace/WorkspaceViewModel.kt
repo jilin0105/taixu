@@ -6,6 +6,8 @@ import top.wkbin.taixu.runtime.WorkspaceFileItem
 import top.wkbin.taixu.runtime.WorkspaceManager
 import top.wkbin.taixu.runtime.WorkspaceProject
 import top.wkbin.taixu.runtime.WorkspaceStorage
+import top.wkbin.taixu.template.InstalledProjectTemplate
+import top.wkbin.taixu.template.ProjectTemplateStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import android.content.Context
@@ -28,7 +30,13 @@ class WorkspaceViewModel @Inject constructor(
     private val toolManager: top.wkbin.taixu.core.tools.ToolManager,
     private val linuxRuntime: top.wkbin.taixu.runtime.LinuxRuntime,
     private val workshopPreferences: top.wkbin.taixu.core.datastore.WorkshopPreferences,
+    private val projectTemplateStore: ProjectTemplateStore,
 ) : ViewModel() {
+
+    private val _projectTemplates = MutableStateFlow<List<InstalledProjectTemplate>>(emptyList())
+    val projectTemplates: StateFlow<List<InstalledProjectTemplate>> = _projectTemplates.asStateFlow()
+    private val _templateScriptPreview = MutableStateFlow<String?>(null)
+    val templateScriptPreview: StateFlow<String?> = _templateScriptPreview.asStateFlow()
 
     // ==================== 聚合开发套件与子组件状态 ====================
     val pluginBundles: List<top.wkbin.taixu.core.model.PluginBundle> = top.wkbin.taixu.core.model.BuiltinPluginBundles.bundles
@@ -55,6 +63,78 @@ class WorkspaceViewModel @Inject constructor(
 
     init {
         refreshInstalledStatus()
+        refreshProjectTemplates()
+    }
+
+    fun refreshProjectTemplates() {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            _projectTemplates.value = projectTemplateStore.list()
+        }
+    }
+
+    fun importProjectTemplate(uri: String) {
+        if (_busy.value) return
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            _busy.value = true
+            runCatching {
+                val input = requireNotNull(context.contentResolver.openInputStream(android.net.Uri.parse(uri))) {
+                    "无法读取模板文件"
+                }
+                input.use(projectTemplateStore::importZip)
+            }.onSuccess { template ->
+                refreshProjectTemplates()
+                _message.value = "模板已导入：${template.manifest.name}"
+            }.onFailure { error ->
+                _message.value = error.message ?: "模板导入失败"
+            }
+            _busy.value = false
+        }
+    }
+
+    fun exportProjectTemplate(id: String, uri: String) {
+        if (_busy.value) return
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            _busy.value = true
+            runCatching {
+                val output = requireNotNull(context.contentResolver.openOutputStream(android.net.Uri.parse(uri), "wt")) {
+                    "无法创建模板文件"
+                }
+                output.use { projectTemplateStore.exportZip(id, it) }
+            }.onSuccess {
+                _message.value = "模板已导出"
+            }.onFailure { error ->
+                _message.value = error.message ?: "模板导出失败"
+            }
+            _busy.value = false
+        }
+    }
+
+    fun deleteProjectTemplate(id: String) {
+        if (_busy.value) return
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            _busy.value = true
+            runCatching { projectTemplateStore.delete(id) }
+                .onSuccess {
+                    refreshProjectTemplates()
+                    _message.value = "模板已删除"
+                }
+                .onFailure { error -> _message.value = error.message ?: "模板删除失败" }
+            _busy.value = false
+        }
+    }
+
+    fun showTemplateScripts(id: String) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            _templateScriptPreview.value = runCatching {
+                projectTemplateStore.hookScripts(id).joinToString("\n\n") { (path, script) ->
+                    "===== $path =====\n$script"
+                }.ifBlank { "该模板没有构造脚本" }
+            }.getOrElse { error -> "读取脚本失败：${error.message.orEmpty()}" }
+        }
+    }
+
+    fun dismissTemplateScripts() {
+        _templateScriptPreview.value = null
     }
 
     fun refreshInstalledStatus() {
@@ -229,11 +309,26 @@ class WorkspaceViewModel @Inject constructor(
         apkSource: top.wkbin.taixu.runtime.ApkImportSource? = null,
         exportApkToDownload: Boolean = false,
         gitUrl: String = "",
+        templateVariables: Map<String, String> = emptyMap(),
+        templateId: String = "",
+        trustTemplateScripts: Boolean = false,
     ) {
         if (_busy.value) return
         viewModelScope.launch {
             _busy.value = true
-            val result = workspaceManager.createProject(name, storage, directoryPath, template, packageName, apkSource, exportApkToDownload, gitUrl)
+            val result = workspaceManager.createProject(
+                name,
+                storage,
+                directoryPath,
+                template,
+                packageName,
+                apkSource,
+                exportApkToDownload,
+                gitUrl,
+                templateVariables,
+                templateId,
+                trustTemplateScripts,
+            )
             _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_project_created)
             if (result.isSuccess) workspaceManager.listProjects()
             _busy.value = false

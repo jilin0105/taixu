@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.flutter",
+  "name": "Flutter",
+  "version": "1.0.0",
+  "description": "ARM64 Flutter application starter",
+  "projectType": "FLUTTER",
+  "category": { "id": "starter", "name": "Starter", "sortOrder": 0 },
+  "previewImage": "",
+  "variables": [
+    { "name": "projectName", "label": "Project name" },
+    { "name": "appName", "label": "App name" },
+    { "name": "flutterProjectName", "label": "Dart package name" },
+    { "name": "packageName", "label": "Android package name", "prompt": true, "inputType": "TEXT", "placeholder": "com.example.myapp", "validationRegex": "^[a-zA-Z_][\\w]*(\\.[a-zA-Z_][\\w]*)+$" },
+    { "name": "packagePath", "label": "Package path" }
+  ]
+}

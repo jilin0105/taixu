@@ -3,6 +3,7 @@ package top.wkbin.taixu.ui.workspace
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 
 import android.Manifest
+import android.graphics.BitmapFactory
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -15,9 +16,11 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -65,7 +68,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -109,8 +115,31 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import top.wkbin.taixu.runtime.build.StepDuration
+import top.wkbin.taixu.template.TemplateProjectType
+import top.wkbin.taixu.template.ProjectTemplatePreviewDevice
+import top.wkbin.taixu.template.InstalledProjectTemplate
 
 private enum class ProjectImportMode { LOCAL, GITHUB }
+private enum class CreateProjectStep { PROJECT_TYPE, TEMPLATE, DETAILS }
+
+@Composable
+private fun TemplatePreviewImage(file: java.io.File, modifier: Modifier = Modifier) {
+    val bitmap = remember(file.absolutePath, file.lastModified()) {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        var sample = 1
+        while (bounds.outWidth / sample > 512 || bounds.outHeight / sample > 512) sample *= 2
+        BitmapFactory.decodeFile(file.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })
+    }
+    bitmap?.let {
+        Image(
+            bitmap = it.asImageBitmap(),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = modifier,
+        )
+    }
+}
 
 /**
  * 太墟 · 工坊空间 (Workspace Space)
@@ -219,6 +248,7 @@ fun WorkspaceScreen(
 ) {
     val projects by viewModel.projects.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
+    val runtimeReady by viewModel.runtimeReady.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val buildProgress by viewModel.buildProgress.collectAsStateWithLifecycle()
     val activeBuildingProjectName by viewModel.activeBuildingProjectName.collectAsStateWithLifecycle()
@@ -226,13 +256,23 @@ fun WorkspaceScreen(
     val installedComponentIds by viewModel.installedComponentIds.collectAsStateWithLifecycle()
     val keystores by viewModel.keystores.collectAsStateWithLifecycle()
     val loadingProjects by viewModel.loadingProjects.collectAsStateWithLifecycle()
+    val projectTemplates by viewModel.projectTemplates.collectAsStateWithLifecycle()
+    val templateScriptPreview by viewModel.templateScriptPreview.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val isTabletWindow = LocalConfiguration.current.screenWidthDp >= 600
     var showCreate by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
+    var showTemplateManager by remember { mutableStateOf(false) }
+    var showTemplateSpec by remember { mutableStateOf(false) }
     var actionsExpanded by remember { mutableStateOf(false) }
-    var selectedTemplate by remember { mutableStateOf(top.wkbin.taixu.runtime.ProjectTemplate.ANDROID_COMPOSE) }
+    var selectedTemplate by remember { mutableStateOf(top.wkbin.taixu.runtime.ProjectTemplate.EMPTY) }
+    var createProjectStep by remember { mutableStateOf(CreateProjectStep.PROJECT_TYPE) }
+    var selectedProjectType by remember { mutableStateOf<TemplateProjectType?>(null) }
+    var selectedTemplateId by remember { mutableStateOf<String?>(null) }
     var projectName by remember { mutableStateOf("") }
     var packageName by remember { mutableStateOf("") }
+    var templateVariableValues by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var trustTemplateScripts by remember { mutableStateOf(false) }
     var projectStorage by remember { mutableStateOf(WorkspaceStorage.INTERNAL) }
     var directoryPath by remember { mutableStateOf("") }
     var internalDirectoryMenuExpanded by remember { mutableStateOf(false) }
@@ -251,6 +291,8 @@ fun WorkspaceScreen(
     var gitTransport by remember { mutableStateOf(GitTransport.HTTP) }
     var pendingExportProject by remember { mutableStateOf<WorkspaceProject?>(null) }
     var buildConfigTarget by remember { mutableStateOf<WorkspaceProject?>(null) }
+    var pendingExportTemplateId by remember { mutableStateOf<String?>(null) }
+    var deleteTemplateTarget by remember { mutableStateOf<InstalledProjectTemplate?>(null) }
 
     val legacyStoragePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         permissionRefresh++
@@ -284,6 +326,21 @@ fun WorkspaceScreen(
                 }
             }
         }
+    }
+    val templateImportPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            viewModel.importProjectTemplate(uri.toString())
+        }
+    }
+    val templateExportPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri ->
+        val templateId = pendingExportTemplateId
+        pendingExportTemplateId = null
+        if (uri != null && templateId != null) viewModel.exportProjectTemplate(templateId, uri.toString())
     }
     val exportDirectoryPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         val project = pendingExportProject
@@ -333,6 +390,7 @@ fun WorkspaceScreen(
                     DropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }) {
                         DropdownMenuItem(text = { Text("创建") }, leadingIcon = { RuntimeIcon(RuntimeIconName.Plus, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; showCreate = true })
                         DropdownMenuItem(text = { Text("导入") }, leadingIcon = { RuntimeIcon(RuntimeIconName.FolderDownload, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; showImport = true })
+                        DropdownMenuItem(text = { Text("模板管理") }, leadingIcon = { RuntimeIcon(RuntimeIconName.Package, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; showTemplateManager = true })
                         DropdownMenuItem(text = { Text("插件") }, leadingIcon = { RuntimeIcon(RuntimeIconName.Package, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; onOpenToolCenter() })
                         DropdownMenuItem(text = { Text("工坊设置") }, leadingIcon = { RuntimeIcon(RuntimeIconName.Settings, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; onOpenWorkshopSettings() })
                     }
@@ -919,6 +977,62 @@ fun WorkspaceScreen(
         )
     }
 
+    if (showTemplateManager) {
+        TemplateManagerDialog(
+            templates = projectTemplates,
+            busy = busy,
+            onDismiss = { showTemplateManager = false },
+            onImport = { templateImportPicker.launch(arrayOf("application/zip", "application/octet-stream")) },
+            onExport = { template ->
+                pendingExportTemplateId = template.manifest.id
+                templateExportPicker.launch("${template.manifest.id}.zip")
+            },
+            onDelete = {
+                showTemplateManager = false
+                deleteTemplateTarget = it
+            },
+            onShowSpec = {
+                showTemplateManager = false
+                showTemplateSpec = true
+            },
+        )
+    }
+
+    if (showTemplateSpec) {
+        ProjectTemplateSpecDialog(onDismiss = { showTemplateSpec = false })
+    }
+
+    templateScriptPreview?.let { preview ->
+        RuntimeAlertDialog(
+            onDismissRequest = viewModel::dismissTemplateScripts,
+            title = { Text("模板构造脚本", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    preview,
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            },
+            confirmButton = { TextButton(onClick = viewModel::dismissTemplateScripts) { Text("关闭") } },
+        )
+    }
+
+    deleteTemplateTarget?.let { template ->
+        RuntimeAlertDialog(
+            onDismissRequest = { deleteTemplateTarget = null },
+            title = { Text("删除模板") },
+            text = { Text("确定删除“${template.manifest.name}”吗？模板文件会从本机移除。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteProjectTemplate(template.manifest.id)
+                    deleteTemplateTarget = null
+                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { deleteTemplateTarget = null }) { Text("取消") } },
+        )
+    }
+
     if (showCreate) {
         RuntimeAlertDialog(
             onDismissRequest = {
@@ -929,39 +1043,149 @@ fun WorkspaceScreen(
                 projectStorage = WorkspaceStorage.INTERNAL
                 apkSource = null
                 exportApkToDownload = false
+                createProjectStep = CreateProjectStep.PROJECT_TYPE
+                selectedProjectType = null
+                selectedTemplateId = null
+                trustTemplateScripts = false
             },
             title = { Text(stringResource(R.string.workspace_new_project), fontWeight = FontWeight.Bold) },
             text = {
                 Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    modifier = Modifier
+                        .verticalScroll(rememberScrollState())
+                        .heightIn(min = 260.dp, max = 420.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text(stringResource(R.string.workspace_choose_template), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    // 模板选择 Chips（FlowRow 自动换行，避免挤压）
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        listOf(
-                            top.wkbin.taixu.runtime.ProjectTemplate.ANDROID_COMPOSE to ("Android" to RuntimeIconName.Android),
-                            top.wkbin.taixu.runtime.ProjectTemplate.FLUTTER to ("Flutter" to RuntimeIconName.Flutter),
-                            top.wkbin.taixu.runtime.ProjectTemplate.APK_REVERSE to (stringResource(R.string.workspace_template_reverse) to RuntimeIconName.Reverse),
-                            top.wkbin.taixu.runtime.ProjectTemplate.EMPTY to (stringResource(R.string.workspace_template_empty) to RuntimeIconName.Code),
-                        ).forEach { (tmpl, pair) ->
-                            val (label, icon) = pair
-                            FilterChip(
-                                selected = selectedTemplate == tmpl,
-                                onClick = {
-                                    selectedTemplate = tmpl
-                                    if (projectName.isNotBlank() && packageName.isBlank()) {
-                                        packageName = "com.example.${projectName.lowercase().filter { it.isLetterOrDigit() }}"
+                    when (createProjectStep) {
+                        CreateProjectStep.PROJECT_TYPE -> {
+                            Text("选择项目类型", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text("先选择要创建的项目平台", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            val projectTypes = projectTemplates.map { it.manifest.projectType }.distinct()
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                projectTypes.chunked(2).forEach { rowTypes ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    ) {
+                                        rowTypes.forEach { type ->
+                                            RuntimeCard(
+                                                onClick = {
+                                                    selectedProjectType = type
+                                                    selectedTemplateId = null
+                                                },
+                                                modifier = Modifier.weight(1f),
+                                                containerColor = if (selectedProjectType == type) {
+                                                    MaterialTheme.colorScheme.primaryContainer
+                                                } else {
+                                                    MaterialTheme.colorScheme.surfaceContainer
+                                                },
+                                            ) {
+                                                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+                                                    RuntimeIcon(
+                                                        when (type) {
+                                                            TemplateProjectType.ANDROID -> RuntimeIconName.Android
+                                                            TemplateProjectType.FLUTTER -> RuntimeIconName.Flutter
+                                                            TemplateProjectType.GENERAL -> RuntimeIconName.Code
+                                                        },
+                                                        Modifier.size(36.dp),
+                                                        MaterialTheme.colorScheme.primary,
+                                                    )
+                                                    Spacer(Modifier.height(8.dp))
+                                                    Text(type.name.lowercase().replaceFirstChar { it.uppercase() }, fontWeight = FontWeight.SemiBold)
+                                                }
+                                            }
+                                        }
+                                        repeat(2 - rowTypes.size) {
+                                            Spacer(Modifier.weight(1f))
+                                        }
                                     }
-                                },
-                                leadingIcon = { RuntimeIcon(icon, Modifier.size(16.dp)) },
-                                label = { Text(label, style = MaterialTheme.typography.labelSmall) },
-                            )
+                                }
+                            }
                         }
-                    }
+
+                        CreateProjectStep.TEMPLATE -> {
+                            Text("选择模板", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text("选择一个具体模板后继续", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            val filteredTemplates = projectTemplates.filter { it.manifest.projectType == selectedProjectType }
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                filteredTemplates.groupBy { it.manifest.category }.forEach { (category, templates) ->
+                                    if (filteredTemplates.map { it.manifest.category.id }.distinct().size > 1) {
+                                        Text(category.name, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                                    }
+                                    templates.chunked(2).forEach { rowTemplates ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        ) {
+                                            rowTemplates.forEach { template ->
+                                                val selected = selectedTemplateId == template.manifest.id
+                                                RuntimeCard(
+                                                    onClick = {
+                                                        selectedTemplateId = template.manifest.id
+                                                        trustTemplateScripts = false
+                                                        // 标准模板一律通过 manifest id 创建，避免 UI 依赖内置模板枚举。
+                                                        selectedTemplate = top.wkbin.taixu.runtime.ProjectTemplate.EMPTY
+                                                        templateVariableValues = template.manifest.variables
+                                                            .filter { it.prompt }
+                                                            .associate { variable ->
+                                                                variable.name to when {
+                                                                    variable.defaultValue.isNotBlank() -> variable.defaultValue
+                                                                    variable.inputType == top.wkbin.taixu.template.ProjectTemplateInputType.BOOLEAN -> "false"
+                                                                    variable.inputType == top.wkbin.taixu.template.ProjectTemplateInputType.SELECT && variable.required ->
+                                                                        variable.options.firstOrNull()?.value.orEmpty()
+                                                                    else -> ""
+                                                                }
+                                                            }
+                                                    },
+                                                    modifier = Modifier.weight(1f),
+                                                    containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+                                                ) {
+                                                    Surface(
+                                                        modifier = Modifier.fillMaxWidth().height(96.dp),
+                                                        shape = RoundedCornerShape(12.dp),
+                                                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                                    ) {
+                                                        Box(contentAlignment = Alignment.Center) {
+                                                            val previewFile = if (isTabletWindow) {
+                                                                template.previewFiles[ProjectTemplatePreviewDevice.TABLET] ?: template.previewFile
+                                                            } else {
+                                                                template.previewFiles[ProjectTemplatePreviewDevice.PHONE] ?: template.previewFile
+                                                            }
+                                                            if (previewFile != null) {
+                                                                TemplatePreviewImage(previewFile, Modifier.fillMaxSize())
+                                                            } else {
+                                                                RuntimeIcon(
+                                                                    when (template.manifest.projectType) {
+                                                                        TemplateProjectType.ANDROID -> RuntimeIconName.Android
+                                                                        TemplateProjectType.FLUTTER -> RuntimeIconName.Flutter
+                                                                        TemplateProjectType.GENERAL -> RuntimeIconName.Code
+                                                                    },
+                                                                    Modifier.size(42.dp),
+                                                                    MaterialTheme.colorScheme.primary,
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                    Spacer(Modifier.height(8.dp))
+                                                    Text(
+                                                        template.manifest.name,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        modifier = Modifier.padding(horizontal = 4.dp).padding(bottom = 4.dp),
+                                                    )
+                                                }
+                                            }
+                                            repeat(2 - rowTemplates.size) {
+                                                Spacer(Modifier.weight(1f))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        CreateProjectStep.DETAILS -> {
 
                     OutlinedTextField(
                         value = projectName,
@@ -976,19 +1200,6 @@ fun WorkspaceScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
-
-                    if (selectedTemplate == top.wkbin.taixu.runtime.ProjectTemplate.ANDROID_COMPOSE ||
-                        selectedTemplate == top.wkbin.taixu.runtime.ProjectTemplate.FLUTTER
-                    ) {
-                        OutlinedTextField(
-                            value = packageName,
-                            onValueChange = { packageName = it },
-                            label = { Text(stringResource(R.string.workspace_package_name)) },
-                            placeholder = { Text("com.example.myapp") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
 
                     // ============ APK 逆向模板：选择安装包来源 ============
                     if (selectedTemplate == top.wkbin.taixu.runtime.ProjectTemplate.APK_REVERSE) {
@@ -1031,7 +1242,6 @@ fun WorkspaceScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         // 逆向工具链就绪状态：避免"建好工程却发现 jadx/apktool 缺失"
-                        val runtimeReady by viewModel.runtimeReady.collectAsStateWithLifecycle()
                         val reverseToolReady = "android-re" in installedComponentIds && runtimeReady
                         val statusSurfaceColor = when {
                             reverseToolReady -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
@@ -1263,43 +1473,134 @@ fun WorkspaceScreen(
                         fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.primary,
                     )
+                    val selectedManifest = projectTemplates.firstOrNull { it.manifest.id == selectedTemplateId }?.manifest
+                    if (selectedManifest != null) {
+                        TemplateVariableFields(
+                            variables = selectedManifest.variables,
+                            values = templateVariableValues + ("packageName" to packageName),
+                            onValueChange = { name, value ->
+                                if (name == "packageName") packageName = value
+                                else templateVariableValues = templateVariableValues + (name to value)
+                            },
+                        )
+                        val hasTemplateScripts = selectedManifest.hooks.beforeCreate.isNotBlank() ||
+                            selectedManifest.hooks.afterCreate.isNotBlank()
+                        if (hasTemplateScripts) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .clickable { trustTemplateScripts = !trustTemplateScripts }
+                                        .padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Checkbox(checked = trustTemplateScripts, onCheckedChange = { trustTemplateScripts = it })
+                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text("允许执行模板构造脚本", fontWeight = FontWeight.SemiBold)
+                                        Text(
+                                            if (runtimeReady) {
+                                                "脚本会在 Linux 沙箱中运行，工作目录仅为新工程；最长运行 60 秒。仅信任来源可靠的模板。"
+                                            } else {
+                                                "Linux 沙箱尚未初始化，初始化后才能执行该模板的构造脚本。"
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                        )
+                                        TextButton(onClick = {
+                                            selectedTemplateId?.let(viewModel::showTemplateScripts)
+                                        }) { Text("查看脚本内容") }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                        }
+                    }
                 }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.create(
-                            name = projectName,
-                            storage = projectStorage,
-                            directoryPath = directoryPath,
-                            template = selectedTemplate,
-                            packageName = packageName,
-                            apkSource = apkSource,
-                            exportApkToDownload = exportApkToDownload,
-                        )
-                        projectName = ""
-                        packageName = ""
-                        directoryPath = ""
-                        projectStorage = WorkspaceStorage.INTERNAL
-                        apkSource = null
-                        exportApkToDownload = false
-                        showCreate = false
+                        when (createProjectStep) {
+                            CreateProjectStep.PROJECT_TYPE -> createProjectStep = CreateProjectStep.TEMPLATE
+                            CreateProjectStep.TEMPLATE -> createProjectStep = CreateProjectStep.DETAILS
+                            CreateProjectStep.DETAILS -> {
+                                viewModel.create(
+                                    name = projectName,
+                                    storage = projectStorage,
+                                    directoryPath = directoryPath,
+                                    template = selectedTemplate,
+                                    packageName = packageName,
+                                    apkSource = apkSource,
+                                    exportApkToDownload = exportApkToDownload,
+                                    templateVariables = templateVariableValues + ("packageName" to packageName),
+                                    templateId = selectedTemplateId.orEmpty(),
+                                    trustTemplateScripts = trustTemplateScripts,
+                                )
+                                projectName = ""
+                                packageName = ""
+                                templateVariableValues = emptyMap()
+                                directoryPath = ""
+                                projectStorage = WorkspaceStorage.INTERNAL
+                                apkSource = null
+                                exportApkToDownload = false
+                                createProjectStep = CreateProjectStep.PROJECT_TYPE
+                                selectedProjectType = null
+                                selectedTemplateId = null
+                                trustTemplateScripts = false
+                                showCreate = false
+                            }
+                        }
                     },
-                    enabled = projectName.isNotBlank() && !busy &&
-                        (projectStorage != WorkspaceStorage.SHARED || sharedAccessGranted) &&
-                        (selectedTemplate != top.wkbin.taixu.runtime.ProjectTemplate.APK_REVERSE || apkSource != null),
-                ) { Text(stringResource(R.string.workspace_create), color = MaterialTheme.colorScheme.primary) }
+                    enabled = when (createProjectStep) {
+                        CreateProjectStep.PROJECT_TYPE -> selectedProjectType != null
+                        CreateProjectStep.TEMPLATE -> selectedTemplateId != null
+                        CreateProjectStep.DETAILS -> projectName.isNotBlank() && !busy &&
+                            (projectStorage != WorkspaceStorage.SHARED || sharedAccessGranted) &&
+                            run {
+                                val variables = projectTemplates.firstOrNull { it.manifest.id == selectedTemplateId }
+                                    ?.manifest?.variables.orEmpty().filter { it.prompt }
+                                val values = templateVariableValues + ("packageName" to packageName)
+                                val manifest = projectTemplates.firstOrNull { it.manifest.id == selectedTemplateId }?.manifest
+                                val hasScripts = manifest != null &&
+                                    (manifest.hooks.beforeCreate.isNotBlank() || manifest.hooks.afterCreate.isNotBlank())
+                                val scriptsReady = !hasScripts || (trustTemplateScripts && runtimeReady)
+                                scriptsReady && variables.none {
+                                    templateVariableError(it, values[it.name] ?: it.defaultValue) != null
+                                }
+                            }
+                    },
+                ) {
+                    Text(
+                        if (createProjectStep == CreateProjectStep.DETAILS) stringResource(R.string.workspace_create) else "下一步",
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
             },
             dismissButton = {
                 TextButton(onClick = {
-                    showCreate = false
-                    projectName = ""
-                    packageName = ""
-                    directoryPath = ""
-                    projectStorage = WorkspaceStorage.INTERNAL
-                    apkSource = null
-                    exportApkToDownload = false
-                }) { Text(stringResource(R.string.workspace_cancel)) }
+                    when (createProjectStep) {
+                        CreateProjectStep.PROJECT_TYPE -> {
+                            showCreate = false
+                            projectName = ""
+                            packageName = ""
+                            templateVariableValues = emptyMap()
+                            directoryPath = ""
+                            projectStorage = WorkspaceStorage.INTERNAL
+                            selectedProjectType = null
+                            selectedTemplateId = null
+                            trustTemplateScripts = false
+                        }
+                        CreateProjectStep.TEMPLATE -> createProjectStep = CreateProjectStep.PROJECT_TYPE
+                        CreateProjectStep.DETAILS -> createProjectStep = CreateProjectStep.TEMPLATE
+                    }
+                }) {
+                    Text(if (createProjectStep == CreateProjectStep.PROJECT_TYPE) stringResource(R.string.workspace_cancel) else "上一步")
+                }
             },
         )
     }
@@ -1583,6 +1884,132 @@ fun WorkspaceScreen(
 }
 
 @Composable
+private fun TemplateManagerDialog(
+    templates: List<InstalledProjectTemplate>,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onImport: () -> Unit,
+    onExport: (InstalledProjectTemplate) -> Unit,
+    onDelete: (InstalledProjectTemplate) -> Unit,
+    onShowSpec: () -> Unit,
+) {
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("模板管理", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onImport, enabled = !busy, modifier = Modifier.weight(1f)) {
+                        Text("导入 ZIP")
+                    }
+                    OutlinedButton(onClick = onShowSpec, modifier = Modifier.weight(1f)) {
+                        Text("制作规范")
+                    }
+                }
+                templates.groupBy { it.manifest.projectType }.forEach { (type, typeTemplates) ->
+                    Text(
+                        type.name.lowercase().replaceFirstChar { it.uppercase() },
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    typeTemplates.forEach { template ->
+                        RuntimeCard(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Surface(
+                                    modifier = Modifier.width(48.dp).height(72.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                ) {
+                                    template.previewFile?.let { TemplatePreviewImage(it, Modifier.fillMaxSize()) }
+                                }
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(template.manifest.name, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                    Text(
+                                        "${template.manifest.category.name} · ${if (template.isBundled) "内置" else "用户导入"}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Text(
+                                        template.manifest.id,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                TextButton(onClick = { onExport(template) }, enabled = !busy) { Text("导出") }
+                                if (!template.isBundled) {
+                                    IconButton(onClick = { onDelete(template) }, enabled = !busy) {
+                                        RuntimeIcon(RuntimeIconName.Trash, Modifier.size(18.dp), MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("完成") } },
+    )
+}
+
+@Composable
+private fun ProjectTemplateSpecDialog(onDismiss: () -> Unit) {
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("模板制作规范 v1", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text("把完整模板目录压缩成 ZIP。ZIP 根目录可以直接放 template.json，也可以只包含一个模板文件夹。")
+                Text("最小结构", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "template.json\npreview-phone.png\n项目文件或 *.template\ntemplate-hooks/（可选）",
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text("清单要求", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "id 只能使用小写字母、数字、点、下划线和短横线；builtin. 为系统保留前缀。" +
+                        " projectType 支持 ANDROID、FLUTTER、GENERAL。category 用于模板分组。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text("变量与文件", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "项目名称和创建路径由工坊统一填写。模板通过 variables 声明动态字段，支持 TEXT、MULTILINE、NUMBER、BOOLEAN、SELECT、SECRET。" +
+                        "文件内容和路径可使用 {{variableName}}；任意文本文件都可添加 .template 后缀，生成时会移除该后缀。" +
+                        "包目录可使用 __PACKAGE_PATH__。隐藏必填变量必须有默认值，系统派生变量除外。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text("预览图", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "支持 PNG、JPEG、WebP、GIF，单图不超过 4 MiB，每条边 128–4096 px，总像素不超过 1200 万。" +
+                        "手机推荐 9:16、270×480；平板横屏推荐 4:3、640×480；平板竖屏推荐 3:4、480×640。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text("构造脚本", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "beforeCreate 和 afterCreate 必须指向 template-hooks/ 下的脚本。脚本只有在用户创建工程时明确授权才会执行，" +
+                        "运行于 Linux 沙箱的新工程目录，最长 60 秒。变量通过 TAIXU_VAR_<大写变量名> 环境变量传入，工程路径为 TAIXU_PROJECT_DIR。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text("可先导出任意内置模板作为完整样例；导入前需要修改 id，并移除保留的 builtin. 前缀。", color = MaterialTheme.colorScheme.primary)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("知道了") } },
+    )
+}
+
+@Composable
 private fun BuildTypePickerDialog(
     project: WorkspaceProject,
     keystores: List<top.wkbin.taixu.core.datastore.WorkshopKeystore>,
@@ -1690,17 +2117,17 @@ private fun ProjectCard(
     var moreExpanded by remember { mutableStateOf(false) }
 
     val typeBadgeColor = when (project.projectType) {
-        top.wkbin.taixu.runtime.ProjectType.ANDROID -> androidx.compose.ui.graphics.Color(0xFF2E7D32)
-        top.wkbin.taixu.runtime.ProjectType.FLUTTER -> androidx.compose.ui.graphics.Color(0xFF0288D1)
-        top.wkbin.taixu.runtime.ProjectType.REVERSE -> androidx.compose.ui.graphics.Color(0xFF6A1B9A)
-        top.wkbin.taixu.runtime.ProjectType.GENERAL -> MaterialTheme.colorScheme.primary
+        ProjectType.ANDROID -> androidx.compose.ui.graphics.Color(0xFF2E7D32)
+        ProjectType.FLUTTER -> androidx.compose.ui.graphics.Color(0xFF0288D1)
+        ProjectType.REVERSE -> androidx.compose.ui.graphics.Color(0xFF6A1B9A)
+        ProjectType.GENERAL -> MaterialTheme.colorScheme.primary
     }
 
     val typeIcon = when (project.projectType) {
-        top.wkbin.taixu.runtime.ProjectType.ANDROID -> RuntimeIconName.Android
-        top.wkbin.taixu.runtime.ProjectType.FLUTTER -> RuntimeIconName.Flutter
-        top.wkbin.taixu.runtime.ProjectType.REVERSE -> RuntimeIconName.Reverse
-        top.wkbin.taixu.runtime.ProjectType.GENERAL -> RuntimeIconName.Code
+        ProjectType.ANDROID -> RuntimeIconName.Android
+        ProjectType.FLUTTER -> RuntimeIconName.Flutter
+        ProjectType.REVERSE -> RuntimeIconName.Reverse
+        ProjectType.GENERAL -> RuntimeIconName.Code
     }
 
     RuntimeCard(

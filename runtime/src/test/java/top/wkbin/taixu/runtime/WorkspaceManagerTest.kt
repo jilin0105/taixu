@@ -5,6 +5,7 @@ import android.content.pm.ApplicationInfo
 import top.wkbin.taixu.core.database.WorkspaceRepository
 import top.wkbin.taixu.core.database.WorkspaceEntity
 import top.wkbin.taixu.runtime.rootfs.RootfsValidator
+import top.wkbin.taixu.template.ProjectTemplateEngine
 import java.io.File
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -37,9 +38,10 @@ class WorkspaceManagerTest {
         val validator = RootfsValidator(ElfInspector())
         val context = TestContext(root)
         pathManager = RuntimePathManager(context, validator)
+        copyProjectTemplates(pathManager.baseDir)
         workspaceDir = pathManager.workspaceDir.apply { mkdirs() }
         workspaceDao = FakeWorkspaceDao()
-        manager = WorkspaceManager(pathManager, workspaceDao)
+        manager = WorkspaceManager(pathManager, workspaceDao, ProjectTemplateEngine(context))
     }
 
     private fun runTest(block: suspend () -> Unit) = runBlocking { block() }
@@ -49,6 +51,7 @@ class WorkspaceManagerTest {
         val proj = manager.createProject("demo").getOrNull()
         assertTrue(proj != null)
         assertEquals("demo", proj?.name)
+        assertEquals("/workspace/demo", proj?.linuxPath)
 
         // 创建文件并写入
         val createRes = manager.createFile("demo", "main.py")
@@ -184,6 +187,55 @@ class WorkspaceManagerTest {
     }
 
     @Test
+    fun androidNoActivityTemplateHasNoLauncherOrActivitySource() = runTest {
+        val result = manager.createProject(
+            name = "android-no-activity",
+            template = ProjectTemplate.ANDROID_NO_ACTIVITY,
+            packageName = "com.example.noactivity",
+        )
+
+        assertTrue(result.isSuccess)
+        val project = File(workspaceDir, "android-no-activity")
+        assertTrue(project.resolve("app/build.gradle.kts").isFile)
+        assertFalse(project.resolve("app/src/main/java/com/example/noactivity/MainActivity.kt").exists())
+        assertFalse(project.resolve("app/src/main/AndroidManifest.xml").readText().contains("<activity"))
+    }
+
+    @Test
+    fun promptedTemplateVariableIsValidatedAndExpanded() = runTest {
+        val template = File(pathManager.baseDir, "templates/android/jetpack-compose")
+        val manifest = template.resolve("template.json")
+        manifest.writeText(
+            manifest.readText().replace(
+                "\"variables\": [",
+                "\"variables\": [{\"name\":\"screenTitle\",\"label\":\"Screen title\",\"prompt\":true},",
+            ),
+        )
+        val launcherTemplate = template.resolve("app/src/main/java/MainActivity.kt.template")
+        launcherTemplate.appendText("\n// {{screenTitle}}\n")
+
+        val missing = manager.createProject(
+            name = "missing-variable",
+            template = ProjectTemplate.ANDROID_COMPOSE,
+            packageName = "com.example.missingvariable",
+        )
+        assertFalse(missing.isSuccess)
+
+        val result = manager.createProject(
+            name = "custom-variable",
+            template = ProjectTemplate.ANDROID_COMPOSE,
+            packageName = "com.example.customvariable",
+            templateVariables = mapOf("screenTitle" to "Dashboard"),
+        )
+        assertTrue(result.isSuccess)
+        val launcher = File(
+            workspaceDir,
+            "custom-variable/app/src/main/java/com/example/customvariable/MainActivity.kt",
+        )
+        assertTrue(launcher.readText().contains("// Dashboard"))
+    }
+
+    @Test
     fun projectArchiveImportFlattensSingleWrapperDirectory() {
         val archive = zipOf(
             "repository-main/settings.gradle.kts" to "rootProject.name = \"Imported\"",
@@ -222,6 +274,13 @@ class WorkspaceManagerTest {
             }
         }
         return bytes.toByteArray()
+    }
+
+    private fun copyProjectTemplates(baseDir: File) {
+        val source = File("../project-template/src/main/assets/templates").takeIf(File::isDirectory)
+            ?: File("project-template/src/main/assets/templates").takeIf(File::isDirectory)
+            ?: error("Test project templates not found")
+        source.copyRecursively(File(baseDir, "templates"), overwrite = true)
     }
 
     private class TestContext(private val baseDir: File) : ContextWrapper(null) {

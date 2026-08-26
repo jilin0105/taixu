@@ -39,7 +39,7 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.androidx.room.runtime)
     implementation(libs.okhttp)
-    implementation(libs.kotlinx.serialization.json.jvm)
-    implementation(libs.kotlinx.coroutines.core.jvm)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.kotlinx.coroutines.core)
     implementation(libs.xz)
 }

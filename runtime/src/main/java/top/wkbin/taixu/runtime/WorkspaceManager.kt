@@ -12,8 +12,10 @@ import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.common.result.ErrorCode
 import top.wkbin.taixu.core.database.WorkspaceRepository
 import top.wkbin.taixu.core.database.WorkspaceEntity
+import top.wkbin.taixu.template.ProjectTemplateEngine
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import java.io.File
+import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -58,6 +60,8 @@ data class ProjectArchiveSource(
 enum class ProjectTemplate {
     EMPTY,
     ANDROID_COMPOSE,
+    ANDROID_NO_ACTIVITY,
+    ANDROID_XPOSED,
     FLUTTER,
     APK_REVERSE,
     GIT_IMPORT;
@@ -65,7 +69,9 @@ enum class ProjectTemplate {
     val displayName: String
         get() = when (this) {
             EMPTY -> "空工程 (Empty)"
-            ANDROID_COMPOSE -> "Android (Jetpack Compose)"
+            ANDROID_COMPOSE -> "Jetpack Compose"
+            ANDROID_NO_ACTIVITY -> "No Activity"
+            ANDROID_XPOSED -> "Xposed"
             FLUTTER -> "Flutter 跨平台"
             APK_REVERSE -> "APK 逆向"
             GIT_IMPORT -> "从 Git 导入"
@@ -124,15 +130,19 @@ class WorkspaceManager @Inject constructor(
     private val workspaceDao: WorkspaceRepository,
     private val fileService: WorkspaceFileService,
     private val linuxRuntime: dagger.Lazy<LinuxRuntime>,
+    private val projectTemplateEngine: ProjectTemplateEngine,
 ) {
-    constructor(pathManager: RuntimePathManager, workspaceDao: WorkspaceRepository) : this(
+    constructor(
+        pathManager: RuntimePathManager,
+        workspaceDao: WorkspaceRepository,
+        projectTemplateEngine: ProjectTemplateEngine,
+    ) : this(
         ContextWrapper(null),
         pathManager,
         workspaceDao,
         WorkspaceFileService(pathManager, workspaceDao),
-        object : dagger.Lazy<LinuxRuntime> {
-            override fun get(): LinuxRuntime = error("Linux runtime is unavailable in this test constructor")
-        },
+        dagger.Lazy<LinuxRuntime> { error("Linux runtime is unavailable in this test constructor") },
+        projectTemplateEngine,
     )
     fun observeProjects(): Flow<List<WorkspaceProject>> = workspaceDao.observeAll().map { entities ->
         val projectPaths = entities.mapNotNull { runCatching { File(it.path).canonicalPath }.getOrNull() }.toSet()
@@ -147,8 +157,8 @@ class WorkspaceManager @Inject constructor(
 
     suspend fun listProjects(): List<WorkspaceProject> = withContext(Dispatchers.IO) {
         pathManager.workspaceDir.mkdirs()
-        // 自动播种内置开箱即用示例工程 (android-demo, flutter-demo)
-        top.wkbin.taixu.runtime.samples.WorkspaceSampleSeeder.ensureBuiltinSamples(context, pathManager.workspaceDir, workspaceDao)
+        // 自动播种内置开箱即用示例工程，直接复用项目模板文件
+        ensureBuiltinSamples()
         // 目录为准；缺失的目录从 Room 补录
         val known = workspaceDao.listAll().associateBy { it.name }
         val knownPaths = known.values.mapNotNull { runCatching { File(it.path).canonicalPath }.getOrNull() }.toSet()
@@ -179,6 +189,63 @@ class WorkspaceManager @Inject constructor(
             .mapNotNull(::projectFromEntity)
     }
 
+    /**
+     * 首次启动或工作区为空时，基于内置项目模板播种两套开箱即用示例工程：
+     *  - `android-demo`：Jetpack Compose 基础示例
+     *  - `flutter-demo`：Flutter 跨平台示例
+     *
+     * 直接复用 [ProjectTemplateEngine] 物化模板文件，与用户手动从模板创建工程
+     * 的产物完全一致，避免在 Kotlin 源码里硬编码模板内容。
+     */
+    private suspend fun ensureBuiltinSamples() {
+        runCatching {
+            pathManager.workspaceDir.mkdirs()
+            seedSampleProject(
+                dirName = "android-demo",
+                templateId = ProjectTemplateEngine.ANDROID_COMPOSE_ID,
+                values = mapOf(
+                    "projectName" to "android-demo",
+                    "appName" to "TaiXu Android Demo",
+                    "packageName" to "com.example.taixudemo",
+                    "packagePath" to "com/example/taixudemo",
+                ),
+            )
+            seedSampleProject(
+                dirName = "flutter-demo",
+                templateId = ProjectTemplateEngine.FLUTTER_ID,
+                values = mapOf(
+                    "projectName" to "flutter-demo",
+                    "appName" to "TaiXu Flutter Demo",
+                    "flutterProjectName" to "flutter_demo",
+                    "packageName" to "com.example.flutterdemo",
+                    "packagePath" to "com/example/flutterdemo",
+                ),
+            )
+        }
+    }
+
+    private suspend fun seedSampleProject(
+        dirName: String,
+        templateId: String,
+        values: Map<String, String>,
+    ) {
+        val projectDir = File(pathManager.workspaceDir, dirName)
+        if (projectDir.exists() && projectDir.listFiles()?.isNotEmpty() == true) return
+        projectDir.mkdirs()
+        projectTemplateEngine.materialize(templateId, projectDir, values)
+        // gradlew 需要可执行权限才能在终端直接运行
+        File(projectDir, "gradlew").takeIf { it.isFile }?.setExecutable(true)
+        File(projectDir, "android/gradlew").takeIf { it.isFile }?.setExecutable(true)
+        workspaceDao.upsert(
+            WorkspaceEntity(
+                name = dirName,
+                path = projectDir.absolutePath,
+                createdAt = System.currentTimeMillis(),
+                ownsDirectory = false,
+            ),
+        )
+    }
+
     suspend fun createProject(
         name: String,
         storage: WorkspaceStorage = WorkspaceStorage.INTERNAL,
@@ -188,6 +255,9 @@ class WorkspaceManager @Inject constructor(
         apkSource: ApkImportSource? = null,
         exportApkToDownload: Boolean = false,
         gitUrl: String = "",
+        templateVariables: Map<String, String> = emptyMap(),
+        templateId: String = "",
+        trustTemplateScripts: Boolean = false,
     ): AppResult<WorkspaceProject> = withContext(Dispatchers.IO) {
         try {
             val safeName = name.trim()
@@ -218,7 +288,7 @@ class WorkspaceManager @Inject constructor(
                 if (!existed) require(directory.mkdirs()) { "无法创建 Git 导入目录" }
             } else {
                 check((existed && directory.isDirectory) || (!existed && directory.mkdirs())) { "无法创建或访问关联目录" }
-                if (template != ProjectTemplate.EMPTY) {
+                if (template != ProjectTemplate.EMPTY || templateId.isNotBlank()) {
                     check(!existed || directory.listFiles().orEmpty().isEmpty()) { "模板目标目录必须为空" }
                 }
             }
@@ -226,15 +296,69 @@ class WorkspaceManager @Inject constructor(
 
             // 模板初始化处理
             // APK 逆向模板：包名无需用户输入，由导入的安装包决定（无则留空）
+            val resolvedTemplateId = templateId.ifBlank {
+                when (template) {
+                    ProjectTemplate.ANDROID_COMPOSE -> ProjectTemplateEngine.ANDROID_COMPOSE_ID
+                    ProjectTemplate.ANDROID_NO_ACTIVITY -> ProjectTemplateEngine.ANDROID_NO_ACTIVITY_ID
+                    ProjectTemplate.ANDROID_XPOSED -> ProjectTemplateEngine.ANDROID_XPOSED_ID
+                    ProjectTemplate.FLUTTER -> ProjectTemplateEngine.FLUTTER_ID
+                    else -> ""
+                }
+            }
+            val resolvedManifest = resolvedTemplateId.takeIf(String::isNotBlank)?.let(projectTemplateEngine::inspect)
+            val needsPackageName = resolvedManifest?.variables.orEmpty().any {
+                it.name == "packageName" || it.name == "packagePath"
+            }
             var effectivePackage = ""
-            if (template == ProjectTemplate.ANDROID_COMPOSE || template == ProjectTemplate.FLUTTER) {
-                val cleanPkg = packageName.trim().ifBlank { "com.example.${safeName.lowercase().filter { it.isLetterOrDigit() }}" }
+            if (needsPackageName) {
+                val packageDefault = resolvedManifest?.variables?.firstOrNull { it.name == "packageName" }?.defaultValue.orEmpty()
+                val cleanPkg = templateVariables["packageName"].orEmpty().trim()
+                    .ifBlank { packageName.trim() }
+                    .ifBlank { packageDefault }
+                    .ifBlank { "com.example.${safeName.lowercase().filter { it.isLetterOrDigit() }}" }
                 require(PACKAGE_NAME.matches(cleanPkg)) { "包名必须是合法的 Java/Kotlin 包名：$cleanPkg" }
                 effectivePackage = cleanPkg
             }
-            when (template) {
-                ProjectTemplate.ANDROID_COMPOSE -> copyAndroidTemplate(directory, safeName, effectivePackage)
-                ProjectTemplate.FLUTTER -> copyFlutterTemplate(directory, safeName, effectivePackage)
+            if (resolvedTemplateId.isNotBlank() && resolvedManifest != null) {
+                val values = projectTemplateEngine.resolvedValues(
+                    resolvedManifest,
+                    builtinTemplateValues(safeName, effectivePackage, templateVariables)
+                        .let { standardValues ->
+                            if (needsPackageName) standardValues else standardValues - setOf("packageName", "packagePath")
+                        } + mapOf(
+                        "projectPath" to linuxPathFor(directory),
+                        "flutterProjectName" to safeName.lowercase()
+                            .replace(Regex("[^a-z0-9_]+"), "_")
+                            .trim('_')
+                            .ifBlank { "flutter_app" },
+                    ),
+                )
+                val hasScripts = resolvedManifest.hooks.beforeCreate.isNotBlank() || resolvedManifest.hooks.afterCreate.isNotBlank()
+                require(!hasScripts || trustTemplateScripts) { "该模板包含构造脚本，请先查看并明确授权" }
+                if (resolvedManifest.hooks.beforeCreate.isNotBlank()) {
+                    executeTemplateHook(
+                        resolvedTemplateId,
+                        "before-create",
+                        resolvedManifest.hooks.beforeCreate,
+                        directory,
+                        values,
+                    )
+                }
+                projectTemplateEngine.materialize(
+                    resolvedTemplateId,
+                    directory,
+                    values,
+                )
+                if (resolvedManifest.hooks.afterCreate.isNotBlank()) {
+                    executeTemplateHook(
+                        resolvedTemplateId,
+                        "after-create",
+                        resolvedManifest.hooks.afterCreate,
+                        directory,
+                        values,
+                    )
+                }
+            } else when (template) {
                 ProjectTemplate.APK_REVERSE -> {
                     val imported = importApkForReverse(directory, safeName, apkSource)
                     effectivePackage = imported.packageName
@@ -244,6 +368,11 @@ class WorkspaceManager @Inject constructor(
                 }
                 ProjectTemplate.GIT_IMPORT -> cloneGitRepository(directory, gitUrl, cleanupOnFailure = !existed)
                 ProjectTemplate.EMPTY -> { /* 保持空目录 */ }
+                ProjectTemplate.ANDROID_COMPOSE,
+                ProjectTemplate.ANDROID_NO_ACTIVITY,
+                ProjectTemplate.ANDROID_XPOSED,
+                ProjectTemplate.FLUTTER,
+                -> error("内置模板标识解析失败")
             }
 
             val ownsDirectory = storage == WorkspaceStorage.INTERNAL && !existed
@@ -445,491 +574,6 @@ class WorkspaceManager @Inject constructor(
         }.getOrDefault("")
     }
 
-    private fun generateAndroidTemplate(projectDir: File, name: String, packageName: String) {
-        val kotlinDisplayName = name.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ")
-        projectDir.mkdirs()
-        // 1. settings.gradle.kts
-        File(projectDir, "settings.gradle.kts").writeText(
-            """
-                import org.gradle.api.initialization.resolve.RepositoriesMode
-
-                pluginManagement {
-                     repositories {
-                         maven("https://maven.aliyun.com/repository/google")
-                         maven("https://maven.aliyun.com/repository/gradle-plugin")
-                         maven("https://maven.aliyun.com/repository/central")
-                         maven("https://maven.aliyun.com/repository/public")
-                         google()
-                         mavenCentral()
-                         gradlePluginPortal()
-                     }
-                 }
-                 dependencyResolutionManagement {
-                     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-                     repositories {
-                         maven("https://maven.aliyun.com/repository/google")
-                         maven("https://maven.aliyun.com/repository/public")
-                         google()
-                         mavenCentral()
-                     }
-                 }
-                 rootProject.name = "AndroidDemo"
-                 include(":app")
-            """.trimIndent()
-        )
-
-        // 2. build.gradle.kts
-        File(projectDir, "build.gradle.kts").writeText(
-            """
-            plugins {
-                id("com.android.application") version "8.11.1" apply false
-                id("org.jetbrains.kotlin.android") version "2.2.20" apply false
-                id("org.jetbrains.kotlin.plugin.compose") version "2.2.20" apply false
-            }
-            """.trimIndent()
-        )
-
-        // 3. gradle.properties
-        File(projectDir, "gradle.properties").writeText(
-            """
-            org.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=384m -XX:+UseSerialGC -Dfile.encoding=UTF-8
-            org.gradle.daemon=false
-            org.gradle.parallel=false
-            org.gradle.workers.max=2
-            org.gradle.caching=true
-            kotlin.daemon.jvmargs=-Xmx512m -XX:MaxMetaspaceSize=256m
-            android.useAndroidX=true
-            android.nonTransitiveRClass=true
-            android.builder.sdkDownload=false
-            """.trimIndent()
-        )
-
-        // 4. app/build.gradle.kts
-        val appDir = File(projectDir, "app").apply { mkdirs() }
-        File(appDir, "build.gradle.kts").writeText(
-            """
-            plugins {
-                id("com.android.application")
-                id("org.jetbrains.kotlin.android")
-                id("org.jetbrains.kotlin.plugin.compose")
-            }
-
-            android {
-                namespace = "$packageName"
-                compileSdk = 34
-
-                defaultConfig {
-                    applicationId = "$packageName"
-                    minSdk = 26
-                    targetSdk = 34
-                    versionCode = 1
-                    versionName = "1.0.0"
-                    ndk {
-                        abiFilters += "arm64-v8a"
-                    }
-                }
-
-                compileOptions {
-                    sourceCompatibility = JavaVersion.VERSION_17
-                    targetCompatibility = JavaVersion.VERSION_17
-                }
-
-                buildFeatures {
-                    compose = true
-                }
-            }
-
-            dependencies {
-                implementation(platform("androidx.compose:compose-bom:2024.10.01"))
-                implementation("androidx.compose.ui:ui")
-                implementation("androidx.compose.material3:material3")
-                implementation("androidx.compose.ui:ui-tooling-preview")
-                implementation("androidx.activity:activity-compose:1.9.3")
-            }
-            """.trimIndent()
-        )
-
-        // 5. app/src/main/AndroidManifest.xml
-        val mainDir = File(appDir, "src/main").apply { mkdirs() }
-        File(mainDir, "AndroidManifest.xml").writeText(
-            """
-            <?xml version="1.0" encoding="utf-8"?>
-            <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-                <application
-                    android:allowBackup="true"
-                    android:icon="@android:drawable/sym_def_app_icon"
-                    android:label="$name"
-                    android:theme="@android:style/Theme.Material.NoActionBar">
-                    <activity
-                        android:name="$packageName.MainActivity"
-                        android:exported="true">
-                        <intent-filter>
-                            <action android:name="android.intent.action.MAIN" />
-                            <category android:name="android.intent.category.LAUNCHER" />
-                        </intent-filter>
-                    </activity>
-                </application>
-            </manifest>
-            """.trimIndent()
-        )
-
-        // 6. MainActivity.kt
-        val packagePath = packageName.replace('.', '/')
-        val javaDir = File(mainDir, "java/$packagePath").apply { mkdirs() }
-        File(javaDir, "MainActivity.kt").writeText(
-            """
-            package $packageName
-
-            import android.os.Bundle
-            import androidx.activity.ComponentActivity
-            import androidx.activity.compose.setContent
-            import androidx.compose.foundation.layout.*
-            import androidx.compose.material3.*
-            import androidx.compose.runtime.*
-            import androidx.compose.ui.Alignment
-            import androidx.compose.ui.Modifier
-            import androidx.compose.ui.unit.dp
-
-            class MainActivity : ComponentActivity() {
-                override fun onCreate(savedInstanceState: Bundle?) {
-                    super.onCreate(savedInstanceState)
-                    setContent {
-                        MaterialTheme {
-                            Surface(modifier = Modifier.fillMaxSize()) {
-                                val countState = remember { mutableStateOf(0) }
-                                Column(
-                                    modifier = Modifier.fillMaxSize().padding(24.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.Center
-                                ) {
-                                    Text(
-                                        text = "$kotlinDisplayName",
-                                        style = MaterialTheme.typography.headlineMedium
-                                    )
-                                    Spacer(modifier = Modifier.height(16.dp))
-                                    Text(
-                                        text = "点击次数: ${'$'}{countState.value}",
-                                        style = MaterialTheme.typography.titleLarge
-                                    )
-                                    Spacer(modifier = Modifier.height(24.dp))
-                                    Button(onClick = { countState.value++ }) {
-                                        Text("点我计数 +1")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            """.trimIndent()
-        )
-        // 7. gradle/wrapper/gradle-wrapper.properties (配置国内腾讯云 Gradle 镜像)
-        val wrapperDir = File(projectDir, "gradle/wrapper").apply { mkdirs() }
-        File(wrapperDir, "gradle-wrapper.properties").writeText(
-            """
-            distributionBase=GRADLE_USER_HOME
-            distributionPath=wrapper/dists
-            distributionUrl=https\://mirrors.cloud.tencent.com/gradle/gradle-8.14.2-bin.zip
-            zipStoreBase=GRADLE_USER_HOME
-            zipStorePath=wrapper/dists
-            """.trimIndent()
-        )
-
-        // 8. gradlew 自适应启动脚本
-        val gradlewFile = File(projectDir, "gradlew")
-        gradlewFile.writeText(
-            """
-            #!/bin/sh
-            DIR="$(cd "$(dirname "${'$'}0")" && pwd)"
-            if [ -f "${'$'}DIR/gradle/wrapper/gradle-wrapper.jar" ]; then
-                exec java -jar "${'$'}DIR/gradle/wrapper/gradle-wrapper.jar" "${'$'}@"
-            elif [ -x /opt/gradle-8.14.2/bin/gradle ]; then
-                exec /opt/gradle-8.14.2/bin/gradle "${'$'}@"
-            elif [ -x /opt/gradle-8.7/bin/gradle ]; then
-                exec /opt/gradle-8.7/bin/gradle "${'$'}@"
-            elif [ -x /usr/local/bin/gradle ]; then
-                exec /usr/local/bin/gradle "${'$'}@"
-            elif command -v gradle >/dev/null 2>&1; then
-                exec gradle "${'$'}@"
-            else
-                exec /usr/bin/gradle "${'$'}@"
-            fi
-            """.trimIndent()
-        )
-        runCatching { gradlewFile.setExecutable(true) }
-    }
-
-    private fun generateFlutterTemplate(projectDir: File, name: String, packageName: String) {
-        projectDir.mkdirs()
-        val cleanName = name.lowercase().replace('-', '_').filter { it.isLetterOrDigit() || it == '_' }
-
-        // 1. pubspec.yaml
-        File(projectDir, "pubspec.yaml").writeText(
-            """
-            name: $cleanName
-            description: "$name Flutter Application"
-            publish_to: 'none'
-            version: 1.0.0+1
-
-            environment:
-              sdk: '>=3.0.0 <4.0.0'
-
-            dependencies:
-              flutter:
-                sdk: flutter
-              cupertino_icons: ^1.0.8
-
-            dev_dependencies:
-              flutter_test:
-                sdk: flutter
-              flutter_lints: ^4.0.0
-
-            flutter:
-              uses-material-design: true
-            """.trimIndent()
-        )
-
-        // 2. lib/main.dart
-        val libDir = File(projectDir, "lib").apply { mkdirs() }
-        File(libDir, "main.dart").writeText(
-            """
-            import 'package:flutter/material.dart';
-
-            void main() {
-              runApp(const MyApp());
-            }
-
-            class MyApp extends StatelessWidget {
-              const MyApp({super.key});
-
-              @override
-              Widget build(BuildContext context) {
-                return MaterialApp(
-                  title: '$name',
-                  theme: ThemeData(
-                    colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-                    useMaterial3: true,
-                  ),
-                  home: const MyHomePage(title: '$name'),
-                );
-              }
-            }
-
-            class MyHomePage extends StatefulWidget {
-              const MyHomePage({super.key, required this.title});
-              final String title;
-
-              @override
-              State<MyHomePage> createState() => _MyHomePageState();
-            }
-
-            class _MyHomePageState extends State<MyHomePage> {
-              int _counter = 0;
-
-              void _incrementCounter() {
-                setState(() {
-                  _counter++;
-                });
-              }
-
-              @override
-              Widget build(BuildContext context) {
-                return Scaffold(
-                  appBar: AppBar(
-                    backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-                    title: Text(widget.title),
-                  ),
-                  body: Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: <Widget>[
-                        const Text('点击按钮增加计数:'),
-                        Text(
-                          '${'$'}_counter',
-                          style: Theme.of(context).textTheme.headlineMedium,
-                        ),
-                      ],
-                    ),
-                  ),
-                  floatingActionButton: FloatingActionButton(
-                    onPressed: _incrementCounter,
-                    tooltip: 'Increment',
-                    child: const Icon(Icons.add),
-                  ),
-                );
-              }
-            }
-            """.trimIndent()
-        )
-
-        val packagePath = packageName.replace('.', '/')
-        val androidDir = File(projectDir, "android").apply { mkdirs() }
-        File(androidDir, "settings.gradle").writeText(
-            """
-            pluginManagement {
-                def flutterProperties = new Properties()
-                file("local.properties").withInputStream { flutterProperties.load(it) }
-                def flutterSdkPath = flutterProperties.getProperty("flutter.sdk", "/opt/flutter")
-                includeBuild("${'$'}{flutterSdkPath}/packages/flutter_tools/gradle")
-                repositories { google(); mavenCentral(); gradlePluginPortal() }
-            }
-            plugins {
-                id "dev.flutter.flutter-plugin-loader" version "1.0.0"
-                id "com.android.application" version "8.11.1" apply false
-                id "org.jetbrains.kotlin.android" version "2.2.20" apply false
-            }
-            rootProject.name = "$cleanName"
-            include ":app"
-            """.trimIndent()
-        )
-        File(androidDir, "build.gradle").writeText(
-            """
-            allprojects { repositories { google(); mavenCentral() } }
-            tasks.register("clean", Delete) { delete rootProject.layout.buildDirectory }
-            """.trimIndent()
-        )
-        val androidAppDir = File(androidDir, "app").apply { mkdirs() }
-        File(androidAppDir, "build.gradle").writeText(
-            """
-            plugins {
-                id "com.android.application"
-                id "org.jetbrains.kotlin.android"
-                id "dev.flutter.flutter-gradle-plugin"
-            }
-            android {
-                namespace "$packageName"
-                compileSdk 34
-                defaultConfig {
-                    applicationId "$packageName"
-                    minSdk 21
-                    targetSdk 34
-                    versionCode 1
-                    versionName "1.0"
-                    ndk {
-                        abiFilters "arm64-v8a"
-                    }
-                }
-                compileOptions {
-                    sourceCompatibility JavaVersion.VERSION_17
-                    targetCompatibility JavaVersion.VERSION_17
-                }
-            }
-            flutter { source "../.." }
-            """.trimIndent()
-        )
-        val androidMainDir = File(androidAppDir, "src/main").apply { mkdirs() }
-        File(androidMainDir, "AndroidManifest.xml").writeText(
-            """
-            <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-                <application android:label="$name">
-                    <activity android:name=".MainActivity" android:exported="true">
-                        <intent-filter>
-                            <action android:name="android.intent.action.MAIN" />
-                            <category android:name="android.intent.category.LAUNCHER" />
-                        </intent-filter>
-                    </activity>
-                    <meta-data android:name="flutterEmbedding" android:value="2" />
-                </application>
-            </manifest>
-            """.trimIndent()
-        )
-        val kotlinDir = File(androidMainDir, "kotlin/$packagePath").apply { mkdirs() }
-        File(kotlinDir, "MainActivity.kt").writeText(
-            """
-            package $packageName
-
-            import io.flutter.embedding.android.FlutterActivity
-
-            class MainActivity : FlutterActivity()
-            """.trimIndent()
-        )
-    }
-
-    /** Materializes the checked-in template and expands package directories. */
-    private fun copyAndroidTemplate(projectDir: File, name: String, packageName: String) {
-        val packagePath = packageName.replace('.', '/')
-        val replacements = mapOf(
-            "{{projectName}}" to name,
-            "{{appName}}" to name,
-            "{{packageName}}" to packageName,
-            "{{packagePath}}" to packagePath,
-        )
-        fun visit(assetPath: String, relativePath: String) {
-            val children = context.assets.list(assetPath).orEmpty()
-            if (children.isNotEmpty()) {
-                children.forEach { child ->
-                    visit("$assetPath/$child", if (relativePath.isBlank()) child else "$relativePath/$child")
-                }
-                return
-            }
-            val outputPath = when (relativePath) {
-                "app/src/main/java/MainActivity.kt.template" ->
-                    "app/src/main/java/$packagePath/MainActivity.kt"
-                else -> relativePath
-                    .replace("__PACKAGE_PATH__", packagePath)
-                    .removeSuffix(".template")
-            }
-            val target = File(projectDir, outputPath).canonicalFile
-            check(isInside(projectDir.canonicalFile, target)) { "模板路径越界：$relativePath" }
-            target.parentFile?.mkdirs()
-            context.assets.open(assetPath).use { input ->
-                val bytes = input.readBytes()
-                if (isTemplateTextFile(target.name)) {
-                    var text = bytes.toString(Charsets.UTF_8)
-                    replacements.forEach { (token, value) -> text = text.replace(token, value) }
-                    target.writeText(text, Charsets.UTF_8)
-                } else {
-                    target.writeBytes(bytes)
-                }
-            }
-        }
-        runCatching { visit("templates/android-compose", "") }.getOrElse {
-            // Compatibility for unit-test contexts without an AssetManager.
-            generateAndroidTemplate(projectDir, name, packageName)
-        }
-        // Some Android AssetManager/resource-packaging versions do not enumerate
-        // placeholder-named directories reliably. Materialize the launcher source
-        // directly when recursive enumeration skipped it.
-        val expectedSource = File(projectDir, "app/src/main/java/$packagePath/MainActivity.kt")
-        if (!expectedSource.isFile) {
-            runCatching {
-                expectedSource.parentFile?.mkdirs()
-                context.assets.open("templates/android-compose/app/src/main/java/MainActivity.kt.template").use { input ->
-                    var text = input.readBytes().toString(Charsets.UTF_8)
-                    replacements.forEach { (token, value) -> text = text.replace(token, value) }
-                    expectedSource.writeText(text, Charsets.UTF_8)
-                }
-            }.getOrElse {
-                generateAndroidTemplate(projectDir, name, packageName)
-            }
-        }
-        validateAndroidTemplate(projectDir, packageName)
-    }
-
-    /** Fail during project creation when template expansion produced an unusable launcher. */
-    private fun validateAndroidTemplate(projectDir: File, packageName: String) {
-        val packagePath = packageName.replace('.', File.separatorChar)
-        val source = File(projectDir, "app/src/main/java/$packagePath/MainActivity.kt")
-        check(source.isFile) { "Android 模板缺少 MainActivity.kt：${source.absolutePath}" }
-        val sourceText = source.readText(Charsets.UTF_8)
-        check(Regex("(?m)^\\s*package\\s+${Regex.escape(packageName)}\\s*$").containsMatchIn(sourceText)) {
-            "Android 模板包名替换失败：MainActivity.kt"
-        }
-        val manifest = File(projectDir, "app/src/main/AndroidManifest.xml")
-        check(manifest.isFile && manifest.readText(Charsets.UTF_8).contains("$packageName.MainActivity")) {
-            "Android 模板启动 Activity 配置无效"
-        }
-        val buildScript = File(projectDir, "app/build.gradle.kts")
-        check(buildScript.isFile && buildScript.readText(Charsets.UTF_8).contains("applicationId = \"$packageName\"")) {
-            "Android 模板 applicationId 替换失败"
-        }
-    }
-
-    private fun isTemplateTextFile(name: String): Boolean =
-        name.endsWith(".kt") || name.endsWith(".kts") || name.endsWith(".xml") ||
-            name.endsWith(".properties") || name.endsWith(".gradle") || name.endsWith(".md") ||
-        name.endsWith(".dart") || name == "pubspec.yaml" || name == "analysis_options.yaml"
-
     private fun isValidGitUrl(url: String): Boolean =
         url.trim().let { value ->
             value.startsWith("https://") || value.startsWith("http://") ||
@@ -1097,71 +741,42 @@ class WorkspaceManager @Inject constructor(
 
     private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
 
-    /** Materializes the Flutter template, including its Android Gradle host. */
-    private fun copyFlutterTemplate(projectDir: File, name: String, packageName: String) {
-        val flutterName = name.lowercase()
-            .replace(Regex("[^a-z0-9_]+"), "_")
-            .trim('_')
-            .ifBlank { "flutter_app" }
-        val packagePath = packageName.replace('.', '/')
-        val replacements = mapOf(
-            "{{projectName}}" to name,
-            "{{appName}}" to name,
-            "{{flutterProjectName}}" to flutterName,
-            "{{packageName}}" to packageName,
-            "{{packagePath}}" to packagePath,
-        )
-        fun visit(assetPath: String, relativePath: String) {
-            val children = context.assets.list(assetPath).orEmpty()
-            if (children.isNotEmpty()) {
-                children.forEach { child ->
-                    visit("$assetPath/$child", if (relativePath.isBlank()) child else "$relativePath/$child")
-                }
-                return
-            }
-            val outputPath = when (relativePath) {
-                "android/app/src/main/kotlin/MainActivity.kt.template" ->
-                    "android/app/src/main/kotlin/$packagePath/MainActivity.kt"
-                else -> relativePath
-                    .replace("__PACKAGE_PATH__", packagePath)
-                    .removeSuffix(".template")
-            }
-            val target = File(projectDir, outputPath).canonicalFile
-            check(isInside(projectDir.canonicalFile, target)) { "模板路径越界：$relativePath" }
-            target.parentFile?.mkdirs()
-            context.assets.open(assetPath).use { input ->
-                val bytes = input.readBytes()
-                if (isTemplateTextFile(target.name)) {
-                    var text = bytes.toString(Charsets.UTF_8)
-                    replacements.forEach { (token, value) -> text = text.replace(token, value) }
-                    target.writeText(text, Charsets.UTF_8)
-                } else {
-                    target.writeBytes(bytes)
-                }
-            }
-        }
-        runCatching { visit("templates/flutter", "") }.getOrElse {
-            generateFlutterTemplate(projectDir, name, packageName)
-        }
-        validateFlutterTemplate(projectDir, packageName)
-    }
+    private fun builtinTemplateValues(
+        name: String,
+        packageName: String,
+        templateVariables: Map<String, String>,
+    ): Map<String, String> = templateVariables + mapOf(
+        "projectName" to name,
+        "appName" to name,
+        "packageName" to packageName,
+        "packagePath" to packageName.replace('.', '/'),
+    )
 
-    private fun validateFlutterTemplate(projectDir: File, packageName: String) {
-        val packagePath = packageName.replace('.', File.separatorChar)
-        val source = File(projectDir, "android/app/src/main/kotlin/$packagePath/MainActivity.kt")
-        check(source.isFile) { "Flutter 模板缺少 MainActivity.kt：${source.absolutePath}" }
-        check(source.readText(Charsets.UTF_8).lineSequence().firstOrNull()?.trim() == "package $packageName") {
-            "Flutter 模板包名替换失败：MainActivity.kt"
-        }
-        val requiredFiles = listOf(
-            File(projectDir, "pubspec.yaml"),
-            File(projectDir, "lib/main.dart"),
-            File(projectDir, "android/settings.gradle"),
-            File(projectDir, "android/app/build.gradle"),
-        )
-        requiredFiles.forEach { file ->
-            check(file.isFile) { "Flutter 模板缺少文件：${file.absolutePath}" }
-            check("{{" !in file.readText(Charsets.UTF_8)) { "Flutter 模板变量未完成替换：${file.name}" }
+    private suspend fun executeTemplateHook(
+        templateId: String,
+        stage: String,
+        relativePath: String,
+        projectDir: File,
+        values: Map<String, String>,
+    ) {
+        val hookFile = File(projectDir, ".taixu-template-$stage-${UUID.randomUUID()}.sh")
+        try {
+            hookFile.writeBytes(projectTemplateEngine.readHook(templateId, relativePath))
+            hookFile.setExecutable(true)
+            val result = linuxRuntime.get().execute(
+                ShellCommand(
+                    commandLine = "sh ${shellQuote(linuxPathFor(hookFile))}",
+                    workingDirectory = linuxPathFor(projectDir),
+                    environment = values.mapKeys { (name, _) -> "TAIXU_VAR_${name.uppercase()}" } +
+                        ("TAIXU_PROJECT_DIR" to linuxPathFor(projectDir)),
+                    timeoutMs = TEMPLATE_HOOK_TIMEOUT_MS,
+                ),
+            )
+            check(result.isSuccess) {
+                "模板脚本执行失败（$stage）：${result.stderr.ifBlank { result.stdout }.takeLast(2_000)}"
+            }
+        } finally {
+            hookFile.delete()
         }
     }
 
@@ -1420,6 +1035,7 @@ class WorkspaceManager @Inject constructor(
         private const val MAX_ARCHIVE_ENTRY_BYTES = 1024L * 1024L * 1024L
         private const val MAX_ARCHIVE_TOTAL_BYTES = 4L * 1024L * 1024L * 1024L
         private const val GIT_CLONE_TIMEOUT_SECONDS = 15 * 60L
+        private const val TEMPLATE_HOOK_TIMEOUT_MS = 60_000L
         private val PACKAGE_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+")
         const val MAX_PROJECT_NAME_LENGTH = 64
         const val MAX_FILE_READ_BYTES = 4 * 1024 * 1024L // 4 MB
