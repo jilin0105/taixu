@@ -29,6 +29,8 @@ class RuntimePreferences @Inject constructor(private val store: SettingsDataStor
     val mountDocumentsEnabled get() = store.mountDocumentsEnabled
     val mountSharedStorageEnabled get() = store.mountSharedStorageEnabled
     val executionMode get() = store.executionMode
+    val preferredExecutionMode get() = store.preferredExecutionMode
+    val effectiveExecutionMode get() = store.effectiveExecutionMode
     val qemuCompatibilityEnabled get() = store.qemuCompatibilityEnabled
     val adbWirelessPort get() = store.adbWirelessPort
     suspend fun readLegacyEnvironmentVariables() = store.readLegacyEnvironmentVariables()
@@ -36,6 +38,12 @@ class RuntimePreferences @Inject constructor(private val store: SettingsDataStor
     suspend fun setSelectedDistribution(value: String) = store.setSelectedDistribution(value)
     suspend fun setMirrorPolicy(value: String) = store.setMirrorPolicy(value)
     suspend fun setExecutionMode(value: top.wkbin.taixu.core.model.ExecutionMode) = store.setExecutionMode(value)
+    suspend fun setPreferredExecutionMode(value: top.wkbin.taixu.core.model.ExecutionMode) = store.setPreferredExecutionMode(value)
+    suspend fun setEffectiveExecutionMode(value: top.wkbin.taixu.core.model.ExecutionMode) = store.setEffectiveExecutionMode(value)
+    suspend fun setExecutionModes(
+        preferred: top.wkbin.taixu.core.model.ExecutionMode,
+        effective: top.wkbin.taixu.core.model.ExecutionMode,
+    ) = store.setExecutionModes(preferred, effective)
     suspend fun setQemuCompatibilityEnabled(value: Boolean) = store.setQemuCompatibilityEnabled(value)
     suspend fun setAdbPairedOnce(value: Boolean) = store.setAdbPairedOnce(value)
 }

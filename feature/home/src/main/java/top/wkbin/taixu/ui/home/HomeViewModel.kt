@@ -21,7 +21,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.wkbin.taixu.core.common.logging.AppLogger
-import top.wkbin.taixu.core.datastore.RuntimePreferences
 import top.wkbin.taixu.core.model.DoctorReport
 import top.wkbin.taixu.core.model.ExecutionMode
 import top.wkbin.taixu.core.model.RepairProgress
@@ -33,15 +32,19 @@ import top.wkbin.taixu.runtime.BackgroundTaskRegistry
 import top.wkbin.taixu.runtime.doctor.EnvironmentDoctor
 import top.wkbin.taixu.runtime.doctor.EnvironmentRepairer
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
+import top.wkbin.taixu.runtime.privilege.PrivilegeAvailability
 import javax.inject.Inject
 
 /** 当前运行特权模式的展示状态（首页徽章与规格卡共用）。 */
 data class ExecutionModeStatus(
     val mode: ExecutionMode = ExecutionMode.PROOT,
+    val preferredMode: ExecutionMode = ExecutionMode.PROOT,
     /** 当前模式的特权是否实际生效（PRoot 恒为 true；Shizuku/Root 依赖实时授权探测）。 */
     val active: Boolean = true,
     /** 正在探测授权状态。 */
     val checking: Boolean = false,
+    val degraded: Boolean = false,
+    val reason: String = "",
 )
 
 data class SystemResourceMetrics(
@@ -69,7 +72,6 @@ class HomeViewModel @Inject constructor(
     private val environmentRepairer: EnvironmentRepairer,
     private val terminalSessionManager: TerminalSessionManager,
     private val backgroundTaskRegistry: BackgroundTaskRegistry,
-    private val runtimePreferences: RuntimePreferences,
     private val privilegeManager: PrivilegeManager,
     private val logger: AppLogger,
 ) : ViewModel() {
@@ -115,39 +117,29 @@ class HomeViewModel @Inject constructor(
         observeExecutionMode()
     }
 
-    /** 订阅持久化的运行模式，变更时自动重新探测授权是否真正生效。 */
+    /** 直接消费全应用共享的权限状态机，避免首页自行维护第二套授权真相。 */
     private fun observeExecutionMode() {
         viewModelScope.launch {
-            runtimePreferences.executionMode.collect { mode ->
-                refreshExecutionModeStatus(mode)
+            privilegeManager.state.collect { state ->
+                _executionModeStatus.value = ExecutionModeStatus(
+                    mode = state.effectiveMode,
+                    preferredMode = state.preferredMode,
+                    active = state.availability == PrivilegeAvailability.ACTIVE,
+                    checking = state.availability == PrivilegeAvailability.CHECKING,
+                    degraded = state.availability == PrivilegeAvailability.DEGRADED,
+                    reason = state.reason,
+                )
             }
         }
     }
 
-    /** 探测当前模式的授权生效状态：PRoot 免探测；Shizuku/Root 走 PrivilegeManager 实时探测。 */
-    fun refreshExecutionModeStatus(mode: ExecutionMode = _executionModeStatus.value.mode) {
+    /** 手动实时复核；若高权限已失效，PrivilegeManager 会统一降级并广播状态。 */
+    fun refreshExecutionModeStatus() {
         viewModelScope.launch {
-            _executionModeStatus.value = ExecutionModeStatus(
-                mode = mode,
-                active = mode == ExecutionMode.PROOT,
-                checking = mode != ExecutionMode.PROOT,
-            )
-            if (mode == ExecutionMode.PROOT) return@launch
             try {
-                val info = privilegeManager.getPrivilegeInfo()
-                // 探测期间模式可能又被切换，仅当仍是同一模式时才落地结果
-                if (_executionModeStatus.value.mode == mode) {
-                    _executionModeStatus.value = ExecutionModeStatus(
-                        mode = mode,
-                        active = info.modeActive,
-                        checking = false,
-                    )
-                }
+                privilegeManager.getPrivilegeInfo()
             } catch (e: Exception) {
                 logger.w("HomeViewModel: Failed to refresh privilege status: ${e.message}", e)
-                if (_executionModeStatus.value.mode == mode) {
-                    _executionModeStatus.value = ExecutionModeStatus(mode = mode, active = false, checking = false)
-                }
             }
         }
     }

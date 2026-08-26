@@ -16,6 +16,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlin.coroutines.coroutineContext
+import kotlin.time.Duration.Companion.milliseconds
 
 data class LocalServiceSpec(
     val serviceId: String,
@@ -120,14 +121,14 @@ class LocalServiceLauncherImpl @Inject constructor(
     }
 
     private suspend fun awaitPort(spec: LocalServiceSpec, process: ManagedProcess) {
-        withTimeout(spec.startupTimeoutMs) {
+        withTimeout(spec.startupTimeoutMs.milliseconds) {
             while (true) {
                 coroutineContext.ensureActive()
                 if (!process.session.isAlive) {
                     throw LocalServiceStartException("本地服务进程已退出：${spec.serviceId}")
                 }
                 if (isPortOpen(spec.port)) return@withTimeout
-                delay(spec.pollIntervalMs)
+                delay(spec.pollIntervalMs.milliseconds)
             }
         }
     }

@@ -31,6 +31,12 @@ class SessionTreeStore @Inject constructor(
         logger.e("Failed to load harness branch for $sessionId/$laneName: ${throwable.message}", throwable)
     }.getOrDefault(emptyList())
 
+    suspend fun loadAt(sessionId: String, leafId: String?): List<HarnessMessage> = runCatching {
+        repository.branch(sessionId, leafId).mapNotNull(::decode)
+    }.onFailure { throwable ->
+        logger.e("Failed to load harness branch at $sessionId/$leafId: ${throwable.message}", throwable)
+    }.getOrDefault(emptyList())
+
     suspend fun append(sessionId: String, message: HarnessMessage, laneName: String = MAIN_LANE) {
         val lane = repository.ensureLane(sessionId, laneName)
         val entry = HarnessEntryEntity(

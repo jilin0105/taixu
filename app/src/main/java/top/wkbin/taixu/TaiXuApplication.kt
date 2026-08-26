@@ -7,6 +7,7 @@ import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.core.database.AgentSkillRepository
 import top.wkbin.taixu.core.database.McpServerRepository
 import top.wkbin.taixu.service.AgentForegroundService
+import top.wkbin.taixu.runtime.privilege.PrivilegeManager
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -23,6 +24,7 @@ class TaiXuApplication : Application() {
     @Inject lateinit var settingsDataStore: SettingsDataStore
     @Inject lateinit var agentSkillRepository: AgentSkillRepository
     @Inject lateinit var mcpServerRepository: McpServerRepository
+    @Inject lateinit var privilegeManager: PrivilegeManager
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -30,6 +32,7 @@ class TaiXuApplication : Application() {
         super.onCreate()
         crashReporter.install()
         appScope.launch(Dispatchers.IO) {
+            runCatching { privilegeManager.reconcilePersistedMode() }
             agentSkillRepository.ensureInitialized()
             mcpServerRepository.ensureInitialized()
             settingsDataStore.incrementLaunchCount()

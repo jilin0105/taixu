@@ -42,6 +42,7 @@ internal object HarnessApiMapper {
             lower == "write" -> HarnessTool.WRITE
             lower == "edit" -> HarnessTool.EDIT
             lower == "process" -> HarnessTool.PROCESS
+            lower == "host" -> HarnessTool.HOST
             lower == "download" -> HarnessTool.DOWNLOAD
             lower == "memory" -> HarnessTool.MEMORY
             lower == "plan" -> HarnessTool.PLAN
@@ -60,12 +61,13 @@ internal object HarnessApiMapper {
         HarnessTool.EDIT -> "edit"
         HarnessTool.BASE -> "base"
         HarnessTool.PROCESS -> "process"
+        HarnessTool.HOST -> "host"
         HarnessTool.DOWNLOAD -> "download"
         HarnessTool.MEMORY -> "memory"
         HarnessTool.PLAN -> "plan"
         HarnessTool.SCRATCHPAD -> "scratchpad"
-        HarnessTool.HISTORY_SEARCH -> "history.search"
-        HarnessTool.HISTORY_READ -> "history.read"
+        HarnessTool.HISTORY_SEARCH -> "history_search"
+        HarnessTool.HISTORY_READ -> "history_read"
         HarnessTool.SUBAGENT -> "invoke_subagent"
         HarnessTool.MCP -> "mcp"
     }

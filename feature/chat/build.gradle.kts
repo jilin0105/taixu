@@ -47,5 +47,6 @@ dependencies {
     implementation(project(":core:datastore"))
     implementation(project(":runtime"))
     implementation(project(":harness"))
+    implementation(project(":tools"))
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

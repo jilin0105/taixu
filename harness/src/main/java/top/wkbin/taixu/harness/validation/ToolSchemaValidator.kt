@@ -10,6 +10,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import top.wkbin.taixu.core.model.McpToolInfo
 import top.wkbin.taixu.harness.ProviderClient
+import top.wkbin.taixu.harness.mcp.McpToolApiName
 
 /**
  * 工具参数执行前 JSON Schema 校验（模型参数 → 校验 → 审批 → 执行 链路的第二环）。
@@ -40,11 +41,16 @@ object ToolSchemaValidator {
 
     private fun resolveSchema(toolName: String, mcpTools: List<McpToolInfo>): JsonObject? {
         if (toolName.startsWith("mcp__")) {
-            val tool = mcpTools.firstOrNull { "mcp__${it.serverId}__${it.name}" == toolName } ?: return null
+            val tool = mcpTools.firstOrNull { McpToolApiName.matches(it, toolName) } ?: return null
             if (tool.parametersJson.isBlank()) return null
             return runCatching { json.parseToJsonElement(tool.parametersJson) as? JsonObject }.getOrNull()
         }
-        return ProviderClient.TOOLS.firstOrNull { it.function.name == toolName }?.function?.parameters
+        val apiName = when (toolName) {
+            "history.search" -> "history_search"
+            "history.read" -> "history_read"
+            else -> toolName
+        }
+        return ProviderClient.TOOLS.firstOrNull { it.function.name == apiName }?.function?.parameters
     }
 
     private fun validateObject(schema: JsonObject, obj: JsonObject, prefix: String): List<String> {

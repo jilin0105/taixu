@@ -54,6 +54,8 @@ import top.wkbin.taixu.harness.recovery.RecoveryOutcome
 import top.wkbin.taixu.harness.queue.PromptQueue
 import top.wkbin.taixu.harness.queue.PromptQueueManager
 import top.wkbin.taixu.harness.compaction.CompactionManager
+import top.wkbin.taixu.runtime.privilege.PrivilegeManager
+import top.wkbin.taixu.core.model.ExecutionMode
 
 /** Agent 单次运行的结构化结果，外层据此设置会话状态，避免内部失败被误标为 COMPLETED。 */
 private sealed interface RunResult {
@@ -89,6 +91,7 @@ class HarnessLoop @Inject constructor(
     private val recoveryManager: RecoveryManager,
     private val promptQueueManager: PromptQueueManager,
     private val compactionManager: CompactionManager,
+    private val privilegeManager: PrivilegeManager,
 ) {
     private val loopScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -147,6 +150,10 @@ class HarnessLoop @Inject constructor(
      * 用户点"停止"时清空。UI 可观察此列表展示排队状态。
      */
     val pendingMessages: StateFlow<List<PendingMessage>> = _pendingMessages.asStateFlow()
+
+    private val _queuedPrompts = MutableStateFlow<List<QueuedPrompt>>(emptyList())
+    /** Current session's durable queues, including steering and follow-up semantics. */
+    val queuedPrompts: StateFlow<List<QueuedPrompt>> = _queuedPrompts.asStateFlow()
 
     private fun getOrCreateLiveMessages(sessId: String): MutableStateFlow<List<HarnessMessage>> {
         return _sessionLiveMessages.getOrPut(sessId) {
@@ -246,6 +253,7 @@ class HarnessLoop @Inject constructor(
         _status.value = null
         _thinkingLive.value = false
         _pendingMessages.value = emptyList()
+        _queuedPrompts.value = emptyList()
         return id
     }
 
@@ -268,9 +276,7 @@ class HarnessLoop @Inject constructor(
         _error.value = _sessionErrors[id]?.value
         _status.value = _sessionStatuses.value[id]?.takeIf { it.isNotBlank() }
         _thinkingLive.value = _sessionThinkingLives[id]?.value ?: false
-        val persistedPending = promptQueueManager.list(id, PromptQueue.NEXT_RUN).map { it.second }
-        getOrCreatePendingFlow(id).value = persistedPending
-        _pendingMessages.value = persistedPending
+        refreshPendingProjection(id)
 
         if (withContext(Dispatchers.IO) { approvalRepository.pendingNow(id).isNotEmpty() }) {
             setSessionState(id, SessionRunState.WAITING_APPROVAL)
@@ -366,6 +372,7 @@ class HarnessLoop @Inject constructor(
         }
         loopScope.launch {
             promptQueueManager.enqueue(sessId, queue, PendingMessage(trimmed, imageUrls))
+            refreshPendingProjection(sessId)
         }
     }
 
@@ -391,6 +398,35 @@ class HarnessLoop @Inject constructor(
             runLoopInternal(sessId, startedAt = now())
         }
         startForegroundServiceSafe()
+    }
+
+    /** Rewinds before a tool call and asks the model to continue again on a preserved new branch. */
+    fun retryToolCall(toolCallId: String, targetSessionId: String? = null) {
+        val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
+        if (sessId.isBlank()) return
+        startSessionRun(sessId) {
+            val current = getOrCreateLiveMessages(sessId).value
+            val targetIndex = current.indexOfFirst { it.id == toolCallId && it is ToolCall }
+            if (targetIndex < 0) return@startSessionRun RunResult.Completed
+            val target = current[targetIndex]
+            val updated = current.take(targetIndex)
+            getOrCreateLiveMessages(sessId).value = updated
+            if (sessId == _currentSessionId.value) _messages.value = updated
+            messageStore.rewindBefore(sessId, target.id)
+            runLoopInternal(sessId, startedAt = now())
+        }
+        startForegroundServiceSafe()
+    }
+
+    /** Moves the main conversation cursor to an existing immutable-tree leaf. */
+    suspend fun activateBranch(leafId: String?, targetSessionId: String? = null): Boolean {
+        val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
+        if (sessId.isBlank() || isSessionBusy(sessId)) return false
+        messageStore.moveTo(sessId, leafId)
+        val history = readHistory(sessId)
+        getOrCreateLiveMessages(sessId).value = history
+        if (sessId == _currentSessionId.value) _messages.value = history
+        return true
     }
 
     /**
@@ -517,6 +553,14 @@ class HarnessLoop @Inject constructor(
         }
     }
 
+    fun removeQueuedPrompt(queue: PromptQueue, index: Int, targetSessionId: String? = null) {
+        val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
+        loopScope.launch {
+            promptQueueManager.cancel(sessId, queue, index)
+            refreshPendingProjection(sessId)
+        }
+    }
+
     /** 清空某会话全部排队消息 */
     fun clearPendingMessages(targetSessionId: String? = null) {
         val sessId = targetSessionId?.ifBlank { null } ?: _currentSessionId.value
@@ -532,9 +576,15 @@ class HarnessLoop @Inject constructor(
     }
 
     private suspend fun refreshPendingProjection(sessId: String) {
-        val pending = promptQueueManager.list(sessId, PromptQueue.NEXT_RUN).map { it.second }
+        val all = PromptQueue.entries.flatMap { queue ->
+            promptQueueManager.list(sessId, queue).map { (id, message) -> QueuedPrompt(id, queue, message) }
+        }.sortedBy { it.message.createdAt }
+        val pending = all.filter { it.queue == PromptQueue.NEXT_RUN }.map { it.message }
         getOrCreatePendingFlow(sessId).value = pending
-        if (sessId == _currentSessionId.value) _pendingMessages.value = pending
+        if (sessId == _currentSessionId.value) {
+            _pendingMessages.value = pending
+            _queuedPrompts.value = all
+        }
     }
 
     private suspend fun finishRun(sessId: String, job: Job) {
@@ -867,6 +917,7 @@ class HarnessLoop @Inject constructor(
             val allCalls = result.toolCalls + jsonCalls
             if (allCalls.isEmpty()) {
                 val followUps = promptQueueManager.consume(sessId, PromptQueue.FOLLOW_UP)
+                refreshPendingProjection(sessId)
                 followUps.forEach { publishPersistedMessage(sessId, it) }
                 if (followUps.isEmpty()) return RunResult.Completed
                 round++
@@ -1112,6 +1163,7 @@ class HarnessLoop @Inject constructor(
                 if (command.isEmpty()) "执行命令" else "执行命令：${command.take(MAX_STATUS_ARG_LENGTH)}"
             }
             HarnessTool.PROCESS -> "管理后台进程：${arg("action") ?: "process"}${arg("id")?.let { " · ${it.take(MAX_STATUS_ARG_LENGTH)}" }.orEmpty()}"
+            HarnessTool.HOST -> "正在使用宿主权限：${arg("action") ?: "host"}${arg("command")?.let { " · ${it.take(MAX_STATUS_ARG_LENGTH)}" }.orEmpty()}"
             HarnessTool.DOWNLOAD -> arg("destination")?.let { "下载文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "下载文件"
             HarnessTool.READ -> arg("path")?.let { "读取文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "读取文件"
             HarnessTool.WRITE -> arg("path")?.let { "写入文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "写入文件"
@@ -1135,6 +1187,7 @@ class HarnessLoop @Inject constructor(
 
     private suspend fun drainSteeringMessages(sessId: String) {
         val queued = promptQueueManager.consume(sessId, PromptQueue.STEER)
+        refreshPendingProjection(sessId)
         queued.forEach { message ->
             logAgentEvent(sessId, "SteeringMessage", message.text)
             publishPersistedMessage(sessId, message)
@@ -1272,11 +1325,22 @@ class HarnessLoop @Inject constructor(
             else -> ""
         }
 
+        val privilegeInfo = runCatching { privilegeManager.getPrivilegeInfo() }.getOrNull()
+        val privilegeSection = when {
+            privilegeInfo == null -> "\n\n## Android 宿主权限\n权限状态暂不可读取；不要调用 host exec，可先调用 host(status)。"
+            privilegeInfo.mode == ExecutionMode.PROOT || !privilegeInfo.modeActive ->
+                "\n\n## Android 宿主权限\n当前实际生效模式为 PRoot/普通应用权限。host exec 不可用；系统设置、pm、input、logcat 等宿主操作不要用 base 冒充执行，可提示用户先到设置授权 Shizuku 或 Root。"
+            privilegeInfo.mode == ExecutionMode.SHIZUKU ->
+                "\n\n## Android 宿主权限\n当前已实际获得 Shizuku shell 权限（UID 2000）。可用 host 操作真实 Android。读取/修改系统设置优先用 settings_get/settings_put，管理应用优先用 package_list/package_disable/package_enable/package_uninstall_user，日志用 logcat；仅在结构化动作无法覆盖时使用 exec。它作用于宿主而非 PRoot；修改系统状态前说明影响，工具会要求用户审批。"
+            else ->
+                "\n\n## Android 宿主权限\n当前已实际获得 Root 权限（UID 0）。可用 host 操作真实 Android。系统设置和软件包管理优先使用 settings_* / package_* 结构化动作；仅在它们无法覆盖 root 专属需求时使用 exec。优先使用可恢复方式；永久删除系统分区内容等不可逆操作必须明确说明风险，工具会要求用户审批。"
+        }
+
         return resolvedTemplate
             .replace("{{DISTRO_NAME}}", distroName)
             .replace("{{PKG_MANAGER}}", pkgManager)
             .replace("{{ACTIVE_SKILLS}}", skillSection)
-            .trim() + installedToolsSection + memorySection + planSection + subagentSection + toolCallSection + workspaceSection + workspaceGuidance + projectContext + thinkingLanguageSection
+            .trim() + installedToolsSection + memorySection + planSection + subagentSection + toolCallSection + workspaceSection + workspaceGuidance + projectContext + privilegeSection + thinkingLanguageSection
     }
 
     private suspend fun buildSubagentGuidance(toolCallMode: ToolCallMode): String {
@@ -1375,7 +1439,7 @@ class HarnessLoop @Inject constructor(
         val toolNames = if (toolCallMode == ToolCallMode.DISABLED) {
             "工具调用已禁用"
         } else {
-            "read, write, edit, base, memory, plan, scratchpad, history.search, history.read, invoke_subagent" +
+            "read, write, edit, base, memory, plan, scratchpad, history_search, history_read, invoke_subagent" +
                 if (toolCallMode == ToolCallMode.JSON_TEXT) "（JSON 文本调用模式）" else ""
         }
         val installedToolNames = installedTools.joinToString(", ") { it.name }.ifBlank { "暂无已安装套件记录" }
@@ -1758,6 +1822,7 @@ class HarnessLoop @Inject constructor(
                             sessId,
                             request.workspace,
                             bypassApproval = true,
+                            operationId = request.operationId,
                         )
                     } else {
                         ToolResult(

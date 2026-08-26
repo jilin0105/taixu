@@ -52,20 +52,23 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import top.wkbin.taixu.core.datastore.AppearancePreferences
 import top.wkbin.taixu.core.model.AppUpdateInfo
+import top.wkbin.taixu.core.network.AppUpdateManager
 import top.wkbin.taixu.runtime.service.RuntimeServiceController
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.navigation.TaiXuNavHost
 import top.wkbin.taixu.ui.theme.TaiXuTheme
+import androidx.core.net.toUri
 
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
     @javax.inject.Inject
-    lateinit var settingsDataStore: top.wkbin.taixu.core.datastore.AppearancePreferences
+    lateinit var settingsDataStore: AppearancePreferences
 
     @javax.inject.Inject
-    lateinit var appUpdateManager: top.wkbin.taixu.core.network.AppUpdateManager
+    lateinit var appUpdateManager: AppUpdateManager
 
     @javax.inject.Inject
     lateinit var runtimeServiceController: RuntimeServiceController
@@ -233,7 +236,8 @@ class MainActivity : AppCompatActivity() {
                                 Button(
                                     onClick = {
                                         runCatching {
-                                            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info.releaseUrl)))
+                                            startActivity(Intent(Intent.ACTION_VIEW,
+                                                info.releaseUrl.toUri()))
                                         }
                                         updateInfo = null
                                     },

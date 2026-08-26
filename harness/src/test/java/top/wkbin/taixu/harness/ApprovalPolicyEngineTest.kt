@@ -69,8 +69,25 @@ class ApprovalPolicyEngineTest {
                 HarnessTool.READ -> args("path" to "/etc/passwd")
                 else -> args("name" to "anything")
             }
-            assertFalse("$tool should be unrestricted", policy.decide(ApprovalMode.FULL_ACCESS, tool, toolArgs, workspace).required)
+            if (tool == HarnessTool.HOST) {
+                assertTrue("host exec must keep its final approval gate", policy.decide(ApprovalMode.FULL_ACCESS, tool, args("action" to "exec", "command" to "pm uninstall --user 0 package"), workspace).required)
+            } else {
+                assertFalse("$tool should be unrestricted", policy.decide(ApprovalMode.FULL_ACCESS, tool, toolArgs, workspace).required)
+            }
         }
+    }
+
+    @Test
+    fun `host status is readable but host exec always requires critical approval`() {
+        assertFalse(policy.decide(ApprovalMode.FULL_ACCESS, HarnessTool.HOST, args("action" to "status"), workspace).required)
+        assertFalse(policy.decide(ApprovalMode.FULL_ACCESS, HarnessTool.HOST, args("action" to "settings_get"), workspace).required)
+        assertFalse(policy.decide(ApprovalMode.FULL_ACCESS, HarnessTool.HOST, args("action" to "package_list"), workspace).required)
+        assertFalse(policy.decide(ApprovalMode.FULL_ACCESS, HarnessTool.HOST, args("action" to "logcat"), workspace).required)
+        val decision = policy.decide(ApprovalMode.FULL_ACCESS, HarnessTool.HOST, args("action" to "exec", "command" to "settings put global foo 1"), workspace)
+        assertTrue(decision.required)
+        assertEquals("critical", decision.riskLevel)
+        assertEquals("high", policy.decide(ApprovalMode.FULL_ACCESS, HarnessTool.HOST, args("action" to "settings_put"), workspace).riskLevel)
+        assertEquals("critical", policy.decide(ApprovalMode.FULL_ACCESS, HarnessTool.HOST, args("action" to "package_uninstall_user"), workspace).riskLevel)
     }
 
     @Test

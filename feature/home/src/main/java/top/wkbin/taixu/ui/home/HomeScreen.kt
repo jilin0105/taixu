@@ -832,6 +832,7 @@ private fun ExecutionModeBadge(
     }
     val statusText = when {
         modeStatus.checking -> stringResource(R.string.home_mode_checking)
+        modeStatus.degraded -> "已降级"
         modeStatus.active -> stringResource(R.string.home_mode_active)
         else -> stringResource(R.string.home_mode_inactive)
     }
@@ -870,7 +871,11 @@ private fun ExecutionModeBadge(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                    text = modeStatus.mode.summary,
+                    text = if (modeStatus.degraded) {
+                        "首选 ${modeStatus.preferredMode.shortLabel} 暂不可用：${modeStatus.reason}"
+                    } else {
+                        modeStatus.mode.summary
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,

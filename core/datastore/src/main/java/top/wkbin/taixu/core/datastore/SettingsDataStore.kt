@@ -136,6 +136,7 @@ class SettingsDataStore @Inject constructor(
     private val defaultReasoningDepthKey = stringPreferencesKey("agent_default_reasoning_depth")
     private val agentLoggingEnabledKey = booleanPreferencesKey("agent_local_logging_enabled")
     private val executionModeKey = stringPreferencesKey("execution_mode")
+    private val preferredExecutionModeKey = stringPreferencesKey("preferred_execution_mode")
     private val thinkingLanguageKey = stringPreferencesKey("thinking_language")
     private val customSystemPromptEnabledKey = booleanPreferencesKey("custom_system_prompt_enabled")
     private val customSystemPromptKey = stringPreferencesKey("custom_system_prompt")
@@ -203,13 +204,45 @@ class SettingsDataStore @Inject constructor(
         }
     }
 
-    val executionMode: Flow<top.wkbin.taixu.core.model.ExecutionMode> = context.settingsDataStore.data.map { preferences ->
+    /** 实际生效模式；高权限失效时可临时回落为 PRoot。 */
+    val effectiveExecutionMode: Flow<top.wkbin.taixu.core.model.ExecutionMode> = context.settingsDataStore.data.map { preferences ->
         top.wkbin.taixu.core.model.ExecutionMode.fromId(preferences[executionModeKey] ?: top.wkbin.taixu.core.model.ExecutionMode.PROOT.id)
     }
+
+    /** 用户最后一次成功选择的模式；缺少新键时从旧 execution_mode 无损迁移。 */
+    val preferredExecutionMode: Flow<top.wkbin.taixu.core.model.ExecutionMode> = context.settingsDataStore.data.map { preferences ->
+        top.wkbin.taixu.core.model.ExecutionMode.fromId(
+            preferences[preferredExecutionModeKey]
+                ?: preferences[executionModeKey]
+                ?: top.wkbin.taixu.core.model.ExecutionMode.PROOT.id,
+        )
+    }
+
+    /** 兼容旧消费者：executionMode 始终表示实际生效模式。 */
+    val executionMode: Flow<top.wkbin.taixu.core.model.ExecutionMode> = effectiveExecutionMode
 
     suspend fun setExecutionMode(mode: top.wkbin.taixu.core.model.ExecutionMode) {
         context.settingsDataStore.edit { preferences ->
             preferences[executionModeKey] = mode.id
+            preferences[preferredExecutionModeKey] = mode.id
+        }
+    }
+
+    suspend fun setPreferredExecutionMode(mode: top.wkbin.taixu.core.model.ExecutionMode) {
+        context.settingsDataStore.edit { it[preferredExecutionModeKey] = mode.id }
+    }
+
+    suspend fun setEffectiveExecutionMode(mode: top.wkbin.taixu.core.model.ExecutionMode) {
+        context.settingsDataStore.edit { it[executionModeKey] = mode.id }
+    }
+
+    suspend fun setExecutionModes(
+        preferred: top.wkbin.taixu.core.model.ExecutionMode,
+        effective: top.wkbin.taixu.core.model.ExecutionMode,
+    ) {
+        context.settingsDataStore.edit {
+            it[preferredExecutionModeKey] = preferred.id
+            it[executionModeKey] = effective.id
         }
     }
 

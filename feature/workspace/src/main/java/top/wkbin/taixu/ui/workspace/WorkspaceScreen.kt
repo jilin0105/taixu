@@ -1051,7 +1051,7 @@ fun WorkspaceScreen(
                 Column(
                     modifier = Modifier
                         .verticalScroll(rememberScrollState())
-                        .heightIn(min = 260.dp, max = 420.dp),
+                        .heightIn(min = 360.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     when (createProjectStep) {
@@ -1110,7 +1110,7 @@ fun WorkspaceScreen(
                                     if (filteredTemplates.map { it.manifest.category.id }.distinct().size > 1) {
                                         Text(category.name, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                                     }
-                                    templates.chunked(2).forEach { rowTemplates ->
+                                    templates.chunked(3).forEach { rowTemplates ->
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1170,7 +1170,7 @@ fun WorkspaceScreen(
                                                     )
                                                 }
                                             }
-                                            repeat(2 - rowTemplates.size) {
+                                            repeat(3 - rowTemplates.size) {
                                                 Spacer(Modifier.weight(1f))
                                             }
                                         }

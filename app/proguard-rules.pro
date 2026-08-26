@@ -25,3 +25,15 @@
 # Keep line information for deobfuscating production crashes while hiding source filenames.
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
+
+# === Shizuku UserService (release 构建必保) ===
+# Shizuku 在独立 fork 的进程中按全限定类名反射加载 ShizukuHostUserService，
+# 并通过 AIDL 描述符 (DESCRIPTOR = 接口全限定名) 匹配 Binder 接口。
+# R8 一旦重命名/裁剪这些类或其构造函数，UserService 进程会静默崩溃，
+# 表现为 bindUserService 一直超时、服务端日志只有 addUserService 无进程启动。
+-keep class top.wkbin.taixu.runtime.privilege.ShizukuHostUserService { *; }
+-keep class top.wkbin.taixu.runtime.privilege.IShizukuHostService { *; }
+-keep class top.wkbin.taixu.runtime.privilege.IShizukuHostService$* { *; }
+# HostProcessRunner 由 ShizukuHostUserService 直接引用，R8 可达性分析应自动保留，
+# 但因其运行在 Shizuku 独立进程中，显式保活避免边缘裁剪。
+-keep class top.wkbin.taixu.runtime.privilege.HostProcessRunner { *; }

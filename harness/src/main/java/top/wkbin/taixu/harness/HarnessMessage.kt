@@ -12,6 +12,7 @@ enum class HarnessTool {
     @SerialName("edit") EDIT,
     @SerialName("base") BASE,
     @SerialName("process") PROCESS,
+    @SerialName("host") HOST,
     @SerialName("download") DOWNLOAD,
     @SerialName("memory") MEMORY,
     @SerialName("plan") PLAN,

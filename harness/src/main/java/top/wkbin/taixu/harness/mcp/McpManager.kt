@@ -58,11 +58,12 @@ class McpManager @Inject constructor(
         .onFailure { cache.remove(server.id); state(server.id, McpConnectionState.OFFLINE) }
 
     suspend fun executeTool(fullToolName: String, arguments: JsonObject): Pair<Boolean, String> {
-        val parts = fullToolName.split("__")
-        if (parts.size < 3 || parts.first() != "mcp") return false to "无效的 MCP 工具名称：$fullToolName"
-        val server = repository.servers.first().firstOrNull { it.id == parts[1] && it.isEnabled }
-            ?: return false to "未找到 MCP 服务：${parts[1]}"
-        return runCatching { transport(server).execute(server, parts.drop(2).joinToString("__"), arguments) }
+        if (!fullToolName.startsWith("mcp__")) return false to "无效的 MCP 工具名称：$fullToolName"
+        val tool = getActiveMcpTools().firstOrNull { McpToolApiName.matches(it, fullToolName) }
+            ?: return false to "未找到 MCP 工具：$fullToolName"
+        val server = repository.servers.first().firstOrNull { it.id == tool.serverId && it.isEnabled }
+            ?: return false to "未找到 MCP 服务：${tool.serverId}"
+        return runCatching { transport(server).execute(server, tool.name, arguments) }
             .getOrElse { false to "MCP 工具执行异常：${it.message ?: it::class.simpleName}" }
     }
 

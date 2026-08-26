@@ -14,10 +14,15 @@ import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.LinuxEnvironmentManager
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import top.wkbin.taixu.runtime.shell.ProcessType
+import top.wkbin.taixu.runtime.privilege.PrivilegeManager
+import top.wkbin.taixu.core.model.ExecutionMode
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.collect
 import kotlinx.serialization.json.JsonObject
@@ -46,6 +51,7 @@ class ToolExecutor @Inject constructor(
     private val contextExecutor: AgentContextExecutor? = null,
     private val messageStore: SessionTreeStore? = null,
     private val eventBus: top.wkbin.taixu.harness.events.HarnessEventBus? = null,
+    private val privilegeManager: PrivilegeManager? = null,
 ) {
     @Inject
     lateinit var settingsDataStore: AgentPreferences
@@ -90,7 +96,7 @@ class ToolExecutor @Inject constructor(
                     )
                 }
             }
-            executeTool(toolCall.tool, toolCall.args, toolCall.rawToolName, sessionId, workspace, progressReporter)
+            executeTool(toolCall.tool, toolCall.args, toolCall.rawToolName, sessionId, workspace, progressReporter, operationId)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (throwable: Throwable) {
@@ -140,6 +146,7 @@ class ToolExecutor @Inject constructor(
         sessionId: String,
         workspace: String,
         progressReporter: (suspend (String) -> Unit)?,
+        operationId: String?,
     ): Pair<Boolean, String> {
         val activeFileAccess = if (workspace.isNotBlank()) fileAccess.withBase(workspace) else fileAccess
         return when (tool) {
@@ -162,6 +169,7 @@ class ToolExecutor @Inject constructor(
             }
             HarnessTool.BASE -> executeBase(args, workspace)
             HarnessTool.PROCESS -> executeProcess(args, workspace)
+            HarnessTool.HOST -> executeHost(args, operationId)
             HarnessTool.DOWNLOAD -> executeDownload(args, activeFileAccess, progressReporter)
             HarnessTool.MEMORY -> contextExecutor?.executeMemory(args, sessionId, "") ?: (false to "未初始化记忆执行器")
             HarnessTool.PLAN -> contextExecutor?.executePlan(args, sessionId) ?: (false to "未初始化计划执行器")
@@ -172,6 +180,101 @@ class ToolExecutor @Inject constructor(
             HarnessTool.MCP -> mcpManager?.executeTool(rawToolName ?: "mcp", args) ?: (false to "未初始化 MCP 管理器")
         }
     }
+
+    /** 宿主 Android 特权通道；权限在每次执行前实时复核，不能仅依赖启动时快照。 */
+    @OptIn(InternalCoroutinesApi::class)
+    private suspend fun executeHost(args: JsonObject, operationId: String?): Pair<Boolean, String> {
+        val manager = privilegeManager ?: return false to "未初始化宿主权限执行器"
+        val action = requireString(args, "action").trim().lowercase()
+        return when (action) {
+            "status" -> {
+                val info = manager.getPrivilegeInfo()
+                true to buildString {
+                    append("当前生效模式：").append(info.mode.title)
+                    append("\n权限状态：").append(if (info.modeActive) "已授权" else "未授权")
+                    append("\nShizuku：").append(if (info.shizukuAvailable) "可用 (shell UID 2000)" else "不可用")
+                    append("\nRoot：").append(if (info.rootAvailable) "可用 (UID 0)" else "不可用或未选择")
+                }
+            }
+            else -> {
+                val command = buildHostCommand(action, args)
+                require(command.length <= MAX_COMMAND_LENGTH) { "命令过长（${command.length} 字符，上限 $MAX_COMMAND_LENGTH）" }
+                val info = manager.getPrivilegeInfo()
+                require(info.mode != ExecutionMode.PROOT && info.modeActive) {
+                    "宿主特权当前不可用；请先在设置中授权并切换到 Shizuku 或 Root 模式"
+                }
+                val hostOperationId = operationId?.takeIf { it.isNotBlank() } ?: "host-${UUID.randomUUID()}"
+                val cancelHandle = currentCoroutineContext()[Job]?.invokeOnCompletion(onCancelling = true) { cause ->
+                    if (cause is CancellationException) manager.cancelShellCommand(hostOperationId)
+                }
+                val result = try {
+                    manager.executeShellCommand(command, hostOperationId)
+                } finally {
+                    cancelHandle?.dispose()
+                }
+                val body = buildString {
+                    append("mode ").append(info.mode.shortLabel).append(" · exit ").append(result.exitCode)
+                    if (result.stdout.isNotBlank()) append("\n").append(result.stdout.trim())
+                    if (result.stderr.isNotBlank()) append("\n").append(result.stderr.trim())
+                }
+                result.success to body
+            }
+        }
+    }
+
+    private fun buildHostCommand(action: String, args: JsonObject): String = when (action) {
+        "exec" -> requireString(args, "command")
+        "settings_get" -> {
+            val namespace = requireSettingsNamespace(args)
+            val key = requireHostIdentifier(args, "key", SETTINGS_KEY)
+            "/system/bin/settings get $namespace ${shellQuote(key)}"
+        }
+        "settings_put" -> {
+            val namespace = requireSettingsNamespace(args)
+            val key = requireHostIdentifier(args, "key", SETTINGS_KEY)
+            val value = requireString(args, "value")
+            "/system/bin/settings put $namespace ${shellQuote(key)} ${shellQuote(value)}"
+        }
+        "package_list" -> {
+            val filter = args["filter"]?.jsonPrimitive?.content?.trim().orEmpty()
+            "/system/bin/pm list packages" + if (filter.isBlank()) "" else " | /system/bin/grep -F -- ${shellQuote(filter)}"
+        }
+        "package_disable", "package_enable", "package_uninstall_user" -> {
+            val packageName = requireHostIdentifier(args, "package", PACKAGE_NAME)
+            val user = optionalLong(args, "user", 0L, 0L, 999L)
+            when (action) {
+                "package_disable" -> "/system/bin/pm disable-user --user $user ${shellQuote(packageName)}"
+                "package_enable" -> "/system/bin/pm enable --user $user ${shellQuote(packageName)}"
+                else -> "/system/bin/pm uninstall --user $user ${shellQuote(packageName)}"
+            }
+        }
+        "logcat" -> {
+            val lines = optionalLong(args, "tail_lines", 200L, 1L, 2_000L)
+            val tag = args["tag"]?.jsonPrimitive?.content?.trim().orEmpty()
+            if (tag.isBlank()) "/system/bin/logcat -d -t $lines"
+            else {
+                require(LOGCAT_TAG.matches(tag)) { "logcat tag 格式不合法" }
+                "/system/bin/logcat -d -t $lines -s ${shellQuote("$tag:*")}"
+            }
+        }
+        else -> throw IllegalArgumentException(
+            "不支持的 host action：$action；可用 status/exec/settings_get/settings_put/package_list/package_disable/package_enable/package_uninstall_user/logcat",
+        )
+    }
+
+    private fun requireSettingsNamespace(args: JsonObject): String {
+        val namespace = requireString(args, "namespace").trim().lowercase()
+        require(namespace in setOf("system", "secure", "global")) { "namespace 仅支持 system/secure/global" }
+        return namespace
+    }
+
+    private fun requireHostIdentifier(args: JsonObject, key: String, pattern: Regex): String {
+        val value = requireString(args, key).trim()
+        require(pattern.matches(value)) { "$key 格式不合法" }
+        return value
+    }
+
+    private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
 
     private suspend fun executeHistorySearch(args: JsonObject, sessionId: String): Pair<Boolean, String> {
         val query = requireString(args, "query")
@@ -432,6 +535,9 @@ class ToolExecutor @Inject constructor(
         const val DEFAULT_CWD = "/root"
         const val DEFAULT_DOWNLOAD_ATTEMPTS = 3L
         const val MAX_DOWNLOAD_ATTEMPTS = 10L
+        private val SETTINGS_KEY = Regex("^[A-Za-z0-9._-]{1,160}$")
+        private val PACKAGE_NAME = Regex("^[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+$")
+        private val LOGCAT_TAG = Regex("^[A-Za-z0-9_.-]{1,80}$")
         const val DEFAULT_DOWNLOAD_MAX_BYTES = 1024L * 1024L * 1024L
         const val MAX_DOWNLOAD_MAX_BYTES = 4L * 1024L * 1024L * 1024L
         const val PROGRESS_REPORT_INTERVAL_MS = 250L

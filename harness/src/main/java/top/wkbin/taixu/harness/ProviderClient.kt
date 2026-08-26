@@ -26,6 +26,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import top.wkbin.taixu.harness.mcp.McpToolApiName
 
 /** HTTP 429 的结构化错误，供 Harness 区分临时限流与账户额度耗尽。 */
 class LlmRateLimitException(
@@ -702,8 +703,8 @@ class ProviderClient @Inject constructor(
         val TOOLS: List<ApiToolDefinition> = listOf(
             ApiToolDefinition(
                 function = ApiFunctionDefinition(
-                    name = "history.search",
-                    description = "在当前会话的完整历史中按关键词检索旧消息。压缩摘要缺少关键细节时先用它定位消息，再用 history.read 读取原文。只读，不修改历史。",
+                    name = "history_search",
+                    description = "在当前会话的完整历史中按关键词检索旧消息。压缩摘要缺少关键细节时先用它定位消息，再用 history_read 读取原文。只读，不修改历史。",
                     parameters = Json.parseToJsonElement(
                         """{"type":"object","properties":{"query":{"type":"string","description":"要检索的关键词、文件名、错误信息或约束"},"limit":{"type":"integer","minimum":1,"maximum":20,"description":"最多返回命中条数，默认 8"}},"required":["query"]}""",
                     ).jsonObject,
@@ -711,10 +712,10 @@ class ProviderClient @Inject constructor(
             ),
             ApiToolDefinition(
                 function = ApiFunctionDefinition(
-                    name = "history.read",
-                    description = "读取当前会话某条历史消息的原文。使用 history.search 返回的 message_id，或使用稳定的历史 index。单条返回有大小上限。只读。",
+                    name = "history_read",
+                    description = "读取当前会话某条历史消息的原文。使用 history_search 返回的 message_id，或使用稳定的历史 index。单条返回有大小上限。只读。",
                     parameters = Json.parseToJsonElement(
-                        """{"type":"object","properties":{"message_id":{"type":"string","description":"history.search 返回的消息 ID"},"index":{"type":"integer","minimum":0,"description":"历史消息的 0 起始索引；与 message_id 二选一"}},"anyOf":[{"required":["message_id"]},{"required":["index"]}]}""",
+                        """{"type":"object","properties":{"message_id":{"type":"string","description":"history_search 返回的消息 ID"},"index":{"type":"integer","minimum":0,"description":"历史消息的 0 起始索引；与 message_id 二选一"}},"anyOf":[{"required":["message_id"]},{"required":["index"]}]}""",
                     ).jsonObject,
                 ),
             ),
@@ -760,6 +761,15 @@ class ProviderClient @Inject constructor(
                     description = "管理需要跨工具调用持续运行的 PRoot 后台进程。start 的命令必须以前台模式运行，由 TaiXu 托管生命周期；不要使用 nohup、& 或自行 daemonize。使用 status/logs/list/stop 查询和停止。",
                     parameters = Json.parseToJsonElement(
                         """{"type":"object","properties":{"action":{"type":"string","enum":["start","status","logs","list","stop"]},"id":{"type":"string","pattern":"^[a-z0-9][a-z0-9._-]{0,63}$","description":"稳定的进程标识；list 不需要"},"command":{"type":"string","description":"start 时必需，需以前台模式持续运行"},"cwd":{"type":"string","description":"start 的工作目录"},"tail_lines":{"type":"integer","minimum":1,"maximum":500,"description":"logs 返回的末尾行数，默认 120"}},"required":["action"]}""",
+                    ).jsonObject,
+                ),
+            ),
+            ApiToolDefinition(
+                function = ApiFunctionDefinition(
+                    name = "host",
+                    description = "读取或使用 Android 宿主特权。优先使用结构化 action 操作系统设置、包状态和日志；只有结构化动作无法覆盖时才使用 exec。所有动作仅在设置已授权 Shizuku(shell UID 2000) 或 Root(UID 0) 时生效。它不同于 base：base 始终在 PRoot Linux 沙箱内。修改宿主的动作需要用户审批。",
+                    parameters = Json.parseToJsonElement(
+                        """{"type":"object","properties":{"action":{"type":"string","enum":["status","exec","settings_get","settings_put","package_list","package_disable","package_enable","package_uninstall_user","logcat"]},"command":{"type":"string","description":"仅 exec 使用的原始宿主命令"},"namespace":{"type":"string","enum":["system","secure","global"],"description":"settings_get/settings_put 的设置命名空间"},"key":{"type":"string","description":"系统设置键名"},"value":{"type":"string","description":"settings_put 的值"},"package":{"type":"string","description":"包管理动作的 Android 包名"},"user":{"type":"integer","minimum":0,"maximum":999,"description":"Android 用户 ID，默认 0"},"filter":{"type":"string","description":"package_list 的可选字面量过滤词"},"tail_lines":{"type":"integer","minimum":1,"maximum":2000,"description":"logcat 返回行数，默认 200"},"tag":{"type":"string","description":"logcat 的可选 tag"}},"required":["action"]}""",
                     ).jsonObject,
                 ),
             ),
@@ -814,7 +824,7 @@ class ProviderClient @Inject constructor(
         fun buildDynamicTools(mcpTools: List<top.wkbin.taixu.core.model.McpToolInfo> = emptyList()): List<ApiToolDefinition> {
             val list = TOOLS.toMutableList()
             mcpTools.forEach { mcp ->
-                val fullToolName = "mcp__${mcp.serverId}__${mcp.name}"
+                val fullToolName = McpToolApiName.encode(mcp)
                 val params = runCatching {
                     Json.parseToJsonElement(mcp.parametersJson).jsonObject
                 }.getOrDefault(JsonObject(emptyMap()))

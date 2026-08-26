@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -169,12 +170,19 @@ fun ChatScreen(
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
     val workspaces by viewModel.workspaces.collectAsStateWithLifecycle()
     val models by viewModel.models.collectAsStateWithLifecycle()
+    val providerModelIds by viewModel.providerModelIds.collectAsStateWithLifecycle()
+    val discoveringProviderModels by viewModel.discoveringProviderModels.collectAsStateWithLifecycle()
+    val providerModelDiscoveryError by viewModel.providerModelDiscoveryError.collectAsStateWithLifecycle()
+    val modelPickerProfileId by viewModel.modelPickerProfileId.collectAsStateWithLifecycle()
     val workspace by viewModel.workspace.collectAsStateWithLifecycle()
     val sessionProjectType by viewModel.projectType.collectAsStateWithLifecycle()
     val matchingCommands by viewModel.matchingCommands.collectAsStateWithLifecycle()
     val matchingMentions by viewModel.matchingMentions.collectAsStateWithLifecycle()
     val attachedMentions by viewModel.attachedMentions.collectAsStateWithLifecycle()
-    val pendingMessages by viewModel.pendingMessages.collectAsStateWithLifecycle()
+    val queuedPrompts by viewModel.queuedPrompts.collectAsStateWithLifecycle()
+    val sendMode by viewModel.sendMode.collectAsStateWithLifecycle()
+    val branches by viewModel.branches.collectAsStateWithLifecycle()
+    val runtimeEvents by viewModel.runtimeEvents.collectAsStateWithLifecycle()
     val currentSessionId by viewModel.currentSessionId.collectAsStateWithLifecycle()
     val sessionRunStates by viewModel.sessionRunStates.collectAsStateWithLifecycle()
     val activeDistroId by viewModel.activeDistroId.collectAsStateWithLifecycle()
@@ -192,6 +200,9 @@ fun ChatScreen(
     var showModels by remember { mutableStateOf(false) }
     var showApprovalModes by remember { mutableStateOf(false) }
     var showSkillsMcpSheet by remember { mutableStateOf(false) }
+    var showBranches by remember { mutableStateOf(false) }
+    var showRuntimeTimeline by remember { mutableStateOf(false) }
+    var branchFromMessageId by remember { mutableStateOf<String?>(null) }
     var editTargetMessage by remember { mutableStateOf<UserMessage?>(null) }
 
     val activeSkillsCount = remember(allSkills) { allSkills.count { it.isEnabled } }
@@ -227,6 +238,10 @@ fun ChatScreen(
     val liveThinkingMessageId = remember(messages) {
         messages.filterIsInstance<AssistantText>().lastOrNull()?.id
     }
+    val lastAssistantMessageId = remember(messages) {
+        messages.filterIsInstance<AssistantText>().lastOrNull()?.id
+    }
+    val currentBranch = remember(branches) { branches.firstOrNull { it.isCurrent } }
 
     val density = LocalDensity.current
     val imeBottom = WindowInsets.ime.getBottom(density)
@@ -295,7 +310,9 @@ fun ChatScreen(
                     ) {
                         Box(Modifier.size(6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
                         Text(
-                            text = activeModel?.name ?: stringResource(R.string.chat_no_model_selected),
+                            text = activeModel?.model?.takeIf { it.isNotBlank() }
+                                ?: activeModel?.name
+                                ?: stringResource(R.string.chat_no_model_selected),
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                             color = MaterialTheme.colorScheme.onSecondaryContainer,
                             maxLines = 1,
@@ -407,8 +424,10 @@ fun ChatScreen(
                         matchingMentions = matchingMentions,
                         attachedMentions = attachedMentions,
                         knownMentionNames = knownMentionNames,
-                        pendingMessages = pendingMessages,
-                        onRemovePending = viewModel::removePendingMessage,
+                        queuedPrompts = queuedPrompts,
+                        onRemoveQueuedPrompt = viewModel::removeQueuedPrompt,
+                        sendMode = sendMode,
+                        onSendModeChange = viewModel::setSendMode,
                         input = input,
                         onInputChanged = viewModel::onInputChanged,
                         onApplyCommand = viewModel::applySlashCommand,
@@ -417,6 +436,15 @@ fun ChatScreen(
                         onTriggerMention = viewModel::triggerMentionInput,
                         onSend = { customText, images -> viewModel.send(customText, images) },
                         onStop = viewModel::stop,
+                        currentBranch = currentBranch,
+                        branchCount = branches.count { it.kind != top.wkbin.taixu.harness.session.ConversationBranchKind.SUBAGENT },
+                        runtimeEvents = runtimeEvents,
+                        onOpenBranches = { showBranches = true },
+                        onOpenRuntime = { showRuntimeTimeline = true },
+                        lastAssistantMessageId = lastAssistantMessageId,
+                        onRegenerate = viewModel::regenerateLast,
+                        onCreateBranch = { branchFromMessageId = it },
+                        onRetryTool = viewModel::retryToolCall,
                         initializing = initializing,
                         activeSkillsCount = activeSkillsCount,
                         activeMcpCount = activeMcpCount,
@@ -424,6 +452,8 @@ fun ChatScreen(
                         pendingApprovals = pendingApprovals,
                         onResolveApproval = viewModel::resolveApproval,
                         contextUsage = contextUsage,
+                        activeModel = activeModel,
+                        onUpdateReasoning = viewModel::updateActiveModelReasoning,
                         quickPhrases = quickPhrases,
                         onSelectPhrase = viewModel::applyQuickPhrase,
                     )
@@ -476,8 +506,10 @@ fun ChatScreen(
                     matchingMentions = matchingMentions,
                     attachedMentions = attachedMentions,
                     knownMentionNames = knownMentionNames,
-                    pendingMessages = pendingMessages,
-                    onRemovePending = viewModel::removePendingMessage,
+                    queuedPrompts = queuedPrompts,
+                    onRemoveQueuedPrompt = viewModel::removeQueuedPrompt,
+                    sendMode = sendMode,
+                    onSendModeChange = viewModel::setSendMode,
                     input = input,
                     onInputChanged = viewModel::onInputChanged,
                     onApplyCommand = viewModel::applySlashCommand,
@@ -486,6 +518,15 @@ fun ChatScreen(
                     onTriggerMention = viewModel::triggerMentionInput,
                     onSend = { customText, images -> viewModel.send(customText, images) },
                     onStop = viewModel::stop,
+                    currentBranch = currentBranch,
+                    branchCount = branches.count { it.kind != top.wkbin.taixu.harness.session.ConversationBranchKind.SUBAGENT },
+                    runtimeEvents = runtimeEvents,
+                    onOpenBranches = { showBranches = true },
+                    onOpenRuntime = { showRuntimeTimeline = true },
+                    lastAssistantMessageId = lastAssistantMessageId,
+                    onRegenerate = viewModel::regenerateLast,
+                    onCreateBranch = { branchFromMessageId = it },
+                    onRetryTool = viewModel::retryToolCall,
                     initializing = initializing,
                     activeSkillsCount = activeSkillsCount,
                     activeMcpCount = activeMcpCount,
@@ -547,8 +588,19 @@ fun ChatScreen(
     if (showModels) {
         ModelDialog(
             models = models,
-            onDismiss = { showModels = false },
-            onSelect = { id -> viewModel.setActiveModel(id) },
+            providerModelIds = providerModelIds,
+            discoveringProviderModels = discoveringProviderModels,
+            providerModelDiscoveryError = providerModelDiscoveryError,
+            modelPickerProfileId = modelPickerProfileId,
+            onDismiss = {
+                viewModel.closeProviderModelPicker()
+                showModels = false
+            },
+            onSelectProfile = { id -> viewModel.setActiveModel(id) },
+            onOpenModelPicker = viewModel::openProviderModelPicker,
+            onCloseModelPicker = viewModel::closeProviderModelPicker,
+            onRefreshModels = viewModel::discoverProviderModels,
+            onSwitchModel = viewModel::switchModelInProfile,
             onAdd = { name, provider, model, baseUrl -> viewModel.addModel(name, provider, model, baseUrl) },
             onDelete = viewModel::deleteModel,
         )
@@ -576,6 +628,33 @@ fun ChatScreen(
             },
         )
     }
+
+    if (showBranches) {
+        BranchBrowserSheet(
+            branches = branches,
+            running = running,
+            onDismiss = { showBranches = false },
+            onSwitch = { branch ->
+                viewModel.switchBranch(branch)
+                showBranches = false
+            },
+        )
+    }
+
+    if (showRuntimeTimeline) {
+        RuntimeTimelineSheet(events = runtimeEvents, onDismiss = { showRuntimeTimeline = false })
+    }
+
+    branchFromMessageId?.let { messageId ->
+        CreateBranchDialog(
+            messageId = messageId,
+            onDismiss = { branchFromMessageId = null },
+            onCreate = { id, name ->
+                viewModel.createBranch(id, name)
+                branchFromMessageId = null
+            },
+        )
+    }
 }
 
 @Composable
@@ -600,8 +679,10 @@ private fun ChatPaneContent(
     matchingMentions: List<MentionItem> = emptyList(),
     attachedMentions: List<MentionItem> = emptyList(),
     knownMentionNames: List<String> = emptyList(),
-    pendingMessages: List<PendingMessage>,
-    onRemovePending: (Int) -> Unit,
+    queuedPrompts: List<top.wkbin.taixu.harness.QueuedPrompt>,
+    onRemoveQueuedPrompt: (top.wkbin.taixu.harness.QueuedPrompt) -> Unit,
+    sendMode: ComposerSendMode,
+    onSendModeChange: (ComposerSendMode) -> Unit,
     input: String,
     onInputChanged: (String) -> Unit,
     onApplyCommand: (SlashCommandItem) -> Unit,
@@ -610,6 +691,15 @@ private fun ChatPaneContent(
     onTriggerMention: () -> Unit = {},
     onSend: (String?, List<String>) -> Unit,
     onStop: () -> Unit,
+    currentBranch: top.wkbin.taixu.harness.session.ConversationBranch?,
+    branchCount: Int,
+    runtimeEvents: List<top.wkbin.taixu.harness.events.HarnessEvent>,
+    onOpenBranches: () -> Unit,
+    onOpenRuntime: () -> Unit,
+    lastAssistantMessageId: String?,
+    onRegenerate: () -> Unit,
+    onCreateBranch: (String) -> Unit,
+    onRetryTool: (String) -> Unit,
     initializing: Boolean = false,
     activeSkillsCount: Int = 0,
     activeMcpCount: Int = 0,
@@ -715,6 +805,16 @@ private fun ChatPaneContent(
     }
 
     Column(modifier = modifier) {
+        if (messages.isNotEmpty() || running) {
+            ChatWorkbenchStrip(
+                currentBranch = currentBranch,
+                branchCount = branchCount,
+                runtimeEvents = runtimeEvents,
+                running = running,
+                onOpenBranches = onOpenBranches,
+                onOpenRuntime = onOpenRuntime,
+            )
+        }
         LazyColumn(
             state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -753,11 +853,15 @@ private fun ChatPaneContent(
                             knownMentionNames = knownMentionNames,
                             onEdit = { onEditMessage(message) },
                             onDelete = { onDeleteMessage(message.id) },
+                            onCreateBranch = { onCreateBranch(message.id) },
                         )
                         is AssistantText -> AssistantBubble(
                             message = message,
                             defaultExpanded = thinkingExpanded,
                             live = thinkingLive && message.id == liveThinkingMessageId,
+                            showRegenerate = message.id == lastAssistantMessageId,
+                            onRegenerate = onRegenerate,
+                            onCreateBranch = { onCreateBranch(message.id) },
                         )
                         is ToolCall -> {
                             if (message.tool == HarnessTool.SUBAGENT) {
@@ -776,6 +880,7 @@ private fun ChatPaneContent(
                                     showReasoning = message.reasoning != null &&
                                         !reasoningAlreadyShown(messages, index, message.reasoning),
                                     defaultExpanded = thinkingExpanded,
+                                    onRetry = { onRetryTool(message.id) },
                                 )
                             }
                         }
@@ -860,51 +965,7 @@ private fun ChatPaneContent(
             )
         }
 
-        // 排队消息提示条：运行中排队的消息，当前任务结束后自动接续
-        if (pendingMessages.isNotEmpty()) {
-            Column(
-                Modifier.fillMaxWidth().padding(top = 6.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                pendingMessages.forEachIndexed { index, queued ->
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Row(
-                            Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(
-                                stringResource(R.string.chat_queue_item, index + 1),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                            Text(
-                                queued.text,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
-                            IconButton(
-                                onClick = { onRemovePending(index) },
-                                modifier = Modifier.size(28.dp),
-                            ) {
-                                RuntimeIcon(
-                                    RuntimeIconName.Close,
-                                    Modifier.size(16.dp),
-                                    MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        QueuedPromptStack(prompts = queuedPrompts, onRemove = onRemoveQueuedPrompt)
 
         // 待发送附件预览栏
         AttachmentPreviewRow(
@@ -971,6 +1032,10 @@ private fun ChatPaneContent(
                     .padding(horizontal = 10.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                // 仅在运行中且用户开始输入时展示，避免发送后立刻占位/换行
+                if (running && input.isNotBlank()) {
+                    ComposerModeSelector(mode = sendMode, onModeChange = onSendModeChange)
+                }
                 // 🌟 上排主体：满宽弹性文本输入框（无任何左侧图标干扰，空间宽敞开阔）
                 Box(
                     modifier = Modifier
@@ -1124,17 +1189,27 @@ private fun ChatPaneContent(
                         ) {
                             ContextUsageButton(contextUsage)
                             if (canSend) {
+                                val sendTint = when (sendMode) {
+                                    ComposerSendMode.STEER -> Color(0xFF7C4DFF)
+                                    ComposerSendMode.FOLLOW_UP -> MaterialTheme.colorScheme.tertiary
+                                    ComposerSendMode.NEXT_RUN -> MaterialTheme.colorScheme.secondary
+                                }
+                                val sendIcon = when (sendMode) {
+                                    ComposerSendMode.STEER -> RuntimeIconName.Tune
+                                    ComposerSendMode.FOLLOW_UP -> RuntimeIconName.Link
+                                    ComposerSendMode.NEXT_RUN -> RuntimeIconName.List
+                                }
                                 Surface(
                                     onClick = doSend,
                                     shape = buttonShape,
-                                    color = MaterialTheme.colorScheme.secondaryContainer,
+                                    color = sendTint,
                                     modifier = Modifier.size(30.dp),
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         RuntimeIcon(
-                                            RuntimeIconName.Plus,
+                                            sendIcon,
                                             Modifier.size(16.dp),
-                                            MaterialTheme.colorScheme.onSecondaryContainer,
+                                            Color.White,
                                         )
                                     }
                                 }
@@ -1570,12 +1645,14 @@ private fun MentionPopup(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun UserBubble(
     message: UserMessage,
     knownMentionNames: List<String> = emptyList(),
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    onCreateBranch: () -> Unit,
 ) {
     val context = LocalContext.current
     var showMenu by remember { mutableStateOf(false) }
@@ -1611,66 +1688,88 @@ private fun UserBubble(
 
             // 🌟 2. 用户文字气泡
             if (message.text.isNotBlank()) {
-                Box {
-                    Surface(
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        shape = RoundedCornerShape(16.dp, 4.dp, 16.dp, 16.dp),
-                        modifier = Modifier
-                            .widthIn(max = 300.dp)
-                            .clickable { showMenu = true },
-                    ) {
-                        val mentionColor = MaterialTheme.colorScheme.primary
-                        val mentionBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-                        val annotatedText = remember(message.text, knownMentionNames, mentionColor, mentionBg) {
-                            formatMentionText(message.text, knownMentionNames, mentionColor, mentionBg)
-                        }
-                        SelectionContainer {
-                            Text(
-                                text = annotatedText,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            )
-                        }
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = RoundedCornerShape(16.dp, 4.dp, 16.dp, 16.dp),
+                    modifier = Modifier
+                        .widthIn(max = 300.dp)
+                        .clickable { showMenu = true },
+                ) {
+                    val mentionColor = MaterialTheme.colorScheme.primary
+                    val mentionBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                    val annotatedText = remember(message.text, knownMentionNames, mentionColor, mentionBg) {
+                        formatMentionText(message.text, knownMentionNames, mentionColor, mentionBg)
                     }
-
-                    DropdownMenu(
-                        expanded = showMenu,
-                        onDismissRequest = { showMenu = false },
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.chat_copy)) },
-                            leadingIcon = { RuntimeIcon(RuntimeIconName.Copy, Modifier.size(16.dp)) },
-                            onClick = {
-                                showMenu = false
-                                copyText()
-                            },
+                    SelectionContainer {
+                        Text(
+                            text = annotatedText,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
                         )
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.chat_edit_resend)) },
-                            leadingIcon = { RuntimeIcon(RuntimeIconName.Edit, Modifier.size(16.dp)) },
-                            onClick = {
-                                showMenu = false
-                                onEdit()
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.chat_delete), color = MaterialTheme.colorScheme.error) },
-                            leadingIcon = {
-                                RuntimeIcon(
-                                    RuntimeIconName.Trash,
-                                    Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.error,
-                                )
-                            },
-                            onClick = {
-                                showMenu = false
-                                onDelete()
-                            },
+                    }
+                }
+            } else if (message.imageUrls.isNotEmpty()) {
+                // 纯图片消息：显示小菜单按钮
+                Surface(
+                    onClick = { showMenu = true },
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shape = CircleShape,
+                    modifier = Modifier.size(28.dp),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        RuntimeIcon(
+                            RuntimeIconName.More,
+                            Modifier.size(15.dp),
+                            MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
             }
+        }
+
+        DropdownMenu(
+            expanded = showMenu,
+            onDismissRequest = { showMenu = false },
+        ) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.chat_copy)) },
+                leadingIcon = { RuntimeIcon(RuntimeIconName.Copy, Modifier.size(16.dp)) },
+                onClick = {
+                    showMenu = false
+                    copyText()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.chat_edit_resend)) },
+                leadingIcon = { RuntimeIcon(RuntimeIconName.Edit, Modifier.size(16.dp)) },
+                onClick = {
+                    showMenu = false
+                    onEdit()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.chat_create_branch)) },
+                leadingIcon = { RuntimeIcon(RuntimeIconName.Hub, Modifier.size(16.dp)) },
+                onClick = {
+                    showMenu = false
+                    onCreateBranch()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.chat_delete), color = MaterialTheme.colorScheme.error) },
+                leadingIcon = {
+                    RuntimeIcon(
+                        RuntimeIconName.Trash,
+                        Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                },
+                onClick = {
+                    showMenu = false
+                    onDelete()
+                },
+            )
         }
     }
 }
@@ -1724,6 +1823,9 @@ private fun AssistantBubble(
     message: AssistantText,
     defaultExpanded: Boolean,
     live: Boolean = false,
+    showRegenerate: Boolean = false,
+    onRegenerate: () -> Unit = {},
+    onCreateBranch: () -> Unit = {},
 ) {
     val reasoning = message.reasoning
     val context = LocalContext.current
@@ -1783,8 +1885,18 @@ private fun AssistantBubble(
 
                 Spacer(Modifier.weight(1f))
 
+                if (showRegenerate) {
+                    IconButton(onClick = onRegenerate, modifier = Modifier.size(26.dp), contentDescription = stringResource(R.string.chat_regenerate)) {
+                        RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+
+                IconButton(onClick = onCreateBranch, modifier = Modifier.size(26.dp), contentDescription = stringResource(R.string.chat_branch_from_here)) {
+                    RuntimeIcon(RuntimeIconName.Hub, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+
                 // 复制按钮
-                IconButton(onClick = copyAll, modifier = Modifier.size(24.dp)) {
+                IconButton(onClick = copyAll, modifier = Modifier.size(24.dp), contentDescription = stringResource(R.string.chat_copy)) {
                     RuntimeIcon(
                         RuntimeIconName.Copy,
                         Modifier.size(13.dp),
@@ -2150,6 +2262,7 @@ private fun ToolCard(
     liveStatus: String?,
     showReasoning: Boolean = false,
     defaultExpanded: Boolean = false,
+    onRetry: () -> Unit = {},
 ) {
     var expanded by remember(call.id) { mutableStateOf(false) }
     val dotColor = when {
@@ -2275,6 +2388,15 @@ private fun ToolCard(
                     workspace = workspace,
                     onOpenFile = onOpenFile,
                 )
+                if (result != null && !running) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = onRetry) {
+                            RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(15.dp), MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(6.dp))
+                            Text(stringResource(R.string.chat_retry_from_tool))
+                        }
+                    }
+                }
             }
         }
     }
@@ -2602,8 +2724,16 @@ private fun RenameSessionDialog(
 @Composable
 private fun ModelDialog(
     models: List<AiModelEntity>,
+    providerModelIds: List<String>,
+    discoveringProviderModels: Boolean,
+    providerModelDiscoveryError: String?,
+    modelPickerProfileId: String?,
     onDismiss: () -> Unit,
-    onSelect: (String) -> Unit,
+    onSelectProfile: (String) -> Unit,
+    onOpenModelPicker: (String) -> Unit,
+    onCloseModelPicker: () -> Unit,
+    onRefreshModels: (String) -> Unit,
+    onSwitchModel: (profileId: String, modelId: String) -> Unit,
     onAdd: (String, String, String, String) -> Unit,
     onDelete: (String) -> Unit,
 ) {
@@ -2617,14 +2747,33 @@ private fun ModelDialog(
             },
         )
     }
+    val pickingProfile = modelPickerProfileId?.let { id -> models.firstOrNull { it.id == id } }
+    if (pickingProfile != null) {
+        ProviderModelPickerDialog(
+            profile = pickingProfile,
+            modelIds = providerModelIds,
+            discovering = discoveringProviderModels,
+            error = providerModelDiscoveryError,
+            onDismiss = onCloseModelPicker,
+            onRefresh = { onRefreshModels(pickingProfile.id) },
+            onSelect = { modelId -> onSwitchModel(pickingProfile.id, modelId) },
+        )
+        return
+    }
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.chat_select_model), fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    stringResource(R.string.chat_select_provider_hint),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 models.forEach { model ->
-                    Row(
-                        Modifier.fillMaxWidth()
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
                             .clip(MaterialTheme.shapes.small)
                             .background(
                                 if (model.isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent,
@@ -2635,24 +2784,89 @@ private fun ModelDialog(
                                 if (model.isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f) else Color.Transparent,
                                 MaterialTheme.shapes.small,
                             )
-                            .clickable { onSelect(model.id) }
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        top.wkbin.taixu.ui.components.ProviderBadge(
-                            providerIdOrName = model.provider,
-                            size = 26.dp,
-                        )
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                model.name,
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { onSelectProfile(model.id) },
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            top.wkbin.taixu.ui.components.ProviderBadge(
+                                providerIdOrName = model.provider,
+                                size = 26.dp,
                             )
-                            Text("${model.provider} · ${model.model}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    model.name.ifBlank { model.provider },
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    model.provider,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            if (model.isActive) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                                    shape = RoundedCornerShape(6.dp),
+                                ) {
+                                    Text(
+                                        stringResource(R.string.chat_current),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                            }
+                            IconButton(onClick = { onDelete(model.id) }, modifier = Modifier.size(28.dp)) {
+                                RuntimeIcon(RuntimeIconName.Trash, Modifier.size(15.dp), MaterialTheme.colorScheme.error)
+                            }
                         }
-                        IconButton(onClick = { onDelete(model.id) }, modifier = Modifier.size(28.dp)) {
-                            RuntimeIcon(RuntimeIconName.Trash, Modifier.size(15.dp), MaterialTheme.colorScheme.error)
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(
+                                    model.model.ifBlank { stringResource(R.string.chat_model_not_set) },
+                                    style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                )
+                            }
+                            Surface(
+                                onClick = { onOpenModelPicker(model.id) },
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                            ) {
+                                Row(
+                                    Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    RuntimeIcon(RuntimeIconName.Tune, Modifier.size(14.dp), MaterialTheme.colorScheme.onSecondaryContainer)
+                                    Text(
+                                        stringResource(R.string.chat_switch_model),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -2666,6 +2880,128 @@ private fun ModelDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.chat_close)) }
+        },
+    )
+}
+
+@Composable
+private fun ProviderModelPickerDialog(
+    profile: AiModelEntity,
+    modelIds: List<String>,
+    discovering: Boolean,
+    error: String?,
+    onDismiss: () -> Unit,
+    onRefresh: () -> Unit,
+    onSelect: (String) -> Unit,
+) {
+    var manualId by remember(profile.id, profile.model) { mutableStateOf(profile.model) }
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(stringResource(R.string.chat_switch_model_title), fontWeight = FontWeight.Bold)
+                Text(
+                    profile.name.ifBlank { profile.provider },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    stringResource(R.string.chat_switch_model_hint),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                when {
+                    discovering -> {
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                stringResource(R.string.chat_model_discovering),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    error != null && modelIds.isEmpty() -> {
+                        Text(
+                            error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    modelIds.isNotEmpty() -> {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 280.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            modelIds.forEach { modelId ->
+                                val selected = modelId == profile.model
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(
+                                            if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                            else MaterialTheme.colorScheme.surfaceContainerLow,
+                                        )
+                                        .clickable { onSelect(modelId) }
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Text(
+                                        modelId,
+                                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (selected) {
+                                        RuntimeIcon(RuntimeIconName.Check, Modifier.size(16.dp), MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (!error.isNullOrBlank() && modelIds.isNotEmpty()) {
+                    Text(error, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                }
+                OutlinedTextField(
+                    value = manualId,
+                    onValueChange = { manualId = it },
+                    label = { Text(stringResource(R.string.chat_model_id)) },
+                    placeholder = { Text("gpt-4o / deepseek-chat") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onRefresh, enabled = !discovering) {
+                    Text(stringResource(R.string.chat_refresh_models), color = MaterialTheme.colorScheme.primary)
+                }
+                TextButton(
+                    onClick = { onSelect(manualId) },
+                    enabled = manualId.isNotBlank(),
+                ) {
+                    Text(stringResource(R.string.chat_apply_model), color = MaterialTheme.colorScheme.primary)
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.chat_cancel)) }
         },
     )
 }
@@ -2916,6 +3252,7 @@ private fun toolName(tool: HarnessTool, rawToolName: String? = null): String {
         HarnessTool.EDIT -> "edit"
         HarnessTool.BASE -> "base"
         HarnessTool.PROCESS -> "process"
+        HarnessTool.HOST -> "host"
         HarnessTool.DOWNLOAD -> "download"
         HarnessTool.MEMORY -> "memory"
         HarnessTool.PLAN -> "plan"

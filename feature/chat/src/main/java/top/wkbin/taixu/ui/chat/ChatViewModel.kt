@@ -16,10 +16,20 @@ import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.harness.HarnessLoop
 import top.wkbin.taixu.harness.HarnessMessage
 import top.wkbin.taixu.harness.PendingMessage
+import top.wkbin.taixu.harness.QueuedPrompt
 import top.wkbin.taixu.harness.ContextWindowPolicy
+import top.wkbin.taixu.harness.events.HarnessEvent
+import top.wkbin.taixu.harness.events.HarnessEventBus
 import top.wkbin.taixu.harness.mcp.McpManager
+import top.wkbin.taixu.harness.queue.PromptQueue
+import top.wkbin.taixu.harness.session.ConversationBranch
+import top.wkbin.taixu.harness.session.LaneManager
 import top.wkbin.taixu.runtime.WorkspaceManager
 import top.wkbin.taixu.runtime.WorkspaceProject
+import top.wkbin.taixu.core.tools.AgentModelDiscovery
+import top.wkbin.taixu.core.tools.AgentProviderCatalog
+import top.wkbin.taixu.core.tools.ProviderEndpointPolicy
+import top.wkbin.taixu.core.tools.ProviderRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import android.content.Context
@@ -32,12 +42,17 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 import top.wkbin.taixu.runtime.terminal.TerminalSessionManager
+
+private const val MAX_RUNTIME_EVENTS = 160
 
 @HiltViewModel
 class ChatViewModel @Inject constructor(
@@ -54,11 +69,25 @@ class ChatViewModel @Inject constructor(
     private val mcpServerRepository: McpServerRepository,
     private val approvalRepository: AgentApprovalRepository,
     private val quickPhraseRepository: top.wkbin.taixu.core.database.QuickPhraseRepository,
+    private val laneManager: LaneManager,
+    private val eventBus: HarnessEventBus,
+    private val modelDiscovery: AgentModelDiscovery,
+    private val providerCatalog: AgentProviderCatalog,
+    private val providerRepository: ProviderRepository,
 ) : ViewModel() {
+
+    private val _eventHistory = MutableStateFlow<Map<String, List<HarnessEvent>>>(emptyMap())
 
     init {
         viewModelScope.launch {
             quickPhraseRepository.ensureInitialized()
+        }
+        viewModelScope.launch {
+            eventBus.events.collect { event ->
+                _eventHistory.value = _eventHistory.value.toMutableMap().apply {
+                    this[event.sessionId] = (this[event.sessionId].orEmpty() + event).takeLast(MAX_RUNTIME_EVENTS)
+                }
+            }
         }
     }
 
@@ -85,6 +114,25 @@ class ChatViewModel @Inject constructor(
     val projectType: StateFlow<String> = harnessLoop.projectType
     /** 运行中排队的待发送消息（当前任务结束后自动接续）。 */
     val pendingMessages: StateFlow<List<PendingMessage>> = harnessLoop.pendingMessages
+    val queuedPrompts: StateFlow<List<QueuedPrompt>> = harnessLoop.queuedPrompts
+
+    private val _sendMode = MutableStateFlow(ComposerSendMode.NEXT_RUN)
+    val sendMode: StateFlow<ComposerSendMode> = _sendMode.asStateFlow()
+
+    val runtimeEvents: StateFlow<List<HarnessEvent>> = combine(harnessLoop.currentSessionId, _eventHistory) { sessionId, history ->
+        history[sessionId].orEmpty()
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _branchRefresh = MutableStateFlow(0)
+    private val branchMessageRevision = messages.map { list -> list.size to list.lastOrNull()?.id }.distinctUntilChanged()
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val branches: StateFlow<List<ConversationBranch>> = combine(
+        harnessLoop.currentSessionId,
+        branchMessageRevision,
+        _branchRefresh,
+    ) { sessionId, _, _ -> sessionId }.mapLatest { sessionId ->
+        if (sessionId.isBlank()) emptyList() else runCatching { laneManager.branches(sessionId) }.getOrDefault(emptyList())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** 当前选中的会话 ID */
     val currentSessionId: StateFlow<String> = harnessLoop.currentSessionId
@@ -352,13 +400,24 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    fun setSendMode(mode: ComposerSendMode) {
+        _sendMode.value = mode
+    }
+
     fun send(customText: String? = null, imageUrls: List<String> = emptyList()) {
         val text = (customText ?: _input.value).trim()
         if (text.isBlank() && imageUrls.isEmpty()) return
         _input.value = ""
-        // 运行中不拦截：HarnessLoop 会把消息放入排队，当前任务结束后自动接续执行。
         // @ 仅引用已经显式启用的能力，不在发送阶段修改全局开关。
-        harnessLoop.send(text, imageUrls = imageUrls)
+        if (!running.value) {
+            harnessLoop.send(text, imageUrls = imageUrls)
+        } else {
+            when (_sendMode.value) {
+                ComposerSendMode.STEER -> harnessLoop.steer(text, imageUrls = imageUrls)
+                ComposerSendMode.FOLLOW_UP -> harnessLoop.followUp(text, imageUrls = imageUrls)
+                ComposerSendMode.NEXT_RUN -> harnessLoop.send(text, imageUrls = imageUrls)
+            }
+        }
     }
 
     /** 创建针对工具安装或沙箱异常的专属自愈会话并立即启动诊断 */
@@ -374,6 +433,32 @@ class ChatViewModel @Inject constructor(
     fun regenerateLast() {
         if (running.value) return
         harnessLoop.regenerateLast()
+    }
+
+    fun retryToolCall(toolCallId: String) {
+        if (running.value) return
+        harnessLoop.retryToolCall(toolCallId)
+    }
+
+    fun createBranch(messageId: String, displayName: String) {
+        val sessionId = currentSessionId.value
+        if (sessionId.isBlank() || running.value) return
+        viewModelScope.launch {
+            runCatching {
+                laneManager.createConversationBranch(sessionId, displayName, messageId)
+                harnessLoop.activateBranch(messageId, sessionId)
+            }
+            _branchRefresh.value++
+        }
+    }
+
+    fun switchBranch(branch: ConversationBranch) {
+        val sessionId = currentSessionId.value
+        if (sessionId.isBlank() || running.value) return
+        viewModelScope.launch {
+            harnessLoop.activateBranch(branch.leafId, sessionId)
+            _branchRefresh.value++
+        }
     }
 
     /** 编辑并重新发送某条用户消息 */
@@ -392,6 +477,12 @@ class ChatViewModel @Inject constructor(
     fun stop() = harnessLoop.cancel()
 
     fun removePendingMessage(index: Int) = harnessLoop.removePendingMessage(index)
+
+    fun removeQueuedPrompt(prompt: QueuedPrompt) {
+        val sameQueue = queuedPrompts.value.filter { it.queue == prompt.queue }
+        val index = sameQueue.indexOfFirst { it.id == prompt.id }
+        if (index >= 0) harnessLoop.removeQueuedPrompt(prompt.queue, index)
+    }
 
     fun clearPendingMessages() = harnessLoop.clearPendingMessages()
 
@@ -417,6 +508,18 @@ class ChatViewModel @Inject constructor(
     }
 
     // ---- 模型管理 ----
+
+    private val _providerModelIds = MutableStateFlow<List<String>>(emptyList())
+    val providerModelIds: StateFlow<List<String>> = _providerModelIds.asStateFlow()
+
+    private val _discoveringProviderModels = MutableStateFlow(false)
+    val discoveringProviderModels: StateFlow<Boolean> = _discoveringProviderModels.asStateFlow()
+
+    private val _providerModelDiscoveryError = MutableStateFlow<String?>(null)
+    val providerModelDiscoveryError: StateFlow<String?> = _providerModelDiscoveryError.asStateFlow()
+
+    private val _modelPickerProfileId = MutableStateFlow<String?>(null)
+    val modelPickerProfileId: StateFlow<String?> = _modelPickerProfileId.asStateFlow()
 
     fun addModel(name: String, provider: String, model: String, baseUrl: String) {
         val trimmedName = name.trim().ifBlank { model }
@@ -450,6 +553,77 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    /** 打开某供应商档案后，通过 v1/models 拉取同端点可用模型列表。 */
+    fun openProviderModelPicker(profileId: String) {
+        _modelPickerProfileId.value = profileId
+        discoverProviderModels(profileId)
+    }
+
+    fun closeProviderModelPicker() {
+        _modelPickerProfileId.value = null
+        _providerModelIds.value = emptyList()
+        _providerModelDiscoveryError.value = null
+        _discoveringProviderModels.value = false
+    }
+
+    fun discoverProviderModels(profileId: String) {
+        viewModelScope.launch {
+            val profile = aiModelDao.findById(profileId) ?: return@launch
+            _discoveringProviderModels.value = true
+            _providerModelDiscoveryError.value = null
+            _providerModelIds.value = emptyList()
+            val provider = providerCatalog.find(profile.provider)
+            val baseUrl = profile.baseUrl.ifBlank { provider.baseUrl }
+            val cleanUrl = ProviderEndpointPolicy.normalizeUrl(baseUrl)
+            if (!ProviderEndpointPolicy.isSafeBaseUrl(cleanUrl)) {
+                _providerModelDiscoveryError.value = context.getString(R.string.chat_model_discovery_bad_url)
+                _discoveringProviderModels.value = false
+                return@launch
+            }
+            val apiKey = profile.secretRef.takeIf { it.isNotBlank() }
+                ?.let { providerRepository.readModelApiKeys(it).firstOrNull() }
+                ?: providerRepository.readApiKey()
+            runCatching { modelDiscovery.discover(provider, cleanUrl, apiKey) }
+                .onSuccess { ids ->
+                    _providerModelIds.value = ids
+                    if (ids.isEmpty()) {
+                        _providerModelDiscoveryError.value = context.getString(R.string.chat_model_discovery_empty)
+                    }
+                }
+                .onFailure {
+                    _providerModelDiscoveryError.value = it.message
+                        ?: context.getString(R.string.chat_model_discovery_failed)
+                }
+            _discoveringProviderModels.value = false
+        }
+    }
+
+    /**
+     * 在同一供应商档案内切换模型 ID（复用 baseUrl / Key / 推理参数）。
+     * 不新建档案，只更新当前档案的 model 字段。
+     */
+    fun switchModelInProfile(profileId: String, modelId: String) {
+        val trimmed = modelId.trim()
+        if (trimmed.isBlank()) return
+        viewModelScope.launch {
+            val profile = aiModelDao.findById(profileId) ?: return@launch
+            val displayName = when {
+                profile.name.isBlank() -> trimmed
+                profile.name == profile.model -> trimmed
+                else -> profile.name
+            }
+            aiModelDao.upsert(
+                profile.copy(
+                    name = displayName,
+                    model = trimmed,
+                ),
+            )
+            aiModelDao.clearActive()
+            aiModelDao.setActive(profileId)
+            closeProviderModelPicker()
+        }
+    }
+
     fun updateActiveModelReasoning(mode: String?, effort: String?) {
         viewModelScope.launch {
             val active = aiModelDao.activeModel() ?: return@launch
@@ -463,6 +637,12 @@ class ChatViewModel @Inject constructor(
             aiModelDao.delete(id)
         }
     }
+}
+
+enum class ComposerSendMode(val queue: PromptQueue) {
+    STEER(PromptQueue.STEER),
+    FOLLOW_UP(PromptQueue.FOLLOW_UP),
+    NEXT_RUN(PromptQueue.NEXT_RUN),
 }
 
 private data class ContextUsageInputs(

@@ -120,7 +120,7 @@ fun SettingsScreen(
     val developer by viewModel.developerMode.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val skills by viewModel.allSkills.collectAsStateWithLifecycle()
-    val executionMode by viewModel.executionMode.collectAsStateWithLifecycle()
+    val effectiveExecutionMode by viewModel.effectiveExecutionMode.collectAsStateWithLifecycle()
     val installedDistros by viewModel.installedDistros.collectAsStateWithLifecycle()
     val activeDistroId by viewModel.activeDistroId.collectAsStateWithLifecycle()
     val terminalFontSize by viewModel.terminalFontSize.collectAsStateWithLifecycle()
@@ -201,7 +201,7 @@ fun SettingsScreen(
                     iconBg = Color(0xFF10B981).copy(alpha = 0.12f),
                     title = "Linux 容器与存储",
                     subtitle = "多发行版管理 · 宿主存储映射 · 运行特权模式",
-                    badge = "${installedDistros.size} 套系统 · ${executionMode.shortLabel}",
+                    badge = "${installedDistros.size} 套系统 · ${effectiveExecutionMode.shortLabel}",
                     onClick = onOpenLinuxEnv,
                 )
             }
@@ -447,6 +447,8 @@ fun LinuxEnvironmentSettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val executionMode by viewModel.executionMode.collectAsStateWithLifecycle()
+    val effectiveExecutionMode by viewModel.effectiveExecutionMode.collectAsStateWithLifecycle()
+    val privilegeState by viewModel.privilegeState.collectAsStateWithLifecycle()
     val switchingMode by viewModel.switchingMode.collectAsStateWithLifecycle()
     val installedDistros by viewModel.installedDistros.collectAsStateWithLifecycle()
 
@@ -544,8 +546,16 @@ fun LinuxEnvironmentSettingsScreen(
                     SettingsRow(
                         icon = RuntimeIconName.Key,
                         title = "系统运行特权模式",
-                        subtitle = "PRoot 用户态沙箱 · Shizuku · Root",
-                        value = executionMode.shortLabel,
+                        subtitle = if (executionMode != effectiveExecutionMode) {
+                            "首选 ${executionMode.shortLabel} 暂不可用：${privilegeState.reason}"
+                        } else {
+                            "PRoot 用户态沙箱 · Shizuku · Root"
+                        },
+                        value = if (executionMode == effectiveExecutionMode) {
+                            effectiveExecutionMode.shortLabel
+                        } else {
+                            "${effectiveExecutionMode.shortLabel}（已降级）"
+                        },
                         onClick = { showExecutionModeDialog = true },
                     )
                 }

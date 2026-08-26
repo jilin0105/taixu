@@ -340,8 +340,12 @@ class SettingsViewModel @Inject constructor(
         return mcpManager.testServer(server)
     }
 
-    val executionMode: StateFlow<ExecutionMode> = settingsDataStore.executionMode
+    /** 用户首选模式；即使本次启动降级也保留，用于下次自动恢复。 */
+    val executionMode: StateFlow<ExecutionMode> = settingsDataStore.preferredExecutionMode
         .stateIn(viewModelScope, SharingStarted.Eagerly, ExecutionMode.PROOT)
+    val effectiveExecutionMode: StateFlow<ExecutionMode> = settingsDataStore.effectiveExecutionMode
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ExecutionMode.PROOT)
+    val privilegeState = privilegeManager.state
 
     private val _switchingMode = MutableStateFlow(false)
     val switchingMode: StateFlow<Boolean> = _switchingMode.asStateFlow()
