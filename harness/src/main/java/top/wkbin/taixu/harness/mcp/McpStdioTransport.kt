@@ -6,9 +6,12 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -31,6 +34,17 @@ class McpStdioTransport @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val connections = ConcurrentHashMap<String, Connection>()
 
+    init {
+        // 空闲回收：常驻 STDIO 进程（尤其 node/python 系）长期不释放会累积内存与 ptrace 负担。
+        // 每分钟清扫一次，超过 IDLE_TIMEOUT 未活动的连接被关闭，下次调用按需重建。
+        scope.launch {
+            while (isActive) {
+                delay(SWEEP_INTERVAL_MS)
+                runCatching { sweepIdleOnce(System.currentTimeMillis()) }
+            }
+        }
+    }
+
     override suspend fun check(server: McpServerConfig): Boolean = runCatching {
         connection(server).withInitialized { true }
     }.getOrDefault(false)
@@ -52,8 +66,36 @@ class McpStdioTransport @Inject constructor(
                 .ifBlank { if (result.isError) "执行失败" else "执行成功" }
         }
 
+    /**
+     * 关闭所有空闲超时的连接；返回关闭数量。可见性放宽给单元测试直接驱动。
+     * 正在执行请求的连接因每次请求都会刷新 lastActivityMs，不会被误回收
+     * （单请求超时上限 120s，远小于空闲阈值）。
+     */
+    internal suspend fun sweepIdleOnce(nowMs: Long): Int {
+        var closed = 0
+        val entries = connections.entries.toList()
+        for ((id, connection) in entries) {
+            if (nowMs - connection.lastActivityMs >= IDLE_TIMEOUT_MS) {
+                if (connections.remove(id, connection)) {
+                    connection.close()
+                    closed++
+                }
+            }
+        }
+        return closed
+    }
+
+    /** 测试钩子：把所有连接的空闲时间拨回到指定时刻。 */
+    internal fun rewindIdleForTest(ageMs: Long) {
+        val target = System.currentTimeMillis() - ageMs
+        connections.values.forEach { it.lastActivityMs = target }
+    }
+
     private suspend fun connection(server: McpServerConfig): Connection {
-        connections[server.id]?.takeIf { it.session.isAlive && it.fingerprint == fingerprint(server) }?.let { return it }
+        connections[server.id]?.takeIf { it.session.isAlive && it.fingerprint == fingerprint(server) }?.let {
+            it.markActive()
+            return it
+        }
         connections.remove(server.id)?.close()
         val session = linuxRuntime.startSession(
             SessionConfig(
@@ -73,9 +115,18 @@ class McpStdioTransport @Inject constructor(
         private val mutex = Mutex()
         private val lines = Channel<String>(Channel.UNLIMITED)
         private var initialized = false
+        private var readerJob: Job? = null
+
+        /** 最近一次请求时间；internal 供测试直接构造"已空闲"状态。 */
+        @Volatile
+        internal var lastActivityMs: Long = System.currentTimeMillis()
+
+        fun markActive() {
+            lastActivityMs = System.currentTimeMillis()
+        }
 
         fun startReader() {
-            scope.launch {
+            readerJob = scope.launch {
                 val buffer = StringBuilder()
                 session.output.collect { output ->
                     buffer.append(output.text)
@@ -91,6 +142,7 @@ class McpStdioTransport @Inject constructor(
         }
 
         suspend fun <T> withInitialized(block: suspend Connection.() -> T): T = mutex.withLock {
+            markActive()
             if (!initialized) {
                 val params = json.encodeToJsonElement(McpInitializeParams.serializer(), McpInitializeParams())
                 val response = requestUnlocked("initialize", params)
@@ -106,6 +158,7 @@ class McpStdioTransport @Inject constructor(
         suspend fun request(method: String, params: kotlinx.serialization.json.JsonElement) = requestUnlocked(method, params)
 
         private suspend fun requestUnlocked(method: String, params: kotlinx.serialization.json.JsonElement): JsonRpcResponse {
+            markActive()
             val id = UUID.randomUUID().toString()
             write(json.encodeToString(JsonRpcRequest.serializer(), JsonRpcRequest(id = id, method = method, params = params)))
             return withTimeout(REQUEST_TIMEOUT_MS) {
@@ -124,7 +177,11 @@ class McpStdioTransport @Inject constructor(
             write(json.encodeToString(JsonRpcNotification.serializer(), JsonRpcNotification(method = method)))
 
         private suspend fun write(payload: String) = session.write("$payload\n".toByteArray(Charsets.UTF_8))
-        suspend fun close() { runCatching { session.close() } }
+
+        suspend fun close() {
+            readerJob?.cancel()
+            runCatching { session.close() }
+        }
     }
 
     private fun commandLine(server: McpServerConfig): String {
@@ -135,5 +192,11 @@ class McpStdioTransport @Inject constructor(
     private fun fingerprint(server: McpServerConfig) = "${server.command}|${server.args}|${server.env}"
     private fun shellQuote(value: String) = "'${value.replace("'", "'\"'\"'")}'"
 
-    companion object { private const val REQUEST_TIMEOUT_MS = 120_000L }
+    companion object {
+        private const val REQUEST_TIMEOUT_MS = 120_000L
+
+        /** 空闲连接回收阈值与清扫周期。 */
+        internal const val IDLE_TIMEOUT_MS = 10 * 60 * 1000L
+        internal const val SWEEP_INTERVAL_MS = 60 * 1000L
+    }
 }

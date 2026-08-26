@@ -31,3 +31,17 @@ val MIGRATION_28_29 = object : Migration(28, 29) {
         )
     }
 }
+
+/**
+ * 审批请求绑定 harness operation 与参数摘要，并引入过期时间：
+ * - operationId：审批所属运行，恢复执行前校验归属，防跨运行重放；
+ * - argsHash：argumentsJson 的 SHA-256，防"批准旧参数、执行新参数"；
+ * - expiresAt：审批有效期（存量行填 Long.MAX_VALUE 表示永不过期）。
+ */
+val MIGRATION_30_31 = object : Migration(30, 31) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE agent_approval_requests ADD COLUMN operationId TEXT")
+        db.execSQL("ALTER TABLE agent_approval_requests ADD COLUMN argsHash TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE agent_approval_requests ADD COLUMN expiresAt INTEGER NOT NULL DEFAULT 9223372036854775807")
+    }
+}

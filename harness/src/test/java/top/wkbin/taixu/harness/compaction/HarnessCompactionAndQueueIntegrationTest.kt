@@ -11,6 +11,7 @@ import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -200,5 +201,27 @@ class HarnessCompactionAndQueueIntegrationTest {
         // 单条取消不影响其余
         queues.cancel(sessionId, PromptQueue.NEXT_RUN, index = 5)
         assertEquals(19, queues.list(sessionId, PromptQueue.NEXT_RUN).size)
+    }
+
+    @Test
+    fun `queues are isolated per lane`() = runBlocking {
+        val sessionId = "s-lanes"
+        queues.enqueue(sessionId, PromptQueue.NEXT_RUN, PendingMessage("主 lane 消息", createdAt = 1L))
+        queues.enqueue(sessionId, PromptQueue.NEXT_RUN, PendingMessage("子 lane 消息", createdAt = 2L), laneName = "subagent:test:1")
+
+        assertEquals(listOf("主 lane 消息"), queues.list(sessionId, PromptQueue.NEXT_RUN).map { it.second.text })
+        assertEquals(listOf("子 lane 消息"), queues.list(sessionId, PromptQueue.NEXT_RUN, laneName = "subagent:test:1").map { it.second.text })
+
+        // 消费子 lane 队列只影响该 lane 的 entry tree
+        val consumed = queues.consume(sessionId, PromptQueue.NEXT_RUN, laneName = "subagent:test:1")
+        assertEquals(listOf("子 lane 消息"), consumed.map { it.text })
+        assertEquals("子 lane 消息", repository.findLane(sessionId, "subagent:test:1")!!.leafId?.let { leafId ->
+            repository.listEntries(sessionId).first { it.id == leafId }
+                .let { entry -> Json.decodeFromString(top.wkbin.taixu.harness.HarnessMessage.serializer(), entry.payloadJson) }
+                .let { (it as UserMessage).text }
+        })
+        // 主 lane 队列不受影响
+        assertEquals(1, queues.list(sessionId, PromptQueue.NEXT_RUN).size)
+        assertNull(repository.findLane(sessionId, "main")!!.leafId)
     }
 }

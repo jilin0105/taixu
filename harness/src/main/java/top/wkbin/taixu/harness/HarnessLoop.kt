@@ -437,23 +437,53 @@ class HarnessLoop @Inject constructor(
     }
 
     /**
-     * 为所有尚无 ToolResult 的 ToolCall 补写一条中断占位结果并持久化
+     * 为所有尚无 ToolResult 的 ToolCall 补写结果并持久化。
+     *
+     * - 用户主动停止（interrupted=true）：一律写中断占位，绝不重放。
+     * - 新运行开始时的历史修复（interrupted=false；能走到这里的悬空调用只可能来自
+     *   进程死亡残留——用户取消的运行在取消处理器里已用 interrupted=true 修复）：
+     *   SAFE 工具（read / history 查询类只读操作）直接重放执行，无缝续接上一轮；
+     *   NEVER 工具（写操作 / 外部副作用）写占位结果交由模型重新发起——
+     *   防止崩溃前的写操作在未经用户确认的情况下被再次执行。
      */
-    private suspend fun repairDanglingToolCalls(sessId: String, interrupted: Boolean) {
+    private suspend fun repairDanglingToolCalls(sessId: String, interrupted: Boolean, workspace: String = "") {
         val liveFlow = getOrCreateLiveMessages(sessId)
         val msgs = liveFlow.value
         val answeredIds = msgs.filterIsInstance<ToolResult>().mapTo(mutableSetOf()) { it.toolCallId }
         val dangling = msgs.filterIsInstance<ToolCall>().filter { it.id !in answeredIds }
         if (dangling.isEmpty()) return
-        val note = if (interrupted) "用户停止了本次执行，工具被中断。" else "工具结果缺失（历史中断），已补占位结果以继续会话。"
         dangling.forEach { call ->
-            val result = ToolResult(
-                id = newId(),
-                createdAt = now(),
-                toolCallId = call.id,
-                success = false,
-                output = note,
-            )
+            val replayable = !interrupted &&
+                ToolReplayPolicy.forTool(call.tool, call.rawToolName) == top.wkbin.taixu.harness.operation.ReplayPolicy.SAFE
+            val result = if (replayable) {
+                logAgentEvent(sessId, "ToolReplay", "重放中断的只读工具 ${call.rawToolName ?: call.tool.name.lowercase()}")
+                try {
+                    toolExecutor.execute(call, sessId, workspace)
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (throwable: Throwable) {
+                    ToolResult(
+                        id = newId(),
+                        createdAt = now(),
+                        toolCallId = call.id,
+                        success = false,
+                        output = "重放中断的只读工具失败：${friendly(throwable)}",
+                    )
+                }
+            } else {
+                val note = if (interrupted) {
+                    "用户停止了本次执行，工具被中断。"
+                } else {
+                    "工具执行期间应用进程中断。该工具不可自动重放，未再次执行；如仍需要请重新发起。"
+                }
+                ToolResult(
+                    id = newId(),
+                    createdAt = now(),
+                    toolCallId = call.id,
+                    success = false,
+                    output = note,
+                )
+            }
             append(sessId, result)
         }
     }
@@ -633,11 +663,12 @@ class HarnessLoop @Inject constructor(
 
     private suspend fun runLoopInternal(sessId: String, startedAt: Long, operationId: String? = null): RunResult {
         val activeOperationId = operationId ?: operationCoordinator.beginRun(sessId)
-        repairDanglingToolCalls(sessId, interrupted = false)
         val maxRounds = runCatching { settingsDataStore.maxToolRounds.first() }.getOrDefault(MAX_ROUNDS)
         val autoCwd = runCatching { settingsDataStore.autoWorkspaceCwd.first() }.getOrDefault(true)
         val sessionEntity = sessionDao.findById(sessId)
         val sessionWorkspace = sessionEntity?.workspace.orEmpty()
+        // 悬空调用修复须带 workspace：SAFE 工具在此重放，读操作需要正确的工作目录
+        repairDanglingToolCalls(sessId, interrupted = false, workspace = sessionWorkspace)
 
         val maxToolsPerRound = runCatching { settingsDataStore.maxToolsPerRound.first() }.getOrDefault(12)
         val maxConsecutiveFailures = runCatching { settingsDataStore.maxConsecutiveFailures.first() }.getOrDefault(8)
@@ -1204,7 +1235,7 @@ class HarnessLoop @Inject constructor(
 
         val projectContext = loadProjectContext(workspacePath)
         val workspaceSection = if (workspacePath.isNotBlank()) {
-            "\n\n当前工作区：" + workspacePath + "（base 命令默认在此目录执行；read/write/edit 的相对路径以此为根）"
+            "\n\n当前工作区：$workspacePath（base 命令默认在此目录执行；read/write/edit 的相对路径以此为根）"
         } else ""
         val workspaceGuidance = buildWorkspaceGuidance(
             workspacePath = workspacePath,
