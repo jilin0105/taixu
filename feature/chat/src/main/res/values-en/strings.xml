@@ -218,6 +218,7 @@
     <string name="chat_event_settled">Settled</string>
     <string name="chat_event_approval">Approval requested</string>
     <string name="chat_event_recovery">Recovery applied</string>
+    <string name="chat_event_permission_required">Permission required: %1$s</string>
     <string name="chat_operation_lane">lane %1$s</string>
     <string name="chat_attempt_count">Attempt %1$d</string>
     <string name="chat_token_usage">In %1$d · out %2$d tokens</string>

@@ -298,20 +298,30 @@ private fun RuntimeEventRow(event: HarnessEvent) {
             Box(Modifier.width(1.dp).height(34.dp).background(MaterialTheme.colorScheme.outlineVariant))
         }
         Column(Modifier.weight(1f).padding(top = 2.dp, bottom = 10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(visual.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.weight(1f))
-                Text(formatEventTime(event.timestamp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
-            }
-            Text(visual.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            eventOperationId(event)?.let {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    stringResource(R.string.chat_operation_id, it.take(12)),
+                    visual.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    formatEventTime(event.timestamp),
                     style = MaterialTheme.typography.labelSmall,
-                    color = visual.color,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
                 )
             }
+            Text(
+                visual.detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -369,7 +379,7 @@ private fun eventVisual(event: HarnessEvent): EventVisual = when (event) {
     )
     is HarnessEvent.PermissionRequired -> EventVisual(
         RuntimeIconName.Shield, Color(0xFFB25E00),
-        "需要权限：${event.permission}",
+        stringResource(R.string.chat_event_permission_required, event.permission),
         event.reason,
     )
 }

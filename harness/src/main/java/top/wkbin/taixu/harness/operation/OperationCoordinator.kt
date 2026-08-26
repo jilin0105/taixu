@@ -126,7 +126,7 @@ class OperationCoordinator @Inject constructor(
         }
     }
 
-    suspend fun toolSettled(operationId: String, message: HarnessMessage, round: Int) {
+    suspend fun toolSettled(operationId: String, message: HarnessMessage, round: Int, toolName: String? = null) {
         settle(
             operationId = operationId,
             message = message,
@@ -138,7 +138,7 @@ class OperationCoordinator @Inject constructor(
             HarnessEvent.ToolCallSettled(
                 sessionId, timestamp, operationId,
                 toolCallId = result?.toolCallId ?: message.id,
-                toolName = result?.toolCallId ?: "tool",
+                toolName = toolName ?: "tool",
                 success = result?.success ?: true,
                 durationMs = result?.durationMs,
             )

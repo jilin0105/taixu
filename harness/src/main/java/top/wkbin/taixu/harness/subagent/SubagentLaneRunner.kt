@@ -95,7 +95,7 @@ class SubagentLaneRunner @Inject constructor(
                     val tool = HarnessApiMapper.toolByName(rawName)
                     val args = runCatching { json.parseToJsonElement(spec.argumentsJson) as JsonObject }.getOrElse {
                         val failed = ToolResult(UUID.randomUUID().toString(), now(), spec.id, false, "工具参数不是 JSON 对象：${it.message}")
-                        operations.toolSettled(operationId, failed, round)
+                        operations.toolSettled(operationId, failed, round, toolName = rawName)
                         continue
                     }
                     val call = ToolCall(spec.id, now(), tool, args, result.reasoningContent, rawName)
@@ -106,7 +106,7 @@ class SubagentLaneRunner @Inject constructor(
                             UUID.randomUUID().toString(), now(), spec.id, false,
                             "工具参数校验未通过：${schemaProblems.joinToString("；")}。请修正参数后重新调用。",
                         )
-                        operations.toolSettled(operationId, rejected, round)
+                        operations.toolSettled(operationId, rejected, round, toolName = rawName)
                         continue
                     }
                     operations.toolIntent(operationId, call, spec.argumentsJson, ToolReplayPolicy.forTool(tool, rawName), round)
@@ -118,7 +118,7 @@ class SubagentLaneRunner @Inject constructor(
                     val settled = if (outcome.awaitingApproval) {
                         outcome.copy(success = false, awaitingApproval = false, output = "子智能体工具需要用户审批，已停止该工具调用")
                     } else outcome
-                    operations.toolSettled(operationId, settled, round)
+                    operations.toolSettled(operationId, settled, round, toolName = rawName)
                 }
             }
             operations.finish(sessionId, "failed", details = "max rounds", laneName = laneName)

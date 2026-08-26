@@ -735,7 +735,6 @@ class HarnessLoop @Inject constructor(
                 throw cancellation
             } catch (throwable: Throwable) {
                 logAgentEvent(sessId, "ModelResolveError", "无法获取模型配置", throwable)
-                appendFatal(sessId, "无法获取模型配置：${friendly(throwable)}", now() - startedAt)
                 return RunResult.Failed("无法获取模型配置：${friendly(throwable)}")
             }
             logAgentEvent(sessId, "ModelRequest", "Round=$round, Model=${model.name}, Provider=${model.provider}")
@@ -813,12 +812,10 @@ class HarnessLoop @Inject constructor(
                         getOrCreateThinkingLiveFlow(sessId).value = false
                         if (sessId == _currentSessionId.value) _thinkingLive.value = false
                         logAgentEvent(sessId, "QuotaExhausted", rateLimit.message.orEmpty(), rateLimit)
-                        appendFatal(
-                            sessId,
-                            "模型服务商额度已耗尽，无法继续执行。请充值、切换可用模型或更新 API Key。\n\n${rateLimit.message}",
-                            now() - startedAt,
-                        )
-                        return RunResult.Failed("模型服务商额度已耗尽，无法继续执行。")
+                        // 移除空的流式气泡；错误通过 error state 展示，不写入消息历史，避免下一轮注入模型上下文
+                        removeLiveMessage(sessId, assistantId)
+                        val detail = rateLimit.message?.takeIf { it.isNotBlank() }?.let { "\n\n$it" }.orEmpty()
+                        return RunResult.Failed("模型服务商额度已耗尽，无法继续执行。请充值、切换可用模型或更新 API Key。$detail")
                     }
                     netRetry++
                     if (netRetry > retryPolicy.maxRetries) throw rateLimit
@@ -867,7 +864,8 @@ class HarnessLoop @Inject constructor(
                             round = round,
                         )
                     } else {
-                        appendFatal(sessId, "执行遇到问题，已中断：${friendly(throwable)}", now() - startedAt)
+                        // 移除空的流式气泡；错误通过 error state 展示，不写入消息历史
+                        removeLiveMessage(sessId, assistantId)
                     }
                     return RunResult.Failed(friendly(throwable))
                 }
@@ -1092,7 +1090,7 @@ class HarnessLoop @Inject constructor(
                     throw ApprovalPauseException()
                 }
                 val settledOutcome = outcome.copy(durationMs = duration)
-                operationCoordinator.toolSettled(activeOperationId, settledOutcome, round)
+                operationCoordinator.toolSettled(activeOperationId, settledOutcome, round, toolName = toolCall.rawToolName ?: tool.name)
                 publishPersistedMessage(sessId, settledOutcome)
                 if (outcome.success) roundHadSuccess = true
                 touchSession(sessId)
@@ -1192,10 +1190,6 @@ class HarnessLoop @Inject constructor(
             logAgentEvent(sessId, "SteeringMessage", message.text)
             publishPersistedMessage(sessId, message)
         }
-    }
-
-    private suspend fun appendFatal(sessId: String, text: String, totalMs: Long? = null) {
-        append(sessId, AssistantText(id = newId(), createdAt = now(), text = text, totalMs = totalMs))
     }
 
     private fun friendly(throwable: Throwable): String =
@@ -1683,6 +1677,13 @@ class HarnessLoop @Inject constructor(
         if (sessId == _currentSessionId.value) _messages.value = liveFlow.value
     }
 
+    /** Remove a live-only message (e.g. empty streaming bubble after fatal error). */
+    private fun removeLiveMessage(sessId: String, messageId: String) {
+        val liveFlow = getOrCreateLiveMessages(sessId)
+        liveFlow.update { current -> current.filterNot { it.id == messageId } }
+        if (sessId == _currentSessionId.value) _messages.value = liveFlow.value
+    }
+
     private fun streamAssistant(sessId: String, id: String, createdAt: Long, text: String) {
         val liveFlow = getOrCreateLiveMessages(sessId)
         liveFlow.update { current ->
@@ -1844,7 +1845,7 @@ class HarnessLoop @Inject constructor(
                     }
                     val activeOperation = operationCoordinator.active(sessId)
                     if (activeOperation != null) {
-                        operationCoordinator.toolSettled(activeOperation.id, result, round = 0)
+                        operationCoordinator.toolSettled(activeOperation.id, result, round = 0, toolName = request.toolName)
                         publishPersistedMessage(sessId, result)
                     } else {
                         append(sessId, result)

@@ -218,6 +218,7 @@
     <string name="chat_event_settled">已结算</string>
     <string name="chat_event_approval">等待操作审批</string>
     <string name="chat_event_recovery">已应用恢复</string>
+    <string name="chat_event_permission_required">需要权限：%1$s</string>
     <string name="chat_operation_lane">lane %1$s</string>
     <string name="chat_attempt_count">尝试 %1$d</string>
     <string name="chat_token_usage">输入 %1$d · 输出 %2$d tokens</string>
