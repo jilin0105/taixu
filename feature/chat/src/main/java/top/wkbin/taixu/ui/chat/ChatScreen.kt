@@ -5,6 +5,9 @@ import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -71,6 +74,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import top.wkbin.taixu.ui.components.RuntimeLinearProgressIndicator as LinearProgressIndicator
@@ -292,8 +299,34 @@ fun ChatScreen(
         }
     }
 
+    val snackbarHostState = remember { SnackbarHostState() }
+    val appContext = LocalContext.current.applicationContext
+    LaunchedEffect(Unit) {
+        viewModel.permissionRequests.collect { req ->
+            val actionLabel = when (req.permission) {
+                "WRITE_SETTINGS" -> "去授权"
+                else -> "知道了"
+            }
+            val result = snackbarHostState.showSnackbar(
+                message = req.reason,
+                actionLabel = actionLabel,
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed && req.permission == "WRITE_SETTINGS") {
+                runCatching {
+                    val intent = Intent(
+                        Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                        Uri.parse("package:${appContext.packageName}")
+                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    appContext.startActivity(intent)
+                }
+            }
+        }
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             RuntimeTopBar(
                 title = stringResource(R.string.chat_title),

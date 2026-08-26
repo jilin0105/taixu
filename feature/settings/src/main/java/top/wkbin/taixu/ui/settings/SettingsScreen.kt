@@ -1050,7 +1050,7 @@ fun ModelEditorScreen(
             result = testResult,
             discover = { provider, url, key -> viewModel.discoverModels(provider, url, key) },
             test = viewModel::testConnection,
-            save = { name, provider, modelsList, url, key, rpmLimit, temperature, maxTokens, topP, reasoningMode, reasoningEffort, toolCallMode, contextTokens, customHeaders, pureChatMode, visionEnabled ->
+            save = { name, provider, modelsList, url, key, rpmLimit, temperature, maxTokens, topP, reasoningMode, reasoningEffort, toolCallMode, contextTokens, customHeaders, pureChatMode, visionEnabled, responseApiEnabled ->
                 viewModel.saveModels(
                     id = modelId,
                     models = modelsList,
@@ -1069,6 +1069,7 @@ fun ModelEditorScreen(
                     customHeaders = customHeaders,
                     pureChatMode = pureChatMode,
                     visionEnabled = visionEnabled,
+                    responseApiEnabled = responseApiEnabled,
                 )
                 onSaved()
             },
@@ -2130,7 +2131,7 @@ private fun ModelEditor(
     result: String?,
     discover: (String, String, String) -> Unit,
     test: (String, String, String) -> Unit,
-    save: (String, String, List<String>, String, String, Int, Float?, Int?, Float?, String?, String?, String?, Int?, String, Boolean, Boolean) -> Unit,
+    save: (String, String, List<String>, String, String, Int, Float?, Int?, Float?, String?, String?, String?, Int?, String, Boolean, Boolean, Boolean) -> Unit,
 ) {
     var providerId by remember(modelId) {
         mutableStateOf(providers.firstOrNull { it.name == existing?.provider }?.id ?: providers.first().id)
@@ -2206,6 +2207,9 @@ private fun ModelEditor(
     }
     var visionEnabled by remember(modelId) {
         mutableStateOf(existing?.visionEnabled ?: true)
+    }
+    var responseApiEnabled by remember(modelId) {
+        mutableStateOf(existing?.responseApiEnabled ?: false)
     }
 
     // 自定义请求头
@@ -2701,6 +2705,36 @@ private fun ModelEditor(
                             )
                         }
                     }
+
+                    // 4. 使用 Responses API
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Response API",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                )
+                                Text(
+                                    "使用 /v1/responses 接口替代 /v1/chat/completions（需服务商支持）",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = responseApiEnabled,
+                                onCheckedChange = { responseApiEnabled = it },
+                            )
+                        }
+                    }
                 }
             }
 
@@ -2832,6 +2866,7 @@ private fun ModelEditor(
                         customHeaders,
                         pureChatMode,
                         visionEnabled,
+                        responseApiEnabled,
                     )
                 },
                 modifier = Modifier.fillMaxWidth().height(48.dp),

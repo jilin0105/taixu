@@ -115,11 +115,27 @@ private val markdownImageRegex = Regex(
     pattern = "^\\s*!\\[([^]\\n]*)]\\((https?://[^)\\s]+)\\)\\s*$",
     option = RegexOption.IGNORE_CASE,
 )
+/** 行内图片（不要求独占一行），用于从段落文本中拆出图片块。 */
+private val inlineImageRegex = Regex("!\\[([^]\\n]*)]\\((https?://[^)\\s]+)\\)", RegexOption.IGNORE_CASE)
+/** HTML <img> 标签，兼容模型直接输出 img 标签的情况。 */
+private val htmlImgRegex = Regex("""<img[^>]+src\s*=\s*["'](https?://[^"'\s]+)["'][^>]*>""", RegexOption.IGNORE_CASE)
 private val standaloneWebUrlRegex = Regex("^https?://\\S+$", RegexOption.IGNORE_CASE)
 private val inlineMarkdownLinkRegex = Regex("\\[([^]\\n]+)]\\((https?://[^)\\s]+)\\)", RegexOption.IGNORE_CASE)
 private val inlineWebUrlRegex = Regex("https?://[^\\s<>\\[\\]{}\"']+", RegexOption.IGNORE_CASE)
+/** 视为图片的 URL 后缀（原始 URL 嵌在段落中时，匹配这些后缀则渲染为图片）。 */
+private val imageFileExtensions = setOf("jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "avif", "heic", "heif")
 
 private fun parseMarkdownBlocks(md: String): List<MdBlock> {
+    val raw = parseRawBlocks(md)
+    // 段落后处理：把行内的 ![alt](url)、<img src="url">、原始图片 URL 拆成独立图片块，
+    // 否则模型带前后文字输出图片时，解析器只当纯文本渲染，Coil 永远不会被调用。
+    return raw.flatMap { block ->
+        if (block is MdParagraph) extractInlineMedia(block.text)
+        else listOf(block)
+    }
+}
+
+private fun parseRawBlocks(md: String): List<MdBlock> {
     val lines = md.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     val blocks = mutableListOf<MdBlock>()
     var i = 0
@@ -213,6 +229,73 @@ private fun parseMarkdownBlocks(md: String): List<MdBlock> {
         }
     }
     return blocks
+}
+
+/**
+ * 从段落文本中拆出行内媒体（Markdown 图片、HTML img、原始图片 URL）。
+ * 返回文本段落与图片块的有序列表；无媒体时返回单段落。
+ */
+private fun extractInlineMedia(text: String): List<MdBlock> {
+    if (text.isBlank()) return listOf(MdParagraph(text))
+    val result = mutableListOf<MdBlock>()
+    val textBuf = StringBuilder()
+    var remaining = text
+
+    while (remaining.isNotEmpty()) {
+        // 优先级：Markdown 图片 > HTML img > 原始图片 URL
+        val mdImg = inlineImageRegex.find(remaining)
+        val htmlImg = htmlImgRegex.find(remaining)
+        val rawUrl = inlineWebUrlRegex.find(remaining)
+
+        val earliest = listOfNotNull(mdImg, htmlImg, rawUrl)
+            .minByOrNull { it.range.first }
+
+        if (earliest == null) {
+            textBuf.append(remaining)
+            break
+        }
+
+        // 匹配到的媒体之前的文本
+        if (earliest.range.first > 0) {
+            textBuf.append(remaining, 0, earliest.range.first)
+        }
+
+        val isActualImage = when (earliest) {
+            mdImg -> true
+            htmlImg -> true
+            rawUrl -> {
+                val url = trimUrlPunctuation(earliest.value)
+                imageFileExtensions.any { ext -> url.lowercase().endsWith(".$ext") }
+            }
+            else -> false
+        }
+
+        if (isActualImage) {
+            // 先 flush 累积的文本
+            if (textBuf.isNotBlank()) {
+                result.add(MdParagraph(textBuf.toString().trim()))
+                textBuf.clear()
+            }
+            val url = when (earliest) {
+                mdImg -> earliest.groupValues[2]
+                htmlImg -> earliest.groupValues[1]
+                else -> trimUrlPunctuation(earliest.value)
+            }
+            val desc = if (earliest === mdImg) earliest.groupValues[1] else ""
+            result.add(MdRemoteMedia(url = url, description = desc))
+        } else {
+            // 普通 URL，保留为文本（行内渲染会把它变成可点击链接）
+            textBuf.append(remaining, earliest.range.first, earliest.range.last + 1)
+        }
+
+        remaining = remaining.substring(earliest.range.last + 1)
+    }
+
+    if (textBuf.isNotBlank()) {
+        result.add(MdParagraph(textBuf.toString().trim()))
+    }
+
+    return if (result.isEmpty()) listOf(MdParagraph(text)) else result
 }
 
 // ---------- 行内渲染 ----------

@@ -1166,6 +1166,7 @@ fun WorkspaceScreen(
                                                         fontWeight = FontWeight.SemiBold,
                                                         maxLines = 1,
                                                         overflow = TextOverflow.Ellipsis,
+                                                        fontSize = 12.sp,
                                                         modifier = Modifier.padding(horizontal = 4.dp).padding(bottom = 4.dp),
                                                     )
                                                 }

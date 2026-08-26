@@ -169,7 +169,7 @@ class ToolExecutor @Inject constructor(
             }
             HarnessTool.BASE -> executeBase(args, workspace)
             HarnessTool.PROCESS -> executeProcess(args, workspace)
-            HarnessTool.HOST -> executeHost(args, operationId)
+            HarnessTool.HOST -> executeHost(args, operationId, sessionId)
             HarnessTool.DOWNLOAD -> executeDownload(args, activeFileAccess, progressReporter)
             HarnessTool.MEMORY -> contextExecutor?.executeMemory(args, sessionId, "") ?: (false to "未初始化记忆执行器")
             HarnessTool.PLAN -> contextExecutor?.executePlan(args, sessionId) ?: (false to "未初始化计划执行器")
@@ -183,9 +183,35 @@ class ToolExecutor @Inject constructor(
 
     /** 宿主 Android 特权通道；权限在每次执行前实时复核，不能仅依赖启动时快照。 */
     @OptIn(InternalCoroutinesApi::class)
-    private suspend fun executeHost(args: JsonObject, operationId: String?): Pair<Boolean, String> {
+    private suspend fun executeHost(args: JsonObject, operationId: String?, sessionId: String): Pair<Boolean, String> {
         val manager = privilegeManager ?: return false to "未初始化宿主权限执行器"
         val action = requireString(args, "action").trim().lowercase()
+
+        // settings_put system 命名空间优先走 Android ContentResolver API（需 WRITE_SETTINGS），
+        // 避免 Shizuku shell 在部分国产 ROM 上被 SettingsProvider 静默拒绝（exit 22）。
+        // secure/global 命名空间需 WRITE_SECURE_SETTINGS（第三方应用不可得），仍走 shell。
+        if (action == "settings_put") {
+            val namespace = requireSettingsNamespace(args)
+            val key = requireHostIdentifier(args, "key", SETTINGS_KEY)
+            val value = requireString(args, "value")
+            if (namespace == "system") {
+                val apiOk = manager.writeSystemSetting(key, value)
+                if (apiOk) {
+                    android.util.Log.i("TaiXu-Host", "action=settings_put via API success: system.$key=$value")
+                    return true to "mode api · exit 0\n[Android API] settings put system $key = $value"
+                }
+                // API 写入失败（通常是未授权 WRITE_SETTINGS），发事件引导用户授权，然后回退 shell
+                eventBus?.emit(
+                    top.wkbin.taixu.harness.events.HarnessEvent.PermissionRequired(
+                        sessionId = sessionId.ifBlank { "unknown" },
+                        timestamp = System.currentTimeMillis(),
+                        permission = "WRITE_SETTINGS",
+                        reason = "修改系统设置（如亮度）需要授权「修改系统设置」权限",
+                    )
+                )
+            }
+        }
+
         return when (action) {
             "status" -> {
                 val info = manager.getPrivilegeInfo()
@@ -212,6 +238,7 @@ class ToolExecutor @Inject constructor(
                 } finally {
                     cancelHandle?.dispose()
                 }
+                android.util.Log.i("TaiXu-Host", "action=$action exit=${result.exitCode} success=${result.success}\ncmd=$command\nstdout=${result.stdout.take(500)}\nstderr=${result.stderr.take(300)}")
                 val body = buildString {
                     append("mode ").append(info.mode.shortLabel).append(" · exit ").append(result.exitCode)
                     if (result.stdout.isNotBlank()) append("\n").append(result.stdout.trim())
@@ -233,7 +260,20 @@ class ToolExecutor @Inject constructor(
             val namespace = requireSettingsNamespace(args)
             val key = requireHostIdentifier(args, "key", SETTINGS_KEY)
             val value = requireString(args, "value")
-            "/system/bin/settings put $namespace ${shellQuote(key)} ${shellQuote(value)}"
+            // 屏幕亮度写入：自适应亮度开启时系统会忽略手动值，先切到手动模式；
+            // 写入后回读验证，因为 Shizuku UserService 进程若 UID 非 shell，
+            // WRITE_SETTINGS 会被 SettingsProvider 静默拒绝（exit 0 但值不变）。
+            if (namespace == "system" && key == "screen_brightness") {
+                val quoted = shellQuote(value)
+                buildString {
+                    append("/system/bin/settings put system screen_brightness_mode 0; ")
+                    append("/system/bin/settings put system screen_brightness $quoted; ")
+                    append("echo \"uid=$(id -u) mode=$(/system/bin/settings get system screen_brightness_mode) ")
+                    append("requested=$quoted actual=$(/system/bin/settings get system screen_brightness)\"")
+                }
+            } else {
+                "/system/bin/settings put $namespace ${shellQuote(key)} ${shellQuote(value)}"
+            }
         }
         "package_list" -> {
             val filter = args["filter"]?.jsonPrimitive?.content?.trim().orEmpty()

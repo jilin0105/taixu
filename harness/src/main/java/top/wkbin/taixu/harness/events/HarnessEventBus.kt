@@ -87,6 +87,17 @@ sealed interface HarnessEvent {
         val outcome: String,
         val detail: String? = null,
     ) : HarnessEvent
+
+    /**
+     * 工具执行时检测到缺少 Android 运行时权限，需要引导用户到系统设置授权。
+     * UI 层订阅此事件后弹出引导（如 Snackbar + 跳转按钮），不阻塞工具执行链路。
+     */
+    data class PermissionRequired(
+        override val sessionId: String,
+        override val timestamp: Long,
+        val permission: String,
+        val reason: String,
+    ) : HarnessEvent
 }
 
 /**

@@ -33,7 +33,7 @@ import androidx.room.RoomDatabase
         HarnessUsageEntity::class,
         HarnessLaneResultEntity::class,
     ],
-    version = 31,
+    version = 32,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {

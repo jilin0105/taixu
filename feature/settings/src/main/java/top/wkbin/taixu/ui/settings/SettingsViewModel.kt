@@ -751,6 +751,7 @@ class SettingsViewModel @Inject constructor(
         customHeaders: String = "",
         pureChatMode: Boolean = false,
         visionEnabled: Boolean = true,
+        responseApiEnabled: Boolean = false,
     ) {
         viewModelScope.launch {
             val existing = aiModelDao.observeAll().first()
@@ -780,6 +781,7 @@ class SettingsViewModel @Inject constructor(
                     customHeaders = customHeaders.trim(),
                     pureChatMode = pureChatMode,
                     visionEnabled = visionEnabled,
+                    responseApiEnabled = responseApiEnabled,
                     apiKeyCount = submittedKeys.ifEmpty { existingKeys }.size,
                     requestsPerMinutePerKey = requestsPerMinutePerKey.coerceAtLeast(0),
                 ),
@@ -806,6 +808,7 @@ class SettingsViewModel @Inject constructor(
         customHeaders: String = "",
         pureChatMode: Boolean = false,
         visionEnabled: Boolean = true,
+        responseApiEnabled: Boolean = false,
     ) {
         viewModelScope.launch {
             val existing = aiModelDao.observeAll().first()
@@ -842,6 +845,7 @@ class SettingsViewModel @Inject constructor(
                     customHeaders = customHeaders.trim(),
                     pureChatMode = pureChatMode,
                     visionEnabled = visionEnabled,
+                    responseApiEnabled = responseApiEnabled,
                     apiKeyCount = submittedKeys.ifEmpty { existingKeys }.size,
                     requestsPerMinutePerKey = requestsPerMinutePerKey.coerceAtLeast(0),
                 ),

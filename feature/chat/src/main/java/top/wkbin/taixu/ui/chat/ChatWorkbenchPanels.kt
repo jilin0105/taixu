@@ -367,6 +367,11 @@ private fun eventVisual(event: HarnessEvent): EventVisual = when (event) {
         stringResource(R.string.chat_event_recovery),
         event.detail ?: event.outcome,
     )
+    is HarnessEvent.PermissionRequired -> EventVisual(
+        RuntimeIconName.Shield, Color(0xFFB25E00),
+        "需要权限：${event.permission}",
+        event.reason,
+    )
 }
 
 @Composable
@@ -499,6 +504,7 @@ private fun eventOperationId(event: HarnessEvent): String? = when (event) {
     is HarnessEvent.ToolCallSettled -> event.operationId
     is HarnessEvent.ApprovalRequested -> event.operationId
     is HarnessEvent.RecoveryApplied -> event.operationId
+    is HarnessEvent.PermissionRequired -> null
 }
 
 /** 用时间戳 + 操作 ID + 事件类型 + 工具调用 ID 组合保证 key 唯一，避免同类事件碰撞。 */

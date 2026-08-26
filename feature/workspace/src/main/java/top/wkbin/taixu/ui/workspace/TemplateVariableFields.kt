@@ -28,6 +28,16 @@ import top.wkbin.taixu.template.ProjectTemplateInputType
 import top.wkbin.taixu.template.ProjectTemplateVariable
 
 @Composable
+private fun VariableLabel(label: String, required: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label)
+        if (required) {
+            Text(" *", color = MaterialTheme.colorScheme.error)
+        }
+    }
+}
+
+@Composable
 internal fun TemplateVariableFields(
     variables: List<ProjectTemplateVariable>,
     values: Map<String, String>,
@@ -46,7 +56,7 @@ internal fun TemplateVariableFields(
                     onCheckedChange = { onValueChange(variable.name, it.toString()) },
                 )
                 Column(Modifier.padding(start = 8.dp)) {
-                    Text(variable.label, style = MaterialTheme.typography.bodyLarge)
+                    VariableLabel(variable.label, variable.required)
                     if (variable.description.isNotBlank()) {
                         Text(variable.description, style = MaterialTheme.typography.bodySmall)
                     }
@@ -60,7 +70,7 @@ internal fun TemplateVariableFields(
                         value = variable.options.firstOrNull { it.value == value }?.label ?: value,
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text(variable.label) },
+                        label = { VariableLabel(variable.label, variable.required) },
                         supportingText = variable.description.takeIf(String::isNotBlank)?.let { description ->
                             { Text(description) }
                         },
@@ -86,7 +96,7 @@ internal fun TemplateVariableFields(
             else -> OutlinedTextField(
                 value = value,
                 onValueChange = { onValueChange(variable.name, it) },
-                label = { Text(variable.label) },
+                label = { VariableLabel(variable.label, variable.required) },
                 placeholder = variable.placeholder.takeIf(String::isNotBlank)?.let { { Text(it) } },
                 supportingText = {
                     Text(error ?: variable.description)

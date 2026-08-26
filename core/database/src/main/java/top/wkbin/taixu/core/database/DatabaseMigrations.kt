@@ -45,3 +45,10 @@ val MIGRATION_30_31 = object : Migration(30, 31) {
         db.execSQL("ALTER TABLE agent_approval_requests ADD COLUMN expiresAt INTEGER NOT NULL DEFAULT 9223372036854775807")
     }
 }
+
+/** 为模型档案追加 Responses API 开关列。 */
+val MIGRATION_31_32 = object : Migration(31, 32) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE harness_models ADD COLUMN responseApiEnabled INTEGER NOT NULL DEFAULT 0")
+    }
+}

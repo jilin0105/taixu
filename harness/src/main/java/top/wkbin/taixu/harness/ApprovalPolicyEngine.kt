@@ -16,26 +16,29 @@ data class ApprovalDecision(
 /** Host-side policy. The model prompt is deliberately not part of this decision. */
 class ApprovalPolicyEngine {
     fun decide(mode: ApprovalMode, tool: HarnessTool, args: JsonObject, workspace: String): ApprovalDecision {
-        // 宿主特权命令作用于真实 Android 系统。即使会话选择“全访问”，也不能绕过
-        // 这一条最终确认；status 是纯读取，可直接执行。
+        // 宿主特权命令作用于真实 Android 系统。只读操作始终放行；
+        // 全访问模式下可恢复的低危操作（settings_put / package_enable / package_disable）
+        // 自动放行；exec（任意 shell）和 package_uninstall_user（可能丢数据）始终要求确认。
         if (tool == HarnessTool.HOST) {
             val action = args["action"]?.jsonPrimitive?.content.orEmpty().trim().lowercase()
-            return if (action in HOST_READ_ONLY_ACTIONS) {
-                ApprovalDecision(false)
-            } else {
-                val critical = action == "exec" || action == "package_uninstall_user"
-                ApprovalDecision(
-                    required = true,
-                    riskLevel = if (critical) "critical" else "high",
-                    reason = when (action) {
-                        "settings_put" -> "操作将修改真实 Android 系统设置。"
-                        "package_disable", "package_enable" -> "操作将改变真实 Android 应用的启用状态。"
-                        "package_uninstall_user" -> "操作将为指定 Android 用户卸载应用；系统应用通常可用 install-existing 恢复，但其数据可能丢失。"
-                        else -> "命令将通过 Shizuku 或 Root 修改真实 Android 宿主，可能改变系统设置、停用或卸载应用。"
-                    },
-                    summary = summarize(tool, args),
-                )
+            if (action in HOST_READ_ONLY_ACTIONS) {
+                return ApprovalDecision(false)
             }
+            if (mode == ApprovalMode.FULL_ACCESS && action in HOST_FULL_ACCESS_AUTO_APPROVE) {
+                return ApprovalDecision(false)
+            }
+            val critical = action == "exec" || action == "package_uninstall_user"
+            return ApprovalDecision(
+                required = true,
+                riskLevel = if (critical) "critical" else "high",
+                reason = when (action) {
+                    "settings_put" -> "操作将修改真实 Android 系统设置。"
+                    "package_disable", "package_enable" -> "操作将改变真实 Android 应用的启用状态。"
+                    "package_uninstall_user" -> "操作将为指定 Android 用户卸载应用；系统应用通常可用 install-existing 恢复，但其数据可能丢失。"
+                    else -> "命令将通过 Shizuku 或 Root 修改真实 Android 宿主，可能改变系统设置、停用或卸载应用。"
+                },
+                summary = summarize(tool, args),
+            )
         }
         if (mode == ApprovalMode.FULL_ACCESS) return ApprovalDecision(false)
         if (tool == HarnessTool.READ || tool == HarnessTool.MEMORY || tool == HarnessTool.PLAN ||
@@ -113,6 +116,9 @@ class ApprovalPolicyEngine {
         /** 审批有效期：超时未决的请求自动失效，恢复执行前也会复核。 */
         const val APPROVAL_TTL_MS: Long = 10 * 60 * 1000L
         private val HOST_READ_ONLY_ACTIONS = setOf("status", "settings_get", "package_list", "logcat")
+
+        /** 全访问模式下自动放行的可恢复低危宿主操作；exec / package_uninstall_user 不在此列。 */
+        private val HOST_FULL_ACCESS_AUTO_APPROVE = setOf("settings_put", "package_enable", "package_disable")
 
         /** argumentsJson 的 SHA-256 十六进制摘要；创建时写入，执行前复核。 */
         fun argsHash(argumentsJson: String): String {

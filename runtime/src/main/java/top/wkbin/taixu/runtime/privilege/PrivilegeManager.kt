@@ -340,6 +340,7 @@ class PrivilegeManager @Inject constructor(
                     .onFailure {
                         logger.w("通过 Root 解除幽灵进程限制失败", it)
                     }
+                selfGrantWriteSettings(mode)
             }
             ExecutionMode.SHIZUKU -> {
                 runCatching { executeViaShizuku(PHANTOM_PROCESS_REMOVE_COMMAND, "privilege-opt-shizuku") }
@@ -349,8 +350,38 @@ class PrivilegeManager @Inject constructor(
                     .onFailure {
                         logger.w("通过 Shizuku 解除幽灵进程限制失败", it)
                     }
+                selfGrantWriteSettings(mode)
             }
             ExecutionMode.PROOT -> Unit
+        }
+    }
+
+    /**
+     * 以 shell/root 权限通过 appops 给自己授予 WRITE_SETTINGS，避免用户手动去系统设置授权。
+     * 授权后 writeSystemSetting() 即可直接用 app 自身的 ContentResolver 写入系统设置，
+     * 绕过部分国产 ROM（如 vivo）对 `settings put` shell 命令的静默拒绝。
+     */
+    private suspend fun selfGrantWriteSettings(mode: ExecutionMode) {
+        if (Settings.System.canWrite(context)) {
+            logger.i("WRITE_SETTINGS 已授权，跳过自授权")
+            return
+        }
+        val pkg = context.packageName
+        // appops op code 23 = android:write_settings；用名称更兼容
+        val command = "appops set $pkg android:write_settings allow"
+        val result = when (mode) {
+            ExecutionMode.SHIZUKU -> runCatching { executeViaShizuku(command, "self-grant-write-settings") }
+            ExecutionMode.ROOT -> runCatching { executeViaRoot(command, "self-grant-write-settings") }
+            else -> return
+        }
+        result.onSuccess { r ->
+            if (r.success && Settings.System.canWrite(context)) {
+                logger.i("自授权 WRITE_SETTINGS 成功 (via ${mode.shortLabel})")
+            } else {
+                logger.w("自授权 WRITE_SETTINGS 失败: exit=${r.exitCode} stderr=${r.stderr} canWrite=${Settings.System.canWrite(context)}")
+            }
+        }.onFailure {
+            logger.w("自授权 WRITE_SETTINGS 异常", it)
         }
     }
 
@@ -458,6 +489,33 @@ class PrivilegeManager @Inject constructor(
     /** Harness 取消任务时同步终止对应的 Shizuku/Root 宿主子进程。 */
     fun cancelShellCommand(operationId: String): Boolean =
         rootRunner.cancel(operationId) or shizukuHostServiceClient.cancel(operationId)
+
+    /**
+     * 直接通过 Android ContentResolver 写入 system 命名空间设置，绕过 shell 命令。
+     * 仅适用于 system namespace（需要 WRITE_SETTINGS 权限）；secure/global 仍需 shell。
+     * 返回 true 表示写入成功，false 表示无权限或写入异常（调用方应回退到 shell 命令）。
+     */
+    fun writeSystemSetting(key: String, value: String): Boolean = try {
+        if (!Settings.System.canWrite(context)) {
+            logger.w("writeSystemSetting: app lacks WRITE_SETTINGS permission, key=$key")
+            false
+        } else {
+            val resolver = context.contentResolver
+            // 优先按整数写入（亮度、超时等数值设置），失败则按字符串写入
+            val asInt = value.toIntOrNull()
+            if (asInt != null) {
+                Settings.System.putInt(resolver, key, asInt)
+            } else {
+                value.toFloatOrNull()?.let { Settings.System.putFloat(resolver, key, it) }
+                    ?: Settings.System.putString(resolver, key, value)
+            }
+            logger.i("writeSystemSetting: wrote $key=$value via ContentResolver")
+            true
+        }
+    } catch (e: Exception) {
+        logger.e("writeSystemSetting failed: key=$key value=$value", e)
+        false
+    }
 
     /**
      * 获取当前特权状态快照：当前激活模式 + 该模式的特权是否实际生效 + 各授权通道可用性。

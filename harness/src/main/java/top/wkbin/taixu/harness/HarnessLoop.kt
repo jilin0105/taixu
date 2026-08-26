@@ -1777,10 +1777,19 @@ class HarnessLoop @Inject constructor(
 
     /** Approve or reject a frozen tool call, then resume the same Agent session. */
     fun resolveApproval(requestId: String, approved: Boolean) {
+        logger.i("resolveApproval called: requestId=$requestId approved=$approved")
         loopScope.launch {
-            val request = approvalRepository.find(requestId) ?: return@launch
+            val request = approvalRepository.find(requestId)
+            if (request == null) {
+                logger.w("resolveApproval: request not found: $requestId")
+                return@launch
+            }
             val sessId = request.sessionId
-            if (request.status != top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_PENDING) return@launch
+            if (request.status != top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_PENDING) {
+                logger.w("resolveApproval: request not pending (status=${request.status}), ignoring: $requestId")
+                return@launch
+            }
+            logger.i("resolveApproval: waiting for prior session job, sessId=$sessId")
             // The original loop may still be unwinding after it persisted the request.
             // Wait for it before claiming the session slot.
             sessionJobs[sessId]?.takeIf { it.isActive }?.join()
@@ -1862,7 +1871,12 @@ class HarnessLoop @Inject constructor(
                         }
                     }
                     throw cancellation
+                } catch (_: ApprovalPauseException) {
+                    // 批准后继续循环，下一个工具又触发了审批门控——这是正常流程，不是失败。
+                    // 外层 executeSessionRun 会把状态置为 WAITING_APPROVAL，等待用户下一次批准。
+                    RunResult.WaitingApproval
                 } catch (throwable: Throwable) {
+                    logger.e("Approval resolution failed for request ${request.id}", throwable)
                     if (!approvalResultPersisted) {
                         approvalRepository.mark(request.id, top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_FAILED)
                         append(
@@ -1876,7 +1890,7 @@ class HarnessLoop @Inject constructor(
                             ),
                         )
                     }
-                    RunResult.Failed(throwable.message ?: "审批操作执行失败")
+                    RunResult.Failed(throwable.message ?: "审批操作执行失败：${throwable::class.simpleName}")
                 }
             }
         }

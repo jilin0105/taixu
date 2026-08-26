@@ -77,6 +77,11 @@ class ChatViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val _eventHistory = MutableStateFlow<Map<String, List<HarnessEvent>>>(emptyMap())
+    private val _permissionRequests = kotlinx.coroutines.flow.MutableSharedFlow<HarnessEvent.PermissionRequired>(
+        extraBufferCapacity = 8,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+    )
+    val permissionRequests: kotlinx.coroutines.flow.SharedFlow<HarnessEvent.PermissionRequired> = _permissionRequests
 
     init {
         viewModelScope.launch {
@@ -86,6 +91,9 @@ class ChatViewModel @Inject constructor(
             eventBus.events.collect { event ->
                 _eventHistory.value = _eventHistory.value.toMutableMap().apply {
                     this[event.sessionId] = (this[event.sessionId].orEmpty() + event).takeLast(MAX_RUNTIME_EVENTS)
+                }
+                if (event is HarnessEvent.PermissionRequired) {
+                    _permissionRequests.tryEmit(event)
                 }
             }
         }

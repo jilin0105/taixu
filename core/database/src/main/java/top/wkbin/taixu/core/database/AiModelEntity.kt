@@ -46,6 +46,8 @@ data class AiModelEntity(
     val pureChatMode: Boolean = false,
     /** 是否支持视觉多模态直接传图（true = 直接以 image_url 发送；false = 提示工具读取）。 */
     val visionEnabled: Boolean = true,
+    /** 是否使用 Responses API（true = /v1/responses；false = /v1/chat/completions）。 */
+    val responseApiEnabled: Boolean = false,
     /** 已配置的 API Key 数量（仅元数据；Key 明文始终位于加密存储）。 */
     val apiKeyCount: Int = 0,
     /** 单个 Key 每分钟最多发起的请求数；0 表示不做客户端限制。 */
