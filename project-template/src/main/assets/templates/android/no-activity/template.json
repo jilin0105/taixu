@@ -6,10 +6,7 @@
   "description": "Minimal Android application without an Activity or launcher entry",
   "projectType": "ANDROID",
   "category": { "id": "starter", "name": "Starter", "sortOrder": 0 },
-  "previewImage": "",
-  "previews": [
-    { "device": "PHONE", "path": "preview-phone.png" }
-  ],
+  "previewImage": "preview.png",
   "variables": [
     { "name": "projectName", "label": "Project name" },
     { "name": "appName", "label": "App name" },

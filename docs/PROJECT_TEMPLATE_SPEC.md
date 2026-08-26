@@ -9,8 +9,7 @@ ZIP 根目录可以直接包含 `template.json`，也可以只包含一个模板
 ```text
 my-template/
 ├── template.json
-├── preview-phone.png
-├── preview-tablet.png
+├── preview.png                   # 可选，固定 270×270
 ├── template-hooks/             # 可选
 │   ├── before-create.sh
 │   └── after-create.sh
@@ -31,7 +30,7 @@ my-template/
   "version": "1.0.0",
   "projectType": "ANDROID",
   "category": { "id": "starter", "name": "Starter", "sortOrder": 0 },
-  "previews": [{ "device": "PHONE", "path": "preview-phone.png" }],
+  "previewImage": "preview.png",
   "variables": []
 }
 ```
@@ -70,17 +69,9 @@ my-template/
 
 ## 6. 预览图
 
-新模板使用 `previews` 数组；`previewImage` 只用于兼容旧模板。支持 PNG、JPEG、WebP、GIF，必须使用包内相对路径。
+模板通过单一的 `previewImage` 字段声明预览图，不再区分手机、平板或横竖屏。支持 PNG、JPEG、WebP、GIF，必须使用包内相对路径。
 
-硬限制：单图不超过 4 MiB；每条边 128–4096 px；总像素不超过 1200 万；同一种设备最多声明一张预览图。
-
-| 设备 | 比例 | 推荐尺寸 |
-| --- | --- | --- |
-| 手机 | 9:16 竖屏 | 270×480 px |
-| 平板横屏 | 4:3 横屏 | 640×480 px |
-| 平板竖屏 | 3:4 竖屏 | 480×640 px |
-
-重要内容建议避开四周 8%，因为模板卡片可能按视口裁切。
+硬限制：预览图比例统一为 **1:1**，像素尺寸必须为 **270×270 px**，单图不超过 4 MiB。建议将 Logo、标题和关键内容放在中央安全区，避免紧贴边缘。
 
 ## 7. 随身构造脚本
 

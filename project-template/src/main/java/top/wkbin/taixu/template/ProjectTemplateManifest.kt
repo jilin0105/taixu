@@ -11,9 +11,8 @@ data class ProjectTemplateManifest(
     val description: String = "",
     val projectType: TemplateProjectType = TemplateProjectType.GENERAL,
     val category: ProjectTemplateCategory = ProjectTemplateCategory(),
-    /** Legacy single preview; prefer [previews] for device-specific artwork. */
+    /** Optional 270 x 270 preview image stored inside the template package. */
     val previewImage: String = "",
-    val previews: List<ProjectTemplatePreview> = emptyList(),
     val variables: List<ProjectTemplateVariable> = emptyList(),
     val hooks: ProjectTemplateHooks = ProjectTemplateHooks(),
 ) {
@@ -45,11 +44,3 @@ data class ProjectTemplateVariable(
 @Serializable enum class ProjectTemplateInputType { TEXT, MULTILINE, NUMBER, BOOLEAN, SELECT, SECRET }
 @Serializable data class ProjectTemplateVariableOption(val value: String, val label: String = value)
 @Serializable data class ProjectTemplateHooks(val beforeCreate: String = "", val afterCreate: String = "")
-
-@Serializable
-data class ProjectTemplatePreview(
-    val device: ProjectTemplatePreviewDevice,
-    val path: String,
-)
-
-@Serializable enum class ProjectTemplatePreviewDevice { PHONE, TABLET }

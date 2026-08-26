@@ -6,10 +6,7 @@
   "description": "Classic Xposed and LSPosed module starter",
   "projectType": "ANDROID",
   "category": { "id": "extension", "name": "Extensions", "sortOrder": 10 },
-  "previewImage": "",
-  "previews": [
-    { "device": "PHONE", "path": "preview-phone.png" }
-  ],
+  "previewImage": "preview.png",
   "variables": [
     { "name": "projectName", "label": "Project name" },
     { "name": "appName", "label": "App name" },

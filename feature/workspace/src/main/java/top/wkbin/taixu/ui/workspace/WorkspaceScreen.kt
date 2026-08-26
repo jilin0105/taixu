@@ -19,6 +19,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -68,7 +69,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -116,7 +116,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import top.wkbin.taixu.runtime.build.StepDuration
 import top.wkbin.taixu.template.TemplateProjectType
-import top.wkbin.taixu.template.ProjectTemplatePreviewDevice
 import top.wkbin.taixu.template.InstalledProjectTemplate
 
 private enum class ProjectImportMode { LOCAL, GITHUB }
@@ -259,7 +258,6 @@ fun WorkspaceScreen(
     val projectTemplates by viewModel.projectTemplates.collectAsStateWithLifecycle()
     val templateScriptPreview by viewModel.templateScriptPreview.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val isTabletWindow = LocalConfiguration.current.screenWidthDp >= 600
     var showCreate by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
     var showTemplateManager by remember { mutableStateOf(false) }
@@ -1141,16 +1139,12 @@ fun WorkspaceScreen(
                                                     containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
                                                 ) {
                                                     Surface(
-                                                        modifier = Modifier.fillMaxWidth().height(96.dp),
+                                                        modifier = Modifier.fillMaxWidth().aspectRatio(1f),
                                                         shape = RoundedCornerShape(12.dp),
                                                         color = MaterialTheme.colorScheme.surfaceContainerHighest,
                                                     ) {
                                                         Box(contentAlignment = Alignment.Center) {
-                                                            val previewFile = if (isTabletWindow) {
-                                                                template.previewFiles[ProjectTemplatePreviewDevice.TABLET] ?: template.previewFile
-                                                            } else {
-                                                                template.previewFiles[ProjectTemplatePreviewDevice.PHONE] ?: template.previewFile
-                                                            }
+                                                            val previewFile = template.previewFile
                                                             if (previewFile != null) {
                                                                 TemplatePreviewImage(previewFile, Modifier.fillMaxSize())
                                                             } else {
@@ -1923,7 +1917,7 @@ private fun TemplateManagerDialog(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Surface(
-                                    modifier = Modifier.width(48.dp).height(72.dp),
+                                    modifier = Modifier.size(56.dp),
                                     shape = RoundedCornerShape(8.dp),
                                     color = MaterialTheme.colorScheme.surfaceContainerHighest,
                                 ) {
@@ -1973,7 +1967,7 @@ private fun ProjectTemplateSpecDialog(onDismiss: () -> Unit) {
                 Text("把完整模板目录压缩成 ZIP。ZIP 根目录可以直接放 template.json，也可以只包含一个模板文件夹。")
                 Text("最小结构", fontWeight = FontWeight.SemiBold)
                 Text(
-                    "template.json\npreview-phone.png\n项目文件或 *.template\ntemplate-hooks/（可选）",
+                    "template.json\npreview.png（可选，270×270）\n项目文件或 *.template\ntemplate-hooks/（可选）",
                     fontFamily = FontFamily.Monospace,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -1992,8 +1986,7 @@ private fun ProjectTemplateSpecDialog(onDismiss: () -> Unit) {
                 )
                 Text("预览图", fontWeight = FontWeight.SemiBold)
                 Text(
-                    "支持 PNG、JPEG、WebP、GIF，单图不超过 4 MiB，每条边 128–4096 px，总像素不超过 1200 万。" +
-                        "手机推荐 9:16、270×480；平板横屏推荐 4:3、640×480；平板竖屏推荐 3:4、480×640。",
+                    "支持 PNG、JPEG、WebP、GIF，单图不超过 4 MiB。预览图统一为 1:1，尺寸必须是 270×270 px。",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text("构造脚本", fontWeight = FontWeight.SemiBold)

@@ -65,7 +65,7 @@ class ProjectTemplateEngine @Inject constructor(
 
         fun write(relativePath: String, bytes: ByteArray) {
             val normalizedPath = relativePath.replace('\\', '/')
-            val previewPaths = (manifest.previews.map { it.path } + manifest.previewImage)
+            val previewPaths = listOf(manifest.previewImage)
                 .filter(String::isNotBlank)
                 .map { it.replace('\\', '/') }
                 .toSet()

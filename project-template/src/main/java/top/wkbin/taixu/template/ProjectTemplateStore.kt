@@ -19,7 +19,6 @@ data class InstalledProjectTemplate(
     val manifest: ProjectTemplateManifest,
     val directory: File,
     val previewFile: File? = null,
-    val previewFiles: Map<ProjectTemplatePreviewDevice, File> = emptyMap(),
     val bundledAssetPath: String? = null,
 ) {
     val isBundled: Boolean get() = bundledAssetPath != null
@@ -70,12 +69,13 @@ class ProjectTemplateStore @Inject constructor(
                     validatePreviewDimensions(previewFile)
                     return previewFile
                 }
-                val previewFiles = manifest.previews.associate { it.device to bundledPreview(it.path) }
-                val legacyPreview = manifest.previewImage.takeIf(String::isNotBlank)?.let(::bundledPreview)
-                val preview = previewFiles[ProjectTemplatePreviewDevice.PHONE]
-                    ?: previewFiles.values.firstOrNull()
-                    ?: legacyPreview
-                InstalledProjectTemplate(manifest, syncedDirectory, preview, previewFiles, "templates/$relativePath")
+                val preview = manifest.previewImage.takeIf(String::isNotBlank)?.let(::bundledPreview)
+                InstalledProjectTemplate(
+                    manifest = manifest,
+                    directory = syncedDirectory,
+                    previewFile = preview,
+                    bundledAssetPath = "templates/$relativePath",
+                )
             }.getOrNull()
         }
         return (installed + bundled)
@@ -199,8 +199,7 @@ class ProjectTemplateStore @Inject constructor(
                 validatePreviewDimensions(file)
             }
         }
-        val previewFiles = manifest.previews.associate { it.device to installedPreview(it.path) }
-        val legacyPreview = manifest.previewImage.takeIf(String::isNotBlank)?.let(::installedPreview)
+        val preview = manifest.previewImage.takeIf(String::isNotBlank)?.let(::installedPreview)
         listOf(manifest.hooks.beforeCreate, manifest.hooks.afterCreate).filter(String::isNotBlank).forEach { hookPath ->
             val hook = File(canonicalDirectory, hookPath).canonicalFile
             require(hook.path.startsWith(canonicalDirectory.path + File.separator) && hook.isFile) {
@@ -208,10 +207,7 @@ class ProjectTemplateStore @Inject constructor(
             }
             require(hook.length() <= MAX_HOOK_BYTES) { "模板脚本过大：$hookPath" }
         }
-        val preview = previewFiles[ProjectTemplatePreviewDevice.PHONE]
-            ?: previewFiles.values.firstOrNull()
-            ?: legacyPreview
-        return InstalledProjectTemplate(manifest, canonicalDirectory, preview, previewFiles)
+        return InstalledProjectTemplate(manifest, canonicalDirectory, preview)
     }
 
     private fun validateManifest(manifest: ProjectTemplateManifest, allowBuiltinId: Boolean) {
@@ -240,8 +236,6 @@ class ProjectTemplateStore @Inject constructor(
                 require(variable.name in DERIVED_VARIABLES) { "隐藏必填变量必须提供默认值：${variable.name}" }
             }
         }
-        val previewDevices = manifest.previews.map { it.device }
-        require(previewDevices.distinct().size == previewDevices.size) { "同一设备只能声明一张预览图" }
         listOf(manifest.hooks.beforeCreate, manifest.hooks.afterCreate).filter(String::isNotBlank).forEach { hook ->
             val normalized = hook.replace('\\', '/')
             require(!normalized.startsWith('/') && !WINDOWS_ABSOLUTE_PATH.containsMatchIn(normalized) &&
@@ -256,14 +250,8 @@ class ProjectTemplateStore @Inject constructor(
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, bounds)
         require(bounds.outWidth > 0 && bounds.outHeight > 0) { "模板预览图无法解码" }
-        require(bounds.outWidth in MIN_PREVIEW_EDGE..MAX_PREVIEW_EDGE &&
-            bounds.outHeight in MIN_PREVIEW_EDGE..MAX_PREVIEW_EDGE
-        ) {
-            "模板预览图尺寸必须在 ${MIN_PREVIEW_EDGE}×${MIN_PREVIEW_EDGE} 到 " +
-                "${MAX_PREVIEW_EDGE}×${MAX_PREVIEW_EDGE} 像素之间"
-        }
-        require(bounds.outWidth.toLong() * bounds.outHeight.toLong() <= MAX_PREVIEW_PIXELS) {
-            "模板预览图总像素不能超过 1200 万"
+        require(bounds.outWidth == PREVIEW_SIZE && bounds.outHeight == PREVIEW_SIZE) {
+            "模板预览图必须为 ${PREVIEW_SIZE}×${PREVIEW_SIZE} 像素（1:1）"
         }
     }
 
@@ -336,8 +324,6 @@ class ProjectTemplateStore @Inject constructor(
         const val MAX_TOTAL_BYTES = 128L * 1024 * 1024
         const val MAX_PREVIEW_BYTES = 4L * 1024 * 1024
         const val MAX_HOOK_BYTES = 1024L * 1024
-        const val MIN_PREVIEW_EDGE = 128
-        const val MAX_PREVIEW_EDGE = 4_096
-        const val MAX_PREVIEW_PIXELS = 12_000_000L
+        const val PREVIEW_SIZE = 270
     }
 }
