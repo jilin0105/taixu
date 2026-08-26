@@ -90,7 +90,7 @@ fun StorageMountSettingsScreen(
         ) {
             item {
                 NoticeBanner(
-                    text = "开启挂载后，无需手动复制文件即可在沙箱（如 /sdcard/Download）与 Android 宿主应用间双向读写共享。挂载在会话启动时注入，修改后新建的终端 / 构建任务 / 服务进程才会应用。",
+                    text = "挂载仅作用于 Linux 沙箱内的进程（终端、智枢 Agent、构建任务与后台服务），不影响文件浏览器——文件浏览器始终直接访问宿主存储。挂载在会话启动时注入，修改后新建的终端 / 构建任务才会应用。完整读写还需在系统设置中授予「所有文件访问」权限。",
                 )
             }
 
@@ -185,7 +185,7 @@ fun StorageMountSettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
                             Text(
-                                "点击上方“新增挂载”将任意 Android 目录映射到 Linux 沙箱中",
+                                "点击上方“新增挂载”将 Android 目录映射进 Linux 沙箱（仅终端 / 智枢 / 构建可见）",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

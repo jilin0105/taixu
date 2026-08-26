@@ -116,7 +116,7 @@ fun DistroManagementScreen(
         ) {
             item {
                 NoticeBanner(
-                    text = "太墟支持多套 Linux 系统并存。所有系统均自动挂载 /workspace 代码工程与 /sdcard 外部存储，各发行版软件生态与包管理器完全独立隔离。",
+                    text = "太墟支持多套 Linux 系统并存。所有系统均自动挂载 /workspace 代码工程，/sdcard 外部存储按「存储挂载与共享」页的开关注入，各发行版软件生态与包管理器完全独立隔离。",
                 )
             }
 
