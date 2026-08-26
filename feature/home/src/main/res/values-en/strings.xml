@@ -47,4 +47,9 @@
     <string name="home_host_os">Host OS version</string>
     <string name="home_runtime_engine">Sandbox runtime</string>
     <string name="home_guest_os">Guest OS distribution</string>
+    <string name="home_current_mode">Current mode · %1$s</string>
+    <string name="home_privilege_mode">Privilege mode</string>
+    <string name="home_mode_active">Active</string>
+    <string name="home_mode_inactive">Inactive</string>
+    <string name="home_mode_checking">Checking</string>
 </resources>

@@ -47,4 +47,9 @@
     <string name="home_host_os">宿主系统版本</string>
     <string name="home_runtime_engine">沙箱运行引擎</string>
     <string name="home_guest_os">Guest OS 发行版</string>
+    <string name="home_current_mode">当前模式 · %1$s</string>
+    <string name="home_privilege_mode">运行特权模式</string>
+    <string name="home_mode_active">已激活</string>
+    <string name="home_mode_inactive">未生效</string>
+    <string name="home_mode_checking">检测中</string>
 </resources>

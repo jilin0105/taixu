@@ -6,6 +6,7 @@ import android.os.Build
 import android.provider.Settings
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
@@ -241,7 +242,10 @@ class PrivilegeManager @Inject constructor(
         executeShellCommand(PHANTOM_PROCESS_REMOVE_COMMAND)
     }
 
-    // ============================ HostBridge 支持 ============================
+    // ============================ HostBridge / 对外接口 ============================
+
+    /** 响应式当前运行模式：DataStore 持久值，切换后所有订阅方（首页/Agent 同步）即刻收到更新。 */
+    val activeMode: Flow<ExecutionMode> = settingsDataStore.executionMode
 
     /** 读取当前持久化的运行模式；读取失败时回退 PRoot。 */
     private suspend fun currentMode(): ExecutionMode = runCatching { settingsDataStore.executionMode.first() }
@@ -274,29 +278,42 @@ class PrivilegeManager @Inject constructor(
     }
 
     /**
-     * 获取当前特权状态摘要（不执行命令，仅探测可用性）。
+     * 获取当前特权状态快照：当前激活模式 + 该模式的特权是否实际生效 + 各授权通道可用性。
+     * 这是首页 UI 与沙箱内 Agent（经 HostBridge /api/health）共用的权威状态来源。
+     * PRoot 模式无需探测即视为生效；Shizuku/Root 则以实时探测结果为准。
      */
     suspend fun getPrivilegeInfo(): PrivilegeInfo = withContext(Dispatchers.IO) {
+        val mode = currentMode()
+
         val shizukuAvailable = runCatching {
             Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
         }.getOrDefault(false)
 
-        val rootAvailable = runCatching {
-            val process = ProcessBuilder("su", "-c", "echo ok").start()
-            val completed = process.waitFor(3, TimeUnit.SECONDS)
-            if (!completed) {
-                process.destroyForcibly()
-                false
-            } else {
-                process.exitValue() == 0
-            }
-        }.getOrDefault(false)
+        // PRoot 无需任何授权，跳过耗时的 su 探测
+        val rootAvailable = if (mode == ExecutionMode.ROOT) {
+            runCatching {
+                val process = ProcessBuilder("su", "-c", "echo ok").start()
+                val completed = process.waitFor(3, TimeUnit.SECONDS)
+                if (!completed) {
+                    process.destroyForcibly()
+                    false
+                } else {
+                    process.exitValue() == 0
+                }
+            }.getOrDefault(false)
+        } else {
+            false
+        }
 
-        val mode = runCatching { settingsDataStore.executionMode.first() }
-            .getOrDefault(ExecutionMode.PROOT)
+        val modeActive = when (mode) {
+            ExecutionMode.PROOT -> true
+            ExecutionMode.SHIZUKU -> shizukuAvailable
+            ExecutionMode.ROOT -> rootAvailable
+        }
 
         PrivilegeInfo(
-            mode = mode.id,
+            mode = mode,
+            modeActive = modeActive,
             shizukuAvailable = shizukuAvailable,
             rootAvailable = rootAvailable,
         )
@@ -447,9 +464,12 @@ data class ShellExecResult(
     val stderr: String,
 )
 
-/** 特权状态摘要。 */
+/** 特权状态快照：首页 UI 与 HostBridge /api/health 共用的权威描述。 */
 data class PrivilegeInfo(
-    val mode: String,
+    /** 当前激活（已持久化）的运行模式。 */
+    val mode: ExecutionMode,
+    /** 当前激活模式的特权是否实际生效（PRoot 恒 true；Shizuku/Root 以实时探测为准）。 */
+    val modeActive: Boolean,
     val shizukuAvailable: Boolean,
     val rootAvailable: Boolean,
 )

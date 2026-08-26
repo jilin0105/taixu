@@ -21,7 +21,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.wkbin.taixu.core.common.logging.AppLogger
+import top.wkbin.taixu.core.datastore.RuntimePreferences
 import top.wkbin.taixu.core.model.DoctorReport
+import top.wkbin.taixu.core.model.ExecutionMode
 import top.wkbin.taixu.core.model.RepairProgress
 import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.runtime.terminal.TerminalSessionManager
@@ -30,7 +32,17 @@ import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.BackgroundTaskRegistry
 import top.wkbin.taixu.runtime.doctor.EnvironmentDoctor
 import top.wkbin.taixu.runtime.doctor.EnvironmentRepairer
+import top.wkbin.taixu.runtime.privilege.PrivilegeManager
 import javax.inject.Inject
+
+/** 当前运行特权模式的展示状态（首页徽章与规格卡共用）。 */
+data class ExecutionModeStatus(
+    val mode: ExecutionMode = ExecutionMode.PROOT,
+    /** 当前模式的特权是否实际生效（PRoot 恒为 true；Shizuku/Root 依赖实时授权探测）。 */
+    val active: Boolean = true,
+    /** 正在探测授权状态。 */
+    val checking: Boolean = false,
+)
 
 data class SystemResourceMetrics(
     val memoryUsedMb: Long = 0,
@@ -57,12 +69,19 @@ class HomeViewModel @Inject constructor(
     private val environmentRepairer: EnvironmentRepairer,
     private val terminalSessionManager: TerminalSessionManager,
     private val backgroundTaskRegistry: BackgroundTaskRegistry,
+    private val runtimePreferences: RuntimePreferences,
+    private val privilegeManager: PrivilegeManager,
     private val logger: AppLogger,
 ) : ViewModel() {
 
     val runtimeState: StateFlow<RuntimeState> = linuxRuntime.state
     val installedDistros = linuxRuntime.installedDistros
     val activeDistroId = linuxRuntime.activeDistroId
+
+    // 当前运行特权模式（PRoot / Shizuku / Root）：模式值来自 DataStore 即时生效，
+    // 授权是否真正生效由 PrivilegeManager 探测；未来同步给 Agent 时直接消费该状态。
+    private val _executionModeStatus = MutableStateFlow(ExecutionModeStatus())
+    val executionModeStatus: StateFlow<ExecutionModeStatus> = _executionModeStatus.asStateFlow()
 
     private val _initializing = MutableStateFlow(false)
     val initializing: StateFlow<Boolean> = _initializing.asStateFlow()
@@ -93,6 +112,44 @@ class HomeViewModel @Inject constructor(
         startMetricsMonitoring()
         observeRuntimeStateForDoctor()
         observeRepairCompletion()
+        observeExecutionMode()
+    }
+
+    /** 订阅持久化的运行模式，变更时自动重新探测授权是否真正生效。 */
+    private fun observeExecutionMode() {
+        viewModelScope.launch {
+            runtimePreferences.executionMode.collect { mode ->
+                refreshExecutionModeStatus(mode)
+            }
+        }
+    }
+
+    /** 探测当前模式的授权生效状态：PRoot 免探测；Shizuku/Root 走 PrivilegeManager 实时探测。 */
+    fun refreshExecutionModeStatus(mode: ExecutionMode = _executionModeStatus.value.mode) {
+        viewModelScope.launch {
+            _executionModeStatus.value = ExecutionModeStatus(
+                mode = mode,
+                active = mode == ExecutionMode.PROOT,
+                checking = mode != ExecutionMode.PROOT,
+            )
+            if (mode == ExecutionMode.PROOT) return@launch
+            try {
+                val info = privilegeManager.getPrivilegeInfo()
+                // 探测期间模式可能又被切换，仅当仍是同一模式时才落地结果
+                if (_executionModeStatus.value.mode == mode) {
+                    _executionModeStatus.value = ExecutionModeStatus(
+                        mode = mode,
+                        active = info.modeActive,
+                        checking = false,
+                    )
+                }
+            } catch (e: Exception) {
+                logger.w("HomeViewModel: Failed to refresh privilege status: ${e.message}", e)
+                if (_executionModeStatus.value.mode == mode) {
+                    _executionModeStatus.value = ExecutionModeStatus(mode = mode, active = false, checking = false)
+                }
+            }
+        }
     }
 
     private fun observeRepairCompletion() {

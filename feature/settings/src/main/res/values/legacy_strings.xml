@@ -72,7 +72,7 @@
     <string name="settings_legacy_0071" formatted="false">存储挂载与共享</string>
     <string name="settings_legacy_0072" formatted="false">PRoot 宿主存储映射 (-b /sdcard)</string>
     <string name="settings_legacy_0073" formatted="false">系统运行特权模式</string>
-    <string name="settings_legacy_0074" formatted="false">PRoot 用户态沙箱 · Shizuku · Root · ADB</string>
+    <string name="settings_legacy_0074" formatted="false">PRoot 用户态沙箱 · Shizuku · Root</string>
     <string name="settings_legacy_0075" formatted="false">外观、字号与终端定制</string>
     <string name="settings_legacy_0076" formatted="false">深浅色主题 · 应用字号缩放 · 终端配色与字体</string>
     <string name="settings_legacy_0077" formatted="false">系统保活与开发者诊断</string>

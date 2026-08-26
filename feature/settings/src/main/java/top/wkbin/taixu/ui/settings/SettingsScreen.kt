@@ -201,7 +201,7 @@ fun SettingsScreen(
                     iconBg = Color(0xFF10B981).copy(alpha = 0.12f),
                     title = "Linux 容器与存储",
                     subtitle = "多发行版管理 · 宿主存储映射 · 运行特权模式",
-                    badge = "${installedDistros.size} 套系统 · ${executionMode.name}",
+                    badge = "${installedDistros.size} 套系统 · ${executionMode.shortLabel}",
                     onClick = onOpenLinuxEnv,
                 )
             }
@@ -544,8 +544,8 @@ fun LinuxEnvironmentSettingsScreen(
                     SettingsRow(
                         icon = RuntimeIconName.Key,
                         title = "系统运行特权模式",
-                        subtitle = "PRoot 用户态沙箱 · Shizuku · Root · ADB",
-                        value = executionMode.name,
+                        subtitle = "PRoot 用户态沙箱 · Shizuku · Root",
+                        value = executionMode.shortLabel,
                         onClick = { showExecutionModeDialog = true },
                     )
                 }

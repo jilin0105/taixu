@@ -72,7 +72,7 @@
     <string name="settings_legacy_0071" formatted="false">Storage mounts &amp; sharing</string>
     <string name="settings_legacy_0072" formatted="false">PRoot host storage mapping (-b /sdcard)</string>
     <string name="settings_legacy_0073" formatted="false">Execution privilege mode</string>
-    <string name="settings_legacy_0074" formatted="false">PRoot userspace sandbox · Shizuku · Root · ADB</string>
+    <string name="settings_legacy_0074" formatted="false">PRoot userspace sandbox · Shizuku · Root</string>
     <string name="settings_legacy_0075" formatted="false">Appearance, font size, and terminal customization</string>
     <string name="settings_legacy_0076" formatted="false">Color theme, interface scaling, and terminal appearance</string>
     <string name="settings_legacy_0077" formatted="false">Background reliability &amp; diagnostics</string>

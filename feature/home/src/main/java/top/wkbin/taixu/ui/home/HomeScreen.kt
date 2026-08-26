@@ -98,6 +98,7 @@ fun HomeScreen(
     val installedDistros by viewModel.installedDistros.collectAsStateWithLifecycle()
     val activeDistroId by viewModel.activeDistroId.collectAsStateWithLifecycle()
     val switchingDistro by viewModel.switchingDistro.collectAsStateWithLifecycle()
+    val modeStatus by viewModel.executionModeStatus.collectAsStateWithLifecycle()
 
     val isLiquidGlassTheme = isLiquidGlassThemeActive()
     Scaffold(
@@ -110,6 +111,7 @@ fun HomeScreen(
                     IconButton(onClick = {
                         viewModel.refreshMetrics()
                         viewModel.runDoctorCheck()
+                        viewModel.refreshExecutionModeStatus()
                     }) {
                         RuntimeIcon(
                             name = RuntimeIconName.Refresh,
@@ -143,10 +145,12 @@ fun HomeScreen(
                 installedDistros = installedDistros,
                 activeDistroId = activeDistroId,
                 switchingDistro = switchingDistro,
+                modeStatus = modeStatus,
                 onSwitchDistro = viewModel::switchDistro,
                 onInitialize = viewModel::initializeRuntime,
                 onCancel = viewModel::cancelInitialization,
                 onOpenTerminal = onOpenTerminal,
+                onOpenModeSettings = { onNavigate(MainDestination.Settings) },
             )
 
             // 2. 运行与开发环境体检自愈中心 (TaiXu Doctor & Auto-Fix)
@@ -206,7 +210,7 @@ fun HomeScreen(
             )
 
             // 5. 运行环境与规格详情
-            SystemSpecsCard(metrics = metrics)
+            SystemSpecsCard(metrics = metrics, modeStatus = modeStatus)
 
             Spacer(Modifier.height(16.dp))
         }
@@ -603,10 +607,12 @@ private fun RuntimeEngineStatusCard(
     installedDistros: List<top.wkbin.taixu.core.model.InstalledDistro> = emptyList(),
     activeDistroId: String = "ubuntu",
     switchingDistro: Boolean = false,
+    modeStatus: ExecutionModeStatus = ExecutionModeStatus(),
     onSwitchDistro: (String) -> Unit = {},
     onInitialize: () -> Unit,
     onCancel: () -> Unit,
     onOpenTerminal: () -> Unit,
+    onOpenModeSettings: () -> Unit = {},
 ) {
     val ready = state is RuntimeState.Ready
     val error = state is RuntimeState.Error
@@ -672,6 +678,12 @@ private fun RuntimeEngineStatusCard(
                     )
                 }
             }
+
+            // 当前激活的运行特权模式徽章（点击跳转设置切换）
+            ExecutionModeBadge(
+                modeStatus = modeStatus,
+                onClick = onOpenModeSettings,
+            )
 
             // 多系统快速切换 Chips（安装了 2 套及以上时展示，自动换行，避免横向滚动）
             if (ready && installedDistros.size > 1) {
@@ -800,6 +812,90 @@ private fun RuntimeEngineStatusCard(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * 当前激活的运行特权模式徽章：展示模式短标签与授权生效状态，点击跳转设置页切换。
+ */
+@Composable
+private fun ExecutionModeBadge(
+    modeStatus: ExecutionModeStatus,
+    onClick: () -> Unit,
+) {
+    // 状态色：生效=绿色 / 探测中=主题色 / 未生效=琥珀警示
+    val statusColor = when {
+        modeStatus.checking -> MaterialTheme.colorScheme.primary
+        modeStatus.active -> Color(0xFF2E7D32)
+        else -> Color(0xFFE65100)
+    }
+    val statusText = when {
+        modeStatus.checking -> stringResource(R.string.home_mode_checking)
+        modeStatus.active -> stringResource(R.string.home_mode_active)
+        else -> stringResource(R.string.home_mode_inactive)
+    }
+
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(1.dp, statusColor.copy(alpha = 0.35f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(statusColor.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                RuntimeIcon(
+                    name = RuntimeIconName.Shield,
+                    modifier = Modifier.size(16.dp),
+                    tint = statusColor,
+                )
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.home_current_mode, modeStatus.mode.shortLabel),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = modeStatus.mode.summary,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (modeStatus.checking) {
+                RuntimeCircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = statusColor,
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(statusColor),
+                )
+            }
+            Text(
+                text = statusText,
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                color = statusColor,
+            )
         }
     }
 }
@@ -957,7 +1053,7 @@ private fun ActiveTasksStatusCard(
  * 宿主与运行环境规格卡片
  */
 @Composable
-private fun SystemSpecsCard(metrics: SystemResourceMetrics) {
+private fun SystemSpecsCard(metrics: SystemResourceMetrics, modeStatus: ExecutionModeStatus) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -977,6 +1073,11 @@ private fun SystemSpecsCard(metrics: SystemResourceMetrics) {
             SpecRow(label = stringResource(R.string.home_host_os), value = metrics.hostAndroidVersion)
             SpecRow(label = stringResource(R.string.home_runtime_engine), value = metrics.engineVersion)
             SpecRow(label = stringResource(R.string.home_guest_os), value = metrics.linuxDistro)
+            SpecRow(
+                label = stringResource(R.string.home_privilege_mode),
+                value = modeStatus.mode.shortLabel +
+                    if (modeStatus.active || modeStatus.checking) "" else " · ${stringResource(R.string.home_mode_inactive)}",
+            )
         }
     }
 }

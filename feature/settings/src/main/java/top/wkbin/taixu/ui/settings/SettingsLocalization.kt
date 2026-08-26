@@ -92,7 +92,7 @@ private fun legacyStringResource(source: String): Int? = when (source) {
         "存储挂载与共享" -> R.string.settings_legacy_0071
         "PRoot 宿主存储映射 (-b /sdcard)" -> R.string.settings_legacy_0072
         "系统运行特权模式" -> R.string.settings_legacy_0073
-        "PRoot 用户态沙箱 · Shizuku · Root · ADB" -> R.string.settings_legacy_0074
+        "PRoot 用户态沙箱 · Shizuku · Root" -> R.string.settings_legacy_0074
         "外观、字号与终端定制" -> R.string.settings_legacy_0075
         "深浅色主题 · 应用字号缩放 · 终端配色与字体" -> R.string.settings_legacy_0076
         "系统保活与开发者诊断" -> R.string.settings_legacy_0077
