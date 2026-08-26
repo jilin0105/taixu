@@ -1,5 +1,11 @@
 package top.wkbin.taixu.runtime.doctor
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Environment
+import dagger.hilt.android.qualifiers.ApplicationContext
 import top.wkbin.taixu.core.model.DoctorCategory
 import top.wkbin.taixu.core.model.DoctorItem
 import top.wkbin.taixu.core.model.DoctorReport
@@ -14,9 +20,13 @@ import kotlinx.coroutines.withContext
 
 @Singleton
 class EnvironmentDoctor @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val linuxRuntime: LinuxRuntime,
 ) {
     suspend fun check(): DoctorReport = withContext(Dispatchers.IO) {
+        // 宿主侧权限检查：不依赖沙箱状态，两种路径都要展示
+        val allFilesAccessItem = checkAllFilesAccess()
+
         val state = linuxRuntime.state.value
         if (state !is RuntimeState.Ready) {
             val unreadyItem = DoctorItem(
@@ -29,11 +39,11 @@ class EnvironmentDoctor @Inject constructor(
                 fixable = false,
             )
             return@withContext DoctorReport(
-                items = listOf(unreadyItem),
+                items = listOf(unreadyItem, allFilesAccessItem),
                 timestamp = System.currentTimeMillis(),
                 overallStatus = DoctorStatus.ERROR,
-                healthyCount = 0,
-                warningCount = 0,
+                healthyCount = itemsHealthy(listOf(unreadyItem, allFilesAccessItem)),
+                warningCount = itemsWarning(listOf(unreadyItem, allFilesAccessItem)),
                 errorCount = 1,
             )
         }
@@ -42,6 +52,7 @@ class EnvironmentDoctor @Inject constructor(
 
         // 1. 沙箱与存储检查
         items.add(checkSandboxStorage())
+        items.add(allFilesAccessItem)
 
         // 2. DNS 与网络连通性检查
         items.add(checkDnsAndNetwork())
@@ -77,6 +88,38 @@ class EnvironmentDoctor @Inject constructor(
             errorCount = errorCount,
         )
     }
+
+    private fun checkAllFilesAccess(): DoctorItem {
+        val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
+                PackageManager.PERMISSION_GRANTED
+        }
+        return if (granted) {
+            DoctorItem(
+                id = "host_all_files_access",
+                category = DoctorCategory.SANDBOX,
+                title = "所有文件访问权限",
+                status = DoctorStatus.HEALTHY,
+                summary = "已授权「所有文件访问」，文件浏览器可完整访问共享存储",
+            )
+        } else {
+            DoctorItem(
+                id = "host_all_files_access",
+                category = DoctorCategory.SANDBOX,
+                title = "所有文件访问权限",
+                status = DoctorStatus.WARNING,
+                summary = "未授权「所有文件访问」权限",
+                detail = "Android 会过滤共享存储中其他应用的文件，文件浏览器 /sdcard 入口可能只显示文件夹而看不到文件。可在文件浏览器顶部横幅点击「去授权」，或前往 系统设置 → 应用 → 太墟 → 权限 开启「所有文件访问」。",
+                fixable = false,
+            )
+        }
+    }
+
+    private fun itemsHealthy(items: List<DoctorItem>): Int = items.count { it.status == DoctorStatus.HEALTHY }
+
+    private fun itemsWarning(items: List<DoctorItem>): Int = items.count { it.status == DoctorStatus.WARNING }
 
     private suspend fun checkSandboxStorage(): DoctorItem {
         val res = runCatching {
