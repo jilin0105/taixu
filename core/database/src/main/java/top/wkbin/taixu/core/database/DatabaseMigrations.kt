@@ -52,3 +52,10 @@ val MIGRATION_31_32 = object : Migration(31, 32) {
         db.execSQL("ALTER TABLE harness_models ADD COLUMN responseApiEnabled INTEGER NOT NULL DEFAULT 0")
     }
 }
+
+/** Privileged Android application inventory used by Settings and the Agent. */
+val MIGRATION_33_34 = object : Migration(33, 34) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("""CREATE TABLE IF NOT EXISTS android_apps (packageName TEXT NOT NULL PRIMARY KEY, label TEXT NOT NULL, uid INTEGER NOT NULL, apkPath TEXT NOT NULL, isSystemApp INTEGER NOT NULL, isEnabled INTEGER NOT NULL, isSuspended INTEGER NOT NULL, isNetworkRestricted INTEGER NOT NULL, lastSyncedAt INTEGER NOT NULL)""")
+    }
+}

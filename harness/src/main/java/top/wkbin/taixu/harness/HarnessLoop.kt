@@ -19,7 +19,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -37,7 +36,6 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import top.wkbin.taixu.harness.validation.ToolSchemaValidator
@@ -45,7 +43,6 @@ import top.wkbin.taixu.harness.prompt.PromptAssetLoader
 
 import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.core.database.AgentSkillRepository
-import top.wkbin.taixu.core.model.AgentSkill
 import top.wkbin.taixu.harness.session.SessionTreeStore
 import top.wkbin.taixu.harness.effects.ToolReplayPolicy
 import top.wkbin.taixu.harness.effects.RetryPolicy
@@ -57,6 +54,7 @@ import top.wkbin.taixu.harness.queue.PromptQueueManager
 import top.wkbin.taixu.harness.compaction.CompactionManager
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
 import top.wkbin.taixu.core.model.ExecutionMode
+import kotlin.time.Duration.Companion.milliseconds
 
 /** Agent 单次运行的结构化结果，外层据此设置会话状态，避免内部失败被误标为 COMPLETED。 */
 private sealed interface RunResult {
@@ -686,7 +684,7 @@ class HarnessLoop @Inject constructor(
                     setSessionState(sessId, SessionRunState.FAILED)
                 }
             }
-        } catch (cancellation: CancellationException) {
+        } catch (_: CancellationException) {
             withContext(NonCancellable) {
                 repairDanglingToolCalls(sessId, interrupted = true)
                 operationCoordinator.finish(sessId, "aborted", details = "cancelled")
@@ -832,7 +830,7 @@ class HarnessLoop @Inject constructor(
                     for (remaining in waitSeconds downTo 1L) {
                         currentCoroutineContext().ensureActive()
                         setStatus(sessId, "请求受限，${remaining} 秒后自动重试（$netRetry/$MAX_STREAM_RETRIES）")
-                        delay(1000L)
+                        delay(1000L.milliseconds)
                     }
                 } catch (io: IOException) {
                     currentCoroutineContext().ensureActive()
@@ -847,7 +845,7 @@ class HarnessLoop @Inject constructor(
                     streamText.clear()
                     streamReasoning.clear()
                     streamAssistant(sessId, assistantId, assistantAt, "")
-                    delay(retryPolicy.delayForRetry(netRetry))
+                    delay(retryPolicy.delayForRetry(netRetry).milliseconds)
                 } catch (throwable: Throwable) {
                     getOrCreateThinkingLiveFlow(sessId).value = false
                     if (sessId == _currentSessionId.value) {

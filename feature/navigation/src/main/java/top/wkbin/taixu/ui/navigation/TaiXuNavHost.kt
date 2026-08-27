@@ -73,6 +73,7 @@ sealed interface AppDestination : NavKey
 @Serializable data class ToolDetailDestination(val toolId: String) : AppDestination
 @Serializable data object DistroManagementDestination : AppDestination
 @Serializable data object StorageMountSettingsDestination : AppDestination
+@Serializable data object AppManagementDestination : AppDestination
 @Serializable data object EnvironmentVariableSettingsDestination : AppDestination
 @Serializable data object SshSettingsDestination : AppDestination
 @Serializable data object ModelProfilesDestination : AppDestination
@@ -234,6 +235,7 @@ fun TaiXuNavHost() {
                     onBack = ::popBack,
                     onOpenDistroManagement = { settingsStack.push(DistroManagementDestination) },
                     onOpenStorageMounts = { settingsStack.push(StorageMountSettingsDestination) },
+                    onOpenAppManagement = { settingsStack.push(AppManagementDestination) },
                     onOpenEnvironmentVariables = { settingsStack.push(EnvironmentVariableSettingsDestination) },
                     onOpenSshSettings = { settingsStack.push(SshSettingsDestination) },
                     viewModel = settingsViewModel,
@@ -307,6 +309,9 @@ fun TaiXuNavHost() {
                     onBack = ::popBack,
                     viewModel = settingsViewModel,
                 )
+            }
+            entry<AppManagementDestination> {
+                top.wkbin.taixu.ui.settings.AppManagementScreen(onBack = ::popBack)
             }
             entry<EnvironmentVariableSettingsDestination> {
                 top.wkbin.taixu.ui.settings.EnvironmentVariableSettingsScreen(

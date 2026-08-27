@@ -51,6 +51,24 @@ interface TerminalSessionRepository {
     suspend fun deleteAll()
 }
 
+/** Persistence boundary for the privileged Android application inventory. */
+interface AndroidAppRepository {
+    fun observeAll(): Flow<List<AndroidAppEntity>>
+    suspend fun findByPackageName(packageName: String): AndroidAppEntity?
+    suspend fun search(query: String, limit: Int = 100): List<AndroidAppEntity>
+    suspend fun count(): Int
+    suspend fun reconcile(apps: List<AndroidAppEntity>)
+}
+
+@Singleton
+class RoomAndroidAppRepository @Inject constructor(private val dao: AndroidAppDao) : AndroidAppRepository {
+    override fun observeAll() = dao.observeAll()
+    override suspend fun findByPackageName(packageName: String) = dao.findByPackageName(packageName)
+    override suspend fun search(query: String, limit: Int) = dao.search(query, limit)
+    override suspend fun count() = dao.count()
+    override suspend fun reconcile(apps: List<AndroidAppEntity>) = dao.reconcile(apps)
+}
+
 interface AgentContextRepository {
     suspend fun saveMemory(memory: AgentMemoryEntity)
     suspend fun getMemoryById(id: String): AgentMemoryEntity?
@@ -348,6 +366,7 @@ abstract class PersistenceRepositoryModule {
     @Binds abstract fun bindWorkspaceRepository(impl: RoomWorkspaceRepository): WorkspaceRepository
     @Binds abstract fun bindTerminalSessionRepository(impl: RoomTerminalSessionRepository): TerminalSessionRepository
     @Binds abstract fun bindAgentContextRepository(impl: RoomAgentContextRepository): AgentContextRepository
+    @Binds abstract fun bindAndroidAppRepository(impl: RoomAndroidAppRepository): AndroidAppRepository
     @Binds abstract fun bindQuickPhraseRepository(impl: RoomQuickPhraseRepository): QuickPhraseRepository
     @Binds abstract fun bindHarnessRuntimeRepository(impl: RoomHarnessRuntimeRepository): HarnessRuntimeRepository
 }

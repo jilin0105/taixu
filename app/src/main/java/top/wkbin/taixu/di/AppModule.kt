@@ -7,6 +7,7 @@ import top.wkbin.taixu.core.database.MIGRATION_27_28
 import top.wkbin.taixu.core.database.MIGRATION_28_29
 import top.wkbin.taixu.core.database.MIGRATION_30_31
 import top.wkbin.taixu.core.database.MIGRATION_31_32
+import top.wkbin.taixu.core.database.MIGRATION_33_34
 import top.wkbin.taixu.core.database.ToolDao
 import top.wkbin.taixu.core.database.InstallLogDao
 import top.wkbin.taixu.core.database.InstallTaskDao
@@ -23,6 +24,7 @@ import top.wkbin.taixu.core.database.ToolSettingsDao
 import top.wkbin.taixu.core.database.AgentApprovalDao
 import top.wkbin.taixu.core.database.QuickPhraseDao
 import top.wkbin.taixu.core.database.HarnessRuntimeDao
+import top.wkbin.taixu.core.database.AndroidAppDao
 import top.wkbin.taixu.harness.WorkspaceFileAccess
 import top.wkbin.taixu.core.tools.RuntimeManager
 import top.wkbin.taixu.core.tools.RuntimeManagerImpl
@@ -69,7 +71,7 @@ object AppModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase {
         return Room.databaseBuilder(context, AppDatabase::class.java, "taixu.db")
-            .addMigrations(MIGRATION_27_28, MIGRATION_28_29, MIGRATION_30_31, MIGRATION_31_32)
+            .addMigrations(MIGRATION_27_28, MIGRATION_28_29, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_33_34)
             .fallbackToDestructiveMigration()
             .build()
     }
@@ -141,6 +143,10 @@ object AppModule {
     @Provides
     @Singleton
     fun provideHarnessRuntimeDao(database: AppDatabase): HarnessRuntimeDao = database.harnessRuntimeDao()
+
+    @Provides
+    @Singleton
+    fun provideAndroidAppDao(database: AppDatabase): AndroidAppDao = database.androidAppDao()
 
     @Provides
     @Singleton

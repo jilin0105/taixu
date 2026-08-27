@@ -1,0 +1,44 @@
+package top.wkbin.taixu.ui.settings
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import top.wkbin.taixu.core.database.AndroidAppEntity
+import top.wkbin.taixu.core.database.AndroidAppRepository
+import top.wkbin.taixu.runtime.apps.AndroidAppManager
+
+@HiltViewModel
+class AppManagementViewModel @Inject constructor(
+    repository: AndroidAppRepository,
+    private val appManager: AndroidAppManager,
+) : ViewModel() {
+    val apps: StateFlow<List<AndroidAppEntity>> = repository.observeAll()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _syncing = MutableStateFlow(false)
+    val syncing: StateFlow<Boolean> = _syncing.asStateFlow()
+    private val _message = MutableStateFlow<String?>(null)
+    val message: StateFlow<String?> = _message.asStateFlow()
+
+    fun synchronize() {
+        if (_syncing.value) return
+        viewModelScope.launch {
+            _syncing.value = true
+            val result = appManager.synchronize()
+            _syncing.value = false
+            _message.value = result.fold(
+                onSuccess = { "已同步 ${it.total} 个应用：${it.userApps} 个用户应用、${it.systemApps} 个系统应用。" },
+                onFailure = { it.message ?: "应用同步失败" },
+            )
+        }
+    }
+
+    fun consumeMessage() { _message.value = null }
+}

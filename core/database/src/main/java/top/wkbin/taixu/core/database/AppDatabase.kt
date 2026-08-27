@@ -32,8 +32,9 @@ import androidx.room.RoomDatabase
         HarnessQueueItemEntity::class,
         HarnessUsageEntity::class,
         HarnessLaneResultEntity::class,
+        AndroidAppEntity::class,
     ],
-    version = 33,
+    version = 34,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -54,4 +55,5 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun agentApprovalDao(): AgentApprovalDao
     abstract fun quickPhraseDao(): QuickPhraseDao
     abstract fun harnessRuntimeDao(): HarnessRuntimeDao
+    abstract fun androidAppDao(): AndroidAppDao
 }

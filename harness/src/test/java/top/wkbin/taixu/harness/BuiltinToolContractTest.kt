@@ -46,7 +46,7 @@ class BuiltinToolContractTest {
         val host = ProviderClient.TOOLS.single { it.function.name == "host" }
         val encoded = host.function.parameters.toString()
         assertTrue(encoded.contains("\"status\""))
-        listOf("exec", "settings_get", "settings_put", "package_list", "package_disable", "package_enable", "package_uninstall_user", "logcat")
+        listOf("exec", "settings_get", "settings_put", "package_list", "package_disable", "package_enable", "package_uninstall_user", "app_list", "app_freeze", "app_unfreeze", "app_grant_permission", "logcat")
             .forEach { action -> assertTrue(encoded.contains("\"$action\"")) }
         assertTrue(host.function.description.contains("Android"))
     }

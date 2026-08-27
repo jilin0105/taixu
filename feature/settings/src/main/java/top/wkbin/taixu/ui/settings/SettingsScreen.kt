@@ -443,6 +443,7 @@ fun LinuxEnvironmentSettingsScreen(
     onBack: () -> Unit,
     onOpenDistroManagement: () -> Unit,
     onOpenStorageMounts: () -> Unit,
+    onOpenAppManagement: () -> Unit,
     onOpenEnvironmentVariables: () -> Unit,
     onOpenSshSettings: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
@@ -532,6 +533,13 @@ fun LinuxEnvironmentSettingsScreen(
                         title = "SSH 远程访问",
                         subtitle = "公钥认证 · 端口与局域网监听 · 随运行时启动",
                         onClick = onOpenSshSettings,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(
+                        icon = RuntimeIconName.Package,
+                        title = "应用管理",
+                        subtitle = "同步系统/用户应用，查看禁用、冻结与后台联网限制状态",
+                        onClick = onOpenAppManagement,
                     )
                 }
             }

@@ -15,6 +15,8 @@ import top.wkbin.taixu.runtime.LinuxEnvironmentManager
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import top.wkbin.taixu.runtime.shell.ProcessType
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
+import top.wkbin.taixu.runtime.apps.AndroidAppManager
+import top.wkbin.taixu.core.database.AndroidAppRepository
 import top.wkbin.taixu.core.model.ExecutionMode
 import java.util.UUID
 import javax.inject.Inject
@@ -24,7 +26,6 @@ import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.collect
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -52,6 +53,8 @@ class ToolExecutor @Inject constructor(
     private val messageStore: SessionTreeStore? = null,
     private val eventBus: top.wkbin.taixu.harness.events.HarnessEventBus? = null,
     private val privilegeManager: PrivilegeManager? = null,
+    private val androidAppManager: AndroidAppManager? = null,
+    private val androidAppRepository: AndroidAppRepository? = null,
 ) {
     @Inject
     lateinit var settingsDataStore: AgentPreferences
@@ -222,12 +225,17 @@ class ToolExecutor @Inject constructor(
                     append("\nRoot：").append(if (info.rootAvailable) "可用 (UID 0)" else "不可用或未选择")
                 }
             }
+            "app_list" -> executeCachedApps(args)
             else -> {
+                if (action in APP_DATABASE_GUARDED_ACTIONS) {
+                    val packageName = requireHostIdentifier(args, "package", PACKAGE_NAME)
+                    (androidAppManager ?: return false to "未初始化应用管理器").requireInitialized(packageName)
+                }
                 val command = buildHostCommand(action, args)
                 require(command.length <= MAX_COMMAND_LENGTH) { "命令过长（${command.length} 字符，上限 $MAX_COMMAND_LENGTH）" }
                 val info = manager.getPrivilegeInfo()
                 require(info.mode != ExecutionMode.PROOT && info.modeActive) {
-                    "宿主特权当前不可用；请先在设置中授权并切换到 Shizuku 或 Root 模式"
+                    "权限不足：冻结、启用、卸载或授权应用前，请先在设置中授权并切换到 Shizuku 或 Root 模式。"
                 }
                 val hostOperationId = operationId?.takeIf { it.isNotBlank() } ?: "host-${UUID.randomUUID()}"
                 val cancelHandle = currentCoroutineContext()[Job]?.invokeOnCompletion(onCancelling = true) { cause ->
@@ -244,7 +252,34 @@ class ToolExecutor @Inject constructor(
                     if (result.stdout.isNotBlank()) append("\n").append(result.stdout.trim())
                     if (result.stderr.isNotBlank()) append("\n").append(result.stderr.trim())
                 }
+                if (result.success && action in APP_DATABASE_GUARDED_ACTIONS) {
+                    // Keep the agent's next app_list read coherent with the mutation it just made.
+                    androidAppManager?.synchronize()
+                }
                 result.success to body
+            }
+        }
+    }
+
+    private suspend fun executeCachedApps(args: JsonObject): Pair<Boolean, String> {
+        val repository = androidAppRepository ?: return false to "未初始化应用数据库"
+        if (repository.count() == 0) return false to "应用数据库尚未初始化；请先到设置 → 应用管理完成初始化和同步。"
+        val query = args["query"]?.jsonPrimitive?.content?.trim().orEmpty()
+        val limit = optionalLong(args, "limit", 50L, 1L, 200L).toInt()
+        val includeSystem = args["include_system"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
+        val apps = repository.search(query, if (includeSystem) limit else 200)
+            .asSequence()
+            .filter { includeSystem || !it.isSystemApp }
+            .take(limit)
+            .toList()
+        if (apps.isEmpty()) return true to "应用数据库中未找到：${query.ifBlank { "全部应用" }}"
+        return true to apps.joinToString("\n") { app ->
+            buildString {
+                append(app.label).append(" | ").append(app.packageName)
+                append(" | ").append(if (app.isSystemApp) "系统" else "用户")
+                append(" | ").append(if (app.isEnabled) "启用" else "禁用")
+                if (app.isSuspended) append(" | 冻结")
+                if (app.isNetworkRestricted) append(" | 后台联网受限")
             }
         }
     }
@@ -279,12 +314,16 @@ class ToolExecutor @Inject constructor(
             val filter = args["filter"]?.jsonPrimitive?.content?.trim().orEmpty()
             "/system/bin/pm list packages" + if (filter.isBlank()) "" else " | /system/bin/grep -F -- ${shellQuote(filter)}"
         }
-        "package_disable", "package_enable", "package_uninstall_user" -> {
+        "package_disable", "package_enable", "package_uninstall_user", "app_freeze", "app_unfreeze", "app_grant_permission" -> {
             val packageName = requireHostIdentifier(args, "package", PACKAGE_NAME)
             val user = optionalLong(args, "user", 0L, 0L, 999L)
             when (action) {
-                "package_disable" -> "/system/bin/pm disable-user --user $user ${shellQuote(packageName)}"
-                "package_enable" -> "/system/bin/pm enable --user $user ${shellQuote(packageName)}"
+                "package_disable", "app_freeze" -> "/system/bin/pm disable-user --user $user ${shellQuote(packageName)}"
+                "package_enable", "app_unfreeze" -> "/system/bin/pm enable --user $user ${shellQuote(packageName)}"
+                "app_grant_permission" -> {
+                    val permission = requireHostIdentifier(args, "permission", ANDROID_PERMISSION)
+                    "/system/bin/pm grant ${shellQuote(packageName)} ${shellQuote(permission)}"
+                }
                 else -> "/system/bin/pm uninstall --user $user ${shellQuote(packageName)}"
             }
         }
@@ -298,7 +337,7 @@ class ToolExecutor @Inject constructor(
             }
         }
         else -> throw IllegalArgumentException(
-            "不支持的 host action：$action；可用 status/exec/settings_get/settings_put/package_list/package_disable/package_enable/package_uninstall_user/logcat",
+            "不支持的 host action：$action；可用 status/exec/settings_get/settings_put/package_list/package_disable/package_enable/package_uninstall_user/app_list/app_freeze/app_unfreeze/app_grant_permission/logcat",
         )
     }
 
@@ -577,6 +616,10 @@ class ToolExecutor @Inject constructor(
         const val MAX_DOWNLOAD_ATTEMPTS = 10L
         private val SETTINGS_KEY = Regex("^[A-Za-z0-9._-]{1,160}$")
         private val PACKAGE_NAME = Regex("^[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+$")
+        private val ANDROID_PERMISSION = Regex("^[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+$")
+        private val APP_DATABASE_GUARDED_ACTIONS = setOf(
+            "package_disable", "package_enable", "package_uninstall_user", "app_freeze", "app_unfreeze", "app_grant_permission",
+        )
         private val LOGCAT_TAG = Regex("^[A-Za-z0-9_.-]{1,80}$")
         const val DEFAULT_DOWNLOAD_MAX_BYTES = 1024L * 1024L * 1024L
         const val MAX_DOWNLOAD_MAX_BYTES = 4L * 1024L * 1024L * 1024L
