@@ -262,4 +262,13 @@
     <string name="chat_scratchpad_section">任务草稿（%1$d）</string>
     <string name="chat_scratchpad_empty">暂无草稿。复杂任务中模型会用 scratchpad 工具留存中间结论。</string>
     <string name="chat_scratchpad_clear">清空本会话草稿</string>
+    <!-- 运行详情时间线（按轮分组） -->
+    <string name="chat_tl_round">第 %1$d 轮</string>
+    <string name="chat_tl_model_response">模型响应</string>
+    <string name="chat_tl_lifecycle">会话生命周期</string>
+    <string name="chat_tl_args">请求参数</string>
+    <string name="chat_tl_result">执行结果</string>
+    <string name="chat_tl_response">响应文本</string>
+    <string name="chat_tl_reasoning">思考过程</string>
+    <string name="chat_tl_running">执行中…</string>
 </resources>

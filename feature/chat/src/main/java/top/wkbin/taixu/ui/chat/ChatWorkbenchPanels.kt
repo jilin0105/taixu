@@ -2,6 +2,9 @@ package top.wkbin.taixu.ui.chat
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,6 +45,8 @@ import androidx.compose.ui.unit.dp
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import top.wkbin.taixu.feature.chat.R
 import top.wkbin.taixu.harness.QueuedPrompt
 import top.wkbin.taixu.harness.events.HarnessEvent
@@ -250,7 +255,11 @@ private fun MiniBadge(text: String, color: Color) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun RuntimeTimelineSheet(events: List<HarnessEvent>, onDismiss: () -> Unit) {
+internal fun RuntimeTimelineSheet(
+    events: List<HarnessEvent>,
+    messages: List<top.wkbin.taixu.harness.HarnessMessage>,
+    onDismiss: () -> Unit,
+) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
             Text(stringResource(R.string.chat_runtime_title), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -278,11 +287,317 @@ internal fun RuntimeTimelineSheet(events: List<HarnessEvent>, onDismiss: () -> U
                     StatPill(RuntimeIconName.Refresh, recoveryCount.toString(), MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), modifier = Modifier.padding(bottom = 8.dp))
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
-                    items(events.asReversed(), key = { "${it.timestamp}:${eventKey(it)}" }) { event ->
-                        RuntimeEventRow(event)
+
+                val (rounds, lifecycle) = remember(events, messages) { buildRoundGroups(events, messages) }
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 520.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    // 最新一轮在最上，组内按发生顺序链式展示；轮间以分隔线区隔。
+                    items(rounds.asReversed(), key = { "round-${it.key}" }) { round ->
+                        RoundSection(round)
+                        HorizontalDivider(
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                            modifier = Modifier.padding(vertical = 6.dp),
+                        )
+                    }
+                    if (lifecycle.isNotEmpty()) {
+                        item(key = "lifecycle-header") {
+                            Text(
+                                stringResource(R.string.chat_tl_lifecycle),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        items(lifecycle, key = { "life-${it.timestamp}-${eventKey(it)}" }) { event ->
+                            RuntimeEventRow(event)
+                        }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** 某一轮的完整调用链：模型响应 + 工具执行 + 审批事件。 */
+private class RoundGroup(
+    val key: Long,
+    val roundNumber: Int,
+    val modelId: String?,
+    val startedAt: Long,
+) {
+    val entries = mutableListOf<TimelineEntry>()
+}
+
+/** 轮内条目：展开详情时从 [messages] 回查 payload。 */
+private sealed interface TimelineEntry {
+    val timestamp: Long
+
+    data class Assistant(
+        override val timestamp: Long,
+        val entryId: String,
+        val inputTokens: Long,
+        val outputTokens: Long,
+        val message: top.wkbin.taixu.harness.AssistantText?,
+    ) : TimelineEntry
+
+    data class Tool(
+        override val timestamp: Long,
+        val callId: String,
+        var name: String,
+        var settled: HarnessEvent.ToolCallSettled?,
+        var callMessage: top.wkbin.taixu.harness.ToolCall?,
+        var result: top.wkbin.taixu.harness.ToolResult?,
+    ) : TimelineEntry
+
+    data class Approval(override val timestamp: Long, val toolName: String, val riskLevel: String) : TimelineEntry
+}
+
+/** 把扁平事件流切成（轮次组，会话级生命周期）两段；tool call 与 settled 结果就地配对。 */
+private fun buildRoundGroups(
+    events: List<HarnessEvent>,
+    messages: List<top.wkbin.taixu.harness.HarnessMessage>,
+): Pair<List<RoundGroup>, List<HarnessEvent>> {
+    val toolResultsById = messages.filterIsInstance<top.wkbin.taixu.harness.ToolResult>()
+        .associateBy { it.toolCallId }
+    val callsById = messages.filterIsInstance<top.wkbin.taixu.harness.ToolCall>().associateBy { it.id }
+    val assistantsById = messages.filterIsInstance<top.wkbin.taixu.harness.AssistantText>().associateBy { it.id }
+
+    val rounds = mutableListOf<RoundGroup>()
+    val lifecycle = mutableListOf<HarnessEvent>()
+    var current: RoundGroup? = null
+    val toolIndexByCallId = mutableMapOf<String, Int>()
+
+    fun newGroup(event: HarnessEvent.ProviderRoundStarted) {
+        current = RoundGroup(System.nanoTime(), event.round, event.modelId, event.timestamp).also { rounds += it }
+        toolIndexByCallId.clear()
+    }
+
+    for (event in events) {
+        when (event) {
+            is HarnessEvent.ProviderRoundStarted -> newGroup(event)
+            is HarnessEvent.ProviderRoundSettled -> current?.entries?.add(
+                TimelineEntry.Assistant(
+                    event.timestamp,
+                    event.entryId.orEmpty(),
+                    event.inputTokens,
+                    event.outputTokens,
+                    assistantsById[event.entryId],
+                ),
+            )
+            is HarnessEvent.ToolCallStarted -> {
+                val entry = TimelineEntry.Tool(
+                    timestamp = event.timestamp,
+                    callId = event.toolCallId,
+                    name = event.toolName,
+                    settled = null,
+                    callMessage = callsById[event.toolCallId],
+                    result = toolResultsById[event.toolCallId],
+                )
+                current?.entries?.add(entry)
+                toolIndexByCallId[event.toolCallId] = current!!.entries.lastIndex
+            }
+            is HarnessEvent.ToolCallSettled -> {
+                val index = toolIndexByCallId[event.toolCallId]
+                val entry = (index?.let { current?.entries?.getOrNull(it) } as? TimelineEntry.Tool)
+                    ?: TimelineEntry.Tool(event.timestamp, event.toolCallId, event.toolName, null, callsById[event.toolCallId], toolResultsById[event.toolCallId])
+                        .also { current?.entries?.add(it); toolIndexByCallId[event.toolCallId] = current!!.entries.lastIndex }
+                entry.settled = event
+            }
+            is HarnessEvent.ApprovalRequested -> current?.entries?.add(
+                TimelineEntry.Approval(event.timestamp, event.toolName, event.riskLevel),
+            )
+            else -> lifecycle += event
+        }
+    }
+    return rounds to lifecycle
+}
+
+@Composable
+private fun RoundSection(group: RoundGroup) {
+    val assistantEntries = group.entries.filterIsInstance<TimelineEntry.Assistant>()
+    val totalIn = assistantEntries.sumOf { it.inputTokens }
+    val totalOut = assistantEntries.sumOf { it.outputTokens }
+    Column {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+        ) {
+            Text(
+                stringResource(R.string.chat_tl_round, group.roundNumber + 1),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            group.modelId?.takeIf { it.isNotBlank() }?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.weight(1f))
+            if (totalIn > 0 || totalOut > 0) {
+                Text(
+                    "↑$totalIn ↓$totalOut",
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            group.entries.forEachIndexed { index, entry ->
+                RoundEntryRow(entry, isLast = index == group.entries.lastIndex)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoundEntryRow(entry: TimelineEntry, isLast: Boolean) {
+    var expanded by remember { mutableStateOf(false) }
+
+    val visual = when (entry) {
+        is TimelineEntry.Assistant -> Triple(RuntimeIconName.Sparkles, Color(0xFF7C4DFF), stringResource(R.string.chat_tl_model_response))
+        is TimelineEntry.Approval -> Triple(RuntimeIconName.Shield, Color(0xFFB25E00), entry.toolName)
+        is TimelineEntry.Tool -> {
+            val settled = entry.settled
+            val icon = when {
+                settled == null -> RuntimeIconName.Wrench
+                settled.success -> RuntimeIconName.Check
+                else -> RuntimeIconName.Alert
+            }
+            val color = when {
+                settled == null -> MaterialTheme.colorScheme.tertiary
+                settled.success -> Color(0xFF2E7D32)
+                else -> MaterialTheme.colorScheme.error
+            }
+            Triple(icon, color, entry.name)
+        }
+    }
+    val (icon, color, title) = visual
+    val detail: String? = when (entry) {
+        is TimelineEntry.Assistant -> stringResource(R.string.chat_token_usage, entry.inputTokens, entry.outputTokens)
+        is TimelineEntry.Approval -> entry.riskLevel
+        is TimelineEntry.Tool -> buildString {
+            append(entry.settled?.durationMs?.let(::formatPanelDuration) ?: stringResource(R.string.chat_tl_running))
+            entry.callMessage?.args?.get("command")?.let { cmd ->
+                append(" · ").append(cmd.toString().replace('\n', ' ').take(80))
+            }
+        }
+    }
+    val expandable: Boolean = when (entry) {
+        is TimelineEntry.Tool -> true
+        is TimelineEntry.Assistant ->
+            entry.message != null && (entry.message.text.isNotBlank() || !entry.message.reasoning.isNullOrBlank())
+        is TimelineEntry.Approval -> false
+    }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable(enabled = expandable) { expanded = !expanded },
+    ) {
+        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            // 链式节点：圆点图标 + 连接线，未轮条目首尾相接。
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(Modifier.size(28.dp).background(color.copy(alpha = 0.13f), CircleShape), contentAlignment = Alignment.Center) {
+                    RuntimeIcon(icon, Modifier.size(15.dp), color)
+                }
+                if (!isLast) {
+                    Box(Modifier.width(1.dp).height(22.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                }
+            }
+            Column(Modifier.weight(1f).padding(top = 3.dp, bottom = if (isLast) 4.dp else 8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        formatEventTime(entry.timestamp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1,
+                    )
+                }
+                detail?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (expandable) {
+                RuntimeIcon(
+                    if (expanded) RuntimeIconName.ChevronDown else RuntimeIconName.ChevronRight,
+                    Modifier.size(14.dp).padding(top = 6.dp),
+                    MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        androidx.compose.animation.AnimatedVisibility(visible = expanded && expandable) {
+            Box(Modifier.padding(start = 38.dp, bottom = 8.dp)) {
+                when (entry) {
+                    is TimelineEntry.Tool -> ToolExpandContent(entry)
+                    is TimelineEntry.Assistant -> entry.message?.let { AssistantExpandContent(it) }
+                    is TimelineEntry.Approval -> Unit
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToolExpandContent(entry: TimelineEntry.Tool) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        entry.callMessage?.let { call ->
+            PayloadBox(stringResource(R.string.chat_tl_args), prettyArgs(call.args))
+        }
+        val result = entry.result
+        PayloadBox(
+            stringResource(R.string.chat_tl_result),
+            result?.output?.ifBlank { "（无输出）" } ?: "结果尚未写入投影",
+        )
+    }
+}
+
+@Composable
+private fun AssistantExpandContent(message: top.wkbin.taixu.harness.AssistantText) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (message.text.isNotBlank()) {
+            PayloadBox(stringResource(R.string.chat_tl_response), message.text)
+        }
+        message.reasoning?.takeIf { it.isNotBlank() }?.let {
+            PayloadBox(stringResource(R.string.chat_tl_reasoning), it)
+        }
+    }
+}
+
+/** 展开详情中的长文本容器：等宽字体 + 可滚动 + 可选中复制。 */
+@Composable
+private fun PayloadBox(label: String, text: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(8.dp)) {
+            androidx.compose.foundation.text.selection.SelectionContainer {
+                Text(
+                    text,
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 240.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(8.dp),
+                )
             }
         }
     }
@@ -553,3 +868,8 @@ private fun eventKey(event: HarnessEvent): String = when (event) {
 
 private fun formatEventTime(timestamp: Long): String = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
 private fun formatPanelDuration(ms: Long): String = if (ms < 1_000) "${ms}ms" else String.format(Locale.getDefault(), "%.1fs", ms / 1_000.0)
+
+private val PAYLOAD_JSON = Json { prettyPrint = true; ignoreUnknownKeys = true }
+
+private fun prettyArgs(args: JsonObject): String =
+    runCatching { PAYLOAD_JSON.encodeToString(JsonObject.serializer(), args) }.getOrDefault(args.toString())

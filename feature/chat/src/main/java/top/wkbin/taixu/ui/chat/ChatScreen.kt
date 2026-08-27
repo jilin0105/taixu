@@ -695,7 +695,11 @@ fun ChatScreen(
     }
 
     if (showRuntimeTimeline) {
-        RuntimeTimelineSheet(events = runtimeEvents, onDismiss = { showRuntimeTimeline = false })
+        RuntimeTimelineSheet(
+            events = runtimeEvents,
+            messages = messages,
+            onDismiss = { showRuntimeTimeline = false },
+        )
     }
 
     if (showMemorySheet) {
