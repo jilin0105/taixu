@@ -55,7 +55,6 @@ import top.wkbin.taixu.ui.components.RuntimeIconName
 @Composable
 internal fun ChatWorkbenchStrip(
     currentBranch: ConversationBranch?,
-    branchCount: Int,
     runtimeEvents: List<HarnessEvent>,
     running: Boolean,
     memoryCount: Int,
@@ -77,18 +76,19 @@ internal fun ChatWorkbenchStrip(
         ) {
             WorkspacePill(
                 icon = RuntimeIconName.Hub,
-                title = currentBranch?.name ?: stringResource(R.string.chat_main_line),
-                subtitle = stringResource(R.string.chat_branch_count, branchCount),
+                title = stringResource(R.string.chat_branch_pill_title),
+                subtitle = currentBranch?.name ?: stringResource(R.string.chat_main_line),
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.weight(1f),
                 onClick = onOpenBranches,
             )
             WorkspacePill(
                 icon = RuntimeIconName.Logs,
-                title = if (running) stringResource(R.string.chat_runtime_running) else stringResource(R.string.chat_runtime_details),
+                title = stringResource(R.string.chat_runtime_details),
                 subtitle = activeRound?.let { stringResource(R.string.chat_round_number, it + 1) }
                     ?: stringResource(R.string.chat_event_count, runtimeEvents.size),
                 tint = if (running) Color(0xFF7C4DFF) else MaterialTheme.colorScheme.tertiary,
+                highlight = running,
                 modifier = Modifier.weight(1f),
                 onClick = onOpenRuntime,
             )
@@ -111,24 +111,38 @@ private fun WorkspacePill(
     subtitle: String,
     tint: Color,
     modifier: Modifier,
+    highlight: Boolean = false,
     onClick: () -> Unit,
 ) {
     Surface(
         modifier = modifier.clickable(onClick = onClick),
-        color = tint.copy(alpha = 0.09f),
+        color = tint.copy(alpha = if (highlight) 0.16f else 0.09f),
         shape = RoundedCornerShape(10.dp),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            RuntimeIcon(icon, Modifier.size(17.dp), tint)
+            RuntimeIcon(icon, Modifier.size(15.dp), tint)
             Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                Text(
+                    title,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-            RuntimeIcon(RuntimeIconName.ChevronRight, Modifier.size(15.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+            RuntimeIcon(RuntimeIconName.ChevronRight, Modifier.size(13.dp), MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

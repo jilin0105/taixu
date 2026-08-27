@@ -187,8 +187,8 @@
     <!-- 分支与运行时工作台 -->
     <string name="chat_main_line">主线</string>
     <string name="chat_branch_count">%1$d 条路径</string>
-    <string name="chat_runtime_running">运行中</string>
-    <string name="chat_runtime_details">运行详情</string>
+    <string name="chat_branch_pill_title">分支</string>
+    <string name="chat_runtime_details">运行</string>
     <string name="chat_round_number">第 %1$d 轮</string>
     <string name="chat_event_count">%1$d 条事件</string>
     <string name="chat_branches_title">会话分支</string>
@@ -254,8 +254,8 @@
     <!-- 上下文压缩透明度 -->
     <string name="chat_compaction_banner">已折叠 %1$d 条早期消息进入上下文摘要，点按查看模型仍记得什么</string>
     <!-- 记忆与草稿抽屉 -->
-    <string name="chat_memory_pill_title">记忆与草稿</string>
-    <string name="chat_memory_pill_subtitle">%1$d 条记忆 · %2$d 草稿</string>
+    <string name="chat_memory_pill_title">记忆</string>
+    <string name="chat_memory_pill_subtitle">%1$d 记忆 · %2$d 草稿</string>
     <string name="chat_memory_sheet_title">会话工作记忆</string>
     <string name="chat_memory_section">长期记忆（%1$d）</string>
     <string name="chat_memory_empty">暂无记忆。当你在对话中表达偏好或重要事实时，模型会通过 memory 工具记录在这里。</string>

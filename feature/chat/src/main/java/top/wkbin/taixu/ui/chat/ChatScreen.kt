@@ -481,7 +481,6 @@ fun ChatScreen(
                         onSend = { customText, images -> viewModel.send(customText, images) },
                         onStop = viewModel::stop,
                         currentBranch = currentBranch,
-                        branchCount = branches.count { it.kind != top.wkbin.taixu.harness.session.ConversationBranchKind.SUBAGENT },
                         runtimeEvents = runtimeEvents,
                         onOpenBranches = { showBranches = true },
                         onOpenRuntime = { showRuntimeTimeline = true },
@@ -568,7 +567,6 @@ fun ChatScreen(
                     onSend = { customText, images -> viewModel.send(customText, images) },
                     onStop = viewModel::stop,
                     currentBranch = currentBranch,
-                    branchCount = branches.count { it.kind != top.wkbin.taixu.harness.session.ConversationBranchKind.SUBAGENT },
                     runtimeEvents = runtimeEvents,
                     onOpenBranches = { showBranches = true },
                     onOpenRuntime = { showRuntimeTimeline = true },
@@ -758,7 +756,6 @@ private fun ChatPaneContent(
     onSend: (String?, List<String>) -> Unit,
     onStop: () -> Unit,
     currentBranch: top.wkbin.taixu.harness.session.ConversationBranch?,
-    branchCount: Int,
     runtimeEvents: List<top.wkbin.taixu.harness.events.HarnessEvent>,
     onOpenBranches: () -> Unit,
     onOpenRuntime: () -> Unit,
@@ -879,7 +876,6 @@ private fun ChatPaneContent(
         if (messages.isNotEmpty() || running) {
             ChatWorkbenchStrip(
                 currentBranch = currentBranch,
-                branchCount = branchCount,
                 runtimeEvents = runtimeEvents,
                 running = running,
                 memoryCount = memoryCount,
