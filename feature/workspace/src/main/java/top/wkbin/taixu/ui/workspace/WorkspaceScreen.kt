@@ -1110,7 +1110,7 @@ fun WorkspaceScreen(
                                     if (filteredTemplates.map { it.manifest.category.id }.distinct().size > 1) {
                                         Text(category.name, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                                     }
-                                    templates.chunked(3).forEach { rowTemplates ->
+                                    templates.chunked(2).forEach { rowTemplates ->
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1171,7 +1171,7 @@ fun WorkspaceScreen(
                                                     )
                                                 }
                                             }
-                                            repeat(3 - rowTemplates.size) {
+                                            repeat(2 - rowTemplates.size) {
                                                 Spacer(Modifier.weight(1f))
                                             }
                                         }
