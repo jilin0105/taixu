@@ -14,8 +14,6 @@ import top.wkbin.taixu.core.tools.ToolRegistry
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.RuntimeHealth
 import top.wkbin.taixu.runtime.RootfsUpdateInfo
-import top.wkbin.taixu.runtime.StorageManager
-import top.wkbin.taixu.runtime.StorageUsage
 import top.wkbin.taixu.runtime.shell.CommandResult
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import top.wkbin.taixu.runtime.shell.ManagedProcess
@@ -33,7 +31,6 @@ import kotlinx.coroutines.launch
 class DeveloperViewModel @Inject constructor(
     private val linuxRuntime: LinuxRuntime,
     private val runtimeManager: RuntimeManager,
-    private val storageManager: StorageManager,
     private val settingsDataStore: SettingsDataStore,
     private val toolRegistry: ToolRegistry,
     private val toolManager: ToolManager,
@@ -60,8 +57,6 @@ class DeveloperViewModel @Inject constructor(
     val unusedRuntimes: StateFlow<List<InstalledRuntime>> = _unusedRuntimes.asStateFlow()
     private val _processes = MutableStateFlow<List<ManagedProcess>>(emptyList())
     val processes: StateFlow<List<ManagedProcess>> = _processes.asStateFlow()
-    private val _storage = MutableStateFlow<StorageUsage?>(null)
-    val storage: StateFlow<StorageUsage?> = _storage.asStateFlow()
     private val _rootfsVersion = MutableStateFlow<String?>(null)
     val rootfsVersion: StateFlow<String?> = _rootfsVersion.asStateFlow()
     private val _rootfsUpdate = MutableStateFlow<RootfsUpdateInfo?>(null)
@@ -129,7 +124,6 @@ class DeveloperViewModel @Inject constructor(
     init {
         refreshUnusedRuntimes()
         refreshProcesses()
-        refreshStorage()
         refreshRootfsVersion()
         refreshAgentLogSize()
     }
@@ -265,30 +259,8 @@ class DeveloperViewModel @Inject constructor(
         }
     }
 
-    fun refreshStorage() {
-        viewModelScope.launch {
-            runCatching { storageManager.inspect() }
-                .onSuccess { _storage.value = it }
-                .onFailure { logger.e("读取存储占用失败", it) }
-        }
-    }
-
     fun refreshRootfsVersion() {
         _rootfsVersion.value = linuxRuntime.rootfsVersion()
-    }
-
-    fun clearCache() {
-        if (_busy.value) return
-        viewModelScope.launch {
-            _busy.value = true
-            runCatching { storageManager.clearCache() }
-                .onSuccess { result ->
-                    _message.value = if (result.isSuccess) "运行时缓存已清理。" else "清理失败：${result.errorOrNull()?.message}"
-                    refreshStorage()
-                }
-                .onFailure { _message.value = "清理失败：${it.message}" }
-            _busy.value = false
-        }
     }
 
     fun resetLinuxEnvironment() {

@@ -1,5 +1,8 @@
 package top.wkbin.taixu.ui.settings
 
+import android.widget.ImageView
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -8,10 +11,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -23,8 +25,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.database.AndroidAppEntity
@@ -46,7 +51,7 @@ fun AppManagementScreen(
     val message by viewModel.message.collectAsStateWithLifecycle()
     var showSystemApps by remember { mutableStateOf(false) }
 
-    // Every entry reconciles the live privileged package list with Room: missing packages are
+    // Every entry reconciles the live PackageManager inventory with Room: missing packages are
     // removed and newly installed ones are inserted, without rebuilding the UI's data source.
     LaunchedEffect(Unit) { viewModel.synchronize() }
     val userApps = apps.filterNot { it.isSystemApp }
@@ -115,26 +120,61 @@ fun AppManagementScreen(
 
 @Composable
 private fun AndroidAppRow(app: AndroidAppEntity) {
-    RuntimeCard(contentPadding = PaddingValues(14.dp)) {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(app.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            Text(app.packageName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                AppStatusChip(if (app.isEnabled) "已启用" else "已禁用/冻结", !app.isEnabled)
-                if (app.isSuspended) AppStatusChip("已冻结", true)
-                if (app.isNetworkRestricted) AppStatusChip("后台联网受限", true)
+    RuntimeCard(contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.CenterVertically) {
+            AndroidAppIcon(app.packageName)
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(app.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(app.packageName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    if (app.isEnabled) "已开启" else "已冻结",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (app.isEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                )
+                if (app.isSuspended || app.isNetworkRestricted) {
+                    Text(
+                        listOfNotNull(
+                            "已冻结".takeIf { app.isSuspended },
+                            "联网受限".takeIf { app.isNetworkRestricted },
+                        ).joinToString(" · "),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun AppStatusChip(label: String, warning: Boolean) {
-    AssistChip(
-        onClick = {},
-        label = { Text(label) },
-        colors = AssistChipDefaults.assistChipColors(
-            labelColor = if (warning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-        ),
-    )
+private fun AndroidAppIcon(packageName: String) {
+    val context = LocalContext.current
+    val drawable = remember(packageName) {
+        runCatching { context.packageManager.getApplicationIcon(packageName) }.getOrNull()
+    }
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (drawable == null) {
+            RuntimeIcon(RuntimeIconName.Package, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            AndroidView(
+                factory = {
+                    ImageView(it).apply {
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        contentDescription = packageName
+                        setImageDrawable(drawable)
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+                update = { image -> image.setImageDrawable(drawable) },
+            )
+        }
+    }
 }

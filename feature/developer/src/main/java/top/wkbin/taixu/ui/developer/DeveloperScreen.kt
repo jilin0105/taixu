@@ -66,7 +66,6 @@ fun DeveloperScreen(
     val message by viewModel.message.collectAsStateWithLifecycle()
     val unusedRuntimes by viewModel.unusedRuntimes.collectAsStateWithLifecycle()
     val processes by viewModel.processes.collectAsStateWithLifecycle()
-    val storage by viewModel.storage.collectAsStateWithLifecycle()
     val rootfsVersion by viewModel.rootfsVersion.collectAsStateWithLifecycle()
     val rootfsUpdate by viewModel.rootfsUpdate.collectAsStateWithLifecycle()
     val savedManifestUrl by viewModel.registryManifestUrl.collectAsStateWithLifecycle()
@@ -79,7 +78,6 @@ fun DeveloperScreen(
     var signatureUrl by remember(savedSignatureUrl) { mutableStateOf(savedSignatureUrl) }
     var publicKey by remember(savedPublicKey) { mutableStateOf(savedPublicKey) }
     var cleanupTarget by remember { mutableStateOf<InstalledRuntime?>(null) }
-    var showCacheConfirmation by remember { mutableStateOf(false) }
     var showRootfsUpdateConfirmation by remember { mutableStateOf(false) }
     var showResetConfirmation by remember { mutableStateOf(false) }
     var showAgentLogDialog by remember { mutableStateOf(false) }
@@ -180,7 +178,7 @@ fun DeveloperScreen(
                 }
             }
 
-            SectionHeader("资源管理", "后台 Linux 进程与磁盘占用")
+            SectionHeader("资源管理", "后台 Linux 进程与共享依赖")
 
             RuntimeCard(Modifier.fillMaxWidth()) {
                 ResourceHeader(RuntimeIconName.Cpu, "后台进程", "${processes.size} 个活动进程", viewModel::refreshProcesses)
@@ -199,26 +197,6 @@ fun DeveloperScreen(
                         }
                     }
                 }
-            }
-
-            RuntimeCard(Modifier.fillMaxWidth()) {
-                ResourceHeader(RuntimeIconName.Storage, "存储占用", storage?.totalManagedBytes?.toReadableSize() ?: "正在读取", viewModel::refreshStorage)
-                Spacer(Modifier.height(14.dp))
-                storage?.let { usage ->
-                    StorageRow("RootFS", usage.rootfsBytes.toReadableSize(), "工具程序", usage.toolBytes.toReadableSize())
-                    Spacer(Modifier.height(10.dp))
-                    StorageRow("运行时基础", usage.runtimeBytes.toReadableSize(), "工具数据", usage.dataBytes.toReadableSize())
-                    Spacer(Modifier.height(10.dp))
-                    StorageRow("工作区", usage.workspaceBytes.toReadableSize(), "下载缓存", usage.cacheBytes.toReadableSize())
-                    Spacer(Modifier.height(14.dp))
-                    NoticeBanner("设备剩余空间 ${usage.availableBytes.toReadableSize()}")
-                } ?: Text("正在读取存储信息…", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(12.dp))
-                OutlinedButton(
-                    onClick = { showCacheConfirmation = true },
-                    enabled = !busy && runtimeState !is RuntimeState.Initializing,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("清理下载缓存") }
             }
 
             RuntimeCard(Modifier.fillMaxWidth()) {
@@ -339,15 +317,6 @@ fun DeveloperScreen(
             text = { Text("将移除未被工具引用的共享 Runtime，此操作无法自动恢复。") },
             confirmButton = { TextButton(onClick = { cleanupTarget = null; viewModel.cleanupRuntime(runtime.id) }) { Text("确认清理", color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { cleanupTarget = null }) { Text("取消") } },
-        )
-    }
-    if (showCacheConfirmation) {
-        RuntimeAlertDialog(
-            onDismissRequest = { showCacheConfirmation = false },
-            title = { Text("清理下载缓存？") },
-            text = { Text("只删除未激活的下载和临时文件，不会影响 Linux 系统、工具或工作区。") },
-            confirmButton = { TextButton(onClick = { showCacheConfirmation = false; viewModel.clearCache() }) { Text("确认清理") } },
-            dismissButton = { TextButton(onClick = { showCacheConfirmation = false }) { Text("取消") } },
         )
     }
     if (showResetConfirmation) {
@@ -497,22 +466,6 @@ private fun ResourceHeader(icon: RuntimeIconName, title: String, detail: String,
             Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         TextButton(onClick = onRefresh) { Text("刷新") }
-    }
-}
-
-@Composable
-private fun StorageRow(labelA: String, valueA: String, labelB: String, valueB: String) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        StorageCell(labelA, valueA, Modifier.weight(1f))
-        StorageCell(labelB, valueB, Modifier.weight(1f))
-    }
-}
-
-@Composable
-private fun StorageCell(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(modifier.clip(MaterialTheme.shapes.medium).background(MaterialTheme.colorScheme.surfaceContainerLow).padding(12.dp)) {
-        Text(value, style = MaterialTheme.typography.titleMedium)
-        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

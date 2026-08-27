@@ -443,6 +443,7 @@ fun LinuxEnvironmentSettingsScreen(
     onBack: () -> Unit,
     onOpenDistroManagement: () -> Unit,
     onOpenStorageMounts: () -> Unit,
+    onOpenStorageUsage: () -> Unit,
     onOpenAppManagement: () -> Unit,
     onOpenEnvironmentVariables: () -> Unit,
     onOpenSshSettings: () -> Unit,
@@ -512,6 +513,13 @@ fun LinuxEnvironmentSettingsScreen(
                         subtitle = "多沙箱并存 · 镜像拉取 · 一键切换主系统",
                         value = "${installedDistros.size} 套系统",
                         onClick = onOpenDistroManagement,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(
+                        icon = RuntimeIconName.Storage,
+                        title = "存储管理",
+                        subtitle = "按 Linux、插件、项目与 Skills 分析占用",
+                        onClick = onOpenStorageUsage,
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     SettingsRow(
