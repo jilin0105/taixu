@@ -850,6 +850,8 @@ fun SystemDevSettingsScreen(
     var showBatteryDialog by remember { mutableStateOf(false) }
     var showPhantomProcessDialog by remember { mutableStateOf(false) }
     var batteryExempted by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
+    val isRestrictiveRom = remember { RomAutostartHelper.isKnownRestrictiveRom() }
+    val romLabel = remember { RomAutostartHelper.romLabel() }
 
     LaunchedEffect(Unit) { viewModel.refreshPhantomProcessLimit() }
 
@@ -899,6 +901,16 @@ fun SystemDevSettingsScreen(
                         value = if (batteryExempted) "已豁免" else "未豁免",
                         onClick = { showBatteryDialog = true },
                     )
+                    if (isRestrictiveRom) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        SettingsRow(
+                            icon = RuntimeIconName.Shield,
+                            title = "$romLabel 自启动与后台运行",
+                            subtitle = "厂商系统需手动允许自启动与锁屏不清理，否则前台服务仍可能被杀",
+                            value = "需手动开启",
+                            onClick = { runCatching { RomAutostartHelper.openAutostartSettings(context) } },
+                        )
+                    }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     SettingsRow(
                         icon = RuntimeIconName.Speed,

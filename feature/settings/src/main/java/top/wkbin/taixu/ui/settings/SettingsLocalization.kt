@@ -527,25 +527,26 @@ private fun legacyStringResource(source: String): Int? = when (source) {
 @Composable
 private fun resolveLegacyString(source: String): String {
     legacyStringResource(source)?.let { return stringResource(it) }
-    Regex("""(\\d+) 套系统 · (.+)""").matchEntire(source)?.also {
+    // NOTE: raw 字符串不做转义处理，此处必须写 \d；写成 \\d 会匹配字面 "\d" 导致永不命中。
+    Regex("""(\d+) 套系统 · (.+)""").matchEntire(source)?.also {
         return stringResource(R.string.settings_dynamic_system_mode, it.groupValues[1], it.groupValues[2])
     }
-    Regex("""(\\d+) 套系统""").matchEntire(source)?.also {
+    Regex("""(\d+) 套系统""").matchEntire(source)?.also {
         return stringResource(R.string.settings_dynamic_system_count, it.groupValues[1])
     }
-    Regex("""(\\d+) 个模型 · (\\d+) 技能""").matchEntire(source)?.also {
+    Regex("""(\d+) 个模型 · (\d+) 技能""").matchEntire(source)?.also {
         return stringResource(R.string.settings_dynamic_model_skill_count, it.groupValues[1], it.groupValues[2])
     }
-    Regex("""(\\d+) 个模型""").matchEntire(source)?.also {
+    Regex("""(\d+) 个模型""").matchEntire(source)?.also {
         return stringResource(R.string.settings_dynamic_model_count, it.groupValues[1])
     }
-    Regex("""(\\d+) 个技能""").matchEntire(source)?.also {
+    Regex("""(\d+) 个技能""").matchEntire(source)?.also {
         return stringResource(R.string.settings_dynamic_skill_count, it.groupValues[1])
     }
-    Regex("""(\\d+) 个""").matchEntire(source)?.also {
+    Regex("""(\d+) 个""").matchEntire(source)?.also {
         return stringResource(R.string.settings_dynamic_item_count, it.groupValues[1])
     }
-    Regex("""(\\d+) 轮""").matchEntire(source)?.also {
+    Regex("""(\d+) 轮""").matchEntire(source)?.also {
         return stringResource(R.string.settings_dynamic_round_count, it.groupValues[1])
     }
     Regex("""下载中：(.+) / (.+) MB""").matchEntire(source)?.also {
@@ -560,7 +561,7 @@ private fun resolveLegacyString(source: String): String {
     if (source.startsWith("确定删除 ") && source.endsWith("？")) {
         return stringResource(R.string.settings_dynamic_delete_confirm, source.removePrefix("确定删除 ").removeSuffix("？"))
     }
-    Regex("""成功探测到 (\\d+) 个工具""").matchEntire(source)?.also {
+    Regex("""成功探测到 (\d+) 个工具""").matchEntire(source)?.also {
         return stringResource(R.string.settings_dynamic_tool_count, it.groupValues[1])
     }
     return source

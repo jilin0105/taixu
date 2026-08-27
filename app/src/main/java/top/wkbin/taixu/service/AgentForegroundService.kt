@@ -21,12 +21,16 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.absoluteValue
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Agent 后台执行前台服务：
@@ -44,6 +48,10 @@ class AgentForegroundService : Service() {
     private var collecting = false
     private var processLock: PowerManager.WakeLock? = null
     private val activeNotifSessionIds = mutableSetOf<String>()
+    /** 记录每个会话开始运行的时间戳，用于通知中显示已运行时长。 */
+    private val sessionStartTimes = mutableMapOf<String, Long>()
+    /** 定时刷新通知的 Job，运行期间每 30 秒更新一次，降低被系统判定为闲置服务的概率。 */
+    private var notificationRefreshJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -83,17 +91,22 @@ class AgentForegroundService : Service() {
                             val runningEntries = runStates.filter { it.value == SessionRunState.RUNNING }
                             if (runningEntries.isNotEmpty()) {
                                 acquireProcessLock()
+                                val now = System.currentTimeMillis()
                                 runningEntries.forEach { (sessionId, _) ->
                                     activeNotifSessionIds.add(sessionId)
+                                    sessionStartTimes.putIfAbsent(sessionId, now)
                                     val notifId = sessionNotificationId(sessionId)
                                     val sessionTitle = sessionDao.findById(sessionId)?.title ?: getString(R.string.taixu_agent_default_title)
                                     val statusText = statuses[sessionId]?.takeIf { it.isNotBlank() } ?: getString(R.string.taixu_agent_thinking)
                                     val notif = sessionNotification(sessionId, sessionTitle, statusText)
                                     safeNotify(notifId, notif)
                                 }
+                                startNotificationRefresh()
                             } else {
+                                stopNotificationRefresh()
                                 val previouslyRunning = activeNotifSessionIds.toList()
                                 activeNotifSessionIds.clear()
+                                sessionStartTimes.clear()
                                 previouslyRunning.forEach { sessionId ->
                                     val notifId = sessionNotificationId(sessionId)
                                     val sessionTitle = sessionDao.findById(sessionId)?.title ?: getString(R.string.taixu_agent_default_title)
@@ -114,9 +127,41 @@ class AgentForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        stopNotificationRefresh()
         releaseProcessLock()
         serviceScope.cancel()
         super.onDestroy()
+    }
+
+    private fun startNotificationRefresh() {
+        if (notificationRefreshJob?.isActive == true) return
+        notificationRefreshJob = serviceScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(NOTIFICATION_REFRESH_INTERVAL_MS.milliseconds)
+                val snapshot = activeNotifSessionIds.toList()
+                if (snapshot.isEmpty()) break
+                val now = System.currentTimeMillis()
+                snapshot.forEach { sessionId ->
+                    val startTime = sessionStartTimes[sessionId] ?: continue
+                    val elapsedMinutes = ((now - startTime) / 60_000L).toInt()
+                    val notifId = sessionNotificationId(sessionId)
+                    val sessionTitle = runCatching { sessionDao.findById(sessionId)?.title }
+                        .getOrNull() ?: getString(R.string.taixu_agent_default_title)
+                    val notif = sessionNotification(
+                        sessionId = sessionId,
+                        title = sessionTitle,
+                        status = getString(R.string.taixu_agent_thinking),
+                        elapsedMinutes = elapsedMinutes,
+                    )
+                    safeNotify(notifId, notif)
+                }
+            }
+        }
+    }
+
+    private fun stopNotificationRefresh() {
+        notificationRefreshJob?.cancel()
+        notificationRefreshJob = null
     }
 
     private fun acquireProcessLock() {
@@ -150,7 +195,12 @@ class AgentForegroundService : Service() {
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .build()
 
-    private fun sessionNotification(sessionId: String, title: String, status: String): Notification {
+    private fun sessionNotification(
+        sessionId: String,
+        title: String,
+        status: String,
+        elapsedMinutes: Int? = null,
+    ): Notification {
         val stopPending = PendingIntent.getService(
             this,
             sessionNotificationId(sessionId),
@@ -160,10 +210,16 @@ class AgentForegroundService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
+        val contentText = if (elapsedMinutes != null && elapsedMinutes > 0) {
+            getString(R.string.taixu_agent_background_locked) + " · 已运行 ${formatElapsed(elapsedMinutes)}"
+        } else {
+            getString(R.string.taixu_agent_background_locked)
+        }
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.taixu_logo)
             .setContentTitle("【$title】$status")
-            .setContentText(getString(R.string.taixu_agent_background_locked))
+            .setContentText(contentText)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
@@ -175,6 +231,11 @@ class AgentForegroundService : Service() {
                 ),
             )
             .build()
+    }
+
+    private fun formatElapsed(minutes: Int): String = when {
+        minutes < 60 -> "${minutes}分钟"
+        else -> "${minutes / 60}小时${minutes % 60}分"
     }
 
     private fun completedNotification(sessionId: String, title: String): Notification {
@@ -233,6 +294,8 @@ class AgentForegroundService : Service() {
         private const val TAG = "AgentForegroundService"
         private const val WAKE_LOCK_TAG = "taixu:agent-execution"
         private const val LOCK_TIMEOUT_MS = 4 * 60 * 60 * 1000L
+        /** 通知定时刷新间隔：30 秒。运行期间定期更新通知，降低被系统判定为闲置前台服务的概率。 */
+        private const val NOTIFICATION_REFRESH_INTERVAL_MS = 30_000L
 
         fun start(context: Context, sessionId: String? = null) {
             val intent = Intent(context, AgentForegroundService::class.java)
