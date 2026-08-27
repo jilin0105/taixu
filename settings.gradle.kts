@@ -39,6 +39,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "TaiXu"
 include(":app")
+include(":baselineprofile")
 include(":core:common")
 include(":core:model")
 include(":core:database")

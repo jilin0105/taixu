@@ -14,6 +14,7 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.androidx.baselineprofile)
 }
 
 extensions.configure<ApplicationExtension> {
@@ -117,6 +118,13 @@ kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
     }
+}
+
+dependencies {
+    // Baseline Profile 运行时安装器：首帧前将打包进 APK 的 profile 提交给 ART 预编译。
+    implementation(libs.androidx.profileinstaller)
+    // 生成者模块：generateBaselineProfile 时由此拉起 macrobenchmark 采集
+    baselineProfile(project(":baselineprofile"))
 }
 
 dependencies {

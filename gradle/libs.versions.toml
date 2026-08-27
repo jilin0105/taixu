@@ -29,6 +29,10 @@ androidxTestCore = "1.7.0"
 backdrop = "2.0.0"
 coil = "3.5.0"
 coreSplashscreen = "1.0.1"
+# Baseline Profile：启动时预编译热点方法，治首次冷启动 JIT 现场编译慢
+baselineprofile = "1.5.0-rc01"
+profileinstaller = "1.4.1"
+uiautomator = "2.3.0"
 
 [libraries]
 shizuku-api = { group = "dev.rikka.shizuku", name = "api", version.ref = "shizuku" }
@@ -79,6 +83,10 @@ asm-commons = { group = "org.ow2.asm", name = "asm-commons", version = "9.9.1" }
 asm-util = { group = "org.ow2.asm", name = "asm-util", version = "9.9.1" }
 asm-tree = { group = "org.ow2.asm", name = "asm-tree", version = "9.9.1" }
 asm-analysis = { group = "org.ow2.asm", name = "asm-analysis", version = "9.9.1" }
+# Baseline Profile 生成与安装
+androidx-benchmark-macro-junit4 = { group = "androidx.benchmark", name = "benchmark-macro-junit4", version.ref = "baselineprofile" }
+androidx-profileinstaller = { group = "androidx.profileinstaller", name = "profileinstaller", version.ref = "profileinstaller" }
+androidx-test-uiautomator = { group = "androidx.test.uiautomator", name = "uiautomator", version.ref = "uiautomator" }
 backdrop = { group = "io.github.kyant0", name = "backdrop", version.ref = "backdrop" }
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
 coil-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp", version.ref = "coil" }
@@ -86,6 +94,8 @@ coil-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp"
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }
+android-test = { id = "com.android.test", version.ref = "agp" }
+androidx-baselineprofile = { id = "androidx.baselineprofile", version.ref = "baselineprofile" }
 kandroid = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

@@ -6,6 +6,8 @@ plugins {
     alias(libs.plugins.ksp) apply false
     alias(libs.plugins.hilt) apply false
     alias(libs.plugins.kotlin.compose) apply false
+    alias(libs.plugins.android.test) apply false
+    alias(libs.plugins.androidx.baselineprofile) apply false
 }
 
 tasks.register("architectureCheck") {
@@ -13,7 +15,12 @@ tasks.register("architectureCheck") {
     description = "Checks module direction and persistence boundaries."
 
     inputs.files(
-        fileTree("feature") { include("**/*.kt", "**/build.gradle.kts") },
+        // 排除各模块 build/ 输出目录：否则与其他任务并发写盘时，
+        // Gradle 9 的严格校验会报隐式依赖错误导致 architectureCheck 直接失败
+        fileTree("feature") {
+            include("**/*.kt", "**/build.gradle.kts")
+            exclude("**/build/**")
+        },
         fileTree("runtime/src/main") { include("**/*.kt") },
         fileTree("harness/src/main") { include("**/*.kt") },
         file("core/model/build.gradle.kts"),
