@@ -791,6 +791,7 @@ private fun ChatPaneContent(
     val context = androidx.compose.ui.platform.LocalContext.current
     var attachments by remember { mutableStateOf<List<ChatAttachment>>(emptyList()) }
     var showReasoningSlider by remember { mutableStateOf(false) }
+    var expandedOverrides by rememberSaveable { mutableStateOf(mapOf<String, Boolean>()) }
 
     // 🌟 任务执行中的极光流光边框动效 (Aurora Glow Border Animation)
     val infiniteTransition = rememberInfiniteTransition(label = "capsuleGlowTransition")
@@ -893,6 +894,13 @@ private fun ChatPaneContent(
                 onOpenMemory = onOpenMemory,
             )
         }
+        val renderItems = remember(messages, toolResults, expandedOverrides) {
+            projectChatMessages(
+                messages = messages,
+                toolResults = toolResults,
+                expandedOverrides = expandedOverrides,
+            )
+        }
         LazyColumn(
             state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -934,55 +942,65 @@ private fun ChatPaneContent(
                         )
                     }
                 }
-                // The skeleton is the complete message-list placeholder. Do not compose the
-                // restored history behind it, otherwise Base64/Markdown work still competes with
-                // the navigation frame and the skeleton provides no performance isolation.
-                itemsIndexed(messages, key = { _, message -> message.id }) { index, message ->
-                    if (message is ToolResult) return@itemsIndexed
+                itemsIndexed(renderItems, key = { _, item -> item.stableKey }) { index, item ->
                     val top = when {
-                        message is ToolCall && prevRenderedIsToolCall(messages, index) -> 2.dp
+                        item is ChatRenderItem.MessageItem && item.message is ToolCall && prevRenderedIsToolCall(renderItems, index) -> 2.dp
                         else -> 8.dp
                     }
                     if (index > 0) Spacer(Modifier.height(top))
-                    when (message) {
-                        is CapabilityEvent -> CapabilityEventCard(message)
-                        is UserMessage -> UserBubble(
-                            message = message,
-                            knownMentionNames = knownMentionNames,
-                            onEdit = { onEditMessage(message) },
-                            onDelete = { onDeleteMessage(message.id) },
-                            onCreateBranch = { onCreateBranch(message.id) },
-                        )
-                        is AssistantText -> AssistantBubble(
-                            message = message,
-                            defaultExpanded = thinkingExpanded,
-                            live = thinkingLive && message.id == liveThinkingMessageId,
-                            showRegenerate = message.id == lastAssistantMessageId,
-                            onRegenerate = onRegenerate,
-                            onCreateBranch = { onCreateBranch(message.id) },
-                        )
-                        is ToolCall -> {
-                            if (message.tool == HarnessTool.SUBAGENT) {
-                                SubagentCard(
-                                    call = message,
-                                    result = toolResults[message.id],
+                    when (item) {
+                        is ChatRenderItem.CollapseButtonItem -> {
+                            RoundCollapseButton(
+                                item = item,
+                                onToggle = {
+                                    val currentExpanded = item.isExpanded
+                                    expandedOverrides = expandedOverrides + (item.roundKey to !currentExpanded)
+                                },
+                            )
+                        }
+                        is ChatRenderItem.MessageItem -> {
+                            when (val message = item.message) {
+                                is CapabilityEvent -> CapabilityEventCard(message)
+                                is UserMessage -> UserBubble(
+                                    message = message,
+                                    knownMentionNames = knownMentionNames,
+                                    onEdit = { onEditMessage(message) },
+                                    onDelete = { onDeleteMessage(message.id) },
+                                    onCreateBranch = { onCreateBranch(message.id) },
                                 )
-                            } else {
-                                ToolCard(
-                                    call = message,
-                                    result = toolResults[message.id],
-                                    workspace = workspace,
-                                    onOpenFile = onOpenFile,
-                                    running = running,
-                                    liveStatus = status,
-                                    showReasoning = message.reasoning != null &&
-                                        !reasoningAlreadyShown(messages, index, message.reasoning),
+                                is AssistantText -> AssistantBubble(
+                                    message = message,
                                     defaultExpanded = thinkingExpanded,
-                                    onRetry = { onRetryTool(message.id) },
+                                    live = thinkingLive && message.id == liveThinkingMessageId,
+                                    showRegenerate = message.id == lastAssistantMessageId,
+                                    onRegenerate = onRegenerate,
+                                    onCreateBranch = { onCreateBranch(message.id) },
                                 )
+                                is ToolCall -> {
+                                    val rawIndex = messages.indexOfFirst { it.id == message.id }
+                                    if (message.tool == HarnessTool.SUBAGENT) {
+                                        SubagentCard(
+                                            call = message,
+                                            result = toolResults[message.id],
+                                        )
+                                    } else {
+                                        ToolCard(
+                                            call = message,
+                                            result = toolResults[message.id],
+                                            workspace = workspace,
+                                            onOpenFile = onOpenFile,
+                                            running = running,
+                                            liveStatus = status,
+                                            showReasoning = message.reasoning != null &&
+                                                !reasoningAlreadyShown(messages, rawIndex, message.reasoning),
+                                            defaultExpanded = thinkingExpanded,
+                                            onRetry = { onRetryTool(message.id) },
+                                        )
+                                    }
+                                }
+                                is ToolResult -> Unit
                             }
                         }
-                        is ToolResult -> Unit
                     }
                 }
             }
@@ -3420,10 +3438,53 @@ private fun WorkspaceOption(name: String, path: String, selected: Boolean, onSel
     }
 }
 
-private fun prevRenderedIsToolCall(messages: List<HarnessMessage>, index: Int): Boolean {
-    var i = index - 1
-    while (i >= 0 && messages[i] is ToolResult) i--
-    return i >= 0 && messages[i] is ToolCall
+@Composable
+private fun RoundCollapseButton(
+    item: ChatRenderItem.CollapseButtonItem,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val text = if (item.isExpanded) {
+        "收起"
+    } else {
+        val durationSuffix = if (item.hiddenDurationMs > 0) {
+            " · " + formatDuration(item.hiddenDurationMs)
+        } else {
+            ""
+        }
+        "展开更多 ${item.hiddenSteps} 步（共 ${item.totalSteps} 步）$durationSuffix"
+    }
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            thickness = 1.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 12.dp),
+        )
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            thickness = 1.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+        )
+    }
+}
+
+private fun prevRenderedIsToolCall(items: List<ChatRenderItem>, index: Int): Boolean {
+    val prev = items.getOrNull(index - 1)
+    return prev is ChatRenderItem.MessageItem && prev.message is ToolCall
 }
 
 private fun reasoningAlreadyShown(messages: List<HarnessMessage>, index: Int, reasoning: String?): Boolean {
