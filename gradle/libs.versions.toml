@@ -28,12 +28,14 @@ androidxTestCore = "1.7.0"
 # AndroidLiquidGlass (Kyant0) — Compose 液态玻璃效果库，澄明主题的渲染核心
 backdrop = "2.0.0"
 coil = "3.5.0"
+coreSplashscreen = "1.0.1"
 
 [libraries]
 shizuku-api = { group = "dev.rikka.shizuku", name = "api", version.ref = "shizuku" }
 shizuku-provider = { group = "dev.rikka.shizuku", name = "provider", version.ref = "shizuku" }
 dadb = { group = "dev.mobile", name = "dadb", version.ref = "dadb" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "coreSplashscreen" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }

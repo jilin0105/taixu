@@ -61,6 +61,7 @@ import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.navigation.TaiXuNavHost
 import top.wkbin.taixu.ui.theme.TaiXuTheme
 import androidx.core.net.toUri
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
@@ -82,6 +83,7 @@ class MainActivity : AppCompatActivity() {
     private var notificationPermissionCheckScheduled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         runtimeServiceController.start()
         enableEdgeToEdge()

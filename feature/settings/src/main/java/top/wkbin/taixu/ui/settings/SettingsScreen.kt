@@ -2215,27 +2215,6 @@ private fun ModelEditor(
     // 自定义请求头
     var customHeaders by remember(modelId) { mutableStateOf(existing?.customHeaders.orEmpty()) }
 
-    LaunchedEffect(providerId, url, autoDiscoverEnabled) {
-        if (!autoDiscoverEnabled) return@LaunchedEffect
-        delay(600)
-        autoDiscoverEnabled = false
-        if (ProviderEndpointPolicy.isSafeBaseUrl(url)) {
-            discover(providerId, url, combinedKey)
-            selectFirstDiscoveredModel = true
-        }
-    }
-
-    LaunchedEffect(discovered, selectFirstDiscoveredModel) {
-        if (selectFirstDiscoveredModel && discovered.isNotEmpty()) {
-            model = discovered.first()
-            selectFirstDiscoveredModel = false
-        }
-    }
-
-    LaunchedEffect(error) {
-        if (error != null) selectFirstDiscoveredModel = false
-    }
-
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),

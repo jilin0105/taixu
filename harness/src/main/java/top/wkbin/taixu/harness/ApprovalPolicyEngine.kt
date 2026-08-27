@@ -25,7 +25,7 @@ class ApprovalPolicyEngine {
                 return ApprovalDecision(false)
             }
             if (mode == ApprovalMode.FULL_ACCESS && action in HOST_FULL_ACCESS_AUTO_APPROVE) {
-                return ApprovalDecision(false)
+                return ApprovalDecision(false, riskLevel = "high")
             }
             val critical = action == "exec" || action == "package_uninstall_user"
             return ApprovalDecision(

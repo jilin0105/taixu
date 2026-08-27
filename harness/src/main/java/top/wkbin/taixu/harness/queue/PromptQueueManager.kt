@@ -33,7 +33,7 @@ class PromptQueueManager @Inject constructor(
         prompt: PendingMessage,
         laneName: String = SessionTreeStore.MAIN_LANE,
     ): String {
-        val operationId = repository.findLane(sessionId, laneName)?.currentOperationId
+        val operationId = repository.ensureLane(sessionId, laneName).currentOperationId
         val id = UUID.randomUUID().toString()
         repository.enqueue(
             HarnessQueueItemEntity(
