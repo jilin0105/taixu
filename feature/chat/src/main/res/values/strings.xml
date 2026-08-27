@@ -245,4 +245,10 @@
     <string name="chat_retry_from_tool">从此工具重试</string>
     <string name="chat_regenerate">重新生成</string>
     <string name="chat_branch_from_here">从这条消息创建分支</string>
+    <!-- 会话级结构化任务规划看板（plan 工具数据源） -->
+    <string name="chat_plan_board_header">任务执行规划</string>
+    <string name="chat_plan_board_progress">%1$d / %2$d</string>
+    <!-- 审批请求过期提示 -->
+    <string name="chat_approval_expires_minutes">约 %1$d 分钟后过期，逾期将自动失效</string>
+    <string name="chat_approval_expires_soon">即将过期</string>
 </resources>

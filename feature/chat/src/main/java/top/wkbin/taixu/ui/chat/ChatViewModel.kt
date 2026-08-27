@@ -40,6 +40,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collect
@@ -68,6 +69,7 @@ class ChatViewModel @Inject constructor(
     private val agentSkillRepository: AgentSkillRepository,
     private val mcpServerRepository: McpServerRepository,
     private val approvalRepository: AgentApprovalRepository,
+    private val agentContextDao: top.wkbin.taixu.core.database.AgentContextRepository,
     private val quickPhraseRepository: top.wkbin.taixu.core.database.QuickPhraseRepository,
     private val laneManager: LaneManager,
     private val eventBus: HarnessEventBus,
@@ -150,6 +152,22 @@ class ChatViewModel @Inject constructor(
     val pendingApprovals: StateFlow<List<AgentApprovalRequestEntity>> = harnessLoop.currentSessionId.flatMapLatest { sessionId ->
         if (sessionId.isBlank()) kotlinx.coroutines.flow.flowOf(emptyList()) else approvalRepository.pendingForSession(sessionId)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * 当前会话的活跃结构化任务规划（模型通过 plan 工具写入的 AgentPlanEntity）。
+     * 以 currentSessionId + 运行状态为键重新读取：一轮执行内状态多次变化，
+     * 借此近似实时刷新看板进度；无规划或非活跃时为 null。
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val activePlan: StateFlow<top.wkbin.taixu.core.database.AgentPlanEntity?> =
+        combine(harnessLoop.currentSessionId, harnessLoop.status) { sessionId, _ -> sessionId }
+            .distinctUntilChanged()
+            .flatMapLatest { sessionId ->
+                kotlinx.coroutines.flow.flow {
+                    emit(if (sessionId.isBlank()) null else agentContextDao.getActivePlan(sessionId)?.takeIf { it.status == "active" })
+                }
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     fun resolveApproval(requestId: String, approved: Boolean) {
         harnessLoop.resolveApproval(requestId, approved)

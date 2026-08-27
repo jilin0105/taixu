@@ -201,6 +201,7 @@ fun ChatScreen(
     val mcpConnectionStates by viewModel.mcpConnectionStates.collectAsStateWithLifecycle()
     val initializing by viewModel.initializing.collectAsStateWithLifecycle()
     val pendingApprovals by viewModel.pendingApprovals.collectAsStateWithLifecycle()
+    val activePlan by viewModel.activePlan.collectAsStateWithLifecycle()
     val contextUsage by viewModel.contextUsage.collectAsStateWithLifecycle()
     val quickPhrases by viewModel.quickPhrases.collectAsStateWithLifecycle()
 
@@ -266,6 +267,9 @@ fun ChatScreen(
     var initialPositionedSessionKey by rememberSaveable { mutableStateOf<String?>(null) }
     val currentSessionKey = remember(messages) { messages.firstOrNull()?.id ?: "" }
 
+    // 计划看板是插入在消息前的固定头部项；按 lastIndexOf 定位时需补偿。
+    val planBoardOffset = if (activePlan != null) 1 else 0
+
     // Only the latest assistant message changes during streaming. Avoid summing the
     // complete history on every live token, which scales with session length.
     val streamedChars = remember(messages) {
@@ -281,7 +285,7 @@ fun ChatScreen(
         if (messages.isNotEmpty()) {
             if (initialPositionedSessionKey != currentSessionKey) {
                 initialPositionedSessionKey = currentSessionKey
-                listState.scrollToItem(messages.size - 1)
+                listState.scrollToItem(messages.size - 1 + planBoardOffset)
             } else if (listState.layoutInfo.totalItemsCount > 0) {
                 val layoutInfo = listState.layoutInfo
                 val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()
@@ -484,6 +488,7 @@ fun ChatScreen(
                         activeSkillsCount = activeSkillsCount,
                         activeMcpCount = activeMcpCount,
                         onOpenSkillsMcp = { showSkillsMcpSheet = true },
+                        activePlan = activePlan,
                         pendingApprovals = pendingApprovals,
                         onResolveApproval = viewModel::resolveApproval,
                         contextUsage = contextUsage,
@@ -566,6 +571,7 @@ fun ChatScreen(
                     activeSkillsCount = activeSkillsCount,
                     activeMcpCount = activeMcpCount,
                     onOpenSkillsMcp = { showSkillsMcpSheet = true },
+                    activePlan = activePlan,
                     pendingApprovals = pendingApprovals,
                     onResolveApproval = viewModel::resolveApproval,
                     contextUsage = contextUsage,
@@ -743,6 +749,7 @@ private fun ChatPaneContent(
     activeModel: top.wkbin.taixu.core.database.AiModelEntity? = null,
     onUpdateReasoning: (mode: String?, effort: String?) -> Unit = { _, _ -> },
     pendingApprovals: List<top.wkbin.taixu.core.database.AgentApprovalRequestEntity> = emptyList(),
+    activePlan: top.wkbin.taixu.core.database.AgentPlanEntity? = null,
     onResolveApproval: (String, Boolean) -> Unit = { _, _ -> },
     contextUsage: ContextUsage = ContextUsage(),
     quickPhrases: List<top.wkbin.taixu.core.model.QuickPhrase> = emptyList(),
@@ -869,6 +876,16 @@ private fun ChatPaneContent(
                             quickPhrases = quickPhrases,
                             onSelectPhrase = onSelectPhrase,
                             onSelectCommand = onApplyCommand,
+                        )
+                    }
+                }
+                // 结构化任务规划看板：plan 工具的真实数据源，与文本正则卡片互补。
+                activePlan?.let { plan ->
+                    item(key = "session_plan_board") {
+                        SessionPlanBoardCard(
+                            goal = plan.goal,
+                            steps = PlanStepParser.parse(plan.stepsJson),
+                            modifier = Modifier.padding(bottom = 2.dp),
                         )
                     }
                 }
@@ -2473,6 +2490,30 @@ private fun ApprovalRequestCard(
             }
             Text(request.summary, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace))
             Text(request.reason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            // 过期倒计时：审批 TTL 默认 10 分钟，超时未决会被 Harness 判定失效。
+            var remainingMinutes by remember(request.expiresAt) { mutableStateOf(Int.MAX_VALUE) }
+            LaunchedEffect(request.expiresAt) {
+                while (true) {
+                    val remaining = request.expiresAt - System.currentTimeMillis()
+                    remainingMinutes = if (remaining <= 0) 0 else ((remaining + 59_999) / 60_000).toInt()
+                    if (remainingMinutes == 0) break
+                    delay(15_000)
+                }
+            }
+            if (remainingMinutes > 0 && remainingMinutes != Int.MAX_VALUE) {
+                val urgent = remainingMinutes <= 2
+                Text(
+                    if (remainingMinutes == 1) {
+                        stringResource(R.string.chat_approval_expires_soon)
+                    } else {
+                        stringResource(R.string.chat_approval_expires_minutes, remainingMinutes)
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (urgent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(onClick = onReject, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.chat_reject)) }
                 Button(onClick = onApprove, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.chat_approve_continue)) }
