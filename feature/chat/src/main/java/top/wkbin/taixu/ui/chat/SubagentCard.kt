@@ -38,11 +38,9 @@ import androidx.compose.ui.res.stringResource
 import top.wkbin.taixu.feature.chat.R
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolResult
+import top.wkbin.taixu.harness.SubagentArgsParser
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Subagent 子智能体任务派发卡片：
@@ -59,23 +57,9 @@ fun SubagentCard(
 
     val defaultTaskName = stringResource(R.string.chat_subtask)
     val tasks = remember(call.args, defaultTaskName) {
-        val list = mutableListOf<Triple<String, String, String>>() // taskName, role, prompt
-        val array = call.args["subagents"]?.jsonArray
-        if (array != null) {
-            for (elem in array) {
-                val obj = elem.jsonObject
-                val taskName = obj["taskName"]?.jsonPrimitive?.content ?: defaultTaskName
-                val role = obj["role"]?.jsonPrimitive?.content ?: "assistant"
-                val prompt = obj["prompt"]?.jsonPrimitive?.content ?: ""
-                list.add(Triple(taskName, role, prompt))
-            }
-        } else {
-            val taskName = call.args["taskName"]?.jsonPrimitive?.content ?: defaultTaskName
-            val role = call.args["role"]?.jsonPrimitive?.content ?: "assistant"
-            val prompt = call.args["prompt"]?.jsonPrimitive?.content ?: ""
-            if (prompt.isNotBlank()) list.add(Triple(taskName, role, prompt))
+        SubagentArgsParser.parse(call.args, defaultTaskName).map { spec ->
+            Triple(spec.taskName, spec.role, spec.prompt)
         }
-        list
     }
 
     val isFinished = result != null

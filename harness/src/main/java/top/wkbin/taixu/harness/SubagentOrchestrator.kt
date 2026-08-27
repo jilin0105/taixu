@@ -12,9 +12,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import top.wkbin.taixu.harness.session.LaneManager
 import top.wkbin.taixu.harness.subagent.SubagentLaneRunner
 import top.wkbin.taixu.harness.prompt.PromptAssetLoader
@@ -42,7 +39,7 @@ class SubagentOrchestrator @Inject constructor(
         val workspace = parentSession?.workspace.orEmpty()
         val modelId = parentSession?.modelId
         val projectType = parentSession?.projectType.orEmpty()
-        val specs = parseSubagentSpecs(args)
+        val specs = SubagentArgsParser.parse(args)
         if (specs.isEmpty()) {
             return@withContext false to "未解析到有效的 subagents 任务列表，请检查参数"
         }
@@ -90,29 +87,6 @@ class SubagentOrchestrator @Inject constructor(
         allSuccess to summaryMarkdown
     }
 
-    private fun parseSubagentSpecs(args: JsonObject): List<SubagentTaskSpec> {
-        val list = mutableListOf<SubagentTaskSpec>()
-        val subagentsArray = args["subagents"]?.jsonArray
-        if (subagentsArray != null) {
-            for (elem in subagentsArray) {
-                val obj = elem.jsonObject
-                val taskName = obj["taskName"]?.jsonPrimitive?.content ?: "子任务"
-                val role = obj["role"]?.jsonPrimitive?.content ?: "assistant"
-                val prompt = obj["prompt"]?.jsonPrimitive?.content ?: continue
-                list.add(SubagentTaskSpec(taskName, role, prompt))
-            }
-        } else {
-            // 单个 subagent 调用兼容
-            val prompt = args["prompt"]?.jsonPrimitive?.content
-            val role = args["role"]?.jsonPrimitive?.content ?: "assistant"
-            val taskName = args["taskName"]?.jsonPrimitive?.content ?: "任务"
-            if (!prompt.isNullOrBlank()) {
-                list.add(SubagentTaskSpec(taskName, role, prompt))
-            }
-        }
-        return list.take(MAX_SUBAGENTS)
-    }
-
     private fun buildSubagentPrompt(spec: SubagentTaskSpec, profile: AgentSubagent, workspace: String): String {
         return promptAssets.render(
             "prompts/subagent_task.md",
@@ -149,7 +123,4 @@ class SubagentOrchestrator @Inject constructor(
         val toolCallCount: Int,
     )
 
-    private companion object {
-        const val MAX_SUBAGENTS = 6
-    }
 }
