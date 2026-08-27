@@ -209,6 +209,8 @@ WorkspaceBuildRunner
 | **偏好领域分面** | [`core/datastore/.../PreferenceFacades.kt`](../core/datastore/src/main/java/top/wkbin/taixu/core/datastore/PreferenceFacades.kt) | 向 UI/runtime/harness 暴露最小配置接口 |
 | **持久化仓储边界** | [`core/database/.../PersistenceRepositories.kt`](../core/database/src/main/java/top/wkbin/taixu/core/database/PersistenceRepositories.kt) | 隔离 Room DAO 与业务模块 |
 | **对讲界面与双栏** | [`feature/chat/.../ChatScreen.kt`](../feature/chat/src/main/java/top/wkbin/taixu/ui/chat/ChatScreen.kt) | M3 对话流、TaskPlanCard、双栏分屏联动 |
+| **任务看板与压缩横幅** | [`feature/chat/.../PlanBoard.kt`](../feature/chat/src/main/java/top/wkbin/taixu/ui/chat/PlanBoard.kt)、[`CompactionBanner.kt`](../feature/chat/src/main/java/top/wkbin/taixu/ui/chat/CompactionBanner.kt) | plan 工具数据源的步骤看板；上下文折叠透明度横幅（累计条数 + 摘要展开） |
+| **记忆与草稿抽屉** | [`feature/chat/.../SessionMemorySheet.kt`](../feature/chat/src/main/java/top/wkbin/taixu/ui/chat/SessionMemorySheet.kt) | AgentMemoryEntity 全量观察 + 当前会话 Scratchpad 的查看与删除入口 |
 | **终端与触觉交互** | [`feature/terminal/.../TerminalScreen.kt`](../feature/terminal/src/main/java/top/wkbin/taixu/ui/terminal/TerminalScreen.kt) | 原生 PTY 渲染、辅助按键与 Haptic 震动 |
 | **终端核心状态** | [`runtime/.../terminal/TerminalSessionManager.kt`](../runtime/src/main/java/top/wkbin/taixu/runtime/terminal/TerminalSessionManager.kt) | UI 无关的 PTY 会话、VT100 缓冲和持久化 |
 | **工作区领域入口** | [`runtime/.../WorkspaceManager.kt`](../runtime/src/main/java/top/wkbin/taixu/runtime/WorkspaceManager.kt) | 创建、ZIP/GitHub 导入、ZIP 导出、项目元数据和文件入口 |
