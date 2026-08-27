@@ -1003,7 +1003,7 @@ private fun ChatPaneContent(
                     LaunchedEffect(roundStart) {
                         while (true) {
                             roundElapsed = System.currentTimeMillis() - roundStart
-                            delay(500)
+                            delay(100)
                         }
                     }
                     val thinkingLabel = status ?: stringResource(R.string.chat_thinking)
@@ -2457,7 +2457,7 @@ private fun ToolCard(
                         LaunchedEffect(call.id) {
                             while (true) {
                                 elapsed = System.currentTimeMillis() - call.createdAt
-                                delay(200)
+                                delay(100)
                             }
                         }
                         formatDuration(elapsed)
