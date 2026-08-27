@@ -49,6 +49,10 @@
     <string name="chat_context_over_budget">已超过预算，下一次请求会自动压缩历史</string>
     <string name="chat_context_estimate">估算值 · 发送前仍由 Harness 最终计算</string>
     <string name="chat_agent_intro">太墟智枢可以为你编写代码、读写 Linux 工作区文件、执行 Shell 命令或排查系统故障。</string>
+    <string name="chat_onboarding_sandbox">当前仅 Linux 沙箱可用。想让 Agent 操作手机应用与系统设置？到设置页完成 Shizuku 或 Root 授权。</string>
+    <string name="chat_onboarding_unlockable">检测到设备支持 Shizuku / Root 特权。切换执行模式即可解锁打开应用、设闹钟、冻结 App 等手机级操作。</string>
+    <string name="chat_onboarding_shizuku">Shizuku 已就绪：试试让我打开某个应用、设定闹钟、冻结耗电 App，或用 device_status 查看电量与前台应用。</string>
+    <string name="chat_onboarding_root">Root 已激活：手机级操作全部可用，且可执行更强的系统级动作——只做任务所需的最小改动。</string>
     <string name="chat_quick_start">快捷开始：</string>
     <string name="chat_capability_mount">🧠 快捷挂载专精技能与 MCP 插件</string>
     <string name="chat_enabled_for_request">本轮定向调用</string>

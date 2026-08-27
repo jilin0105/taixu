@@ -207,6 +207,7 @@ fun ChatScreen(
     val activeCompaction by viewModel.activeCompaction.collectAsStateWithLifecycle()
     val contextUsage by viewModel.contextUsage.collectAsStateWithLifecycle()
     val quickPhrases by viewModel.quickPhrases.collectAsStateWithLifecycle()
+    val onboardingPrivilege by viewModel.privilegeOnboarding.collectAsStateWithLifecycle()
 
     var showSessions by remember { mutableStateOf(false) }
     var showNewSession by remember { mutableStateOf(false) }
@@ -446,6 +447,7 @@ fun ChatScreen(
                 ) {
                     // 左栏：Agent 对话与指令区
                     ChatPaneContent(
+                        onboardingPrivilege = onboardingPrivilege,
                         modifier = Modifier
                             .weight(0.48f)
                             .fillMaxHeight(),
@@ -530,6 +532,7 @@ fun ChatScreen(
             } else {
                 // 单栏 Phone 视图
                     ChatPaneContent(
+                        onboardingPrivilege = onboardingPrivilege,
                         modifier = Modifier
                             .fillMaxSize()
                             .liquidGlassContent()
@@ -729,6 +732,7 @@ fun ChatScreen(
 private fun ChatPaneContent(
     modifier: Modifier = Modifier,
     messages: List<HarnessMessage>,
+    onboardingPrivilege: OnboardingPrivilege? = null,
     listState: androidx.compose.foundation.lazy.LazyListState,
     running: Boolean,
     status: String?,
@@ -904,6 +908,7 @@ private fun ChatPaneContent(
                     item {
                         EmptyChatGuidance(
                             workspaceProject = workspaceProject,
+                            onboardingPrivilege = onboardingPrivilege,
                             quickPhrases = quickPhrases,
                             onSelectPhrase = onSelectPhrase,
                             onSelectCommand = onApplyCommand,
@@ -1442,6 +1447,7 @@ private fun formatContextTokens(tokens: Int): String = when {
 @Composable
 private fun EmptyChatGuidance(
     workspaceProject: WorkspaceProject? = null,
+    onboardingPrivilege: OnboardingPrivilege? = null,
     quickPhrases: List<top.wkbin.taixu.core.model.QuickPhrase> = emptyList(),
     onSelectPhrase: (top.wkbin.taixu.core.model.QuickPhrase) -> Unit = {},
     onSelectCommand: (SlashCommandItem) -> Unit,
@@ -1488,6 +1494,28 @@ private fun EmptyChatGuidance(
             .padding(vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        onboardingPrivilege?.let { privilege ->
+            val ready = privilege == OnboardingPrivilege.SHIZUKU_READY || privilege == OnboardingPrivilege.ROOT_READY
+            Surface(
+                color = if (ready) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    stringResource(
+                        when (privilege) {
+                            OnboardingPrivilege.SANDBOX -> R.string.chat_onboarding_sandbox
+                            OnboardingPrivilege.SANDBOX_UNLOCKABLE -> R.string.chat_onboarding_unlockable
+                            OnboardingPrivilege.SHIZUKU_READY -> R.string.chat_onboarding_shizuku
+                            OnboardingPrivilege.ROOT_READY -> R.string.chat_onboarding_root
+                        }
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (ready) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                )
+            }
+        }
         Text(
             stringResource(R.string.chat_agent_intro),
             style = MaterialTheme.typography.bodyMedium,

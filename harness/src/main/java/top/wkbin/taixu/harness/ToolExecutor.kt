@@ -366,6 +366,11 @@ class ToolExecutor @Inject constructor(
                 else -> "/system/bin/pm uninstall --user $user ${shellQuote(packageName)}"
             }
         }
+        "device_status" ->
+            "echo '[battery]'; dumpsys battery | grep -E 'level|status|temperature'" +
+                "; echo '[network]'; dumpsys connectivity | head -30" +
+                "; echo '[foreground]'; dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity' | head -6" +
+                "; echo '[storage]'; df -h /data | tail -2"
         "logcat" -> {
             val lines = optionalLong(args, "tail_lines", 200L, 1L, 2_000L)
             val tag = args["tag"]?.jsonPrimitive?.content?.trim().orEmpty()

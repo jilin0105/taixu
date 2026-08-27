@@ -2,6 +2,7 @@ package top.wkbin.taixu.ui.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import top.wkbin.taixu.core.model.ExecutionMode
 import top.wkbin.taixu.core.model.McpConnectionState
 import top.wkbin.taixu.core.model.ApprovalMode
 import top.wkbin.taixu.core.database.AiModelRepository
@@ -56,6 +57,9 @@ import top.wkbin.taixu.runtime.terminal.TerminalSessionManager
 
 private const val MAX_RUNTIME_EVENTS = 160
 
+/** 空会话首屏的权限感知引导档位；决定开场提示卡的文案与色调。 */
+enum class OnboardingPrivilege { SANDBOX, SANDBOX_UNLOCKABLE, SHIZUKU_READY, ROOT_READY }
+
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -78,7 +82,21 @@ class ChatViewModel @Inject constructor(
     private val modelDiscovery: AgentModelDiscovery,
     private val providerCatalog: AgentProviderCatalog,
     private val providerRepository: ProviderRepository,
+    private val privilegeManager: top.wkbin.taixu.runtime.privilege.PrivilegeManager,
 ) : ViewModel() {
+
+    /** 空会话首屏权限感知引导：按实际特权状态给出不同玩法提示。 */
+    val privilegeOnboarding: StateFlow<OnboardingPrivilege?> =
+        flow { emit(privilegeManager.getPrivilegeInfo()) }
+            .map { info ->
+                when {
+                    info.mode == ExecutionMode.ROOT && info.modeActive -> OnboardingPrivilege.ROOT_READY
+                    info.mode == ExecutionMode.SHIZUKU && info.modeActive -> OnboardingPrivilege.SHIZUKU_READY
+                    info.shizukuAvailable || info.rootAvailable -> OnboardingPrivilege.SANDBOX_UNLOCKABLE
+                    else -> OnboardingPrivilege.SANDBOX
+                }
+            }
+            .stateIn(viewModelScope, SharingStarted.Lazily, null)
 
     private val _eventHistory = MutableStateFlow<Map<String, List<HarnessEvent>>>(emptyMap())
     private val _permissionRequests = kotlinx.coroutines.flow.MutableSharedFlow<HarnessEvent.PermissionRequired>(

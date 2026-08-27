@@ -116,7 +116,7 @@ class ApprovalPolicyEngine {
     companion object {
         /** 审批有效期：超时未决的请求自动失效，恢复执行前也会复核。 */
         const val APPROVAL_TTL_MS: Long = 10 * 60 * 1000L
-        private val HOST_READ_ONLY_ACTIONS = setOf("status", "settings_get", "package_list", "app_list", "logcat")
+        private val HOST_READ_ONLY_ACTIONS = setOf("status", "settings_get", "package_list", "app_list", "logcat", "device_status")
 
         /** 全访问模式下自动放行的可恢复低危宿主操作；exec / package_uninstall_user 不在此列。 */
         private val HOST_FULL_ACCESS_AUTO_APPROVE = setOf("settings_put", "package_enable", "package_disable", "app_freeze", "app_unfreeze")
