@@ -41,6 +41,7 @@ import kotlinx.coroutines.Dispatchers
 import java.io.File
 import java.util.UUID
 import java.util.zip.ZipInputStream
+import java.io.BufferedOutputStream
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
@@ -512,6 +513,9 @@ class SettingsViewModel @Inject constructor(
     val allSkills: StateFlow<List<top.wkbin.taixu.core.model.AgentSkill>> = agentSkillRepository.allSkills
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    private val _skillArchiveMessage = MutableStateFlow<String?>(null)
+    val skillArchiveMessage: StateFlow<String?> = _skillArchiveMessage.asStateFlow()
+
     val autoSubagentDelegationEnabled: StateFlow<Boolean> = subagentRepository.autoDelegationEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
@@ -589,32 +593,102 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun deleteCustomSkill(skillId: String) {
-        viewModelScope.launch { agentSkillRepository.deleteCustom(skillId) }
+        viewModelScope.launch(Dispatchers.IO) {
+            val resourcePath = allSkills.value.firstOrNull { it.id == skillId }?.resourcePath
+            agentSkillRepository.deleteCustom(skillId)
+            resourcePath?.let(::deleteOwnedSkillDirectory)
+        }
     }
 
     fun importSkillArchive(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
+            var target: File? = null
             runCatching {
                 val id = "custom_" + UUID.randomUUID().toString().take(8)
-                val target = File(application.filesDir, "skills/$id").apply { mkdirs() }
+                target = File(pathManager.attachmentsDir, "skills/$id").apply { mkdirs() }
+                var entryCount = 0
+                var totalBytes = 0L
                 application.contentResolver.openInputStream(uri)?.use { source ->
                     ZipInputStream(source).use { zip ->
                         var entry = zip.nextEntry
                         while (entry != null) {
+                            check(++entryCount <= MAX_SKILL_ARCHIVE_ENTRIES) { "Skill 压缩包文件数量超过 $MAX_SKILL_ARCHIVE_ENTRIES 个" }
                             val relative = entry!!.name.replace('\\', '/')
-                            val out = File(target, relative)
-                            require(out.canonicalPath.startsWith(target.canonicalPath + File.separator)) { "Skill 压缩包包含非法路径" }
-                            if (entry!!.isDirectory) out.mkdirs() else { out.parentFile?.mkdirs(); out.outputStream().use { zip.copyTo(it) } }
+                            check(relative.isNotBlank() && !relative.startsWith('/')) { "Skill 压缩包包含非法路径" }
+                            val out = File(target!!, relative)
+                            require(out.canonicalPath.startsWith(target!!.canonicalPath + File.separator)) { "Skill 压缩包包含非法路径" }
+                            if (entry!!.isDirectory) {
+                                out.mkdirs()
+                            } else {
+                                out.parentFile?.mkdirs()
+                                var entryBytes = 0L
+                                BufferedOutputStream(out.outputStream()).use { output ->
+                                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                                    while (true) {
+                                        val read = zip.read(buffer)
+                                        if (read < 0) break
+                                        entryBytes += read
+                                        totalBytes += read
+                                        check(entryBytes <= MAX_SKILL_ENTRY_BYTES) { "Skill 单个文件不能超过 8 MB" }
+                                        check(totalBytes <= MAX_SKILL_ARCHIVE_BYTES) { "Skill 解压后总大小不能超过 32 MB" }
+                                        output.write(buffer, 0, read)
+                                    }
+                                }
+                                if (relative.startsWith("scripts/") || relative.contains("/scripts/") || out.extension.lowercase() in setOf("sh", "py", "js")) {
+                                    out.setExecutable(true, false)
+                                }
+                            }
                             entry = zip.nextEntry
                         }
                     }
                 } ?: error("无法读取 Skill 压缩包")
-                val promptFile = listOf("SKILL.md", "skill.md", "prompt.md").map { File(target, it) }.firstOrNull(File::isFile)
+                val promptFile = target!!.walkTopDown()
+                    .maxDepth(3)
+                    .filter { it.isFile && it.name.lowercase() in setOf("skill.md", "prompt.md") }
+                    .singleOrNull()
                     ?: error("压缩包内未找到 SKILL.md")
-                val prompt = promptFile.readText().trim() + "\n\n【Skill 资源目录】${target.absolutePath}\n如需执行该 Skill 附带的脚本，请先检查脚本内容与参数，再从此目录调用。"
-                agentSkillRepository.addCustom(top.wkbin.taixu.core.model.AgentSkill(id, target.name, "从压缩包导入的 Skill", prompt, isBuiltin = false, category = "自定义", resourcePath = target.absolutePath))
+                val markdown = promptFile.readText().trim()
+                require(markdown.isNotBlank()) { "SKILL.md 为空" }
+                val skillName = extractSkillMetadata(markdown, "name")
+                    ?: markdown.lineSequence().firstOrNull { it.startsWith("# ") }?.removePrefix("# ")?.trim()
+                    ?: promptFile.parentFile?.name
+                    ?: id
+                val description = extractSkillMetadata(markdown, "description") ?: "从压缩包导入的 Skill"
+                val guestPath = "/attachments/skills/$id"
+                val prompt = markdown + "\n\n【Skill 资源目录】$guestPath\n如需执行该 Skill 附带的脚本，请先检查脚本内容与参数，再从此目录调用。"
+                agentSkillRepository.addCustom(top.wkbin.taixu.core.model.AgentSkill(id, skillName, description, prompt, isBuiltin = false, category = "自定义", resourcePath = target!!.absolutePath))
+                _skillArchiveMessage.value = "Skill“$skillName”导入成功，脚本资源位于 $guestPath"
+            }.onFailure { error ->
+                target?.let(::deleteOwnedSkillDirectory)
+                _skillArchiveMessage.value = error.message ?: "Skill 压缩包导入失败"
             }
         }
+    }
+
+    fun clearSkillArchiveMessage() {
+        _skillArchiveMessage.value = null
+    }
+
+    private fun deleteOwnedSkillDirectory(directory: File) {
+        val candidate = runCatching { directory.canonicalFile }.getOrNull() ?: return
+        val roots = listOf(File(pathManager.attachmentsDir, "skills"), File(application.filesDir, "skills"))
+            .mapNotNull { runCatching { it.canonicalFile }.getOrNull() }
+        if (roots.any { candidate.path.startsWith(it.path + File.separator) }) candidate.deleteRecursively()
+    }
+
+    private fun deleteOwnedSkillDirectory(path: String) = deleteOwnedSkillDirectory(File(path))
+
+    private fun extractSkillMetadata(markdown: String, key: String): String? {
+        if (!markdown.startsWith("---")) return null
+        return markdown.lineSequence().drop(1).takeWhile { it.trim() != "---" }
+            .firstOrNull { it.substringBefore(':').trim().equals(key, ignoreCase = true) }
+            ?.substringAfter(':')?.trim()?.trim('"', '\'')?.takeIf { it.isNotBlank() }
+    }
+
+    private companion object {
+        const val MAX_SKILL_ARCHIVE_ENTRIES = 256
+        const val MAX_SKILL_ENTRY_BYTES = 8L * 1024 * 1024
+        const val MAX_SKILL_ARCHIVE_BYTES = 32L * 1024 * 1024
     }
 
     fun setAutoSubagentDelegationEnabled(enabled: Boolean) {

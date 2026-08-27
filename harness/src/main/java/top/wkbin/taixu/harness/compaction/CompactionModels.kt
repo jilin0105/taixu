@@ -18,3 +18,14 @@ data class CompactedContext(
     val summary: String? = null,
     val messages: List<HarnessMessage> = emptyList(),
 )
+
+/**
+ * 最近一次压缩的只读快照，供 UI 展示折叠透明度信息：
+ * 被折叠进摘要的早期消息条数与摘要文本预览。
+ */
+data class CompactionSnapshot(
+    val summary: String,
+    /** 累计被折叠进摘要的早期消息条数（多次压缩会累加）。 */
+    val foldedMessageCount: Int,
+    val createdAt: Long,
+)

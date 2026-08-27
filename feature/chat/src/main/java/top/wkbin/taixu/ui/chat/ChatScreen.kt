@@ -197,11 +197,14 @@ fun ChatScreen(
     val activeDistroId by viewModel.activeDistroId.collectAsStateWithLifecycle()
     val installedDistros by viewModel.installedDistros.collectAsStateWithLifecycle()
     val allSkills by viewModel.allSkills.collectAsStateWithLifecycle()
+    val memories by viewModel.memories.collectAsStateWithLifecycle()
+    val scratchpads by viewModel.scratchpads.collectAsStateWithLifecycle()
     val mcpServers by viewModel.mcpServers.collectAsStateWithLifecycle()
     val mcpConnectionStates by viewModel.mcpConnectionStates.collectAsStateWithLifecycle()
     val initializing by viewModel.initializing.collectAsStateWithLifecycle()
     val pendingApprovals by viewModel.pendingApprovals.collectAsStateWithLifecycle()
     val activePlan by viewModel.activePlan.collectAsStateWithLifecycle()
+    val activeCompaction by viewModel.activeCompaction.collectAsStateWithLifecycle()
     val contextUsage by viewModel.contextUsage.collectAsStateWithLifecycle()
     val quickPhrases by viewModel.quickPhrases.collectAsStateWithLifecycle()
 
@@ -212,6 +215,7 @@ fun ChatScreen(
     var showSkillsMcpSheet by remember { mutableStateOf(false) }
     var showBranches by remember { mutableStateOf(false) }
     var showRuntimeTimeline by remember { mutableStateOf(false) }
+    var showMemorySheet by remember { mutableStateOf(false) }
     var branchFromMessageId by remember { mutableStateOf<String?>(null) }
     var editTargetMessage by remember { mutableStateOf<UserMessage?>(null) }
 
@@ -267,8 +271,9 @@ fun ChatScreen(
     var initialPositionedSessionKey by rememberSaveable { mutableStateOf<String?>(null) }
     val currentSessionKey = remember(messages) { messages.firstOrNull()?.id ?: "" }
 
-    // 计划看板是插入在消息前的固定头部项；按 lastIndexOf 定位时需补偿。
-    val planBoardOffset = if (activePlan != null) 1 else 0
+    // 计划看板与压缩横幅是插入在消息前的固定头部项；按 lastIndexOf 定位时需补偿。
+    val headerOffset =
+        (if (activeCompaction != null) 1 else 0) + (if (activePlan != null) 1 else 0)
 
     // Only the latest assistant message changes during streaming. Avoid summing the
     // complete history on every live token, which scales with session length.
@@ -285,7 +290,7 @@ fun ChatScreen(
         if (messages.isNotEmpty()) {
             if (initialPositionedSessionKey != currentSessionKey) {
                 initialPositionedSessionKey = currentSessionKey
-                listState.scrollToItem(messages.size - 1 + planBoardOffset)
+                listState.scrollToItem(messages.size - 1 + headerOffset)
             } else if (listState.layoutInfo.totalItemsCount > 0) {
                 val layoutInfo = listState.layoutInfo
                 val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()
@@ -496,6 +501,10 @@ fun ChatScreen(
                         onUpdateReasoning = viewModel::updateActiveModelReasoning,
                         quickPhrases = quickPhrases,
                         onSelectPhrase = viewModel::applyQuickPhrase,
+                        activeCompaction = activeCompaction,
+                        memoryCount = memories.size,
+                        scratchpadCount = scratchpads.size,
+                        onOpenMemory = { showMemorySheet = true },
                     )
 
                     VerticalDivider(
@@ -579,6 +588,10 @@ fun ChatScreen(
                     onUpdateReasoning = viewModel::updateActiveModelReasoning,
                     quickPhrases = quickPhrases,
                     onSelectPhrase = viewModel::applyQuickPhrase,
+                    activeCompaction = activeCompaction,
+                    memoryCount = memories.size,
+                    scratchpadCount = scratchpads.size,
+                    onOpenMemory = { showMemorySheet = true },
                 )
             }
 
@@ -687,6 +700,17 @@ fun ChatScreen(
         RuntimeTimelineSheet(events = runtimeEvents, onDismiss = { showRuntimeTimeline = false })
     }
 
+    if (showMemorySheet) {
+        SessionMemorySheet(
+            memories = memories,
+            scratchpads = scratchpads,
+            onDeleteMemory = viewModel::deleteMemory,
+            onDeleteScratchpad = viewModel::deleteScratchpad,
+            onClearScratchpads = viewModel::clearScratchpads,
+            onDismiss = { showMemorySheet = false },
+        )
+    }
+
     branchFromMessageId?.let { messageId ->
         CreateBranchDialog(
             messageId = messageId,
@@ -750,6 +774,10 @@ private fun ChatPaneContent(
     onUpdateReasoning: (mode: String?, effort: String?) -> Unit = { _, _ -> },
     pendingApprovals: List<top.wkbin.taixu.core.database.AgentApprovalRequestEntity> = emptyList(),
     activePlan: top.wkbin.taixu.core.database.AgentPlanEntity? = null,
+    activeCompaction: top.wkbin.taixu.harness.compaction.CompactionSnapshot? = null,
+    memoryCount: Int = 0,
+    scratchpadCount: Int = 0,
+    onOpenMemory: () -> Unit = {},
     onResolveApproval: (String, Boolean) -> Unit = { _, _ -> },
     contextUsage: ContextUsage = ContextUsage(),
     quickPhrases: List<top.wkbin.taixu.core.model.QuickPhrase> = emptyList(),
@@ -854,8 +882,11 @@ private fun ChatPaneContent(
                 branchCount = branchCount,
                 runtimeEvents = runtimeEvents,
                 running = running,
+                memoryCount = memoryCount,
+                scratchpadCount = scratchpadCount,
                 onOpenBranches = onOpenBranches,
                 onOpenRuntime = onOpenRuntime,
+                onOpenMemory = onOpenMemory,
             )
         }
         LazyColumn(
@@ -876,6 +907,15 @@ private fun ChatPaneContent(
                             quickPhrases = quickPhrases,
                             onSelectPhrase = onSelectPhrase,
                             onSelectCommand = onApplyCommand,
+                        )
+                    }
+                }
+                // 上下文压缩透明度横幅：真实折叠条数 + 摘要原地展开预览。
+                activeCompaction?.let { snapshot ->
+                    item(key = "session_compaction_banner") {
+                        CompactionBanner(
+                            snapshot = snapshot,
+                            modifier = Modifier.padding(bottom = 2.dp),
                         )
                     }
                 }
@@ -1932,6 +1972,21 @@ private fun AssistantBubble(
                         stringResource(R.string.chat_elapsed, formatDuration(it)),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                }
+
+                // Provider 报告的本轮 token 用量明细（输入/输出/缓存命中）。
+                val tokenParts = buildList {
+                    message.promptTokens?.let { add("↑${formatTokenCount(it)}") }
+                    message.completionTokens?.let { add("↓${formatTokenCount(it)}") }
+                    message.cachedTokens?.takeIf { cached -> cached > 0 }?.let { add("⚡${formatTokenCount(it)}") }
+                }
+                if (tokenParts.isNotEmpty()) {
+                    Text(
+                        tokenParts.joinToString(" "),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
                         fontFamily = FontFamily.Monospace,
                     )
                 }
@@ -3391,6 +3446,13 @@ private fun formatDuration(ms: Long): String {
         totalSeconds < 60 -> "${totalSeconds}s"
         else -> "${totalSeconds / 60}m${totalSeconds % 60}s"
     }
+}
+
+/** Token 计数紧凑格式：1234 → 1.2k，用于气泡底部的用量明细。 */
+internal fun formatTokenCount(tokens: Int): String = when {
+    tokens >= 10_000 -> String.format(java.util.Locale.US, "%.1fk", tokens / 1000f)
+    tokens >= 1_000 -> String.format(java.util.Locale.US, "%.2fk", tokens / 1000f)
+    else -> tokens.toString()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

@@ -29,6 +29,29 @@ class CompactionManager @Inject constructor(
         return CompactedContext(summary = payload.summary, messages = retained + after)
     }
 
+    /**
+     * 最近一次压缩的轻量快照（不解码保留消息）。
+     * 折叠条数为历次压缩累计；摘要与时间取最新一条——与 UI 横幅对齐。
+     * 会话从未压缩时返回 null——UI 据此隐藏折叠提示。
+     */
+    suspend fun latestSnapshot(sessionId: String, laneName: String = SessionTreeStore.MAIN_LANE): CompactionSnapshot? {
+        val lane = runCatching { repository.ensureLane(sessionId, laneName) }.getOrNull() ?: return null
+        val payloads = runCatching { repository.branch(sessionId, lane.leafId) }
+            .getOrNull()
+            ?.filter { it.entryType == ENTRY_TYPE }
+            ?.mapNotNull { entry ->
+                runCatching { json.decodeFromString(CompactionPayload.serializer(), entry.payloadJson) }.getOrNull()
+            }
+            .orEmpty()
+        if (payloads.isEmpty()) return null
+        val newest = payloads.maxBy { it.createdAt }
+        return CompactionSnapshot(
+            summary = newest.summary,
+            foldedMessageCount = payloads.sumOf { it.compactedMessageCount },
+            createdAt = newest.createdAt,
+        )
+    }
+
     suspend fun compact(
         sessionId: String,
         context: CompactedContext,

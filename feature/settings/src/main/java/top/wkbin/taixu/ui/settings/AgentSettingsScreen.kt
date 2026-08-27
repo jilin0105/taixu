@@ -93,6 +93,7 @@ fun AgentSettingsScreen(
     val subagents by viewModel.allSubagents.collectAsStateWithLifecycle()
     val autoSubagentDelegation by viewModel.autoSubagentDelegationEnabled.collectAsStateWithLifecycle()
     val plugins by viewModel.allPlugins.collectAsStateWithLifecycle()
+    val skillArchiveMessage by viewModel.skillArchiveMessage.collectAsStateWithLifecycle()
 
     var showAddSkillDialog by remember { mutableStateOf(false) }
     var viewingSkillPrompt by remember { mutableStateOf<AgentSkill?>(null) }
@@ -122,6 +123,7 @@ fun AgentSettingsScreen(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            if (category == AgentSettingsCategory.EXECUTION) {
             // ---- 模块 1：模型思考与交互表现 ----
             item {
                 SectionHeader(
@@ -247,6 +249,9 @@ fun AgentSettingsScreen(
                 }
             }
 
+            }
+
+            if (category == AgentSettingsCategory.SUBAGENTS) {
             // ---- 模块 3：内置子智能体 ----
             item {
                 SectionHeader(
@@ -303,6 +308,9 @@ fun AgentSettingsScreen(
                 )
             }
 
+            }
+
+            if (category == AgentSettingsCategory.SKILLS) {
             // ---- 模块 4：Skill 专精技能库 ----
             item {
                 Row(
@@ -367,9 +375,19 @@ fun AgentSettingsScreen(
                     onToggle = { enabled -> viewModel.togglePlugin(plugin.id, enabled) },
                 )
             }
+            }
 
             item { Spacer(Modifier.height(16.dp)) }
         }
+    }
+
+    skillArchiveMessage?.let { message ->
+        RuntimeAlertDialog(
+            onDismissRequest = viewModel::clearSkillArchiveMessage,
+            title = { Text(if (message.contains("成功")) "Skill 导入完成" else "Skill 导入失败", fontWeight = FontWeight.Bold) },
+            text = { Text(message) },
+            confirmButton = { TextButton(onClick = viewModel::clearSkillArchiveMessage) { Text("知道了") } },
+        )
     }
 
     // 查看 Skill 完整提示词弹窗

@@ -42,6 +42,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.map
@@ -70,6 +71,7 @@ class ChatViewModel @Inject constructor(
     private val mcpServerRepository: McpServerRepository,
     private val approvalRepository: AgentApprovalRepository,
     private val agentContextDao: top.wkbin.taixu.core.database.AgentContextRepository,
+    private val compactionManager: top.wkbin.taixu.harness.compaction.CompactionManager,
     private val quickPhraseRepository: top.wkbin.taixu.core.database.QuickPhraseRepository,
     private val laneManager: LaneManager,
     private val eventBus: HarnessEventBus,
@@ -168,6 +170,66 @@ class ChatViewModel @Inject constructor(
                 }
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * 当前会话最近一次上下文压缩的快照（折叠条数 + 摘要预览）。
+     * 会话从未压缩时为 null——UI 据此隐藏提示横幅。
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val activeCompaction: StateFlow<top.wkbin.taixu.harness.compaction.CompactionSnapshot?> =
+        combine(harnessLoop.currentSessionId, harnessLoop.status) { sessionId, _ -> sessionId }
+            .distinctUntilChanged()
+            .flatMapLatest { sessionId ->
+                kotlinx.coroutines.flow.flow {
+                    emit(if (sessionId.isBlank()) null else compactionManager.latestSnapshot(sessionId))
+                }
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** 全量长期记忆（memory 工具写入），供记忆抽屉管理与模型上下文核对。 */
+    val memories: StateFlow<List<top.wkbin.taixu.core.database.AgentMemoryEntity>> =
+        agentContextDao.observeAllMemories()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val scratchpadRefresh = MutableStateFlow(0)
+
+    /** 当前会话的草稿便签；随运行状态变化与手动刷新重建。 */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val scratchpads: StateFlow<List<top.wkbin.taixu.core.database.AgentScratchpadEntity>> =
+        combine(
+            harnessLoop.currentSessionId,
+            harnessLoop.status,
+            scratchpadRefresh,
+        ) { sessionId, _, _ -> sessionId }
+            .distinctUntilChanged()
+            .flatMapLatest { sessionId ->
+                flow {
+                    emit(if (sessionId.isBlank()) emptyList() else agentContextDao.listScratchpads(sessionId))
+                }
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun deleteMemory(id: String) {
+        viewModelScope.launch { agentContextDao.deleteMemoryById(id) }
+    }
+
+    fun deleteScratchpad(key: String) {
+        val sessionId = currentSessionId.value
+        if (sessionId.isBlank()) return
+        viewModelScope.launch {
+            agentContextDao.deleteScratchpad(sessionId, key)
+            scratchpadRefresh.value++
+        }
+    }
+
+    fun clearScratchpads() {
+        val sessionId = currentSessionId.value
+        if (sessionId.isBlank()) return
+        viewModelScope.launch {
+            agentContextDao.clearScratchpads(sessionId)
+            scratchpadRefresh.value++
+        }
+    }
 
     fun resolveApproval(requestId: String, approved: Boolean) {
         harnessLoop.resolveApproval(requestId, approved)

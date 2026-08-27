@@ -58,8 +58,11 @@ internal fun ChatWorkbenchStrip(
     branchCount: Int,
     runtimeEvents: List<HarnessEvent>,
     running: Boolean,
+    memoryCount: Int,
+    scratchpadCount: Int,
     onOpenBranches: () -> Unit,
     onOpenRuntime: () -> Unit,
+    onOpenMemory: () -> Unit,
 ) {
     val activeRound = runtimeEvents.filterIsInstance<HarnessEvent.ProviderRoundStarted>().lastOrNull()?.round
     Surface(
@@ -88,6 +91,14 @@ internal fun ChatWorkbenchStrip(
                 tint = if (running) Color(0xFF7C4DFF) else MaterialTheme.colorScheme.tertiary,
                 modifier = Modifier.weight(1f),
                 onClick = onOpenRuntime,
+            )
+            WorkspacePill(
+                icon = RuntimeIconName.Brain,
+                title = stringResource(R.string.chat_memory_pill_title),
+                subtitle = stringResource(R.string.chat_memory_pill_subtitle, memoryCount, scratchpadCount),
+                tint = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.weight(1f),
+                onClick = onOpenMemory,
             )
         }
     }
