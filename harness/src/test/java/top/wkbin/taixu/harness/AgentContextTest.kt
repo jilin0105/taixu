@@ -42,6 +42,12 @@ class AgentContextTest {
         assertTrue(saveOk)
         assertTrue(saveMsg.contains("已成功存储长期记忆"))
 
+        // 同 key 二次保存：覆盖不再是静默行为，回执必须明确告知发生了更新。
+        val (resaveOk, resaveMsg) = executor.executeMemory(saveArgs, "session-1", "")
+        assertTrue(resaveOk)
+        assertTrue(resaveMsg.contains("已更新既有长期记忆"))
+        assertTrue(resaveMsg.contains("原值被覆盖"))
+
         val queryArgs = buildJsonObject {
             put("action", "query")
             put("query", "kotlin")

@@ -174,7 +174,7 @@ class ToolExecutor @Inject constructor(
             HarnessTool.PROCESS -> executeProcess(args, workspace)
             HarnessTool.HOST -> executeHost(args, operationId, sessionId)
             HarnessTool.DOWNLOAD -> executeDownload(args, activeFileAccess, progressReporter)
-            HarnessTool.MEMORY -> contextExecutor?.executeMemory(args, sessionId, "") ?: (false to "未初始化记忆执行器")
+            HarnessTool.MEMORY -> contextExecutor?.executeMemory(args, sessionId, workspace) ?: (false to "未初始化记忆执行器")
             HarnessTool.PLAN -> contextExecutor?.executePlan(args, sessionId) ?: (false to "未初始化计划执行器")
             HarnessTool.SCRATCHPAD -> contextExecutor?.executeScratchpad(args, sessionId) ?: (false to "未初始化草稿执行器")
             HarnessTool.HISTORY_SEARCH -> executeHistorySearch(args, sessionId)

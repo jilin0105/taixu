@@ -48,7 +48,12 @@ class AgentContextExecutor @Inject constructor(
                         updatedAt = System.currentTimeMillis(),
                     )
                 )
-                true to "已成功存储长期记忆 [$scope/$kind] $key = $value"
+                val savedMessage = if (existing != null) {
+                    "已更新既有长期记忆（原值被覆盖）[$scope/$kind] $key = $value"
+                } else {
+                    "已成功存储长期记忆 [$scope/$kind] $key = $value"
+                }
+                true to savedMessage
             }
             "query", "search" -> {
                 val query = args["query"]?.jsonPrimitive?.contentOrNull?.trim()

@@ -155,6 +155,15 @@ class SessionStateMirrors @Inject constructor(
         }
     }
 
+    /**
+     * 运行中实时观测到 reasoning 输出时即时翻转标记。
+     * 若只在 loadSession 时从历史推断，本进程内新对话的第二轮仍读不到，
+     * 思考链占位（reasoning_content）会断供。
+     */
+    fun recordThinkingObserved(sessionId: String) {
+        if (thinkingModes[sessionId] != true) thinkingModes[sessionId] = true
+    }
+
     /** 下一轮请求上下文组装所需的思考模式读数。 */
     fun requestThinkingMode(sessionId: String): Boolean = thinkingModes[sessionId] ?: false
 }

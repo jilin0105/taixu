@@ -460,6 +460,7 @@ class HarnessLoop @Inject constructor(
 
     fun cancel(targetSessionId: String? = null) {
         val sessId = targetSessionId?.ifBlank { null } ?: sessionTracker.currentSessionId.value
+        if (sessId.isBlank()) return
         _sessionPendingMessages[sessId]?.value = emptyList()
         loopScope.launch {
             PromptQueue.entries.forEach { promptQueueManager.clear(sessId, it) }
@@ -480,6 +481,7 @@ class HarnessLoop @Inject constructor(
     /** 移除某会话排队中的消息 */
     fun removePendingMessage(index: Int, targetSessionId: String? = null) {
         val sessId = targetSessionId?.ifBlank { null } ?: sessionTracker.currentSessionId.value
+        if (sessId.isBlank()) return
         loopScope.launch {
             promptQueueManager.cancel(sessId, PromptQueue.NEXT_RUN, index)
             refreshPendingProjection(sessId)
@@ -488,6 +490,7 @@ class HarnessLoop @Inject constructor(
 
     fun removeQueuedPrompt(queue: PromptQueue, index: Int, targetSessionId: String? = null) {
         val sessId = targetSessionId?.ifBlank { null } ?: sessionTracker.currentSessionId.value
+        if (sessId.isBlank()) return
         loopScope.launch {
             promptQueueManager.cancel(sessId, queue, index)
             refreshPendingProjection(sessId)
@@ -497,6 +500,7 @@ class HarnessLoop @Inject constructor(
     /** 清空某会话全部排队消息 */
     fun clearPendingMessages(targetSessionId: String? = null) {
         val sessId = targetSessionId?.ifBlank { null } ?: sessionTracker.currentSessionId.value
+        if (sessId.isBlank()) return
         loopScope.launch {
             promptQueueManager.clear(sessId, PromptQueue.NEXT_RUN)
             refreshPendingProjection(sessId)
@@ -536,6 +540,7 @@ class HarnessLoop @Inject constructor(
 
     fun clearError(targetSessionId: String? = null) {
         val sessId = targetSessionId?.ifBlank { null } ?: sessionTracker.currentSessionId.value
+        if (sessId.isBlank()) return
         stateMirrors.setError(sessId, null)
     }
 
@@ -709,6 +714,7 @@ class HarnessLoop @Inject constructor(
                         onReasoning = { chunk ->
                             streamReasoning.append(chunk)
                             stateMirrors.setThinkingLive(sessId, true)
+                            stateMirrors.recordThinkingObserved(sessId)
                             val now = System.currentTimeMillis()
                             if (now - lastReasoningFlushTime >= STREAM_FLUSH_INTERVAL_MS) {
                                 lastReasoningFlushTime = now

@@ -6,6 +6,7 @@ import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import top.wkbin.taixu.harness.ApiMessage
@@ -127,6 +128,14 @@ class SubagentLaneRunner @Inject constructor(
             }
             operations.finish(sessionId, "failed", details = "max rounds", laneName = laneName)
             SubagentLaneResult(false, finalText.ifBlank { "达到子智能体最大工具轮数" }, toolCalls)
+        } catch (cancellation: kotlinx.coroutines.CancellationException) {
+            // 结构化取消（用户停止或编排层超时）必须向上重抛；
+            // 否则 lane operation 永远停留在 RUNNING，形成僵尸行。
+            // finish 自身是挂起点，需在 NonCancellable 下落盘（与主循环清理链同一模式）。
+            withContext(kotlinx.coroutines.NonCancellable) {
+                operations.finish(sessionId, "aborted", details = "已取消", laneName = laneName)
+            }
+            throw cancellation
         } catch (throwable: Throwable) {
             operations.finish(sessionId, "failed", details = throwable.message, laneName = laneName)
             SubagentLaneResult(false, throwable.message ?: "子智能体执行失败", toolCalls)
