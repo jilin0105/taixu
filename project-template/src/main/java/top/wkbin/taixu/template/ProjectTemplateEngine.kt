@@ -119,7 +119,10 @@ class ProjectTemplateEngine @Inject constructor(
             val value = values[variable.name].orEmpty()
             require(!variable.required || value.isNotBlank()) { "模板变量不能为空：${variable.label}" }
             if (value.isNotBlank() && variable.validationRegex.isNotBlank()) {
-                require(Regex(variable.validationRegex).matches(value)) { "模板变量格式无效：${variable.label}" }
+                // NOTE: validationRegex 来自模板清单（可能由外部导入），坏正则会抛
+                // PatternSyntaxException；统一按"校验不通过"处理而非崩溃。
+                val valid = runCatching { Regex(variable.validationRegex).matches(value) }.getOrDefault(false)
+                require(valid) { "模板变量格式无效：${variable.label}" }
             }
             if (variable.inputType == ProjectTemplateInputType.SELECT && value.isNotBlank()) {
                 require(variable.options.any { it.value == value }) { "模板变量选项无效：${variable.label}" }
