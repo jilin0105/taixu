@@ -691,8 +691,6 @@ class HarnessLoop @Inject constructor(
             val streamReasoning = StringBuilder()
             var streamed: ChatResult? = null
             var netRetry = 0
-            var lastReasoningFlushTime = 0L
-            var lastTextFlushTime = 0L
             while (streamed == null) {
                 try {
                     operationCoordinator.providerIntent(
@@ -715,18 +713,15 @@ class HarnessLoop @Inject constructor(
                             streamReasoning.append(chunk)
                             stateMirrors.setThinkingLive(sessId, true)
                             stateMirrors.recordThinkingObserved(sessId)
-                            val now = System.currentTimeMillis()
-                            if (now - lastReasoningFlushTime >= STREAM_FLUSH_INTERVAL_MS) {
-                                lastReasoningFlushTime = now
+                            // 纯内存投影（不落库），逐增量即时发布；重组频率由帧率自然兑底。
+                            if (chunk.isNotEmpty()) {
                                 messageProjector.streamReasoning(sessId, assistantId, assistantAt, streamReasoning.toString())
                             }
                         },
                     ) { chunk ->
                         stateMirrors.setStatus(sessId, "回复中")
                         streamText.append(chunk)
-                        val now = System.currentTimeMillis()
-                        if (now - lastTextFlushTime >= STREAM_FLUSH_INTERVAL_MS) {
-                            lastTextFlushTime = now
+                        if (chunk.isNotEmpty()) {
                             messageProjector.streamText(sessId, assistantId, assistantAt, streamText.toString())
                         }
                     }
@@ -1231,7 +1226,6 @@ class HarnessLoop @Inject constructor(
     }
 
     companion object {
-        const val STREAM_FLUSH_INTERVAL_MS = 80L
         const val MAX_ROUNDS = 200
         val KNOWN_TOOL_NAMES: Set<String> = HarnessTool.entries
             .map { HarnessApiMapper.apiName(it) }
