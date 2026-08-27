@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -333,11 +334,6 @@ private fun QuickPhraseCard(
                         )
                     }
                 }
-
-                Switch(
-                    checked = phrase.isEnabled,
-                    onCheckedChange = onToggle,
-                )
             }
 
             // 提示词/指令内容预览
@@ -359,17 +355,75 @@ private fun QuickPhraseCard(
                 )
             }
 
-            // 操作行
+            // 底部三等分等宽操作栏 (状态切换 + 编辑 + 删除)
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = onEdit) {
-                    Text("编辑", style = MaterialTheme.typography.labelMedium)
+                // 1. 状态切换按钮 (1/3 宽)
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (phrase.isEnabled) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                            else MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.5f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onToggle(!phrase.isEnabled) },
+                ) {
+                    Row(
+                        modifier = Modifier.padding(vertical = 7.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = if (phrase.isEnabled) "● 已启用" else "○ 已停用",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = if (phrase.isEnabled) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
-                TextButton(onClick = onDelete) {
-                    Text("删除", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+
+                // 2. 编辑按钮 (1/3 宽)
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.4f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onEdit() },
+                ) {
+                    Row(
+                        modifier = Modifier.padding(vertical = 7.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "编辑",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+
+                // 3. 删除按钮 (1/3 宽)
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onDelete() },
+                ) {
+                    Row(
+                        modifier = Modifier.padding(vertical = 7.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "删除",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                 }
             }
         }
@@ -434,6 +488,7 @@ private fun QuickPhraseEditorDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
@@ -460,8 +515,8 @@ private fun QuickPhraseEditorDialog(
                     onValueChange = { content = it },
                     label = { Text("提示词 / 命令模板") },
                     placeholder = { Text("输入要自动填入或触发的指令/Prompt...") },
-                    minLines = 3,
-                    maxLines = 6,
+                    minLines = 2,
+                    maxLines = 5,
                     modifier = Modifier.fillMaxWidth(),
                 )
 
