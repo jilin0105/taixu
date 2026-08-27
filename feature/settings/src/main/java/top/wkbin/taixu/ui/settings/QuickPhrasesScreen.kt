@@ -483,7 +483,7 @@ private fun QuickPhraseEditorDialog(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 520.dp, max = 720.dp)
-            .offset(y = 200.dp),
+            .offset(y = 100.dp),
         title = {
             Text(
                 text = if (phrase == null) "新增快捷短语" else "编辑快捷短语",
