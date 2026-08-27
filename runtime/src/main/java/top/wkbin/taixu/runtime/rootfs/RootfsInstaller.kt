@@ -204,6 +204,7 @@ class RootfsInstaller @Inject constructor(
         pendingUpdateBackup = null
         pendingUpdateVersion = null
         pendingUpdateDigest = null
+        pathManager.invalidateDistroSizeCache(distroId)
         pathManager.rootfsUpdatePendingMarker(distroId).delete()
         true
     }
@@ -216,6 +217,8 @@ class RootfsInstaller @Inject constructor(
         pendingUpdateBackup = null
         pendingUpdateVersion = null
         pendingUpdateDigest = null
+        // 更新完成后 distro 体积已变化，作废旧快照，下次展示时重建缓存
+        pathManager.invalidateDistroSizeCache(distroId)
         pathManager.rootfsUpdatePendingMarker(distroId).delete()
     }
 
@@ -245,6 +248,7 @@ class RootfsInstaller @Inject constructor(
             pathManager.homeDir(distroId).mkdirs()
             pathManager.ensureDistroDirectories(distroId)
             pathManager.cleanupStalePtyMarkers(distroId)
+            pathManager.invalidateDistroSizeCache(distroId)
             logger.i("Reset distro ${distribution.displayName} ($distroId) to pristine state at $distroTargetDir")
             AppResult.Success(distroTargetDir)
         } catch (cancellation: CancellationException) {
@@ -402,6 +406,9 @@ class RootfsInstaller @Inject constructor(
         pathManager.rootfsInstalledMarker(distroId).writeText(
             "rootfs-version=${image.version}\nrootfs-digest=${image.digest}\n",
         )
+        // 新 marker 写入后立刻失效安装列表缓存：
+        // 初始化流程在同一事务内就会跑健康检查（依赖 no-arg rootfsDir 解析新发行版）。
+        pathManager.invalidateInstalledDistrosCache()
     }
 
     private fun recoverInterruptedUpdate(distroId: String) {

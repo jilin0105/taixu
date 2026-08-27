@@ -68,6 +68,8 @@ class LinuxRuntimeImpl @Inject constructor(
     private val interactiveSessions = ConcurrentHashMap<LinuxSession, String>()
 
     override fun refreshInstalledDistros() {
+        // 兑现“刷新”语义：结构性变更后由各调用方走到这里，统一失效路径管理器缓存
+        pathManager.invalidateInstalledDistrosCache()
         val ids = pathManager.listInstalledDistroIds()
         val active = _activeDistroId.value
         val list = ids.map { id ->

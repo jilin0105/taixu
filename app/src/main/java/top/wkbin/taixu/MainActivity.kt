@@ -38,6 +38,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.MutableState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -82,10 +83,16 @@ class MainActivity : AppCompatActivity() {
 
     private var notificationPermissionCheckScheduled = false
 
+    /** 控制 SplashScreen 持续显示，直到 onboarding 偏好从 DataStore 加载完成，避免白屏空窗。 */
+    private val keepSplashOnScreen: MutableState<Boolean> = mutableStateOf(true)
+
+    private var createdUptimeMs: Long = 0L
+
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
+        createdUptimeMs = android.os.SystemClock.uptimeMillis()
+        val splashScreen = installSplashScreen()
+        splashScreen.setKeepOnScreenCondition { keepSplashOnScreen.value }
         super.onCreate(savedInstanceState)
-        runtimeServiceController.start()
         enableEdgeToEdge()
         setContent {
             val themeMode by settingsDataStore.themeMode.collectAsStateWithLifecycle(initialValue = "system")
@@ -112,8 +119,19 @@ class MainActivity : AppCompatActivity() {
                     backgroundUri = chengmingBackgroundUri,
                 ) {
                 val onboardingViewModel: OnboardingViewModel = hiltViewModel()
-                LaunchedEffect(Unit) { onboardingViewModel.restoreInstalledState() }
                 val onboarding by onboardingViewModel.status.collectAsStateWithLifecycle()
+
+                // onboarding 偏好读盘完成后让 SplashScreen 退场；Runtime 恢复已在后台继续，不阻塞首帧。
+                // Linux 环境恢复（restoreInstalledState）由 OnboardingViewModel.init 自行发起，不再在此重复触发。
+                LaunchedEffect(onboarding.loaded) {
+                    if (onboarding.loaded && keepSplashOnScreen.value) {
+                        keepSplashOnScreen.value = false
+                        android.util.Log.i(
+                            "TaiXuStartup",
+                            "splash dismissed in ${android.os.SystemClock.uptimeMillis() - createdUptimeMs}ms",
+                        )
+                    }
+                }
 
                 // 启动时静默检查更新
                 var updateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
@@ -281,6 +299,8 @@ class MainActivity : AppCompatActivity() {
         // swallowed by some Android builds before the Activity becomes fully interactive.
         window.decorView.post {
             if (!isFinishing && !isDestroyed) {
+                // 首帧之后再拉起 Runtime 保活前台服务，避免 onStartCommand 抢在首帧前占用主线程。
+                runtimeServiceController.start()
                 requestNotificationPermissionIfNeeded()
             }
         }

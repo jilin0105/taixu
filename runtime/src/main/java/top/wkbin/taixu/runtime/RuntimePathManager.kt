@@ -90,12 +90,37 @@ class RuntimePathManager @Inject constructor(
     fun isDistroInstalled(distroId: String): Boolean =
         rootfsInstalledMarker(distroId).isFile && rootfsValidator.isValid(rootfsDir(distroId))
 
+    /**
+     * 已安装发行版 ID 缓存。
+     *
+     * `rootfsDir` / `homeDir` getter 与每条命令构建都会走到这里；原实现每次访问都重新
+     * 扫描 distros 目录并对每个候选目录做 ELF 校验，是冷启动与首次执行命令的隐形热点。
+     * 只缓存非空结果：空结果的目录扫描本身开销极小（marker 文件缺失即短路）。
+     * 结构性变更（安装/更新/重置/卸载）后由 RootfsInstaller / refreshInstalledDistros 显式失效。
+     */
+    @Volatile
+    private var installedDistroIdsCache: List<String>? = null
+
     fun listInstalledDistroIds(): List<String> {
+        installedDistroIdsCache?.let { return it }
         if (!distrosDir.exists()) return emptyList()
-        return distrosDir.listFiles()
+        val ids = distrosDir.listFiles()
             .orEmpty()
             .filter { it.isDirectory && isDistroInstalled(it.name) }
             .map { it.name }
+        if (ids.isNotEmpty()) installedDistroIdsCache = ids
+        return ids
+    }
+
+    fun invalidateInstalledDistrosCache() {
+        installedDistroIdsCache = null
+    }
+
+    /** 发行版磁盘占用快照缓存文件（metadata/distro.size），避免启动路径全树遍历。 */
+    fun distroSizeMarker(distroId: String): File = File(metadataDir(distroId.lowercase().trim()), "distro.size")
+
+    fun invalidateDistroSizeCache(distroId: String) {
+        runCatching { distroSizeMarker(distroId).delete() }
     }
 
     fun rootfsVersion(distroId: String): String? = rootfsInstalledMarker(distroId)
@@ -115,11 +140,24 @@ class RuntimePathManager @Inject constructor(
         ?.takeIf { it.isNotBlank() }
 
     fun distroSizeBytes(distroId: String): Long {
-        val dir = distroDir(distroId)
+        val safeId = distroId.lowercase().trim()
+        val dir = distroDir(safeId)
         if (!dir.exists()) return 0L
-        return runCatching {
+        // 启动路径高频调用：优先读安装/更新时缓存的体积快照，避免对数万文件的 rootfs 做 walkTopDown。
+        distroSizeMarker(safeId).takeIf { it.isFile }
+            ?.useLines { lines -> lines.firstOrNull()?.trim()?.toLongOrNull() }
+            ?.takeIf { it >= 0L }
+            ?.let { return it }
+        val computed = runCatching {
             dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
         }.getOrDefault(0L)
+        if (computed > 0L) {
+            runCatching {
+                metadataDir(safeId).mkdirs()
+                distroSizeMarker(safeId).writeText(computed.toString())
+            }
+        }
+        return computed
     }
 
     /**

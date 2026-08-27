@@ -27,26 +27,26 @@ class RuntimeHealthChecker @Inject constructor(
             )
         }
 
-        val osReleaseResult = runCatching { runCommand(ShellCommand("cat /etc/os-release")) }
-            .getOrElse { failedCommandResult(it) }
-        val architectureResult = runCatching { runCommand(ShellCommand("uname -m")) }
-            .getOrElse { failedCommandResult(it) }
-        val osRelease = osReleaseResult.stdout.trim()
-        val architecture = architectureResult.stdout.trim()
         val healthMarker = ".taixu-health"
-        val writeResult = runCatching {
+        // 三条 PRoot 命令合并为单次探针：每次冷启动都要完整拉起 proot 进程，
+        // 串行 3 次是启动路径上的主要延迟之一。拆分符保证输出仍可精确归位。
+        val probeSplit = "__TAIXU_HEALTH_SPLIT__"
+        val probeResult = runCatching {
             runCommand(
-                ShellCommand("mkdir -p /workspace && echo taixu-health-ok > /workspace/$healthMarker"),
+                ShellCommand(
+                    "cat /etc/os-release; echo $probeSplit; uname -m; echo $probeSplit; " +
+                        "mkdir -p /workspace && echo taixu-health-ok > /workspace/$healthMarker",
+                ),
             )
         }.getOrElse { failedCommandResult(it) }
+        val probeParts = probeResult.stdout.split(probeSplit)
+        val osRelease = probeParts.getOrNull(0)?.trim().orEmpty()
+        val architecture = probeParts.getOrNull(1)?.trim().orEmpty()
         val workspaceFile = File(pathManager.workspaceDir, healthMarker)
-        val workspaceWritable = writeResult.isSuccess &&
-            workspaceFile.isFile &&
+        val workspaceWritable = workspaceFile.isFile &&
             workspaceFile.readText().contains("taixu-health-ok")
 
-        val healthy = osReleaseResult.isSuccess &&
-            architectureResult.isSuccess &&
-            osRelease.isNotBlank() &&
+        val healthy = osRelease.isNotBlank() &&
             architecture.isNotBlank() &&
             workspaceWritable
 
@@ -55,23 +55,23 @@ class RuntimeHealthChecker @Inject constructor(
             osRelease = osRelease.ifBlank { null },
             architecture = architecture.ifBlank { null },
             workspaceWritable = workspaceWritable,
-            detail = if (healthy) null else buildFailureDetail(
-                osReleaseResult,
-                architectureResult,
-                writeResult,
-            ),
+            detail = if (healthy) null else buildFailureDetail(probeResult, workspaceWritable),
         )
     }
 
     private fun buildFailureDetail(
-        osRelease: top.wkbin.taixu.runtime.shell.CommandResult,
-        architecture: top.wkbin.taixu.runtime.shell.CommandResult,
-        workspace: top.wkbin.taixu.runtime.shell.CommandResult,
-    ): String = listOfNotNull(
-        osRelease.takeUnless { it.isSuccess }?.describeFailure("os-release"),
-        architecture.takeUnless { it.isSuccess }?.describeFailure("uname"),
-        workspace.takeUnless { it.isSuccess }?.describeFailure("workspace"),
-    ).ifEmpty { listOf("Workspace is not writable") }.joinToString("; ")
+        probe: top.wkbin.taixu.runtime.shell.CommandResult,
+        workspaceWritable: Boolean,
+    ): String {
+        val details = buildList {
+            if (probe.isBlankOrFailed()) add(probe.describeFailure("health-probe"))
+            if (!workspaceWritable) add("workspace marker missing or unreadable")
+        }
+        return details.ifEmpty { listOf("Health probe returned empty output") }.joinToString("; ")
+    }
+
+    private fun top.wkbin.taixu.runtime.shell.CommandResult.isBlankOrFailed(): Boolean =
+        !isSuccess || stdout.isBlank()
 
     private fun top.wkbin.taixu.runtime.shell.CommandResult.describeFailure(
         label: String,

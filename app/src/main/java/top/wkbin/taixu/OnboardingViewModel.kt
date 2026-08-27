@@ -56,13 +56,16 @@ class OnboardingViewModel @Inject constructor(
     private val toolManager: top.wkbin.taixu.core.tools.ToolManager,
 ) : ViewModel() {
     val providerCatalog = providerCatalogRepository.providers
-    private val restoreComplete = MutableStateFlow(false)
+
+    /** DataStore 偏好读盘完成信号：Splash 退场只等这里（毫秒级），不等 Linux Runtime 恢复。 */
+    private val prefsLoaded = MutableStateFlow(false)
     val status: StateFlow<OnboardingStatus> = combine(
+        prefsLoaded,
         settings.onboardingCompleted,
-        linuxRuntime.state,
-        restoreComplete,
-    ) { completed, state, restored ->
-        OnboardingStatus(loaded = restored, completed = completed && state is RuntimeState.Ready)
+    ) { loaded, completed ->
+        // completed 不再依赖 RuntimeState.Ready：已完成引导的用户直接进主界面，
+        // 沙箱恢复在后台继续；首页/向导各自已有初始化进度与错误态展示。
+        OnboardingStatus(loaded = loaded, completed = completed)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, OnboardingStatus())
     val runtimeState: StateFlow<RuntimeState> = linuxRuntime.state
 
@@ -109,6 +112,10 @@ class OnboardingViewModel @Inject constructor(
         viewModelScope.launch {
             _distribution.value = settings.selectedDistribution.first()
             _mirror.value = settings.mirrorPolicy.first()
+            prefsLoaded.value = true
+        }
+        viewModelScope.launch {
+            restoreInstalledState()
         }
     }
 
@@ -238,15 +245,16 @@ class OnboardingViewModel @Inject constructor(
 
     fun restoreInstalledState() {
         viewModelScope.launch {
-            val restored = linuxRuntime.restoreInstalledState()
-            if (restored && !settings.onboardingCompleted.first()) _page.value = 1
-            restoreComplete.value = true
+            // 后台恢复已安装的 Linux 环境：PRoot 健康探针、镜像配置等重活不再阻塞首帧。
+            linuxRuntime.restoreInstalledState()
+            if (!settings.onboardingCompleted.first() && linuxRuntime.state.value is RuntimeState.Ready) {
+                _page.value = 1
+            }
         }
     }
 
     fun retryReady() {
-        if (runtimeState.value is RuntimeState.Initializing) return
-        restoreComplete.value = false
+        if (linuxRuntime.state.value is RuntimeState.Initializing) return
         restoreInstalledState()
     }
 
