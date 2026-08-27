@@ -123,9 +123,11 @@ class SystemPromptBuilder @Inject constructor(
             else -> ""
         }
 
-        val privilegeSection = runCatching { privilegeRenderer.render() }.getOrDefault(
-            context.getString(R.string.harness_prompt_privilege_unavailable),
-        )
+        val privilegeSection = runCatching { privilegeRenderer.render() }.getOrElse {
+            // 渲染失败（如资产缺失）不等于能力不可用——旧的兜底文案会让模型
+            // 在授权后误以为宿主通道被禁用。改为中性指示，以 host(status) 实测为准。
+            context.getString(R.string.harness_prompt_privilege_render_failed)
+        }
 
         val baseVariables = mapOf(
             "DISTRO_NAME" to distroName,

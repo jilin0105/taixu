@@ -14,7 +14,9 @@ import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.LinuxEnvironmentManager
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import top.wkbin.taixu.runtime.shell.ProcessType
+import top.wkbin.taixu.runtime.privilege.BinderOutcome
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
+import top.wkbin.taixu.runtime.privilege.ShizukuSystemApis
 import top.wkbin.taixu.runtime.apps.AndroidAppManager
 import top.wkbin.taixu.core.database.AndroidAppRepository
 import top.wkbin.taixu.core.model.ExecutionMode
@@ -55,6 +57,7 @@ class ToolExecutor @Inject constructor(
     private val privilegeManager: PrivilegeManager? = null,
     private val androidAppManager: AndroidAppManager? = null,
     private val androidAppRepository: AndroidAppRepository? = null,
+    private val shizukuApis: ShizukuSystemApis? = null,
 ) {
     @Inject
     lateinit var settingsDataStore: AgentPreferences
@@ -227,16 +230,52 @@ class ToolExecutor @Inject constructor(
             }
             "app_list" -> executeCachedApps(args)
             else -> {
+                val packageName = if (action in APP_DATABASE_GUARDED_ACTIONS || action == "app_grant_permission") {
+                    requireHostIdentifier(args, "package", PACKAGE_NAME)
+                } else ""
                 if (action in APP_DATABASE_GUARDED_ACTIONS) {
-                    val packageName = requireHostIdentifier(args, "package", PACKAGE_NAME)
                     (androidAppManager ?: return false to "未初始化应用管理器").requireInitialized(packageName)
                 }
-                val command = buildHostCommand(action, args)
-                require(command.length <= MAX_COMMAND_LENGTH) { "命令过长（${command.length} 字符，上限 $MAX_COMMAND_LENGTH）" }
                 val info = manager.getPrivilegeInfo()
                 require(info.mode != ExecutionMode.PROOT && info.modeActive) {
                     "权限不足：冻结、启用、卸载或授权应用前，请先在设置中授权并切换到 Shizuku 或 Root 模式。"
                 }
+
+                // Shizuku 生效时优先 Binder 直调：免 shell 转义、异常结构化。
+                // 仅通道不可用时才回退 shell；远端明确拒绝则直接报告不重试。
+                if (info.mode == ExecutionMode.SHIZUKU && shizukuApis != null) {
+                    val userId = optionalLong(args, "user", 0L, 0L, 999L).toInt()
+                    val binderOutcome = when (action) {
+                        "app_grant_permission" -> {
+                            val permission = requireHostIdentifier(args, "permission", ANDROID_PERMISSION)
+                            shizukuApis.grantRuntimePermission(packageName, permission, userId)
+                        }
+                        "app_freeze", "package_disable" ->
+                            shizukuApis.setApplicationEnabledSetting(packageName, enabled = false, userId = userId)
+                        "app_unfreeze", "package_enable" ->
+                            shizukuApis.setApplicationEnabledSetting(packageName, enabled = true, userId = userId)
+                        else -> null
+                    }
+                    when (binderOutcome) {
+                        is BinderOutcome.Success -> {
+                            android.util.Log.i("TaiXu-Host", "action=$action via binder success pkg=$packageName")
+                            if (action in APP_DATABASE_GUARDED_ACTIONS) androidAppManager?.synchronize()
+                            return true to buildString {
+                                append("mode shizuku-api · exit 0")
+                                append("\n[Android Binder] $action $packageName 成功")
+                                if (action == "app_grant_permission") {
+                                    append(" 权限=").append(requireHostIdentifier(args, "permission", ANDROID_PERMISSION))
+                                }
+                            }
+                        }
+                        is BinderOutcome.Failed ->
+                            return false to "宿主侧拒绝该操作：${binderOutcome.message}（模式=${info.mode.shortLabel}）。请核对包名/权限名后重试。"
+                        else -> Unit
+                    }
+                }
+
+                val command = buildHostCommand(action, args)
+                require(command.length <= MAX_COMMAND_LENGTH) { "命令过长（${command.length} 字符，上限 $MAX_COMMAND_LENGTH）" }
                 val hostOperationId = operationId?.takeIf { it.isNotBlank() } ?: "host-${UUID.randomUUID()}"
                 val cancelHandle = currentCoroutineContext()[Job]?.invokeOnCompletion(onCancelling = true) { cause ->
                     if (cause is CancellationException) manager.cancelShellCommand(hostOperationId)
