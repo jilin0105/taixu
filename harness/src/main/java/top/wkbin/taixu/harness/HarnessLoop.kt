@@ -1294,26 +1294,26 @@ class HarnessLoop @Inject constructor(
 
         val toolCallSection = when (toolCallMode) {
             ToolCallMode.JSON_TEXT -> promptAssets.render("prompts/tool_call_json.md")
-            ToolCallMode.DISABLED -> promptAssets.render("prompts/tool_call_disabled.md")
+            ToolCallMode.DISABLED -> context.getString(R.string.harness_prompt_tool_call_disabled)
             ToolCallMode.NATIVE -> ""
         }
 
         val thinkingLang = runCatching { settingsDataStore.thinkingLanguage.first() }.getOrDefault("zh")
         val thinkingLanguageSection = when (thinkingLang) {
-            "zh" -> promptAssets.render("prompts/thinking_language_zh.md")
-            "en" -> promptAssets.render("prompts/thinking_language_en.md")
+            "zh" -> context.getString(R.string.harness_prompt_thinking_language_zh)
+            "en" -> context.getString(R.string.harness_prompt_thinking_language_en)
             else -> ""
         }
 
         val privilegeInfo = runCatching { privilegeManager.getPrivilegeInfo() }.getOrNull()
         val privilegeSection = when {
-            privilegeInfo == null -> "\n\n## Android 宿主权限\n权限状态暂不可读取；不要调用 host exec，可先调用 host(status)。"
+            privilegeInfo == null -> context.getString(R.string.harness_prompt_privilege_unavailable)
             privilegeInfo.mode == ExecutionMode.PROOT || !privilegeInfo.modeActive ->
-                "\n\n## Android 宿主权限\n当前实际生效模式为 PRoot/普通应用权限。host exec 不可用；系统设置、pm、input、logcat 等宿主操作不要用 base 冒充执行，可提示用户先到设置授权 Shizuku 或 Root。"
+                context.getString(R.string.harness_prompt_privilege_proot)
             privilegeInfo.mode == ExecutionMode.SHIZUKU ->
-                "\n\n## Android 宿主权限\n当前已实际获得 Shizuku shell 权限（UID 2000）。可用 host 操作真实 Android。读取/修改系统设置优先用 settings_get/settings_put，管理应用优先用 package_list/package_disable/package_enable/package_uninstall_user，日志用 logcat；仅在结构化动作无法覆盖时使用 exec。它作用于宿主而非 PRoot；修改系统状态前说明影响，工具会要求用户审批。"
+                promptAssets.render("prompts/privilege_shizuku.md")
             else ->
-                "\n\n## Android 宿主权限\n当前已实际获得 Root 权限（UID 0）。可用 host 操作真实 Android。系统设置和软件包管理优先使用 settings_* / package_* 结构化动作；仅在它们无法覆盖 root 专属需求时使用 exec。优先使用可恢复方式；永久删除系统分区内容等不可逆操作必须明确说明风险，工具会要求用户审批。"
+                promptAssets.render("prompts/privilege_root.md")
         }
 
         val baseVariables = mapOf(
@@ -1351,15 +1351,17 @@ class HarnessLoop @Inject constructor(
         if (toolCallMode == ToolCallMode.DISABLED) return ""
         val profiles = runCatching { subagentRepository.enabledProfiles() }.getOrDefault(emptyList())
         if (profiles.isEmpty()) {
-            return promptAssets.render("prompts/subagent_none.md")
+            return context.getString(R.string.harness_prompt_subagent_none)
         }
         val autoEnabled = runCatching { subagentRepository.autoDelegationEnabled.first() }.getOrDefault(true)
         val roleList = profiles.joinToString("\n") { profile ->
             "- role=\"${profile.id}\"：${profile.name}。${profile.description}"
         }
-        val triggerPolicy = promptAssets.render(
-            if (autoEnabled) "prompts/subagent_trigger_auto.md" else "prompts/subagent_trigger_manual.md",
-        )
+        val triggerPolicy = if (autoEnabled) {
+            promptAssets.render("prompts/subagent_trigger_auto.md")
+        } else {
+            context.getString(R.string.harness_prompt_subagent_trigger_manual)
+        }
         return promptAssets.render(
             "prompts/subagent_guidance.md",
             mapOf("TRIGGER_POLICY" to triggerPolicy, "ROLE_LIST" to roleList),

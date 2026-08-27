@@ -8,11 +8,14 @@ import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import androidx.core.content.FileProvider
 import java.io.File
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import dagger.hilt.android.qualifiers.ApplicationContext
+import top.wkbin.taixu.tools.R
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -27,6 +30,11 @@ class ToolNotificationNotifier @Inject constructor(
 ) {
     private val notificationManager = NotificationManagerCompat.from(context)
     private val channelId = "taixu_tool_install"
+    private val appLogo: Bitmap? by lazy {
+        context.applicationInfo.icon.takeIf { it != 0 }?.let { iconRes ->
+            runCatching { BitmapFactory.decodeResource(context.resources, iconRes) }.getOrNull()
+        }
+    }
 
     init {
         createChannel()
@@ -53,9 +61,10 @@ class ToolNotificationNotifier @Inject constructor(
         val isIndeterminate = progress == null
 
         val builder = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(context.applicationInfo.icon.takeIf { it != 0 } ?: android.R.drawable.stat_sys_download)
+            .setSmallIcon(context.applicationInfo.icon)
             .setContentTitle("正在安装 $toolName")
             .setContentText(message)
+            .setLargeIcon(appLogo)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setProgress(100, progressPercent, isIndeterminate)
@@ -74,9 +83,10 @@ class ToolNotificationNotifier @Inject constructor(
         val pendingIntent = getLaunchIntent()
 
         val builder = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(context.applicationInfo.icon.takeIf { it != 0 } ?: android.R.drawable.stat_sys_download_done)
+            .setSmallIcon(context.applicationInfo.icon)
             .setContentTitle("$toolName 安装完成")
             .setContentText("版本 ${version ?: "已就绪"}，可在控制台或工具中心直接使用")
+            .setLargeIcon(appLogo)
             .setOngoing(false)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
@@ -93,9 +103,10 @@ class ToolNotificationNotifier @Inject constructor(
         val pendingIntent = getLaunchIntent()
 
         val builder = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(context.applicationInfo.icon.takeIf { it != 0 } ?: android.R.drawable.stat_notify_error)
+            .setSmallIcon(context.applicationInfo.icon)
             .setContentTitle("$toolName 安装失败")
             .setContentText(error.take(120))
+            .setLargeIcon(appLogo)
             .setOngoing(false)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
@@ -138,9 +149,10 @@ class ToolNotificationNotifier @Inject constructor(
         val notificationId = buildNotificationId(projectName)
         val pendingIntent = getLaunchIntent()
         val builder = NotificationCompat.Builder(context, buildChannelId)
-            .setSmallIcon(context.applicationInfo.icon.takeIf { it != 0 } ?: android.R.drawable.stat_sys_download)
+            .setSmallIcon(context.applicationInfo.icon)
             .setContentTitle("🔨 正在编译 $projectName")
             .setContentText(step)
+            .setLargeIcon(appLogo)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setProgress(100, 0, true)
@@ -156,9 +168,10 @@ class ToolNotificationNotifier @Inject constructor(
         val notificationId = buildNotificationId(projectName)
         val pendingIntent = apkPath?.let { getApkInstallIntent(File(it)) } ?: getLaunchIntent()
         val builder = NotificationCompat.Builder(context, buildChannelId)
-            .setSmallIcon(context.applicationInfo.icon.takeIf { it != 0 } ?: android.R.drawable.stat_sys_download_done)
+            .setSmallIcon(context.applicationInfo.icon)
             .setContentTitle("✅ $projectName 编译成功")
             .setContentText(if (apkPath != null) "APK 已生成，点击安装到手机" else "构建已完成")
+            .setLargeIcon(appLogo)
             .setOngoing(false)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
@@ -179,9 +192,10 @@ class ToolNotificationNotifier @Inject constructor(
         val notificationId = buildNotificationId(projectName)
         val pendingIntent = getLaunchIntent()
         val builder = NotificationCompat.Builder(context, buildChannelId)
-            .setSmallIcon(context.applicationInfo.icon.takeIf { it != 0 } ?: android.R.drawable.stat_notify_error)
+            .setSmallIcon(context.applicationInfo.icon)
             .setContentTitle("❌ $projectName 编译失败")
             .setContentText(error.take(120))
+            .setLargeIcon(appLogo)
             .setOngoing(false)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)

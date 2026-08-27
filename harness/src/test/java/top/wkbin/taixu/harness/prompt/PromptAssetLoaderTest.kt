@@ -10,6 +10,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import top.wkbin.taixu.harness.R
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -27,6 +28,22 @@ class PromptAssetLoaderTest {
         val paths = context.assets.list("prompts").orEmpty()
         assertTrue(paths.isNotEmpty())
         paths.forEach { path -> assertTrue(loader.read("prompts/$path").isNotBlank()) }
+    }
+
+    @Test
+    fun shortPromptsAreAvailableAsStringResources() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val ids = listOf(
+            R.string.harness_prompt_tool_call_disabled,
+            R.string.harness_prompt_thinking_language_zh,
+            R.string.harness_prompt_thinking_language_en,
+            R.string.harness_prompt_subagent_none,
+            R.string.harness_prompt_subagent_lane_system,
+            R.string.harness_prompt_subagent_trigger_manual,
+            R.string.harness_prompt_privilege_unavailable,
+            R.string.harness_prompt_privilege_proot,
+        )
+        ids.forEach { id -> assertTrue(context.getString(id).isNotBlank()) }
     }
 
     @Test

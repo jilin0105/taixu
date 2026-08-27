@@ -1,5 +1,7 @@
 package top.wkbin.taixu.harness.subagent
 
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Provider
@@ -20,7 +22,7 @@ import top.wkbin.taixu.harness.effects.ToolReplayPolicy
 import top.wkbin.taixu.harness.operation.OperationCoordinator
 import top.wkbin.taixu.harness.session.SessionTreeStore
 import top.wkbin.taixu.harness.validation.ToolSchemaValidator
-import top.wkbin.taixu.harness.prompt.PromptAssetLoader
+import top.wkbin.taixu.harness.R
 
 data class SubagentLaneResult(
     val success: Boolean,
@@ -37,7 +39,7 @@ data class SubagentLaneResult(
  */
 @Singleton
 class SubagentLaneRunner @Inject constructor(
-    private val promptAssets: PromptAssetLoader,
+    @ApplicationContext private val context: Context,
     private val providerClient: ProviderClient,
     private val toolExecutor: Provider<ToolExecutor>,
     private val treeStore: SessionTreeStore,
@@ -132,7 +134,7 @@ class SubagentLaneRunner @Inject constructor(
     }
 
     private suspend fun providerMessages(sessionId: String, laneName: String): List<ApiMessage> = buildList {
-        val systemPrompt = promptAssets.render("prompts/subagent_lane_system.md")
+        val systemPrompt = context.getString(R.string.harness_prompt_subagent_lane_system)
         add(ApiMessage(role = "system", content = systemPrompt))
         treeStore.load(sessionId, laneName).forEach { message ->
             if (message !is CapabilityEvent) add(HarnessApiMapper.toApiMessage(message))
