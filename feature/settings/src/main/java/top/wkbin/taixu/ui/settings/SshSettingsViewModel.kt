@@ -52,6 +52,7 @@ class SshSettingsViewModel @Inject constructor(
     val vpnActive: StateFlow<Boolean> = _vpnActive.asStateFlow()
     private var vpnCallback: ConnectivityManager.NetworkCallback? = null
 
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val settings: StateFlow<SshSettingsUiState> = linuxRuntime.activeDistroId
         .flatMapLatest { distroId ->
             combine(

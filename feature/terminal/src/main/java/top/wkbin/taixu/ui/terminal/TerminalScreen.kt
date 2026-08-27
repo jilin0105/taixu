@@ -167,7 +167,7 @@ fun TerminalScreen(
 
     val copyScreen = {
         val text = screen.joinToString("\n") { line ->
-            line.cells.joinToString("") { it.character.toString() }.trimEnd()
+            line.cells.joinToString("") { it.character }.trimEnd()
         }
         if (text.isNotBlank()) {
             (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)

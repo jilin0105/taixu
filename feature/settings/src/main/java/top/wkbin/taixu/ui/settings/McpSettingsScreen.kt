@@ -41,7 +41,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import top.wkbin.taixu.ui.components.RuntimeSwitch as Switch
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
+import androidx.compose.material3.SecondaryTabRow
 import top.wkbin.taixu.ui.settings.LocalizedText as Text
 import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
@@ -608,7 +608,7 @@ private fun AddMcpServerDialog(
         title = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("添加 MCP 服务", fontWeight = FontWeight.Bold)
-                TabRow(
+                SecondaryTabRow(
                     selectedTabIndex = selectedTab,
                     containerColor = Color.Transparent,
                     divider = {},

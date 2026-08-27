@@ -319,7 +319,17 @@ class WorkspaceManager @Inject constructor(
             workspaceDao.upsert(
                 WorkspaceEntity(safeName, directory.absolutePath, System.currentTimeMillis(), ownsDirectory),
             )
-            AppResult.Success(projectFromEntity(workspaceDao.findByName(safeName)!!)!!)
+            val createdEntity = workspaceDao.findByName(safeName)
+            if (createdEntity == null) {
+                AppResult.Failure(AppError(ErrorCode.IO, "项目写入后查询失败", null))
+            } else {
+                val created = projectFromEntity(createdEntity)
+                if (created == null) {
+                    AppResult.Failure(AppError(ErrorCode.IO, "项目数据转换失败", null))
+                } else {
+                    AppResult.Success(created)
+                }
+            }
         } catch (throwable: Throwable) {
             AppResult.Failure(AppError(ErrorCode.IO, throwable.message ?: "创建项目失败", throwable))
         }
@@ -590,7 +600,17 @@ class WorkspaceManager @Inject constructor(
             workspaceDao.upsert(
                 WorkspaceEntity(safeName, directory.absolutePath, System.currentTimeMillis(), ownsDirectory = !existed),
             )
-            AppResult.Success(projectFromEntity(workspaceDao.findByName(safeName)!!)!!)
+            val createdEntity = workspaceDao.findByName(safeName)
+            if (createdEntity == null) {
+                AppResult.Failure(AppError(ErrorCode.IO, "项目写入后查询失败", null))
+            } else {
+                val created = projectFromEntity(createdEntity)
+                if (created == null) {
+                    AppResult.Failure(AppError(ErrorCode.IO, "项目数据转换失败", null))
+                } else {
+                    AppResult.Success(created)
+                }
+            }
         } catch (throwable: Throwable) {
             AppResult.Failure(AppError(ErrorCode.IO, throwable.message ?: "导入项目失败", throwable))
         }

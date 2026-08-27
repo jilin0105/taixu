@@ -221,8 +221,6 @@ fun TaiXuTheme(
         SideEffect {
             val window = (view.context as? Activity)?.window
             if (window != null) {
-                window.navigationBarColor = android.graphics.Color.TRANSPARENT
-                window.navigationBarDividerColor = android.graphics.Color.TRANSPARENT
                 window.isNavigationBarContrastEnforced = false
                 val insetsController = WindowCompat.getInsetsController(window, view)
                 insetsController.isAppearanceLightStatusBars = !darkTheme

@@ -400,7 +400,9 @@ class SshServiceManager @Inject constructor(
             context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         }.getOrNull() ?: return
         val lock = wifiLock ?: wifi.createWifiLock(
-            WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+            // WIFI_MODE_FULL_HIGH_PERF 在 API 34+ 标记弃用，但 FULL_LOW_LATENCY 语义不同（低延迟≠高吞吐），
+            // 保持原模式以不改变行为；系统在 Android 13+ 会自行优化调度。
+            @Suppress("DEPRECATION") WifiManager.WIFI_MODE_FULL_HIGH_PERF,
             "Taixu::LinuxRuntime",
         ).also { it.setReferenceCounted(false) }
         wifiLock = lock

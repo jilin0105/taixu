@@ -92,7 +92,7 @@ class ShizukuHostServiceClient @Inject constructor(
                 }
             }
         }
-        throw lastError!!
+        throw requireNotNull(lastError)
     }
 
     private suspend fun bindOnce(): IShizukuHostService {

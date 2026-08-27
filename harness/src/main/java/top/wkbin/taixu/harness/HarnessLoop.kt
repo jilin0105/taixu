@@ -595,7 +595,7 @@ class HarnessLoop @Inject constructor(
     }
 
     private suspend fun executeSessionRun(sessId: String, block: suspend () -> RunResult) {
-        val selfJob = currentCoroutineContext()[Job]!!
+        val selfJob = requireNotNull(currentCoroutineContext()[Job])
         stateMirrors.setRunState(sessId, SessionRunState.RUNNING)
         stateMirrors.setError(sessId, null)
         try {

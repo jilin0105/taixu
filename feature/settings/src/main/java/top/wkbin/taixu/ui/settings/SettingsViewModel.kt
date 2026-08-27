@@ -613,11 +613,11 @@ class SettingsViewModel @Inject constructor(
                         var entry = zip.nextEntry
                         while (entry != null) {
                             check(++entryCount <= MAX_SKILL_ARCHIVE_ENTRIES) { "Skill 压缩包文件数量超过 $MAX_SKILL_ARCHIVE_ENTRIES 个" }
-                            val relative = entry!!.name.replace('\\', '/')
+                            val relative = entry.name.replace('\\', '/')
                             check(relative.isNotBlank() && !relative.startsWith('/')) { "Skill 压缩包包含非法路径" }
-                            val out = File(target!!, relative)
-                            require(out.canonicalPath.startsWith(target!!.canonicalPath + File.separator)) { "Skill 压缩包包含非法路径" }
-                            if (entry!!.isDirectory) {
+                            val out = File(target, relative)
+                            require(out.canonicalPath.startsWith(target.canonicalPath + File.separator)) { "Skill 压缩包包含非法路径" }
+                            if (entry.isDirectory) {
                                 out.mkdirs()
                             } else {
                                 out.parentFile?.mkdirs()
@@ -642,7 +642,7 @@ class SettingsViewModel @Inject constructor(
                         }
                     }
                 } ?: error("无法读取 Skill 压缩包")
-                val promptFile = target!!.walkTopDown()
+                val promptFile = target.walkTopDown()
                     .maxDepth(3)
                     .filter { it.isFile && it.name.lowercase() in setOf("skill.md", "prompt.md") }
                     .singleOrNull()
@@ -656,7 +656,7 @@ class SettingsViewModel @Inject constructor(
                 val description = extractSkillMetadata(markdown, "description") ?: "从压缩包导入的 Skill"
                 val guestPath = "/attachments/skills/$id"
                 val prompt = markdown + "\n\n【Skill 资源目录】$guestPath\n如需执行该 Skill 附带的脚本，请先检查脚本内容与参数，再从此目录调用。"
-                agentSkillRepository.addCustom(top.wkbin.taixu.core.model.AgentSkill(id, skillName, description, prompt, isBuiltin = false, category = "自定义", resourcePath = target!!.absolutePath))
+                agentSkillRepository.addCustom(top.wkbin.taixu.core.model.AgentSkill(id, skillName, description, prompt, isBuiltin = false, category = "自定义", resourcePath = target.absolutePath))
                 _skillArchiveMessage.value = "Skill“$skillName”导入成功，脚本资源位于 $guestPath"
             }.onFailure { error ->
                 target?.let(::deleteOwnedSkillDirectory)
