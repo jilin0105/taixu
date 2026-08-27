@@ -49,6 +49,7 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
+    implementation(libs.hiddenapi.bypass)
     implementation(libs.dadb)
     testImplementation(libs.junit)
 }

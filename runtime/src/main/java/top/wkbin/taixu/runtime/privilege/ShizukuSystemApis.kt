@@ -11,6 +11,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.lsposed.hiddenapibypass.HiddenApiBypass
 import rikka.shizuku.ShizukuBinderWrapper
 import rikka.shizuku.SystemServiceHelper
 
@@ -42,6 +43,13 @@ sealed interface BinderOutcome {
 class ShizukuSystemApis @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
+    init {
+        // API 28+ 的 hidden API 强制限制会拦截 IPackageManager$Stub / $Stub$Proxy 的
+        // 加载与方法反射。AndroidHiddenApiBypass 通过 ART 元数据技巧做定向豁免；
+        // 只放行所需声明前缀，不做全局豁免。Android <28 无此限制，豁免失败可安全忽略。
+        runCatching { HiddenApiBypass.setHiddenApiExemptions("Landroid/content/pm/IPackageManager") }
+    }
+
     private val proxies = ConcurrentHashMap<String, Any>()
 
     private val intType: Class<*> = Integer.TYPE
