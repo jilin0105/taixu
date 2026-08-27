@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -478,6 +480,10 @@ private fun QuickPhraseEditorDialog(
 
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 520.dp, max = 720.dp)
+            .offset(y = 200.dp),
         title = {
             Text(
                 text = if (phrase == null) "新增快捷短语" else "编辑快捷短语",
@@ -488,6 +494,7 @@ private fun QuickPhraseEditorDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(min = 360.dp)
                     .verticalScroll(rememberScrollState())
                     .padding(vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -515,8 +522,8 @@ private fun QuickPhraseEditorDialog(
                     onValueChange = { content = it },
                     label = { Text("提示词 / 命令模板") },
                     placeholder = { Text("输入要自动填入或触发的指令/Prompt...") },
-                    minLines = 2,
-                    maxLines = 5,
+                    minLines = 3,
+                    maxLines = 8,
                     modifier = Modifier.fillMaxWidth(),
                 )
 
