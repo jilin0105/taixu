@@ -37,5 +37,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "{{flutterProjectName}}"
+rootProject.name = "{{projectName}}"
 include ":app"

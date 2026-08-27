@@ -97,6 +97,7 @@
           <p><code>prompt: true</code> 会在创建工程的最后一步自动渲染控件。支持 <code>TEXT</code>、<code>MULTILINE</code>、<code>NUMBER</code>、<code>BOOLEAN</code>、<code>SELECT</code> 和 <code>SECRET</code>。</p>
           <ul><li>变量名必须匹配 <code>^[A-Za-z][A-Za-z0-9_]*$</code>，且不能重复。</li><li>隐藏必填变量必须提供默认值，系统派生变量除外。</li><li><code>SELECT</code> 必须有不重复的选项；可选字段允许留空。</li><li>项目名称与创建路径由工坊统一填写，不应伪装成动态字段。</li></ul>
           <p>系统提供 <code>projectName</code>、<code>appName</code>、<code>projectPath</code>；如果模板把 <code>appName</code> 设为动态字段，则优先使用用户输入。只有模板声明 <code>packageName</code> 或 <code>packagePath</code> 时，才会启用 Java 包名规则。</p>
+          <p>模板可将 <code>projectName</code> 声明为 <code>prompt: false</code> 的固定变量，并用 <code>validationRegex</code> 约束统一项目名称输入框。校验失败时工坊显示该变量的 <code>description</code> 并禁止创建，不会静默改写用户输入。</p>
         </section>
 
         <section id="files" class="reveal">

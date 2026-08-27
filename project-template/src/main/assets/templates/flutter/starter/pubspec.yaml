@@ -1,4 +1,4 @@
-name: {{flutterProjectName}}
+name: "{{projectName}}"
 description: "{{appName}} Flutter Application"
 publish_to: 'none'
 version: 1.0.0+1

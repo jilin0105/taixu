@@ -330,7 +330,7 @@ class ProjectTemplateStore @Inject constructor(
         val WINDOWS_ABSOLUTE_PATH = Regex("^[A-Za-z]:/")
         const val BUILTIN_ID_PREFIX = "builtin."
         val DERIVED_VARIABLES = setOf(
-            "projectName", "appName", "packageName", "packagePath", "projectPath", "flutterProjectName",
+            "projectName", "appName", "packageName", "packagePath", "projectPath",
         )
         val FIXED_VARIABLES = setOf("projectName", "projectPath", "packagePath")
         val PREVIEW_EXTENSIONS = setOf("png", "jpg", "jpeg", "webp", "gif")

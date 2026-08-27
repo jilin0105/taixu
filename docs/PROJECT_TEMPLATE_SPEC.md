@@ -48,6 +48,8 @@ my-template/
 - 项目名称必填。
 - 路径可留空；内部空间默认创建到 `/workspace/<项目名称>`。
 - 模板可使用系统派生变量 `projectName`、`appName` 和 `projectPath`；`appName` 若由动态字段提供则优先使用用户输入。
+- 模板可以将 `projectName` 声明为 `prompt: false` 的固定变量，并通过 `validationRegex` 约束项目名称；工坊会在统一的项目名称输入框显示 `description` 提示并阻止无效提交。例如 Flutter 模板可要求名称匹配 `^[a-z][a-z0-9_]*$`。
+- 工坊不会静默改写用户输入的项目名称；名称不符合模板规则时必须由用户修改。
 - `packageName`、`packagePath` 只有在模板清单中声明时才生成和校验；非 Android 模板不依赖 Java 包名。
 
 ## 4. 动态变量

@@ -119,16 +119,14 @@ keep_project_arm64_only() {
 
 check_project_toolchain_declarations() {
     project="$1"
-    files="$project"/*.gradle
-    files="$files $project"/*.gradle.kts "$project"/app/*.gradle "$project"/app/*.gradle.kts "$project"/android/app/*.gradle "$project"/android/app/*.gradle.kts
     ndk_home="${TAIXU_NDK_PATH:-${ANDROID_NDK_HOME:-/opt/taixu/toolchains/android/ndk}}"
     expected_ndk=$(sed -n 's/^[[:space:]]*Pkg\.Revision[[:space:]]*=[[:space:]]*//p' "$ndk_home/source.properties" 2>/dev/null | head -n 1 || true)
-    declared_ndk=$(grep -RhsE 'ndkVersion[^0-9]*[0-9]+(\.[0-9]+)+' $files 2>/dev/null |
+    declared_ndk=$(grep -RhsE 'ndkVersion[^0-9]*[0-9]+(\.[0-9]+)+' "$project"/*.gradle "$project"/*.gradle.kts "$project"/app/*.gradle "$project"/app/*.gradle.kts "$project"/android/app/*.gradle "$project"/android/app/*.gradle.kts 2>/dev/null |
         sed -n 's/.*ndkVersion[^0-9]*\([0-9][0-9.]*\).*/\1/p' | head -n 1 || true)
     if test -n "$declared_ndk" && test -n "$expected_ndk" && test "$declared_ndk" != "$expected_ndk"; then
         warn "项目声明 NDK $declared_ndk，构建将按工坊当前 NDK $expected_ndk 执行"
     fi
-    declared_cmake=$(grep -RhsE 'cmake[^\n]*version[^0-9]*[0-9]+(\.[0-9]+)+' $files 2>/dev/null |
+    declared_cmake=$(grep -RhsE 'cmake[^\n]*version[^0-9]*[0-9]+(\.[0-9]+)+' "$project"/*.gradle "$project"/*.gradle.kts "$project"/app/*.gradle "$project"/app/*.gradle.kts "$project"/android/app/*.gradle "$project"/android/app/*.gradle.kts 2>/dev/null |
         sed -n 's/.*version[^0-9]*\([0-9][0-9.]*\).*/\1/p' | head -n 1 || true)
     expected_cmake=$(${TAIXU_CMAKE_HOME:-/opt/taixu/tools/android-suite-offline/cmake}/bin/cmake --version 2>/dev/null |
         sed -n 's/^cmake version[[:space:]]*//p' | head -n 1 || true)

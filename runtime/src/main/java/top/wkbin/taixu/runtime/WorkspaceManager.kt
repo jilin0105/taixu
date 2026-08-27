@@ -199,6 +199,16 @@ class WorkspaceManager @Inject constructor(
             require(isValidProjectName(safeName)) { "名称需以文字或数字开头，只能包含文字、数字、点、下划线和短横线" }
             require(safeName != "sdcard") { "sdcard 是系统共享空间保留名称" }
             check(workspaceDao.findByName(safeName) == null) { "项目已存在：$safeName" }
+            val resolvedTemplateId = templateId
+            val resolvedManifest = resolvedTemplateId.takeIf(String::isNotBlank)?.let(projectTemplateEngine::inspect)
+            resolvedManifest?.variables?.firstOrNull { it.name == "projectName" }?.let { variable ->
+                require(!variable.required || safeName.isNotBlank()) { "项目名称不能为空" }
+                if (variable.validationRegex.isNotBlank()) {
+                    require(Regex(variable.validationRegex).matches(safeName)) {
+                        variable.description.ifBlank { "项目名称不符合所选模板的格式要求" }
+                    }
+                }
+            }
             pathManager.workspaceDir.mkdirs()
             val base = when (storage) {
                 WorkspaceStorage.INTERNAL -> pathManager.workspaceDir
@@ -231,8 +241,6 @@ class WorkspaceManager @Inject constructor(
 
             // 模板初始化处理
             // APK 逆向模板：包名无需用户输入，由导入的安装包决定（无则留空）
-            val resolvedTemplateId = templateId
-            val resolvedManifest = resolvedTemplateId.takeIf(String::isNotBlank)?.let(projectTemplateEngine::inspect)
             val needsPackageName = resolvedManifest?.variables.orEmpty().any {
                 it.name == "packageName" || it.name == "packagePath"
             }
@@ -251,10 +259,6 @@ class WorkspaceManager @Inject constructor(
                     this["projectName"] = safeName
                     this["projectPath"] = linuxPathFor(directory)
                     putIfAbsent("appName", safeName)
-                    putIfAbsent(
-                        "flutterProjectName",
-                        safeName.lowercase().replace(Regex("[^a-z0-9_]+"), "_").trim('_').ifBlank { "flutter_app" },
-                    )
                     if (needsPackageName) {
                         this["packageName"] = effectivePackage
                         this["packagePath"] = effectivePackage.replace('.', '/')

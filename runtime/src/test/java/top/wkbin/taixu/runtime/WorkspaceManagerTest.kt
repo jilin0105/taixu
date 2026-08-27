@@ -171,19 +171,31 @@ class WorkspaceManagerTest {
     @Test
     fun flutterTemplateGeneratesAndroidHostInPackageDirectory() = runTest {
         val result = manager.createProject(
-            name = "flutter-template",
+            name = "flutter_template",
             templateId = "builtin.flutter",
             packageName = "com.example.fluttergenerated",
         )
 
         assertTrue(result.isSuccess)
-        val project = File(workspaceDir, "flutter-template")
+        val project = File(workspaceDir, "flutter_template")
         val launcher = project.resolve(
             "android/app/src/main/kotlin/com/example/fluttergenerated/MainActivity.kt",
         )
         assertTrue(launcher.isFile)
         assertTrue(launcher.readText().startsWith("package com.example.fluttergenerated"))
         assertFalse(project.walkTopDown().any { it.name.endsWith(".template") })
+    }
+
+    @Test
+    fun flutterTemplateRejectsNumericProjectName() = runTest {
+        val result = manager.createProject(
+            name = "444",
+            templateId = "builtin.flutter",
+            packageName = "com.example.numeric",
+        )
+
+        assertTrue(result.isFailure)
+        assertFalse(File(workspaceDir, "444").exists())
     }
 
     @Test

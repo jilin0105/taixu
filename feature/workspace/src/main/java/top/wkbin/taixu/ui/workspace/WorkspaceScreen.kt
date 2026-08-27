@@ -1182,6 +1182,18 @@ fun WorkspaceScreen(
 
                         CreateProjectStep.DETAILS -> {
 
+                    val selectedManifest = projectTemplates.firstOrNull {
+                        it.manifest.id == selectedTemplateId
+                    }?.manifest
+                    val projectNameVariable = selectedManifest?.variables?.firstOrNull {
+                        it.name == "projectName"
+                    }
+                    val projectNameError = projectNameVariable?.let { variable ->
+                        templateVariableError(variable, projectName)?.let {
+                            variable.description.ifBlank { it }
+                        }
+                    }
+
                     OutlinedTextField(
                         value = projectName,
                         onValueChange = {
@@ -1192,6 +1204,8 @@ fun WorkspaceScreen(
                         },
                         label = { Text(stringResource(R.string.workspace_project_name)) },
                         placeholder = { Text("MyApplication / demo-app") },
+                        supportingText = projectNameError?.let { error -> { Text(error) } },
+                        isError = projectNameError != null,
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -1468,7 +1482,6 @@ fun WorkspaceScreen(
                         fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.primary,
                     )
-                    val selectedManifest = projectTemplates.firstOrNull { it.manifest.id == selectedTemplateId }?.manifest
                     if (selectedManifest != null) {
                         TemplateVariableFields(
                             variables = selectedManifest.variables,
@@ -1564,7 +1577,10 @@ fun WorkspaceScreen(
                                 val hasScripts = manifest != null &&
                                     (manifest.hooks.beforeCreate.isNotBlank() || manifest.hooks.afterCreate.isNotBlank())
                                 val scriptsReady = !hasScripts || (trustTemplateScripts && runtimeReady)
-                                scriptsReady && variables.none {
+                                val projectNameRule = manifest?.variables?.firstOrNull { it.name == "projectName" }
+                                val projectNameValid = projectNameRule == null ||
+                                    templateVariableError(projectNameRule, projectName) == null
+                                scriptsReady && projectNameValid && variables.none {
                                     templateVariableError(it, values[it.name] ?: it.defaultValue) != null
                                 }
                             }
