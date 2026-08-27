@@ -1,5 +1,7 @@
 package top.wkbin.taixu.ui.settings
 
+import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import top.wkbin.taixu.core.datastore.SettingsDataStore
@@ -36,9 +38,13 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.Dispatchers
+import java.io.File
+import java.util.UUID
+import java.util.zip.ZipInputStream
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
+    private val application: Application,
     private val settingsDataStore: SettingsDataStore,
     private val providerRepository: ProviderRepository,
     private val aiModelDao: AiModelRepository,
@@ -586,6 +592,31 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { agentSkillRepository.deleteCustom(skillId) }
     }
 
+    fun importSkillArchive(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val id = "custom_" + UUID.randomUUID().toString().take(8)
+                val target = File(application.filesDir, "skills/$id").apply { mkdirs() }
+                application.contentResolver.openInputStream(uri)?.use { source ->
+                    ZipInputStream(source).use { zip ->
+                        var entry = zip.nextEntry
+                        while (entry != null) {
+                            val relative = entry!!.name.replace('\\', '/')
+                            val out = File(target, relative)
+                            require(out.canonicalPath.startsWith(target.canonicalPath + File.separator)) { "Skill 压缩包包含非法路径" }
+                            if (entry!!.isDirectory) out.mkdirs() else { out.parentFile?.mkdirs(); out.outputStream().use { zip.copyTo(it) } }
+                            entry = zip.nextEntry
+                        }
+                    }
+                } ?: error("无法读取 Skill 压缩包")
+                val promptFile = listOf("SKILL.md", "skill.md", "prompt.md").map { File(target, it) }.firstOrNull(File::isFile)
+                    ?: error("压缩包内未找到 SKILL.md")
+                val prompt = promptFile.readText().trim() + "\n\n【Skill 资源目录】${target.absolutePath}\n如需执行该 Skill 附带的脚本，请先检查脚本内容与参数，再从此目录调用。"
+                agentSkillRepository.addCustom(top.wkbin.taixu.core.model.AgentSkill(id, target.name, "从压缩包导入的 Skill", prompt, isBuiltin = false, category = "自定义", resourcePath = target.absolutePath))
+            }
+        }
+    }
+
     fun setAutoSubagentDelegationEnabled(enabled: Boolean) {
         viewModelScope.launch { subagentRepository.setAutoDelegationEnabled(enabled) }
     }
@@ -687,12 +718,18 @@ class SettingsViewModel @Inject constructor(
     fun discoverModels(providerId: String, baseUrl: String, apiKey: String = "") {
         val cleanUrl = ProviderEndpointPolicy.normalizeUrl(baseUrl)
         if (!ProviderEndpointPolicy.isSafeBaseUrl(cleanUrl)) return
+        val provider = providerCatalogRepository.find(providerId)
         _discoveringModels.value = true
         _modelDiscoveryError.value = null
         _discoveredModels.value = emptyList()
         viewModelScope.launch {
-            val provider = providerCatalogRepository.find(providerId)
             val discoveryKey = parseApiKeys(apiKey).firstOrNull() ?: providerRepository.readApiKey()
+            // 对于要求 API Key 的服务商，空 key 不发请求，直接给出友好提示
+            if (!provider.apiKeyOptional && discoveryKey.isNullOrBlank()) {
+                _modelDiscoveryError.value = "该服务商需要 API Key 才能获取模型列表，请先填写 API Key 后再刷新"
+                _discoveringModels.value = false
+                return@launch
+            }
             runCatching { modelDiscovery.discover(provider, cleanUrl, discoveryKey) }
                 .onSuccess { models ->
                     _discoveredModels.value = models

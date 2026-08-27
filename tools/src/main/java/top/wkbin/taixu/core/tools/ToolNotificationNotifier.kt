@@ -165,6 +165,11 @@ class ToolNotificationNotifier @Inject constructor(
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
         try {
+            // Some Android/OEM notification managers keep the previous ongoing
+            // notification row when it is changed in-place to a non-ongoing one.
+            // Remove the progress row first so a completed build cannot remain
+            // stuck on the last "copying to Download" message.
+            notificationManager.cancel(notificationId)
             notificationManager.notify(notificationId, builder.build())
         } catch (_: SecurityException) {
         }
@@ -183,6 +188,7 @@ class ToolNotificationNotifier @Inject constructor(
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setCategory(NotificationCompat.CATEGORY_ERROR)
         try {
+            notificationManager.cancel(notificationId)
             notificationManager.notify(notificationId, builder.build())
         } catch (_: SecurityException) {
         }

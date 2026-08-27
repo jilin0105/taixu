@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -1335,6 +1336,8 @@ fun RuntimeAlertDialog(
         Column(
             modifier = modifier
                 .fillMaxWidth()
+                .fillMaxHeight(0.92f)
+                .wrapContentHeight(Alignment.Top)
                 .imePadding()
                 .heightIn(max = 560.dp)
                 .drawBackdrop(
@@ -1365,7 +1368,9 @@ fun RuntimeAlertDialog(
                     title?.invoke()
                 }
             }
-            text?.invoke()
+            Box(modifier = Modifier.weight(1f, fill = false)) {
+                text?.invoke()
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),

@@ -1051,7 +1051,7 @@ fun WorkspaceScreen(
                 Column(
                     modifier = Modifier
                         .verticalScroll(rememberScrollState())
-                        .heightIn(min = 360.dp),
+                        .heightIn(min = 360.dp, max = 420.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     when (createProjectStep) {
@@ -1982,7 +1982,7 @@ private fun ProjectTemplateSpecDialog(onDismiss: () -> Unit) {
                 Text(
                     "项目名称和创建路径由工坊统一填写。模板通过 variables 声明动态字段，支持 TEXT、MULTILINE、NUMBER、BOOLEAN、SELECT、SECRET。" +
                         "文件内容和路径可使用 {{variableName}}；任意文本文件都可添加 .template 后缀，生成时会移除该后缀。" +
-                        "包目录可使用 __PACKAGE_PATH__。隐藏必填变量必须有默认值，系统派生变量除外。",
+                        "包目录使用 TAIXU_PACKAGE_PATH。隐藏必填变量必须有默认值，系统派生变量除外。",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text("预览图", fontWeight = FontWeight.SemiBold)
@@ -1994,6 +1994,11 @@ private fun ProjectTemplateSpecDialog(onDismiss: () -> Unit) {
                 Text(
                     "beforeCreate 和 afterCreate 必须指向 template-hooks/ 下的脚本。脚本只有在用户创建工程时明确授权才会执行，" +
                         "运行于 Linux 沙箱的新工程目录，最长 60 秒。变量通过 TAIXU_VAR_<大写变量名> 环境变量传入，工程路径为 TAIXU_PROJECT_DIR。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text("结果校验", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "validation 可声明 requiredFiles、forbiddenFiles 和 contentRules；路径及内容支持模板变量。校验在 afterCreate 完成后执行。",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text("可先导出任意内置模板作为完整样例；导入前需要修改 id，并移除保留的 builtin. 前缀。", color = MaterialTheme.colorScheme.primary)

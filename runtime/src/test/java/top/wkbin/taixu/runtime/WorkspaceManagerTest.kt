@@ -140,7 +140,7 @@ class WorkspaceManagerTest {
         val result = manager.createProject(
             name = "existing-android-project",
             directoryPath = "existing-android",
-            template = ProjectTemplate.ANDROID_COMPOSE,
+            templateId = "builtin.android-compose",
             packageName = "com.example.existingandroid",
         )
 
@@ -152,7 +152,7 @@ class WorkspaceManagerTest {
     fun androidTemplateGeneratesLauncherInPackageDirectory() = runTest {
         val result = manager.createProject(
             name = "android-template",
-            template = ProjectTemplate.ANDROID_COMPOSE,
+            templateId = "builtin.android-compose",
             packageName = "com.example.generated",
         )
 
@@ -172,7 +172,7 @@ class WorkspaceManagerTest {
     fun flutterTemplateGeneratesAndroidHostInPackageDirectory() = runTest {
         val result = manager.createProject(
             name = "flutter-template",
-            template = ProjectTemplate.FLUTTER,
+            templateId = "builtin.flutter",
             packageName = "com.example.fluttergenerated",
         )
 
@@ -190,7 +190,7 @@ class WorkspaceManagerTest {
     fun androidNoActivityTemplateHasNoLauncherOrActivitySource() = runTest {
         val result = manager.createProject(
             name = "android-no-activity",
-            template = ProjectTemplate.ANDROID_NO_ACTIVITY,
+            templateId = "builtin.android-no-activity",
             packageName = "com.example.noactivity",
         )
 
@@ -199,6 +199,92 @@ class WorkspaceManagerTest {
         assertTrue(project.resolve("app/build.gradle.kts").isFile)
         assertFalse(project.resolve("app/src/main/java/com/example/noactivity/MainActivity.kt").exists())
         assertFalse(project.resolve("app/src/main/AndroidManifest.xml").readText().contains("<activity"))
+    }
+
+    @Test
+    fun xposedTemplateGeneratesHookInPackageDirectory() = runTest {
+        val result = manager.createProject(
+            name = "xposed-template",
+            templateId = "builtin.android-xposed",
+            packageName = "com.example.xposedmodule",
+            templateVariables = mapOf(
+                "targetPackage" to "com.example.target",
+                "moduleDescription" to "Example module",
+            ),
+        )
+
+        assertTrue(result.isSuccess)
+        val project = File(workspaceDir, "xposed-template")
+        val hook = project.resolve("app/src/main/java/com/example/xposedmodule/MainHook.kt")
+        assertTrue(hook.isFile)
+        assertTrue(hook.readText().startsWith("package com.example.xposedmodule"))
+        assertEquals(
+            "com.example.xposedmodule.MainHook",
+            project.resolve("app/src/main/assets/xposed_init").readText().trim(),
+        )
+        assertFalse(project.walkTopDown().any { it.name.endsWith(".template") })
+    }
+
+    @Test
+    fun importedXposedTemplateGeneratesHookWithoutBuiltinId() = runTest {
+        val templates = File(pathManager.baseDir, "templates/android")
+        val imported = File(templates, "user-xposed")
+        File(templates, "xposed").copyRecursively(imported)
+        val manifest = imported.resolve("template.json")
+        manifest.writeText(
+            manifest.readText()
+                .replace("builtin.android-xposed", "user.android-xposed")
+                .replace("\"name\": \"Xposed\"", "\"name\": \"User Xposed\""),
+        )
+
+        val result = manager.createProject(
+            name = "imported-xposed-template",
+            templateId = "user.android-xposed",
+            packageName = "com.example.importedxposed",
+            templateVariables = mapOf(
+                "appName" to "Imported Xposed",
+                "targetPackage" to "com.example.target",
+                "moduleDescription" to "Imported module",
+            ),
+        )
+
+        assertTrue(result.isSuccess)
+        assertEquals(ProjectType.ANDROID, result.getOrNull()?.projectType)
+        val project = File(workspaceDir, "imported-xposed-template")
+        assertTrue(project.resolve("app/src/main/java/com/example/importedxposed/MainHook.kt").isFile)
+        assertTrue(
+            project.resolve("app/src/main/java/com/example/importedxposed/MainHook.kt")
+                .readText().contains("Imported Xposed loaded"),
+        )
+        assertEquals(
+            "com.example.importedxposed.MainHook",
+            project.resolve("app/src/main/assets/xposed_init").readText().trim(),
+        )
+    }
+
+    @Test
+    fun manifestProjectTypeIsPersistedWithoutStructureGuessing() = runTest {
+        val template = File(pathManager.baseDir, "templates/android/user-type-only").apply { mkdirs() }
+        template.resolve("template.json").writeText(
+            """
+            {
+              "schemaVersion": 1,
+              "id": "user.type-only",
+              "name": "Type Only",
+              "version": "1.0.0",
+              "projectType": "ANDROID",
+              "variables": [],
+              "validation": { "requiredFiles": ["README.md"] }
+            }
+            """.trimIndent(),
+        )
+        template.resolve("README.md.template").writeText("# {{projectName}}")
+
+        val result = manager.createProject(name = "type-only", templateId = "user.type-only")
+
+        assertTrue(result.isSuccess)
+        assertEquals(ProjectType.ANDROID, result.getOrNull()?.projectType)
+        assertTrue(File(workspaceDir, "type-only/.taixu-project.properties").readText().contains("source=TEMPLATE"))
     }
 
     @Test
@@ -211,19 +297,19 @@ class WorkspaceManagerTest {
                 "\"variables\": [{\"name\":\"screenTitle\",\"label\":\"Screen title\",\"prompt\":true},",
             ),
         )
-        val launcherTemplate = template.resolve("app/src/main/java/MainActivity.kt.template")
+        val launcherTemplate = template.resolve("app/src/main/java/TAIXU_PACKAGE_PATH/MainActivity.kt.template")
         launcherTemplate.appendText("\n// {{screenTitle}}\n")
 
         val missing = manager.createProject(
             name = "missing-variable",
-            template = ProjectTemplate.ANDROID_COMPOSE,
+            templateId = "builtin.android-compose",
             packageName = "com.example.missingvariable",
         )
         assertFalse(missing.isSuccess)
 
         val result = manager.createProject(
             name = "custom-variable",
-            template = ProjectTemplate.ANDROID_COMPOSE,
+            templateId = "builtin.android-compose",
             packageName = "com.example.customvariable",
             templateVariables = mapOf("screenTitle" to "Dashboard"),
         )

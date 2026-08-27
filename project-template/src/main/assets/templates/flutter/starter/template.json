@@ -13,5 +13,8 @@
     { "name": "flutterProjectName", "label": "Dart package name" },
     { "name": "packageName", "label": "Android package name", "prompt": true, "inputType": "TEXT", "placeholder": "com.example.myapp", "validationRegex": "^[a-zA-Z_][\\w]*(\\.[a-zA-Z_][\\w]*)+$" },
     { "name": "packagePath", "label": "Package path" }
-  ]
+  ],
+  "validation": {
+    "requiredFiles": ["android/app/src/main/kotlin/TAIXU_PACKAGE_PATH/MainActivity.kt"]
+  }
 }

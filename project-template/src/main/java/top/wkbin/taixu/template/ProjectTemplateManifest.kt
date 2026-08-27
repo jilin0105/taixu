@@ -15,6 +15,7 @@ data class ProjectTemplateManifest(
     val previewImage: String = "",
     val variables: List<ProjectTemplateVariable> = emptyList(),
     val hooks: ProjectTemplateHooks = ProjectTemplateHooks(),
+    val validation: ProjectTemplateValidation = ProjectTemplateValidation(),
 ) {
     companion object {
         const val CURRENT_SCHEMA_VERSION = 1
@@ -44,3 +45,18 @@ data class ProjectTemplateVariable(
 @Serializable enum class ProjectTemplateInputType { TEXT, MULTILINE, NUMBER, BOOLEAN, SELECT, SECRET }
 @Serializable data class ProjectTemplateVariableOption(val value: String, val label: String = value)
 @Serializable data class ProjectTemplateHooks(val beforeCreate: String = "", val afterCreate: String = "")
+
+@Serializable
+data class ProjectTemplateValidation(
+    val requiredFiles: List<String> = emptyList(),
+    val forbiddenFiles: List<String> = emptyList(),
+    val contentRules: List<ProjectTemplateContentRule> = emptyList(),
+)
+
+@Serializable
+data class ProjectTemplateContentRule(
+    val path: String,
+    val equals: String = "",
+    val contains: List<String> = emptyList(),
+    val excludes: List<String> = emptyList(),
+)

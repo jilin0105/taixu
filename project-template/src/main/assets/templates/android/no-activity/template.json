@@ -12,5 +12,11 @@
     { "name": "appName", "label": "App name" },
     { "name": "packageName", "label": "Package name", "prompt": true, "inputType": "TEXT", "placeholder": "com.example.myapp", "validationRegex": "^[a-zA-Z_][\\w]*(\\.[a-zA-Z_][\\w]*)+$" },
     { "name": "packagePath", "label": "Package path" }
-  ]
+  ],
+  "validation": {
+    "requiredFiles": ["app/src/main/AndroidManifest.xml", "app/build.gradle.kts"],
+    "contentRules": [
+      { "path": "app/src/main/AndroidManifest.xml", "excludes": ["<activity"] }
+    ]
+  }
 }

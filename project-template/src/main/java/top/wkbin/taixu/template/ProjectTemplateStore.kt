@@ -236,6 +236,21 @@ class ProjectTemplateStore @Inject constructor(
                 require(variable.name in DERIVED_VARIABLES) { "隐藏必填变量必须提供默认值：${variable.name}" }
             }
         }
+        fun validateTemplatePath(path: String) {
+            val normalized = path.replace('\\', '/')
+            require(normalized.isNotBlank() && !normalized.startsWith('/') &&
+                !WINDOWS_ABSOLUTE_PATH.containsMatchIn(normalized) && normalized.split('/').none { it == ".." }
+            ) { "模板校验路径无效：$path" }
+        }
+        manifest.validation.requiredFiles.forEach(::validateTemplatePath)
+        manifest.validation.forbiddenFiles.forEach(::validateTemplatePath)
+        manifest.validation.contentRules.forEach { rule -> validateTemplatePath(rule.path) }
+        require(manifest.validation.requiredFiles.distinct().size == manifest.validation.requiredFiles.size) {
+            "模板必需文件不能重复"
+        }
+        require(manifest.validation.forbiddenFiles.distinct().size == manifest.validation.forbiddenFiles.size) {
+            "模板禁止文件不能重复"
+        }
         listOf(manifest.hooks.beforeCreate, manifest.hooks.afterCreate).filter(String::isNotBlank).forEach { hook ->
             val normalized = hook.replace('\\', '/')
             require(!normalized.startsWith('/') && !WINDOWS_ABSOLUTE_PATH.containsMatchIn(normalized) &&

@@ -17,6 +17,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import top.wkbin.taixu.harness.session.LaneManager
 import top.wkbin.taixu.harness.subagent.SubagentLaneRunner
+import top.wkbin.taixu.harness.prompt.PromptAssetLoader
 
 /**
  * Subagent 子智能体任务编排器：
@@ -29,6 +30,7 @@ class SubagentOrchestrator @Inject constructor(
     private val laneManager: LaneManager,
     private val laneRunner: SubagentLaneRunner,
     private val subagentRepository: top.wkbin.taixu.core.database.AgentSubagentRepository,
+    private val promptAssets: PromptAssetLoader,
 ) {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
@@ -112,16 +114,17 @@ class SubagentOrchestrator @Inject constructor(
     }
 
     private fun buildSubagentPrompt(spec: SubagentTaskSpec, profile: AgentSubagent, workspace: String): String {
-        return buildString {
-            append("【子智能体任务指派】\n")
-            append("角色定位：${profile.name} (${profile.id})\n")
-            append("任务目标：${spec.taskName}\n")
-            if (workspace.isNotBlank()) append("工作区：$workspace\n")
-            append("\n角色专属指导：\n${profile.systemPrompt.trim()}\n")
-            append("\n任务详情：\n${spec.prompt}\n\n")
-            append("你是被主智能体派发的子智能体，禁止调用 invoke_subagent 或继续拆分子智能体。")
-            append("请集中精力使用工具解决该特定任务，并在最后输出清晰简明的结论与发现。")
-        }
+        return promptAssets.render(
+            "prompts/subagent_task.md",
+            mapOf(
+                "ROLE_NAME" to profile.name,
+                "ROLE_ID" to profile.id,
+                "TASK_NAME" to spec.taskName,
+                "WORKSPACE_LINE" to workspace.takeIf { it.isNotBlank() }?.let { "工作区：$it" }.orEmpty(),
+                "ROLE_PROMPT" to profile.systemPrompt.trim(),
+                "TASK_PROMPT" to spec.prompt,
+            ),
+        )
     }
 
     private fun buildSummaryMarkdown(outcomes: List<SubagentExecutionOutcome>): String {

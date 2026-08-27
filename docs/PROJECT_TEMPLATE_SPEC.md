@@ -47,7 +47,7 @@ my-template/
 
 - 项目名称必填。
 - 路径可留空；内部空间默认创建到 `/workspace/<项目名称>`。
-- 模板可使用系统派生变量 `projectName`、`appName` 和 `projectPath`。
+- 模板可使用系统派生变量 `projectName`、`appName` 和 `projectPath`；`appName` 若由动态字段提供则优先使用用户输入。
 - `packageName`、`packagePath` 只有在模板清单中声明时才生成和校验；非 Android 模板不依赖 Java 包名。
 
 ## 4. 动态变量
@@ -63,7 +63,7 @@ my-template/
 
 文本内容和相对路径都可使用 `{{variableName}}`，例如 `src/{{moduleName}}/config.json.template`。生成时会替换变量并去掉末尾的 `.template`。
 
-任意需要替换的文本文件都建议添加 `.template` 后缀；常见源码和配置扩展名也会自动按文本处理。Android/Kotlin 包目录可使用 `__PACKAGE_PATH__`。
+任意需要替换的文本文件都建议添加 `.template` 后缀；常见源码和配置扩展名也会自动按文本处理。Android/Kotlin 包目录使用 `TAIXU_PACKAGE_PATH`，创建时会替换为包名对应的目录层级。不要使用以下划线开头的占位目录，否则可能被 Android AAPT 忽略。
 
 生成结束前若仍存在 `{{unknownVariable}}`，创建会失败。所有输出路径都会进行规范化和越界检查。
 
@@ -92,7 +92,32 @@ my-template/
 - 变量通过 `TAIXU_VAR_<大写变量名>` 提供，例如 `packageName` 对应 `TAIXU_VAR_PACKAGENAME`。
 - 任一脚本非零退出会终止创建并显示错误输出。
 
-## 8. 导入、导出与分享
+## 8. 生成结果校验
+
+模板可以自行声明生成后必须满足的条件，不依赖模板 ID 或应用内硬编码：
+
+```json
+{
+  "validation": {
+    "requiredFiles": ["app/src/main/java/TAIXU_PACKAGE_PATH/MainHook.kt"],
+    "forbiddenFiles": ["app/src/main/java/TAIXU_PACKAGE_PATH/LegacyHook.kt"],
+    "contentRules": [
+      {
+        "path": "app/src/main/assets/xposed_init",
+        "equals": "{{packageName}}.MainHook"
+      }
+    ]
+  }
+}
+```
+
+- `requiredFiles`：必须存在的文件。
+- `forbiddenFiles`：不得生成的文件或目录。
+- `contentRules`：支持 `equals`、`contains`、`excludes` 文本规则。
+- 路径和期望内容都支持模板变量及 `TAIXU_PACKAGE_PATH`。
+- 校验在 `afterCreate` 脚本完成后执行，因此脚本可以参与最终工程构造。
+
+## 9. 导入、导出与分享
 
 导入时会校验清单、变量、分类、预览图、脚本路径及 ZIP 安全限制。用户模板安装在应用私有模板目录，不会覆盖内置模板。
 

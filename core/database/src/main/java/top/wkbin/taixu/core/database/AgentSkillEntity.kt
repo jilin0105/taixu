@@ -24,6 +24,7 @@ data class AgentSkillEntity(
     val isBuiltin: Boolean,
     val isImmutable: Boolean,
     val category: String,
+    val resourcePath: String?,
 )
 
 @Dao
@@ -82,6 +83,7 @@ private fun AgentSkillEntity.toModel() = AgentSkill(
     isBuiltin = isBuiltin,
     isImmutable = isImmutable,
     category = category,
+    resourcePath = resourcePath,
 )
 
 private fun AgentSkill.toEntity() = AgentSkillEntity(
@@ -95,4 +97,5 @@ private fun AgentSkill.toEntity() = AgentSkillEntity(
     isBuiltin = isBuiltin,
     isImmutable = isImmutable,
     category = category,
+    resourcePath = resourcePath,
 )

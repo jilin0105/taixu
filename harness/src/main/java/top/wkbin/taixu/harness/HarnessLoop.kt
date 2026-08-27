@@ -41,6 +41,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import top.wkbin.taixu.harness.validation.ToolSchemaValidator
+import top.wkbin.taixu.harness.prompt.PromptAssetLoader
 
 import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.core.database.AgentSkillRepository
@@ -92,6 +93,7 @@ class HarnessLoop @Inject constructor(
     private val promptQueueManager: PromptQueueManager,
     private val compactionManager: CompactionManager,
     private val privilegeManager: PrivilegeManager,
+    private val promptAssets: PromptAssetLoader,
 ) {
     private val loopScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -1223,9 +1225,7 @@ class HarnessLoop @Inject constructor(
         val baseRawTemplate = if (customPromptEnabled && customPrompt.isNotBlank()) {
             customPrompt
         } else {
-            runCatching {
-                context.assets.open("prompts/agent_system.md").bufferedReader().use { it.readText() }
-            }.getOrDefault(FALLBACK_SYSTEM_PROMPT)
+            promptAssets.read("prompts/agent_system.md")
         }
 
         val providerModelId = runCatching { settingsDataStore.providerModel.first() }.getOrDefault("")
@@ -1293,29 +1293,15 @@ class HarnessLoop @Inject constructor(
         )
 
         val toolCallSection = when (toolCallMode) {
-            ToolCallMode.JSON_TEXT -> """
-                |
-                |## 工具调用方式（重要：当前使用 JSON 文本模式）
-                |你无法使用系统级 function calling，必须用**文本标记**调用工具：
-                |- 当需要调用工具时，在回复中直接输出（独占一行，前后不要有解释文字）：
-                |  [[tool_call]]{"name":"工具名","arguments":{...}}[[/tool_call]]
-                |- 参数必须与上方"可用工具 JSON 定义"中的参数一致，缺一不可；
-                |- 一次可连续输出多个 [[tool_call]] 标记，引擎会逐个执行并返回结果；
-                |- 标记后的结果会以【工具 xxx 执行结果】形式出现在后续对话中，你据此继续；
-                |- 不调用工具时，不要输出任何 [[tool_call]] 标记。
-            """.trimMargin()
-            ToolCallMode.DISABLED -> """
-                |
-                |## 工具禁用说明
-                |当前会话已禁用工具调用：请直接回答用户问题，不要尝试调用任何工具（read / write / edit / base 等均不可用）。
-            """.trimMargin()
+            ToolCallMode.JSON_TEXT -> promptAssets.render("prompts/tool_call_json.md")
+            ToolCallMode.DISABLED -> promptAssets.render("prompts/tool_call_disabled.md")
             ToolCallMode.NATIVE -> ""
         }
 
         val thinkingLang = runCatching { settingsDataStore.thinkingLanguage.first() }.getOrDefault("zh")
         val thinkingLanguageSection = when (thinkingLang) {
-            "zh" -> "\n\n## 思考与推理语言强约束 (Thinking Language Policy)\n重要：你的内部思考推导过程（Thinking / Reasoning Process / CoT）必须全程严格使用【中文】进行分析与推导，禁止在思考过程中输出非必要的英文！"
-            "en" -> "\n\n## Thinking Language Policy\nImportant: Your internal reasoning and thinking process must be conducted strictly in English."
+            "zh" -> promptAssets.render("prompts/thinking_language_zh.md")
+            "en" -> promptAssets.render("prompts/thinking_language_en.md")
             else -> ""
         }
 
@@ -1330,42 +1316,39 @@ class HarnessLoop @Inject constructor(
                 "\n\n## Android 宿主权限\n当前已实际获得 Root 权限（UID 0）。可用 host 操作真实 Android。系统设置和软件包管理优先使用 settings_* / package_* 结构化动作；仅在它们无法覆盖 root 专属需求时使用 exec。优先使用可恢复方式；永久删除系统分区内容等不可逆操作必须明确说明风险，工具会要求用户审批。"
         }
 
-        return resolvedTemplate
-            .replace("{{DISTRO_NAME}}", distroName)
-            .replace("{{PKG_MANAGER}}", pkgManager)
-            .replace("{{ACTIVE_SKILLS}}", skillSection)
-            .trim() + installedToolsSection + memorySection + planSection + subagentSection + toolCallSection + workspaceSection + workspaceGuidance + projectContext + privilegeSection + thinkingLanguageSection
+        val basePrompt = if (customPromptEnabled && customPrompt.isNotBlank()) {
+            resolvedTemplate.trim()
+        } else {
+            promptAssets.renderTemplate(
+                path = "prompts/agent_system.md",
+                template = resolvedTemplate,
+                variables = mapOf(
+                    "DISTRO_NAME" to distroName,
+                    "PKG_MANAGER" to pkgManager,
+                    "ACTIVE_SKILLS" to skillSection,
+                ),
+            )
+        }
+        return basePrompt + installedToolsSection + memorySection + planSection + subagentSection + toolCallSection + workspaceSection + workspaceGuidance + projectContext + privilegeSection + thinkingLanguageSection
     }
 
     private suspend fun buildSubagentGuidance(toolCallMode: ToolCallMode): String {
         if (toolCallMode == ToolCallMode.DISABLED) return ""
         val profiles = runCatching { subagentRepository.enabledProfiles() }.getOrDefault(emptyList())
         if (profiles.isEmpty()) {
-            return "\n\n## 子智能体委派\n当前没有启用的子智能体角色，不要调用 invoke_subagent。"
+            return promptAssets.render("prompts/subagent_none.md")
         }
         val autoEnabled = runCatching { subagentRepository.autoDelegationEnabled.first() }.getOrDefault(true)
         val roleList = profiles.joinToString("\n") { profile ->
             "- role=\"${profile.id}\"：${profile.name}。${profile.description}"
         }
-        val triggerPolicy = if (autoEnabled) {
-            """
-                你必须自行判断当前任务是否值得拆分，用户不需要知道工具名称或编写特殊提示词。
-                当任务至少包含两个彼此独立、可以真正并行推进的子任务时，主动调用 invoke_subagent；例如跨模块调研、实现与独立验证、多方案并行评估。
-                简单问答、单点小改动、存在严格前后依赖的步骤不要拆分。不要为了展示能力而委派，也不要把主智能体自己必须完成的整体验收责任完全转交出去。
-            """.trimIndent()
-        } else {
-            "仅当用户明确要求并行处理、分头检查或使用子智能体时调用 invoke_subagent；否则由主智能体直接完成。"
-        }
-        return """
-
-            ## 子智能体自主委派策略
-            $triggerPolicy
-            - 每次最多派发 6 个目标清晰、输出边界明确的子任务。
-            - role 参数必须严格使用下列已启用角色标识，不得自行编造：
-            $roleList
-            - 收到以“【子智能体任务指派】”开头的任务时，你已经是子智能体，严禁再次调用 invoke_subagent，必须直接执行被分配的任务。
-            - 子任务返回后由主智能体整合、解决冲突并继续完成最终交付。
-        """.trimIndent()
+        val triggerPolicy = promptAssets.render(
+            if (autoEnabled) "prompts/subagent_trigger_auto.md" else "prompts/subagent_trigger_manual.md",
+        )
+        return promptAssets.render(
+            "prompts/subagent_guidance.md",
+            mapOf("TRIGGER_POLICY" to triggerPolicy, "ROLE_LIST" to roleList),
+        )
     }
 
     private fun extractMentionedNames(text: String): Set<String> {
@@ -1437,41 +1420,26 @@ class HarnessLoop @Inject constructor(
                 if (toolCallMode == ToolCallMode.JSON_TEXT) "（JSON 文本调用模式）" else ""
         }
         val installedToolNames = installedTools.joinToString(", ") { it.name }.ifBlank { "暂无已安装套件记录" }
-        val typeGuidance = when (projectType) {
-            "Android" -> """
-                ### Android 工程操作规约
-                - 当前工程类型：Android；根目录标记：$markerText。
-                - 修改代码或构建配置时，先用 read 查看 `settings.gradle(.kts)`、`app/build.gradle(.kts)`、`app/src/main/AndroidManifest.xml` 和入口源码；局部修改优先用 edit，需要新文件才用 write。
-                - 首选构建入口：`/opt/taixu/scripts/build_android.sh "$workspacePath" assembleDebug`；也可在工程根目录执行 `./gradlew assembleDebug`。不要调用已移除的 android CLI。
-                - 需要安装到手机时，先确认 APK 真实存在并完成构建，再复制到 `/sdcard/Download/`，然后执行 `taixu-host install-apk /sdcard/Download/<项目名>.apk` 调起宿主安装器；若 `adb devices` 有设备，优先 `adb install -r <apk>`。
-                - 构建失败必须读取完整 Gradle/AAPT2 错误并编辑对应脚本或工程文件修复，不能只汇报“编译失败”。
-            """.trimIndent()
-            "Flutter" -> """
-                ### Flutter 工程操作规约
-                - 当前工程类型：Flutter；根目录标记：$markerText。
-                - 修改前先 read `pubspec.yaml`、`lib/` 和 `android/` 的 Gradle 配置；Dart 代码用 edit/write 修改。
-                - 依赖优先执行 `flutter pub get`；构建入口：`/opt/taixu/scripts/build_flutter.sh "$workspacePath" "apk --debug"`，或 `flutter build apk --debug`。
-                - 安装到手机时，确认 `build/app/outputs/flutter-apk/*.apk` 完整后复制到 `/sdcard/Download/`，再执行 `taixu-host install-apk <apk路径>`；检测到 ADB 后可执行 `adb install -r <apk>`。
-                - 遇到 Android Gradle/AAPT2 错误，检查 `android/gradle.properties`、Android 核心环境和 ARM64 AAPT2，不要反复全量下载 Flutter SDK。
-            """.trimIndent()
-            "Android APK 逆向" -> """
-                ### Android 逆向工程操作规约
-                - 当前工程类型：APK 逆向；根目录标记：$markerText。
-                - 原始 APK 和 `unpacked/` 是分析输入，先 read `apk-info.properties` 与 `REVERSE.md`，不要覆盖原始 APK。
-                - 优先使用 `jadx` 反编译 Java 源码，使用 `apktool` 处理资源/Smali；修改后再用既有脚本回编译、签名并验证。
-            """.trimIndent()
-            else -> """
-                ### 通用工作区操作规约
-                - 当前工程类型：通用工程；根目录标记：$markerText。
-                - 先识别入口文件和项目说明，再选择对应构建命令；修改已有文件优先 edit，新文件使用 write，并在完成后执行最小验证。
-            """.trimIndent()
+        val typeAsset = when (projectType) {
+            "Android" -> "prompts/workspace_android.md"
+            "Flutter" -> "prompts/workspace_flutter.md"
+            "Android APK 逆向" -> "prompts/workspace_reverse.md"
+            else -> "prompts/workspace_general.md"
         }
-        return "\n\n## 关联工作区会话环境与项目指导（自动注入，不依赖 Skill 开关）\n" +
-            "- 工作区路径：$workspacePath\n" +
-            "- 当前 Linux 环境：$distroName，aarch64，Android 私有用户态 PRoot；没有真正的 root/systemd。\n" +
-            "- 当前可用 Harness 工具：$toolNames。\n" +
-            "- 已登记的开发套件：$installedToolNames。已就绪的工具直接调用，避免重复安装。\n" +
-            typeGuidance
+        val typeGuidance = promptAssets.render(
+            typeAsset,
+            mapOf("MARKER_TEXT" to markerText, "WORKSPACE_PATH" to workspacePath),
+        )
+        return promptAssets.render(
+            "prompts/workspace_context.md",
+            mapOf(
+                "WORKSPACE_PATH" to workspacePath,
+                "DISTRO_NAME" to distroName,
+                "TOOL_NAMES" to toolNames,
+                "INSTALLED_TOOL_NAMES" to installedToolNames,
+                "TYPE_GUIDANCE" to typeGuidance,
+            ),
+        )
     }
 
     private suspend fun apiMessages(sessId: String, model: ModelConfig): List<ApiMessage> {
@@ -1985,49 +1953,6 @@ class HarnessLoop @Inject constructor(
         const val RETRY_BACKOFF_SEC = 2L
         const val MAX_STATUS_ARG_LENGTH = 60
 
-        val FALLBACK_SYSTEM_PROMPT = """
-            你是太墟（TaiXu）内置的 Agent Harness——一个运行在 Android 私有 Linux 沙箱（Debian via PRoot）中的 AI 助手。你通过调用工具完成任务：读写用户工作区的文件、在 Linux 环境执行命令、安装软件、排查问题。
-
-            可用工具与使用指南：
-
-            1. read —— 读取文件内容
-               用途：检查文件、查看当前状态、确认现状。
-               指南：优先用 read 而不是 cat / sed。读取路径可用相对路径或以 /workspace/ 开头。若文件不存在或读取失败，用 base 的 ls / find 定位后再读。
-
-            2. write —— 创建或完全覆盖文件
-               用途：写新文件、整体重写。
-               指南：只用于新文件或完整重写；若只想改其中一段，请用 edit。会自动创建父目录。
-
-            3. edit —— 精确文本替换
-               用途：修改已有文件的局部内容。
-               指南：oldText 必须与文件原文逐字精确匹配且唯一。一次调用可传多个替换，但每个 oldText 都不能重叠或嵌套。oldText 尽量短而唯一；若匹配多处会失败——先 read 确认内容，或提供更多上下文再改。对尚未存在的新文件完全不适用，用 write。
-
-            4. base —— 在 Debian Linux 沙箱中执行 shell 命令
-               用途：安装软件（apt-get / npm / pip install）、运行脚本、查看系统状态（文件、进程、网络）、执行任意 bash。
-               返回退出码、stdout、stderr。默认超时由用户设置，可用 timeout_seconds 为单次命令指定 1-3600 秒。若执行前需要某个目录，用参数 cwd 指定；当前会话关联了工作区时，默认在工作区目录执行。
-
-            5. process —— 托管跨工具调用持续运行的后台进程
-               start 时提供稳定 id 和前台运行命令；随后用 status/logs/list/stop 管理。不要在命令中使用 nohup、& 或自行 daemonize，PRoot 子进程必须由 TaiXu 生命周期注册表持有。
-
-            运行环境约束（PRoot 沙箱，务必遵守，不要浪费时间在注定失败的操作上）：
-            - 你运行在 Android 设备上的 PRoot Debian 沙箱中：没有真正的 root 权限。chown/chgrp 改属主、mount、insmod、sysctl 大部分参数、设置 capabilities 等内核级操作会被静默忽略或失败——不要尝试，也不要因为命令返回成功就误以为生效。
-            - 文件权限与属主由 PRoot 模拟。perl 等程序可能因“幽灵”硬链接报错：遇到时改用符号链接（ln -s）替代。锁文件（*.lock、groupadd 的锁机制）在沙箱里可能异常，必要时直接写配置文件或清理残留锁。
-            - dpkg 升级含 setuid 文件的包（util-linux 的 su/mount/umount、login 的 newgrp 等）会卡死在 "unable to securely remove *.dpkg-tmp"：PRoot 下无法删除 setuid 的解包残留。已验证的解法：先 rm 所有 .dpkg-tmp 残留，再 chmod u-s,g-s 降级现存的 setuid 目标文件，然后 dpkg -i 重装。装完后文件会恢复 setuid 标记，下次大版本升级可能再卡，同样处理即可——不要反复重试 dpkg，也不要试图让 setuid 真正生效。
-            - 没有 systemd：服务不会自启，systemctl 不可用。需要常驻进程时必须使用 process 工具托管，并让命令保持前台运行；普通 base 中的 nohup 或 & 无法跨 PRoot 会话存活。
-            - /proc、/sys 部分内容反映的是宿主 Android 系统，不要据此判断 Debian 的状态。
-            - 设备 CPU/IO 弱于服务器：编译、apt upgrade 等操作耗时长属正常现象；重操作前先告知用户预计耗时。
-            - 遇到奇怪的错误（Bad substitution、dpkg -V 报缺文档、权限异常）优先怀疑是沙箱差异而非系统损坏；确认无实际影响后继续，不要反复重试同一命令，也不要试图“修复”沙箱本身。
-            - 工具输出可能被截断：需要完整输出时用 grep/head/tail 截取关键部分，而不是重复执行。
-
-            工作方式（行动优先，直接交付，绝不墨迹）：
-            - 直接行动与代码交付：当用户要求创建项目、编写代码、修改逻辑或配置环境时，直接调用 write / edit 工具创建或修改完整工程文件，立即交付成果！严禁在无必要时反复执行环境探测命令，严禁在未受阻碍时反复向用户询问多余的确认问题。
-            - 敏捷思考：内部推理与思考（thinking 内容）一律使用中文，必须精炼敏捷、直奔关键决策，严禁冗长铺垫与自言自语；理清第一步后立即调用工具行动。
-            - 需要信息时先 read / base 获取事实，不要凭空猜测或编造内容。
-            - 失败时读取真实错误输出并自我纠正（换路径、装依赖、重试）。
-            - 尽量一次完成用户要求：安装或编写完成后汇报真实结果。
-            - 用简洁中文汇报；不空话客套；绝不复述或暴露 API Key / Token 等机密。
-            - 仅在涉及不可逆破坏性操作（如 rm -rf / 等）时才向用户确认，常规开发任务直接执行！
-        """.trimIndent()
     }
 }
 

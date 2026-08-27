@@ -342,6 +342,8 @@ fun AgentEcoSettingsScreen(
     onOpenLocalLlm: () -> Unit,
     onOpenToolCenter: () -> Unit,
     onOpenAgentSettings: () -> Unit,
+    onOpenSubagentSettings: () -> Unit,
+    onOpenSkillSettings: () -> Unit,
     onOpenMcpSettings: () -> Unit,
     onOpenQuickPhrases: () -> Unit,
     onOpenStats: () -> Unit,
@@ -415,13 +417,11 @@ fun AgentEcoSettingsScreen(
                         onClick = onOpenToolCenter,
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    SettingsRow(
-                        icon = RuntimeIconName.Bot,
-                        title = "Agent 智能体管理",
-                        subtitle = "思考流呈现、上下文压缩阈值与技能插件",
-                        value = "${skills.count { it.isEnabled }} 个技能",
-                        onClick = onOpenAgentSettings,
-                    )
+                    SettingsRow(icon = RuntimeIconName.Bot, title = "Agent 执行与上下文", subtitle = "思考流、上下文压缩、工具调用限制与系统提示词", onClick = onOpenAgentSettings)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(icon = RuntimeIconName.Bot, title = "子智能体角色", subtitle = "自动委派策略与可用的子智能体角色", onClick = onOpenSubagentSettings)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(icon = RuntimeIconName.Sparkles, title = "Skills 与插件", subtitle = "管理 Skill 提示词、脚本包与运行时插件", value = "${skills.count { it.isEnabled }} 个技能", onClick = onOpenSkillSettings)
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     SettingsRow(
                         icon = RuntimeIconName.Network,
@@ -2214,6 +2214,27 @@ private fun ModelEditor(
 
     // 自定义请求头
     var customHeaders by remember(modelId) { mutableStateOf(existing?.customHeaders.orEmpty()) }
+
+    LaunchedEffect(providerId, url, autoDiscoverEnabled) {
+        if (!autoDiscoverEnabled) return@LaunchedEffect
+        delay(600)
+        autoDiscoverEnabled = false
+        if (ProviderEndpointPolicy.isSafeBaseUrl(url)) {
+            discover(providerId, url, combinedKey)
+            selectFirstDiscoveredModel = true
+        }
+    }
+
+    LaunchedEffect(discovered, selectFirstDiscoveredModel) {
+        if (selectFirstDiscoveredModel && discovered.isNotEmpty()) {
+            model = discovered.first()
+            selectFirstDiscoveredModel = false
+        }
+    }
+
+    LaunchedEffect(error) {
+        if (error != null) selectFirstDiscoveredModel = false
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),

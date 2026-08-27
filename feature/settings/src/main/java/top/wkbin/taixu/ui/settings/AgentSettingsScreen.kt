@@ -54,6 +54,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.model.AgentPlugin
@@ -66,9 +68,12 @@ import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
 import top.wkbin.taixu.ui.components.SectionHeader
 
+enum class AgentSettingsCategory { EXECUTION, SUBAGENTS, SKILLS }
+
 @Composable
 fun AgentSettingsScreen(
     onBack: () -> Unit,
+    category: AgentSettingsCategory = AgentSettingsCategory.EXECUTION,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val thinkingExpanded by viewModel.thinkingExpanded.collectAsStateWithLifecycle()
@@ -94,13 +99,18 @@ fun AgentSettingsScreen(
     var editingSubagent by remember { mutableStateOf<AgentSubagent?>(null) }
     var showSubagentDialog by remember { mutableStateOf(false) }
     var deletingSubagent by remember { mutableStateOf<AgentSubagent?>(null) }
+    val skillArchivePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(viewModel::importSkillArchive) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             RuntimeTopBar(
-                title = "Agent 智能体管理与配置",
-                statusText = "思考流、子智能体、Skill 与插件",
+                title = when (category) {
+                    AgentSettingsCategory.EXECUTION -> "Agent 执行与上下文"
+                    AgentSettingsCategory.SUBAGENTS -> "子智能体角色"
+                    AgentSettingsCategory.SKILLS -> "Skills 与插件"
+                },
+                statusText = "按领域独立管理 Agent 能力",
                 onBack = onBack,
             )
         },
@@ -308,6 +318,14 @@ fun AgentSettingsScreen(
             }
             item {
                 AgentBlockTitle("技能管理")
+            }
+            item {
+                OutlinedButton(onClick = { skillArchivePicker.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")) }, modifier = Modifier.fillMaxWidth().height(44.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        RuntimeIcon(RuntimeIconName.FolderDownload, Modifier.size(16.dp))
+                        Text("从 ZIP 导入 Skill（支持 scripts/ 执行脚本）")
+                    }
+                }
             }
             item {
                 Button(

@@ -26,7 +26,7 @@
     </section>
 
     <div class="docs-layout">
-      <aside class="docs-toc"><b>目录</b><a href="#workflow">工作流程</a><a href="#format">目录结构</a><a href="#manifest">清单字段</a><a href="#variables">动态字段</a><a href="#files">文件与路径</a><a href="#preview">预览图</a><a href="#hooks">构造脚本</a><a href="#package">打包导入</a><a href="#example">完整示例</a><a href="#checklist">发布检查</a></aside>
+      <aside class="docs-toc"><b>目录</b><a href="#workflow">工作流程</a><a href="#format">目录结构</a><a href="#manifest">清单字段</a><a href="#variables">动态字段</a><a href="#files">文件与路径</a><a href="#preview">预览图</a><a href="#hooks">构造脚本</a><a href="#validation">结果校验</a><a href="#package">打包导入</a><a href="#example">完整示例</a><a href="#checklist">发布检查</a></aside>
       <article class="docs-content">
         <section id="workflow" class="reveal">
           <h2>01 / 从工程到模板</h2>
@@ -45,7 +45,7 @@
 │   └── after-create.sh
 └── app/
     ├── build.gradle.kts
-    └── src/main/java/__PACKAGE_PATH__/
+    └── src/main/java/TAIXU_PACKAGE_PATH/
         └── MainActivity.kt.template</code></pre>
           <ul><li>最多 5000 个 ZIP 条目。</li><li>单文件最大 16 MiB。</li><li>总解压体积最大 128 MiB。</li><li>绝对路径、Windows 盘符和包含 <code>..</code> 的越界路径会被拒绝。</li></ul>
         </section>
@@ -67,7 +67,7 @@
   "previewImage": "preview.png",
   "variables": []
 }</code></pre>
-          <table><thead><tr><th>字段</th><th>当前约束</th></tr></thead><tbody><tr><td><code>schemaVersion</code></td><td>当前固定为 <code>1</code>。</td></tr><tr><td><code>id</code></td><td>小写字母和数字，可用点、下划线、短横线分隔；<code>builtin.</code> 为保留前缀。</td></tr><tr><td><code>projectType</code></td><td><code>ANDROID</code>、<code>FLUTTER</code> 或 <code>GENERAL</code>。</td></tr><tr><td><code>category</code></td><td>模板选择页的分组；<code>sortOrder</code> 越小越靠前。</td></tr><tr><td><code>previewImage</code></td><td>可选的单张 1:1、270×270 预览图。</td></tr><tr><td><code>variables</code></td><td>声明动态表单和所有模板变量。</td></tr><tr><td><code>hooks</code></td><td>可选的前置、后置构造脚本。</td></tr></tbody></table>
+          <table><thead><tr><th>字段</th><th>当前约束</th></tr></thead><tbody><tr><td><code>schemaVersion</code></td><td>当前固定为 <code>1</code>。</td></tr><tr><td><code>id</code></td><td>小写字母和数字，可用点、下划线、短横线分隔；<code>builtin.</code> 为保留前缀。</td></tr><tr><td><code>projectType</code></td><td><code>ANDROID</code>、<code>FLUTTER</code> 或 <code>GENERAL</code>。</td></tr><tr><td><code>category</code></td><td>模板选择页的分组；<code>sortOrder</code> 越小越靠前。</td></tr><tr><td><code>previewImage</code></td><td>可选的单张 1:1、270×270 预览图。</td></tr><tr><td><code>variables</code></td><td>声明动态表单和所有模板变量。</td></tr><tr><td><code>hooks</code></td><td>可选的前置、后置构造脚本。</td></tr><tr><td><code>validation</code></td><td>模板自带的生成结果校验规则。</td></tr></tbody></table>
           <p>清单采用严格解析，未知字段不会被忽略。机器可读的 JSON Schema 可从项目仓库直接获取。</p>
         </section>
 
@@ -96,7 +96,7 @@
 ]</code></pre>
           <p><code>prompt: true</code> 会在创建工程的最后一步自动渲染控件。支持 <code>TEXT</code>、<code>MULTILINE</code>、<code>NUMBER</code>、<code>BOOLEAN</code>、<code>SELECT</code> 和 <code>SECRET</code>。</p>
           <ul><li>变量名必须匹配 <code>^[A-Za-z][A-Za-z0-9_]*$</code>，且不能重复。</li><li>隐藏必填变量必须提供默认值，系统派生变量除外。</li><li><code>SELECT</code> 必须有不重复的选项；可选字段允许留空。</li><li>项目名称与创建路径由工坊统一填写，不应伪装成动态字段。</li></ul>
-          <p>系统提供 <code>projectName</code>、<code>appName</code>、<code>projectPath</code>。只有模板声明 <code>packageName</code> 或 <code>packagePath</code> 时，才会启用 Java 包名规则。</p>
+          <p>系统提供 <code>projectName</code>、<code>appName</code>、<code>projectPath</code>；如果模板把 <code>appName</code> 设为动态字段，则优先使用用户输入。只有模板声明 <code>packageName</code> 或 <code>packagePath</code> 时，才会启用 Java 包名规则。</p>
         </section>
 
         <section id="files" class="reveal">
@@ -109,7 +109,7 @@
   "mode": "{{buildMode}}"
 }</code></pre>
           <p>生成时会替换变量并移除末尾的 <code>.template</code>。任意需要替换的文本都建议使用该后缀；Java、Kotlin、Dart、JSON、YAML、TOML、Shell、Python、JavaScript、C/C++ 等常见文本格式也会自动识别。</p>
-          <p>包目录可写成 <code>__PACKAGE_PATH__</code>。变量生成的路径会再次规范化，越界路径会被拒绝。若文件中残留未声明的 <code>{{unknownVariable}}</code>，创建会直接失败。</p>
+          <p>包目录使用 <code>TAIXU_PACKAGE_PATH</code>，创建时会替换为包名对应的目录层级。不要使用以下划线开头的占位目录，否则可能被 Android AAPT 忽略。变量生成的路径会再次规范化，越界路径会被拒绝。若文件中残留未声明的 <code>{{unknownVariable}}</code>，创建会直接失败。</p>
         </section>
 
         <section id="preview" class="reveal">
@@ -132,8 +132,24 @@ mkdir -p generated
 printf '%s\n' "$TAIXU_VAR_PROJECTNAME" &gt; generated/project-name.txt</code></pre>
         </section>
 
+        <section id="validation" class="reveal">
+          <h2>08 / 模板自带结果校验</h2>
+          <pre><code>"validation": {
+  "requiredFiles": ["app/src/main/java/TAIXU_PACKAGE_PATH/MainHook.kt"],
+  "forbiddenFiles": ["app/src/main/java/TAIXU_PACKAGE_PATH/LegacyHook.kt"],
+  "contentRules": [
+    {
+      "path": "app/src/main/assets/xposed_init",
+      "equals": "{{packageName}}.MainHook"
+    }
+  ]
+}</code></pre>
+          <p><code>requiredFiles</code> 声明必需文件，<code>forbiddenFiles</code> 声明禁止产物，<code>contentRules</code> 支持 <code>equals</code>、<code>contains</code> 和 <code>excludes</code>。路径与内容均可使用模板变量。</p>
+          <p class="callout">校验在 <code>afterCreate</code> 完成后执行，规则属于模板本身，与内置 ID 无关；模板改名、导出和重新导入后行为保持一致。</p>
+        </section>
+
         <section id="package" class="reveal">
-          <h2>08 / 打包、导入与分享</h2>
+          <h2>09 / 打包、导入与分享</h2>
           <h3>Windows PowerShell</h3>
           <pre><code>Compress-Archive `
   -Path .\my-android-template\* `
@@ -146,7 +162,7 @@ zip -r ../my-android-template.zip .</code></pre>
         </section>
 
         <section id="example" class="reveal">
-          <h2>09 / 一个完整的无包名模板</h2>
+          <h2>10 / 一个完整的无包名模板</h2>
           <p><code>GENERAL</code> 模板不依赖 Android 包名：</p>
           <pre><code>{
   "schemaVersion": 1,
@@ -169,7 +185,7 @@ zip -r ../my-android-template.zip .</code></pre>
         </section>
 
         <section id="checklist" class="reveal">
-          <h2>10 / 发布前检查</h2>
+          <h2>11 / 发布前检查</h2>
           <ul><li>清单可通过 v1 JSON Schema，且没有未知字段。</li><li>ID 未使用 <code>builtin.</code>，变量名与分类 ID 合法且不重复。</li><li>项目名称和路径没有被声明成动态字段。</li><li>所有文本占位符均已声明，路径变量不会产生越界。</li><li>单张预览图符合 1:1、270×270、格式和体积限制。</li><li>脚本位于指定目录，不包含密钥，并能在 60 秒内结束。</li><li>在全新目录中完成导入、表单填写、创建、导出和重新导入。</li><li>GENERAL 模板已确认不会被错误要求填写 Java 包名。</li></ul>
           <div class="hero-actions">
             <a class="button button-primary" href="https://github.com/wkbin/taixu/blob/main/docs/PROJECT_TEMPLATE_SPEC.md" target="_blank" rel="noreferrer">阅读完整规范 <span>↗</span></a>

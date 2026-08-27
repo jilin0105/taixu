@@ -51,15 +51,10 @@ class ProjectTemplateEngine @Inject constructor(
         }
 
         fun outputPath(relativePath: String): String {
-            val compatiblePath = when {
-                id == ANDROID_COMPOSE_ID && relativePath == "app/src/main/java/MainActivity.kt.template" ->
-                    "app/src/main/java/__PACKAGE_PATH__/MainActivity.kt.template"
-                id == FLUTTER_ID && relativePath == "android/app/src/main/kotlin/MainActivity.kt.template" ->
-                    "android/app/src/main/kotlin/__PACKAGE_PATH__/MainActivity.kt.template"
-                else -> relativePath
-            }
+            val packagePath = resolvedValues["packagePath"].orEmpty()
             return replaceVariables(
-                compatiblePath.replace("__PACKAGE_PATH__", resolvedValues["packagePath"].orEmpty()),
+                relativePath
+                    .replace("TAIXU_PACKAGE_PATH", packagePath),
             ).removeSuffix(".template")
         }
 
@@ -81,9 +76,32 @@ class ProjectTemplateEngine @Inject constructor(
             } else target.writeBytes(bytes)
         }
 
-        source.files().forEach { relativePath -> write(relativePath, source.read(relativePath)) }
-        validateOutput(id, projectDir, resolvedValues["packageName"].orEmpty())
+        val sourceFiles = source.files().toList()
+        val validationPaths = manifest.validation.requiredFiles + manifest.validation.forbiddenFiles +
+            manifest.validation.contentRules.map { it.path }
+        require(
+            (sourceFiles + validationPaths).none { "TAIXU_PACKAGE_PATH" in it } ||
+                resolvedValues["packagePath"].orEmpty().isNotBlank(),
+        ) { "模板使用了 TAIXU_PACKAGE_PATH，但没有声明 packageName 或 packagePath" }
+        sourceFiles.forEach { relativePath -> write(relativePath, source.read(relativePath)) }
         return manifest
+    }
+
+    fun validateMaterialized(id: String, projectDir: File, values: Map<String, String>) {
+        val manifest = inspect(id)
+        val resolvedValues = resolvedValues(manifest, values)
+        validateVariables(manifest, resolvedValues)
+        fun replaceVariables(text: String): String {
+            var result = text
+            resolvedValues.forEach { (name, value) -> result = result.replace("{{$name}}", value) }
+            val unresolved = PLACEHOLDER.find(result)?.value
+            require(unresolved == null) { "模板包含未赋值变量：$unresolved" }
+            return result
+        }
+        fun outputPath(relativePath: String): String = replaceVariables(
+            relativePath.replace("TAIXU_PACKAGE_PATH", resolvedValues["packagePath"].orEmpty()),
+        ).removeSuffix(".template")
+        validateOutput(manifest, projectDir, ::outputPath, ::replaceVariables)
     }
 
     fun readHook(id: String, relativePath: String): ByteArray {
@@ -138,26 +156,38 @@ class ProjectTemplateEngine @Inject constructor(
             }.getOrDefault(false)
         } ?: error("项目模板不可用：$id")
 
-    private fun validateOutput(id: String, projectDir: File, packageName: String) {
-        val packagePath = packageName.replace('.', File.separatorChar)
-        when (id) {
-            ANDROID_COMPOSE_ID -> require(File(projectDir, "app/src/main/java/$packagePath/MainActivity.kt").isFile) {
-                "Android 模板缺少 MainActivity.kt"
+    private fun validateOutput(
+        manifest: ProjectTemplateManifest,
+        projectDir: File,
+        outputPath: (String) -> String,
+        replaceVariables: (String) -> String,
+    ) {
+        fun validatedFile(relativePath: String): File {
+            val file = File(projectDir, outputPath(relativePath)).canonicalFile
+            require(file.path.startsWith(projectDir.canonicalPath + File.separator)) {
+                "模板校验路径越界：$relativePath"
             }
-            ANDROID_NO_ACTIVITY_ID -> require(
-                "<activity" !in File(projectDir, "app/src/main/AndroidManifest.xml").readText(Charsets.UTF_8),
-            ) { "No Activity 模板包含了 Activity 启动入口" }
-            ANDROID_XPOSED_ID -> {
-                require(File(projectDir, "app/src/main/java/$packagePath/MainHook.kt").isFile) {
-                    "Xposed 模板缺少 MainHook.kt"
-                }
-                require(
-                    File(projectDir, "app/src/main/assets/xposed_init").readText(Charsets.UTF_8).trim() ==
-                        "$packageName.MainHook",
-                ) { "Xposed 模板入口声明无效" }
+            return file
+        }
+        manifest.validation.requiredFiles.forEach { relativePath ->
+            require(validatedFile(relativePath).isFile) { "模板缺少必需文件：${outputPath(relativePath)}" }
+        }
+        manifest.validation.forbiddenFiles.forEach { relativePath ->
+            require(!validatedFile(relativePath).exists()) { "模板生成了禁止文件：${outputPath(relativePath)}" }
+        }
+        manifest.validation.contentRules.forEach { rule ->
+            val relativePath = outputPath(rule.path)
+            val file = validatedFile(rule.path)
+            require(file.isFile) { "模板内容校验文件不存在：$relativePath" }
+            val content = file.readText(Charsets.UTF_8)
+            if (rule.equals.isNotEmpty()) {
+                require(content.trim() == replaceVariables(rule.equals)) { "模板文件内容不符合要求：$relativePath" }
             }
-            FLUTTER_ID -> require(File(projectDir, "android/app/src/main/kotlin/$packagePath/MainActivity.kt").isFile) {
-                "Flutter 模板缺少 MainActivity.kt"
+            rule.contains.forEach { expected ->
+                require(replaceVariables(expected) in content) { "模板文件缺少必需内容：$relativePath" }
+            }
+            rule.excludes.forEach { forbidden ->
+                require(replaceVariables(forbidden) !in content) { "模板文件包含禁止内容：$relativePath" }
             }
         }
     }
@@ -197,10 +227,6 @@ class ProjectTemplateEngine @Inject constructor(
     }
 
     companion object {
-        const val ANDROID_COMPOSE_ID = "builtin.android-compose"
-        const val ANDROID_NO_ACTIVITY_ID = "builtin.android-no-activity"
-        const val ANDROID_XPOSED_ID = "builtin.android-xposed"
-        const val FLUTTER_ID = "builtin.flutter"
         private val PLACEHOLDER = Regex("\\{\\{[A-Za-z][A-Za-z0-9_]*\\}\\}")
         private val WINDOWS_ABSOLUTE_PATH = Regex("^[A-Za-z]:/")
         private val TEXT_EXTENSIONS = setOf(

@@ -20,6 +20,7 @@ import top.wkbin.taixu.harness.effects.ToolReplayPolicy
 import top.wkbin.taixu.harness.operation.OperationCoordinator
 import top.wkbin.taixu.harness.session.SessionTreeStore
 import top.wkbin.taixu.harness.validation.ToolSchemaValidator
+import top.wkbin.taixu.harness.prompt.PromptAssetLoader
 
 data class SubagentLaneResult(
     val success: Boolean,
@@ -36,6 +37,7 @@ data class SubagentLaneResult(
  */
 @Singleton
 class SubagentLaneRunner @Inject constructor(
+    private val promptAssets: PromptAssetLoader,
     private val providerClient: ProviderClient,
     private val toolExecutor: Provider<ToolExecutor>,
     private val treeStore: SessionTreeStore,
@@ -130,7 +132,8 @@ class SubagentLaneRunner @Inject constructor(
     }
 
     private suspend fun providerMessages(sessionId: String, laneName: String): List<ApiMessage> = buildList {
-        add(ApiMessage(role = "system", content = "你是隔离 Lane 中运行的子智能体。聚焦指派任务，不得派发更多子智能体。"))
+        val systemPrompt = promptAssets.render("prompts/subagent_lane_system.md")
+        add(ApiMessage(role = "system", content = systemPrompt))
         treeStore.load(sessionId, laneName).forEach { message ->
             if (message !is CapabilityEvent) add(HarnessApiMapper.toApiMessage(message))
         }

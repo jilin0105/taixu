@@ -66,6 +66,8 @@ sealed interface AppDestination : NavKey
 @Serializable data object SystemDevSettingsDestination : AppDestination
 @Serializable data object AboutCommunityDestination : AppDestination
 @Serializable data object AgentSettingsDestination : AppDestination
+@Serializable data object AgentSubagentSettingsDestination : AppDestination
+@Serializable data object AgentSkillSettingsDestination : AppDestination
 @Serializable data object McpSettingsDestination : AppDestination
 @Serializable data object ToolCenterDestination : AppDestination
 @Serializable data class ToolDetailDestination(val toolId: String) : AppDestination
@@ -219,6 +221,8 @@ fun TaiXuNavHost() {
                     onOpenLocalLlm = { settingsStack.push(LocalLlmDestination) },
                     onOpenToolCenter = { settingsStack.push(ToolCenterDestination) },
                     onOpenAgentSettings = { settingsStack.push(AgentSettingsDestination) },
+                    onOpenSubagentSettings = { settingsStack.push(AgentSubagentSettingsDestination) },
+                    onOpenSkillSettings = { settingsStack.push(AgentSkillSettingsDestination) },
                     onOpenMcpSettings = { settingsStack.push(McpSettingsDestination) },
                     onOpenQuickPhrases = { settingsStack.push(QuickPhrasesDestination) },
                     onOpenStats = { settingsStack.push(StatsDestination) },
@@ -258,8 +262,15 @@ fun TaiXuNavHost() {
             entry<AgentSettingsDestination> {
                 AgentSettingsScreen(
                     onBack = ::popBack,
+                    category = top.wkbin.taixu.ui.settings.AgentSettingsCategory.EXECUTION,
                     viewModel = settingsViewModel,
                 )
+            }
+            entry<AgentSubagentSettingsDestination> {
+                AgentSettingsScreen(onBack = ::popBack, category = top.wkbin.taixu.ui.settings.AgentSettingsCategory.SUBAGENTS, viewModel = settingsViewModel)
+            }
+            entry<AgentSkillSettingsDestination> {
+                AgentSettingsScreen(onBack = ::popBack, category = top.wkbin.taixu.ui.settings.AgentSettingsCategory.SKILLS, viewModel = settingsViewModel)
             }
             entry<McpSettingsDestination> {
                 top.wkbin.taixu.ui.settings.McpSettingsScreen(

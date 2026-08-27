@@ -14,6 +14,8 @@ data class AgentSkill(
     val isBuiltin: Boolean = true,
     val isImmutable: Boolean = false,
     val category: String = "通用",
+    /** 私有 Skill 包解压目录；为空表示仅包含提示词。 */
+    val resourcePath: String? = null,
 )
 
 object BuiltinSkills {

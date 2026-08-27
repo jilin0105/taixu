@@ -13,6 +13,7 @@ import top.wkbin.taixu.core.common.result.ErrorCode
 import top.wkbin.taixu.core.database.WorkspaceRepository
 import top.wkbin.taixu.core.database.WorkspaceEntity
 import top.wkbin.taixu.template.ProjectTemplateEngine
+import top.wkbin.taixu.template.TemplateProjectType
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import java.io.File
 import java.util.UUID
@@ -45,6 +46,7 @@ enum class ProjectType {
 enum class ProjectImportSource {
     LOCAL_ARCHIVE,
     GITHUB,
+    TEMPLATE,
 }
 
 enum class GitTransport {
@@ -59,20 +61,12 @@ data class ProjectArchiveSource(
 
 enum class ProjectTemplate {
     EMPTY,
-    ANDROID_COMPOSE,
-    ANDROID_NO_ACTIVITY,
-    ANDROID_XPOSED,
-    FLUTTER,
     APK_REVERSE,
     GIT_IMPORT;
 
     val displayName: String
         get() = when (this) {
             EMPTY -> "空工程 (Empty)"
-            ANDROID_COMPOSE -> "Jetpack Compose"
-            ANDROID_NO_ACTIVITY -> "No Activity"
-            ANDROID_XPOSED -> "Xposed"
-            FLUTTER -> "Flutter 跨平台"
             APK_REVERSE -> "APK 逆向"
             GIT_IMPORT -> "从 Git 导入"
         }
@@ -157,8 +151,6 @@ class WorkspaceManager @Inject constructor(
 
     suspend fun listProjects(): List<WorkspaceProject> = withContext(Dispatchers.IO) {
         pathManager.workspaceDir.mkdirs()
-        // 自动播种内置开箱即用示例工程，直接复用项目模板文件
-        ensureBuiltinSamples()
         // 目录为准；缺失的目录从 Room 补录
         val known = workspaceDao.listAll().associateBy { it.name }
         val knownPaths = known.values.mapNotNull { runCatching { File(it.path).canonicalPath }.getOrNull() }.toSet()
@@ -187,63 +179,6 @@ class WorkspaceManager @Inject constructor(
             .filter { entity -> File(entity.path).isDirectory }
             .sortedBy { it.name.lowercase() }
             .mapNotNull(::projectFromEntity)
-    }
-
-    /**
-     * 首次启动或工作区为空时，基于内置项目模板播种两套开箱即用示例工程：
-     *  - `android-demo`：Jetpack Compose 基础示例
-     *  - `flutter-demo`：Flutter 跨平台示例
-     *
-     * 直接复用 [ProjectTemplateEngine] 物化模板文件，与用户手动从模板创建工程
-     * 的产物完全一致，避免在 Kotlin 源码里硬编码模板内容。
-     */
-    private suspend fun ensureBuiltinSamples() {
-        runCatching {
-            pathManager.workspaceDir.mkdirs()
-            seedSampleProject(
-                dirName = "android-demo",
-                templateId = ProjectTemplateEngine.ANDROID_COMPOSE_ID,
-                values = mapOf(
-                    "projectName" to "android-demo",
-                    "appName" to "TaiXu Android Demo",
-                    "packageName" to "com.example.taixudemo",
-                    "packagePath" to "com/example/taixudemo",
-                ),
-            )
-            seedSampleProject(
-                dirName = "flutter-demo",
-                templateId = ProjectTemplateEngine.FLUTTER_ID,
-                values = mapOf(
-                    "projectName" to "flutter-demo",
-                    "appName" to "TaiXu Flutter Demo",
-                    "flutterProjectName" to "flutter_demo",
-                    "packageName" to "com.example.flutterdemo",
-                    "packagePath" to "com/example/flutterdemo",
-                ),
-            )
-        }
-    }
-
-    private suspend fun seedSampleProject(
-        dirName: String,
-        templateId: String,
-        values: Map<String, String>,
-    ) {
-        val projectDir = File(pathManager.workspaceDir, dirName)
-        if (projectDir.exists() && projectDir.listFiles()?.isNotEmpty() == true) return
-        projectDir.mkdirs()
-        projectTemplateEngine.materialize(templateId, projectDir, values)
-        // gradlew 需要可执行权限才能在终端直接运行
-        File(projectDir, "gradlew").takeIf { it.isFile }?.setExecutable(true)
-        File(projectDir, "android/gradlew").takeIf { it.isFile }?.setExecutable(true)
-        workspaceDao.upsert(
-            WorkspaceEntity(
-                name = dirName,
-                path = projectDir.absolutePath,
-                createdAt = System.currentTimeMillis(),
-                ownsDirectory = false,
-            ),
-        )
     }
 
     suspend fun createProject(
@@ -296,15 +231,7 @@ class WorkspaceManager @Inject constructor(
 
             // 模板初始化处理
             // APK 逆向模板：包名无需用户输入，由导入的安装包决定（无则留空）
-            val resolvedTemplateId = templateId.ifBlank {
-                when (template) {
-                    ProjectTemplate.ANDROID_COMPOSE -> ProjectTemplateEngine.ANDROID_COMPOSE_ID
-                    ProjectTemplate.ANDROID_NO_ACTIVITY -> ProjectTemplateEngine.ANDROID_NO_ACTIVITY_ID
-                    ProjectTemplate.ANDROID_XPOSED -> ProjectTemplateEngine.ANDROID_XPOSED_ID
-                    ProjectTemplate.FLUTTER -> ProjectTemplateEngine.FLUTTER_ID
-                    else -> ""
-                }
-            }
+            val resolvedTemplateId = templateId
             val resolvedManifest = resolvedTemplateId.takeIf(String::isNotBlank)?.let(projectTemplateEngine::inspect)
             val needsPackageName = resolvedManifest?.variables.orEmpty().any {
                 it.name == "packageName" || it.name == "packagePath"
@@ -320,19 +247,23 @@ class WorkspaceManager @Inject constructor(
                 effectivePackage = cleanPkg
             }
             if (resolvedTemplateId.isNotBlank() && resolvedManifest != null) {
-                val values = projectTemplateEngine.resolvedValues(
-                    resolvedManifest,
-                    builtinTemplateValues(safeName, effectivePackage, templateVariables)
-                        .let { standardValues ->
-                            if (needsPackageName) standardValues else standardValues - setOf("packageName", "packagePath")
-                        } + mapOf(
-                        "projectPath" to linuxPathFor(directory),
-                        "flutterProjectName" to safeName.lowercase()
-                            .replace(Regex("[^a-z0-9_]+"), "_")
-                            .trim('_')
-                            .ifBlank { "flutter_app" },
-                    ),
-                )
+                val suppliedValues = templateVariables.toMutableMap().apply {
+                    this["projectName"] = safeName
+                    this["projectPath"] = linuxPathFor(directory)
+                    putIfAbsent("appName", safeName)
+                    putIfAbsent(
+                        "flutterProjectName",
+                        safeName.lowercase().replace(Regex("[^a-z0-9_]+"), "_").trim('_').ifBlank { "flutter_app" },
+                    )
+                    if (needsPackageName) {
+                        this["packageName"] = effectivePackage
+                        this["packagePath"] = effectivePackage.replace('.', '/')
+                    } else {
+                        remove("packageName")
+                        remove("packagePath")
+                    }
+                }
+                val values = projectTemplateEngine.resolvedValues(resolvedManifest, suppliedValues)
                 val hasScripts = resolvedManifest.hooks.beforeCreate.isNotBlank() || resolvedManifest.hooks.afterCreate.isNotBlank()
                 require(!hasScripts || trustTemplateScripts) { "该模板包含构造脚本，请先查看并明确授权" }
                 if (resolvedManifest.hooks.beforeCreate.isNotBlank()) {
@@ -358,6 +289,16 @@ class WorkspaceManager @Inject constructor(
                         values,
                     )
                 }
+                projectTemplateEngine.validateMaterialized(resolvedTemplateId, directory, values)
+                writeProjectTypeMetadata(
+                    directory = directory,
+                    type = when (resolvedManifest.projectType) {
+                        TemplateProjectType.ANDROID -> ProjectType.ANDROID
+                        TemplateProjectType.FLUTTER -> ProjectType.FLUTTER
+                        TemplateProjectType.GENERAL -> ProjectType.GENERAL
+                    },
+                    source = ProjectImportSource.TEMPLATE,
+                )
             } else when (template) {
                 ProjectTemplate.APK_REVERSE -> {
                     val imported = importApkForReverse(directory, safeName, apkSource)
@@ -368,11 +309,6 @@ class WorkspaceManager @Inject constructor(
                 }
                 ProjectTemplate.GIT_IMPORT -> cloneGitRepository(directory, gitUrl, cleanupOnFailure = !existed)
                 ProjectTemplate.EMPTY -> { /* 保持空目录 */ }
-                ProjectTemplate.ANDROID_COMPOSE,
-                ProjectTemplate.ANDROID_NO_ACTIVITY,
-                ProjectTemplate.ANDROID_XPOSED,
-                ProjectTemplate.FLUTTER,
-                -> error("内置模板标识解析失败")
             }
 
             val ownsDirectory = storage == WorkspaceStorage.INTERNAL && !existed
@@ -753,17 +689,6 @@ class WorkspaceManager @Inject constructor(
     }.getOrNull()
 
     private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
-
-    private fun builtinTemplateValues(
-        name: String,
-        packageName: String,
-        templateVariables: Map<String, String>,
-    ): Map<String, String> = templateVariables + mapOf(
-        "projectName" to name,
-        "appName" to name,
-        "packageName" to packageName,
-        "packagePath" to packageName.replace('.', '/'),
-    )
 
     private suspend fun executeTemplateHook(
         templateId: String,

@@ -15,7 +15,8 @@
     "category": { "$ref": "#/$defs/category" },
     "previewImage": { "type": "string", "default": "", "description": "Optional 270x270 (1:1) image path inside the template package" },
     "variables": { "type": "array", "items": { "$ref": "#/$defs/variable" }, "default": [] },
-    "hooks": { "$ref": "#/$defs/hooks" }
+    "hooks": { "$ref": "#/$defs/hooks" },
+    "validation": { "$ref": "#/$defs/validation" }
   },
   "$defs": {
     "category": {
@@ -56,6 +57,26 @@
       "properties": {
         "beforeCreate": { "type": "string", "pattern": "^(|template-hooks/[^/].*)$", "default": "" },
         "afterCreate": { "type": "string", "pattern": "^(|template-hooks/[^/].*)$", "default": "" }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requiredFiles": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true, "default": [] },
+        "forbiddenFiles": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true, "default": [] },
+        "contentRules": { "type": "array", "items": { "$ref": "#/$defs/contentRule" }, "default": [] }
+      }
+    },
+    "contentRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "equals": { "type": "string", "default": "" },
+        "contains": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "excludes": { "type": "array", "items": { "type": "string" }, "default": [] }
       }
     }
   }
