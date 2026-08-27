@@ -52,10 +52,3 @@ val MIGRATION_31_32 = object : Migration(31, 32) {
         db.execSQL("ALTER TABLE harness_models ADD COLUMN responseApiEnabled INTEGER NOT NULL DEFAULT 0")
     }
 }
-
-/** 为可导入 Skill 记录原始资源包路径。 */
-val MIGRATION_32_33 = object : Migration(32, 33) {
-    override fun migrate(db: SupportSQLiteDatabase) {
-        db.execSQL("ALTER TABLE agent_skills ADD COLUMN resourcePath TEXT")
-    }
-}

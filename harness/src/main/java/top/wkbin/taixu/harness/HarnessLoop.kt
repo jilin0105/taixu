@@ -1316,20 +1316,35 @@ class HarnessLoop @Inject constructor(
                 "\n\n## Android 宿主权限\n当前已实际获得 Root 权限（UID 0）。可用 host 操作真实 Android。系统设置和软件包管理优先使用 settings_* / package_* 结构化动作；仅在它们无法覆盖 root 专属需求时使用 exec。优先使用可恢复方式；永久删除系统分区内容等不可逆操作必须明确说明风险，工具会要求用户审批。"
         }
 
+        val baseVariables = mapOf(
+            "DISTRO_NAME" to distroName,
+            "PKG_MANAGER" to pkgManager,
+            "ACTIVE_SKILLS" to skillSection,
+        )
         val basePrompt = if (customPromptEnabled && customPrompt.isNotBlank()) {
-            resolvedTemplate.trim()
+            baseVariables.entries.fold(resolvedTemplate) { prompt, (name, value) ->
+                prompt.replace("{{$name}}", value)
+            }.trim()
         } else {
             promptAssets.renderTemplate(
                 path = "prompts/agent_system.md",
                 template = resolvedTemplate,
-                variables = mapOf(
-                    "DISTRO_NAME" to distroName,
-                    "PKG_MANAGER" to pkgManager,
-                    "ACTIVE_SKILLS" to skillSection,
-                ),
+                variables = baseVariables,
             )
         }
-        return basePrompt + installedToolsSection + memorySection + planSection + subagentSection + toolCallSection + workspaceSection + workspaceGuidance + projectContext + privilegeSection + thinkingLanguageSection
+        return listOf(
+            basePrompt,
+            installedToolsSection,
+            memorySection,
+            planSection,
+            subagentSection,
+            toolCallSection,
+            workspaceSection,
+            workspaceGuidance,
+            projectContext,
+            privilegeSection,
+            thinkingLanguageSection,
+        ).filter { it.isNotBlank() }.joinToString("\n\n") { it.trim() }
     }
 
     private suspend fun buildSubagentGuidance(toolCallMode: ToolCallMode): String {
