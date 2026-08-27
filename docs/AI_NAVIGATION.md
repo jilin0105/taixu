@@ -192,7 +192,12 @@ WorkspaceBuildRunner
 
 | 业务领域 | 关键文件路径 | 核心职责 |
 | :--- | :--- | :--- |
-| **Agent 核心** | [`harness/.../HarnessLoop.kt`](../harness/src/main/java/top/wkbin/taixu/harness/HarnessLoop.kt) | Agent 思考与工具调用闭环调度 |
+| **Agent 核心** | [`harness/.../HarnessLoop.kt`](../harness/src/main/java/top/wkbin/taixu/harness/HarnessLoop.kt) | Agent 思考与工具调用闭环调度（并发内核 + 公共 API 门面） |
+| **会话消息投影** | [`harness/.../projection/SessionMessageProjector.kt`](../harness/src/main/java/top/wkbin/taixu/harness/projection/SessionMessageProjector.kt) | 实时消息流、前台镜像与流式上屏；配套 `SessionStateMirrors`（状态机镜像）与 `CurrentSessionTracker`（前台聚焦） |
+| **上下文组装** | [`harness/.../session/ApiContextAssembler.kt`](../harness/src/main/java/top/wkbin/taixu/harness/session/ApiContextAssembler.kt) | 会话树 → 提供商协议消息（NATIVE / JSON_TEXT 双协议、预算折叠、视觉剥离） |
+| **系统提示词构建** | [`harness/.../prompt/SystemPromptBuilder.kt`](../harness/src/main/java/top/wkbin/taixu/harness/prompt/SystemPromptBuilder.kt) | 基础模板/技能/记忆/规划/工作区聚合；权限章节经 `PrivilegeSectionRenderer` 接缝注入 |
+| **悬空调用修复** | [`harness/.../effects/DanglingToolCallPlanner.kt`](../harness/src/main/java/top/wkbin/taixu/harness/effects/DanglingToolCallPlanner.kt) | 中断/进程死亡后 ToolCall 的重放与占位策略（策略-执行分离） |
+| **审批恢复裁决** | [`harness/.../approval/ApprovalResumePolicy.kt`](../harness/src/main/java/top/wkbin/taixu/harness/approval/ApprovalResumePolicy.kt) | 恢复执行前四重校验（过期/参数摘要/工作区/operation 归属）与状态映射 |
 | **内置工具执行器** | [`harness/.../ToolExecutor.kt`](../harness/src/main/java/top/wkbin/taixu/harness/ToolExecutor.kt) | `base` 超时解析、`process` 生命周期与文件工具分派 |
 | **工具协议与 Schema** | [`harness/.../ProviderClient.kt`](../harness/src/main/java/top/wkbin/taixu/harness/ProviderClient.kt) | 向模型暴露内置工具定义和参数边界 |
 | **工具审批策略** | [`harness/.../ApprovalPolicyEngine.kt`](../harness/src/main/java/top/wkbin/taixu/harness/ApprovalPolicyEngine.kt) | 根据工具、动作和安全模式计算审批要求 |

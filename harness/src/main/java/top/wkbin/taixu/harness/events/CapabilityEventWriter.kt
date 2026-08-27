@@ -1,0 +1,105 @@
+package top.wkbin.taixu.harness.events
+
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlinx.coroutines.flow.first
+import top.wkbin.taixu.core.database.AgentSkillRepository
+import top.wkbin.taixu.core.database.McpServerRepository
+import top.wkbin.taixu.harness.CapabilityEvent
+import top.wkbin.taixu.harness.HarnessMessage
+import top.wkbin.taixu.harness.ModelConfig
+import top.wkbin.taixu.harness.projection.LiveMessagePort
+
+/**
+ * @提及 能力事件写入器：当用户消息提及技能或 MCP 服务时，
+ * 在会话内插入一条幂等的 [CapabilityEvent] 展示卡片（同一用户消息下不重复）。
+ */
+@Singleton
+class CapabilityEventWriter @Inject constructor(
+    private val port: LiveMessagePort,
+    private val skillRepository: AgentSkillRepository,
+    private val mcpServerRepository: McpServerRepository,
+) {
+    suspend fun writeIfMentioned(
+        sessionId: String,
+        userMessageId: String,
+        mentionedNames: Set<String>,
+        model: ModelConfig,
+    ) {
+        if (mentionedNames.isEmpty()) return
+        if (userMessageId.isBlank()) return
+        val existing = port.snapshot(sessionId)
+        writeSkillEvents(existing, sessionId, userMessageId, mentionedNames)
+        writeMcpEvents(existing, sessionId, userMessageId, mentionedNames, model)
+    }
+
+    private suspend fun writeSkillEvents(
+        existing: List<HarnessMessage>,
+        sessionId: String,
+        userMessageId: String,
+        mentionedNames: Set<String>,
+    ) {
+        val skills = runCatching { skillRepository.allSkills.first() }.getOrDefault(emptyList())
+            .filter { skill ->
+                val names = setOf(
+                    skill.name.lowercase(),
+                    skill.id.lowercase(),
+                    skill.triggerCommand?.removePrefix("/")?.lowercase().orEmpty(),
+                )
+                names.any { it.isNotBlank() && it in mentionedNames }
+            }
+        skills.forEach { skill ->
+            appendEventOnce(
+                existing,
+                sessionId,
+                id = "skill:$userMessageId:${skill.id}",
+                kind = CapabilityEvent.Kind.SKILL,
+                name = skill.name,
+                description = skill.description,
+            )
+        }
+    }
+
+    private suspend fun writeMcpEvents(
+        existing: List<HarnessMessage>,
+        sessionId: String,
+        userMessageId: String,
+        mentionedNames: Set<String>,
+        model: ModelConfig,
+    ) {
+        val configuredMcp = runCatching { mcpServerRepository.servers.first() }
+            .getOrDefault(emptyList())
+            .map { it.id to it.name }
+        val discoveredMcp = model.dynamicMcpTools.map { it.serverId to it.serverName }
+        (configuredMcp + discoveredMcp)
+            .distinctBy { it.first }
+            .filter { (serverId, serverName) -> serverId.lowercase() in mentionedNames || serverName.lowercase() in mentionedNames }
+            .forEach { (serverId, serverName) ->
+                appendEventOnce(
+                    existing,
+                    sessionId,
+                    id = "mcp:$userMessageId:$serverId",
+                    kind = CapabilityEvent.Kind.MCP,
+                    name = serverName,
+                    description = if (model.dynamicMcpTools.any { it.serverId == serverId }) {
+                        "MCP 工具已挂载，模型可按需调用"
+                    } else {
+                        "已选择 MCP 服务，正在尝试发现工具；若服务离线，后续会显示连接错误"
+                    },
+                )
+            }
+    }
+
+    private suspend fun appendEventOnce(
+        existing: List<HarnessMessage>,
+        sessionId: String,
+        id: String,
+        kind: CapabilityEvent.Kind,
+        name: String,
+        description: String,
+    ) {
+        if (existing.none { message -> message is CapabilityEvent && message.id == id }) {
+            port.append(sessionId, CapabilityEvent(id, System.currentTimeMillis(), kind, name, description))
+        }
+    }
+}

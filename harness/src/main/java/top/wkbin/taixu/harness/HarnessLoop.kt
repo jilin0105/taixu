@@ -29,31 +29,32 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import top.wkbin.taixu.harness.validation.ToolSchemaValidator
-import top.wkbin.taixu.harness.prompt.PromptAssetLoader
 
 import top.wkbin.taixu.core.datastore.AgentPreferences
-import top.wkbin.taixu.core.database.AgentSkillRepository
 import top.wkbin.taixu.harness.session.SessionTreeStore
-import top.wkbin.taixu.harness.effects.ToolReplayPolicy
 import top.wkbin.taixu.harness.effects.RetryPolicy
+import top.wkbin.taixu.harness.effects.ToolReplayPolicy
 import top.wkbin.taixu.harness.operation.OperationCoordinator
 import top.wkbin.taixu.harness.recovery.RecoveryManager
 import top.wkbin.taixu.harness.recovery.RecoveryOutcome
 import top.wkbin.taixu.harness.queue.PromptQueue
 import top.wkbin.taixu.harness.queue.PromptQueueManager
 import top.wkbin.taixu.harness.compaction.CompactionManager
-import top.wkbin.taixu.runtime.privilege.PrivilegeManager
-import top.wkbin.taixu.core.model.ExecutionMode
+import top.wkbin.taixu.harness.effects.DanglingToolCallPlanner
+import top.wkbin.taixu.harness.events.AgentEventLogger
+import top.wkbin.taixu.harness.events.CapabilityEventWriter
+import top.wkbin.taixu.harness.projection.CurrentSessionTracker
+import top.wkbin.taixu.harness.projection.SessionMessageProjector
+import top.wkbin.taixu.harness.projection.SessionStateMirrors
+import top.wkbin.taixu.harness.projection.ToolStatusDescriber
+import top.wkbin.taixu.harness.session.ApiContextAssembler
 import kotlin.time.Duration.Companion.milliseconds
 
 /** Agent 单次运行的结构化结果，外层据此设置会话状态，避免内部失败被误标为 COMPLETED。 */
@@ -76,27 +77,28 @@ class HarnessLoop @Inject constructor(
     private val toolExecutor: ToolExecutor,
     private val messageStore: SessionTreeStore,
     private val sessionDao: HarnessSessionRepository,
-    private val toolRepository: top.wkbin.taixu.core.tools.ToolRepository,
-    private val agentContextDao: top.wkbin.taixu.core.database.AgentContextRepository,
     private val settingsDataStore: AgentPreferences,
-    private val fileAccess: WorkspaceFileAccess,
     private val json: Json,
     private val logger: AppLogger,
-    private val subagentRepository: top.wkbin.taixu.core.database.AgentSubagentRepository,
-    private val skillRepository: AgentSkillRepository,
-    private val mcpServerRepository: top.wkbin.taixu.core.database.McpServerRepository,
     private val approvalRepository: top.wkbin.taixu.core.database.AgentApprovalRepository,
     private val operationCoordinator: OperationCoordinator,
     private val recoveryManager: RecoveryManager,
     private val promptQueueManager: PromptQueueManager,
-    private val compactionManager: CompactionManager,
-    private val privilegeManager: PrivilegeManager,
-    private val promptAssets: PromptAssetLoader,
+    private val sessionTracker: CurrentSessionTracker,
+    private val stateMirrors: SessionStateMirrors,
+    private val messageProjector: SessionMessageProjector,
+    private val capabilityWriter: CapabilityEventWriter,
+    private val agentEventLogger: AgentEventLogger,
+    private val systemPromptBuilder: top.wkbin.taixu.harness.prompt.SystemPromptBuilder,
+    private val contextAssembler: ApiContextAssembler,
+    private val resumePolicy: top.wkbin.taixu.harness.approval.ApprovalResumePolicy,
 ) {
     private val loopScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    private val _currentSessionId = MutableStateFlow("")
-    val currentSessionId: StateFlow<String> = _currentSessionId.asStateFlow()
+    val currentSessionId: StateFlow<String> get() = sessionTracker.currentSessionId
+
+    /** 只读别名：历史代码中的 `_currentSessionId.value` 引用无需改动。 */
+    private val _currentSessionId: StateFlow<String> get() = sessionTracker.currentSessionId
 
     private val sessionJobs = ConcurrentHashMap<String, Job>()
     private val sessionMutexes = ConcurrentHashMap<String, Mutex>()
@@ -104,26 +106,17 @@ class HarnessLoop @Inject constructor(
     private val tombstonedSessions = ConcurrentHashMap.newKeySet<String>()
     private val recoveredSessions = ConcurrentHashMap.newKeySet<String>()
 
-    private val _sessionRunStates = MutableStateFlow<Map<String, SessionRunState>>(emptyMap())
-    /** 全局所有会话的运行状态映射（供会话抽屉、状态点等观察） */
-    val sessionRunStates: StateFlow<Map<String, SessionRunState>> = _sessionRunStates.asStateFlow()
-
-    private val _sessionStatuses = MutableStateFlow<Map<String, String>>(emptyMap())
-    /** 全局各会话当前的动作描述状态 */
-    val sessionStatuses: StateFlow<Map<String, String>> = _sessionStatuses.asStateFlow()
-
-    private val _sessionLiveMessages = ConcurrentHashMap<String, MutableStateFlow<List<HarnessMessage>>>()
     private val _sessionPendingMessages = ConcurrentHashMap<String, MutableStateFlow<List<PendingMessage>>>()
-    private val _sessionThinkingLives = ConcurrentHashMap<String, MutableStateFlow<Boolean>>()
-    private val _sessionErrors = ConcurrentHashMap<String, MutableStateFlow<String?>>()
-    private val sessionThinkingModes = ConcurrentHashMap<String, Boolean>()
 
-    // ---- 当前前台聚焦会话的响应式状态镜像 ----
-    private val _messages = MutableStateFlow<List<HarnessMessage>>(emptyList())
-    val messages: StateFlow<List<HarnessMessage>> = _messages.asStateFlow()
+    /** 全局所有会话的运行状态映射（供会话抽屉、状态点等观察）——委托给状态镜像器。 */
+    val sessionRunStates: StateFlow<Map<String, SessionRunState>> get() = stateMirrors.sessionRunStates
+    /** 全局各会话当前的动作描述状态。 */
+    val sessionStatuses: StateFlow<Map<String, String>> get() = stateMirrors.sessionStatuses
 
-    private val _running = MutableStateFlow(false)
-    val running: StateFlow<Boolean> = _running.asStateFlow()
+    // ---- 当前前台聚焦会话的响应式镜像（全部委托给投影协作类） ----
+    val messages: StateFlow<List<HarnessMessage>> get() = messageProjector.foregroundMessages
+
+    val running: StateFlow<Boolean> get() = stateMirrors.running
 
     private val _workspace = MutableStateFlow("")
     /** 当前会话关联的工作区 Linux 路径（"" = 未关联）。 */
@@ -133,16 +126,13 @@ class HarnessLoop @Inject constructor(
     /** 当前会话显式选择的工程类型；空值表示由工作区内容自动识别。 */
     val projectType: StateFlow<String> = _projectType.asStateFlow()
 
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
+    val error: StateFlow<String?> get() = stateMirrors.error
 
-    private val _status = MutableStateFlow<String?>(null)
     /** 当前执行状态（供 UI / 后台通知显示进度）。运行结束或出错时置空。 */
-    val status: StateFlow<String?> = _status.asStateFlow()
+    val status: StateFlow<String?> get() = stateMirrors.status
 
-    private val _thinkingLive = MutableStateFlow(false)
     /** 推理模型思考中（reasoning 正在流式上屏）。开始思考置 true，本回合结束时置 false。 */
-    val thinkingLive: StateFlow<Boolean> = _thinkingLive.asStateFlow()
+    val thinkingLive: StateFlow<Boolean> get() = stateMirrors.thinkingLive
 
     private val _pendingMessages = MutableStateFlow<List<PendingMessage>>(emptyList())
     /**
@@ -156,76 +146,31 @@ class HarnessLoop @Inject constructor(
     val queuedPrompts: StateFlow<List<QueuedPrompt>> = _queuedPrompts.asStateFlow()
 
     private fun getOrCreateLiveMessages(sessId: String): MutableStateFlow<List<HarnessMessage>> {
-        return _sessionLiveMessages.getOrPut(sessId) {
-            val flow = MutableStateFlow<List<HarnessMessage>>(emptyList())
-            loopScope.launch(Dispatchers.IO) {
-                val history = readHistory(sessId)
-                // Merge history with messages appended while the asynchronous read was running,
-                // instead of discarding the whole history when the flow is no longer empty.
-                flow.update { current ->
-                    if (current.isEmpty()) {
-                        history
-                    } else {
-                        val historyIds = history.mapTo(mutableSetOf()) { it.id }
-                        (history + current.filter { it.id !in historyIds })
-                            .sortedBy { it.createdAt }
-                    }
-                }
-                if (sessId == _currentSessionId.value) {
-                    _messages.value = flow.value
-                }
-            }
-            flow
-        }
+        return messageProjector.messagesFlow(sessId)
     }
 
     private suspend fun readHistory(sessId: String): List<HarnessMessage> =
-        withContext(Dispatchers.IO) { messageStore.load(sessId) }
+        messageProjector.loadHistory(sessId)
 
     private fun getOrCreatePendingFlow(sessId: String): MutableStateFlow<List<PendingMessage>> {
         return _sessionPendingMessages.getOrPut(sessId) { MutableStateFlow(emptyList()) }
     }
 
-    private fun getOrCreateThinkingLiveFlow(sessId: String): MutableStateFlow<Boolean> {
-        return _sessionThinkingLives.getOrPut(sessId) { MutableStateFlow(false) }
-    }
+    private fun setStatus(sessId: String, statusText: String?) = stateMirrors.setStatus(sessId, statusText)
 
-    private fun getOrCreateErrorFlow(sessId: String): MutableStateFlow<String?> {
-        return _sessionErrors.getOrPut(sessId) { MutableStateFlow(null) }
-    }
+    private fun setError(sessId: String, errorText: String?) = stateMirrors.setError(sessId, errorText)
 
-    private fun setStatus(sessId: String, statusText: String?) {
-        _sessionStatuses.update { map ->
-            if (statusText.isNullOrBlank()) map - sessId else map + (sessId to statusText)
-        }
-        if (sessId == _currentSessionId.value) {
-            _status.value = statusText
-        }
-    }
-
-    private fun setError(sessId: String, errorText: String?) {
-        getOrCreateErrorFlow(sessId).value = errorText
-        if (sessId == _currentSessionId.value) {
-            _error.value = errorText
-        }
-    }
-
-    private fun setSessionState(sessId: String, state: SessionRunState) {
-        _sessionRunStates.update { it + (sessId to state) }
-        if (sessId == _currentSessionId.value) {
-            _running.value = (state == SessionRunState.RUNNING)
-        }
-    }
+    private fun setSessionState(sessId: String, state: SessionRunState) = stateMirrors.setRunState(sessId, state)
 
     private fun isSessionBusy(sessId: String): Boolean =
         sessionJobs[sessId]?.isActive == true ||
-            _sessionRunStates.value[sessId] == SessionRunState.WAITING_APPROVAL
+            stateMirrors.isWaitingApproval(sessId)
 
     /** 新建会话。workspace 为关联的工作区 Linux 路径（如 /workspace/proj），空串表示不关联。 */
     suspend fun newSession(title: String, workspace: String = "", projectType: String = ""): String {
         val id = UUID.randomUUID().toString()
         tombstonedSessions.remove(id)
-        _currentSessionId.value = id
+        sessionTracker.setCurrent(id)
         _workspace.value = workspace
         _projectType.value = projectType
         sessionDao.upsert(
@@ -240,18 +185,14 @@ class HarnessLoop @Inject constructor(
                 approvalMode = approvalRepository.currentMode().id,
             ),
         )
-        _sessionLiveMessages[id] = MutableStateFlow(emptyList())
+        messageProjector.seedEmpty(id)
+        messageProjector.resetForegroundProjection(emptyList())
         _sessionPendingMessages[id] = MutableStateFlow(emptyList())
-        _sessionThinkingLives[id] = MutableStateFlow(false)
-        _sessionErrors[id] = MutableStateFlow(null)
+        stateMirrors.ensureFlows(id)
         setSessionState(id, SessionRunState.IDLE)
         setStatus(id, null)
 
-        _messages.value = emptyList()
-        _running.value = false
-        _error.value = null
-        _status.value = null
-        _thinkingLive.value = false
+        stateMirrors.resetForeground()
         _pendingMessages.value = emptyList()
         _queuedPrompts.value = emptyList()
         return id
@@ -259,23 +200,18 @@ class HarnessLoop @Inject constructor(
 
     /** 恢复已有会话的历史消息与工作区关联，不中断正在后台运行的任何会话。 */
     suspend fun loadSession(id: String) {
-        _currentSessionId.value = id
+        sessionTracker.setCurrent(id)
         val sessionEntity = withContext(Dispatchers.IO) { sessionDao.findById(id) }
         _workspace.value = sessionEntity?.workspace.orEmpty()
         _projectType.value = sessionEntity?.projectType.orEmpty()
 
-        val liveFlow = _sessionLiveMessages[id] ?: run {
-            val history = readHistory(id)
-            MutableStateFlow(history).also { created ->
-                _sessionLiveMessages.putIfAbsent(id, created)
-            }
-        }
+        val liveFlow = messageProjector.preparedForLoad(id)
 
-        _messages.value = liveFlow.value
-        _running.value = sessionJobs[id]?.isActive == true
-        _error.value = _sessionErrors[id]?.value
-        _status.value = _sessionStatuses.value[id]?.takeIf { it.isNotBlank() }
-        _thinkingLive.value = _sessionThinkingLives[id]?.value ?: false
+        messageProjector.resetForegroundProjection(liveFlow.value)
+        stateMirrors.setForegroundRunning(sessionJobs[id]?.isActive == true)
+        stateMirrors.restoreForegroundError(id, stateMirrors.errorOf(id))
+        setStatus(id, stateMirrors.lastStatus(id))
+        stateMirrors.setThinkingLive(id, stateMirrors.thinkingLiveOf(id))
         refreshPendingProjection(id)
 
         if (withContext(Dispatchers.IO) { approvalRepository.pendingNow(id).isNotEmpty() }) {
@@ -283,27 +219,70 @@ class HarnessLoop @Inject constructor(
             setStatus(id, "等待用户批准")
         }
 
-        sessionThinkingModes[id] = liveFlow.value.any { message ->
-            (message as? AssistantText)?.reasoning != null || (message as? ToolCall)?.reasoning != null
+        stateMirrors.recordThinkingModeFromHistory(id, liveFlow.value)
+        recoverSessionIfInterrupted(id, liveFlow)
+    }
+
+    /**
+     * 应用进程重启后批量恢复所有被中断的 Agent 会话。
+     *
+     * 遍历数据库中所有会话，对存在未完成操作（活跃 operation）的会话执行恢复策略：
+     * - 等待审批：保持 WAITING_APPROVAL 状态
+     * - 工具中断 / 运行挂起：设为 IDLE 并提示用户"发送消息即可继续"
+     *
+     * 不会自动续跑，避免重复执行工具或产生额外模型费用。
+     * 进程被杀后用户切回应用时，会话状态会被正确还原，而不是显示空白或"运行中"假死。
+     *
+     * @return 实际执行了恢复处理的会话数量
+     */
+    suspend fun recoverAllInterruptedSessions(): Int {
+        val sessions = withContext(Dispatchers.IO) { sessionDao.listAll() }
+        var recovered = 0
+        for (session in sessions) {
+            val hasActiveOperation = withContext(Dispatchers.IO) {
+                operationCoordinator.active(session.id) != null
+            }
+            if (hasActiveOperation && recoverSessionIfInterrupted(session.id, null)) {
+                recovered++
+            }
         }
-        if (sessionJobs[id]?.isActive != true && recoveredSessions.add(id)) {
-            when (val recovery = recoveryManager.recoverSession(id)) {
-                RecoveryOutcome.Clean -> Unit
-                RecoveryOutcome.WaitingApproval -> {
-                    setSessionState(id, SessionRunState.WAITING_APPROVAL)
-                    setStatus(id, "等待用户批准")
-                }
-                is RecoveryOutcome.ToolInterrupted -> {
-                    val restored = readHistory(id)
-                    liveFlow.value = restored
-                    if (id == _currentSessionId.value) _messages.value = restored
-                    setSessionState(id, SessionRunState.IDLE)
-                    setStatus(id, "上次工具执行被中断，发送消息即可继续")
-                }
-                is RecoveryOutcome.Suspended -> {
-                    setSessionState(id, SessionRunState.IDLE)
-                    setStatus(id, "上次运行已暂停（${recovery.reason}），发送消息即可重新开始")
-                }
+        return recovered
+    }
+
+    /**
+     * 对单个会话执行中断恢复。从 loadSession 中提取，供批量恢复复用。
+     *
+     * @param id 会话 ID
+     * @param existingLiveFlow loadSession 中已初始化的消息流；批量恢复时传 null，内部按需创建
+     * @return 是否执行了非 Clean 的恢复处理
+     */
+    private suspend fun recoverSessionIfInterrupted(
+        id: String,
+        existingLiveFlow: MutableStateFlow<List<HarnessMessage>>?,
+    ): Boolean {
+        if (sessionJobs[id]?.isActive == true) return false
+        if (!recoveredSessions.add(id)) return false
+
+        val liveFlow = existingLiveFlow ?: messageProjector.preparedForLoad(id)
+
+        return when (val recovery = recoveryManager.recoverSession(id)) {
+            RecoveryOutcome.Clean -> false
+            RecoveryOutcome.WaitingApproval -> {
+                setSessionState(id, SessionRunState.WAITING_APPROVAL)
+                setStatus(id, "等待用户批准")
+                true
+            }
+            is RecoveryOutcome.ToolInterrupted -> {
+                val restored = readHistory(id)
+                messageProjector.replaceAll(id, restored)
+                setSessionState(id, SessionRunState.IDLE)
+                setStatus(id, "上次工具执行被中断，发送消息即可继续")
+                true
+            }
+            is RecoveryOutcome.Suspended -> {
+                setSessionState(id, SessionRunState.IDLE)
+                setStatus(id, "上次运行已暂停（${recovery.reason}），发送消息即可重新开始")
+                true
             }
         }
     }
@@ -318,19 +297,16 @@ class HarnessLoop @Inject constructor(
         tombstonedSessions.add(id)
         _sessionPendingMessages[id]?.value = emptyList()
         sessionJobs[id]?.cancelAndJoin()
-        _sessionLiveMessages.remove(id)
         _sessionPendingMessages.remove(id)
-        _sessionThinkingLives.remove(id)
-        _sessionErrors.remove(id)
         sessionMutexes.remove(id)
-        _sessionRunStates.update { it - id }
-        _sessionStatuses.update { it - id }
+        messageProjector.removeSession(id)
+        stateMirrors.removeSession(id)
 
         messageStore.deleteSession(id)
         approvalRepository.deleteForSession(id)
         sessionDao.deleteSession(id)
         tombstonedSessions.remove(id)
-        if (_currentSessionId.value == id) {
+        if (sessionTracker.currentSessionId.value == id) {
             val remaining = sessionDao.observeAll().first()
             val nextSession = remaining.firstOrNull { it.id != id }
             if (nextSession != null) {
@@ -390,10 +366,7 @@ class HarnessLoop @Inject constructor(
             val lastUserMessage = current[lastUserIndex] as UserMessage
             val toKeep = current.subList(0, lastUserIndex + 1)
             val liveFlow = getOrCreateLiveMessages(sessId)
-            liveFlow.value = toKeep
-            if (sessId == _currentSessionId.value) {
-                _messages.value = toKeep
-            }
+            messageProjector.replaceAll(sessId, toKeep)
             messageStore.moveTo(sessId, lastUserMessage.id)
             runLoopInternal(sessId, startedAt = now())
         }
@@ -410,8 +383,7 @@ class HarnessLoop @Inject constructor(
             if (targetIndex < 0) return@startSessionRun RunResult.Completed
             val target = current[targetIndex]
             val updated = current.take(targetIndex)
-            getOrCreateLiveMessages(sessId).value = updated
-            if (sessId == _currentSessionId.value) _messages.value = updated
+            messageProjector.replaceAll(sessId, updated)
             messageStore.rewindBefore(sessId, target.id)
             runLoopInternal(sessId, startedAt = now())
         }
@@ -424,8 +396,7 @@ class HarnessLoop @Inject constructor(
         if (sessId.isBlank() || isSessionBusy(sessId)) return false
         messageStore.moveTo(sessId, leafId)
         val history = readHistory(sessId)
-        getOrCreateLiveMessages(sessId).value = history
-        if (sessId == _currentSessionId.value) _messages.value = history
+        messageProjector.replaceAll(sessId, history)
         return true
     }
 
@@ -446,10 +417,7 @@ class HarnessLoop @Inject constructor(
             val targetMessage = current[targetIndex]
             val toKeep = current.subList(0, targetIndex)
             val liveFlow = getOrCreateLiveMessages(sessId)
-            liveFlow.value = toKeep
-            if (sessId == _currentSessionId.value) {
-                _messages.value = toKeep
-            }
+            messageProjector.replaceAll(sessId, toKeep)
             messageStore.rewindBefore(sessId, targetMessage.id)
             runLoop(sessId, trimmed)
         }
@@ -465,59 +433,41 @@ class HarnessLoop @Inject constructor(
         val target = current.firstOrNull { it.id == messageId } ?: return
         val targetIndex = current.indexOf(target)
         val updated = current.take(targetIndex)
-        liveFlow.value = updated
-        if (sessId == _currentSessionId.value) {
-            _messages.value = updated
-        }
+        messageProjector.replaceAll(sessId, updated)
         messageStore.rewindBefore(sessId, target.id)
     }
 
-    /**
-     * 为所有尚无 ToolResult 的 ToolCall 补写结果并持久化。
-     *
-     * - 用户主动停止（interrupted=true）：一律写中断占位，绝不重放。
-     * - 新运行开始时的历史修复（interrupted=false；能走到这里的悬空调用只可能来自
-     *   进程死亡残留——用户取消的运行在取消处理器里已用 interrupted=true 修复）：
-     *   SAFE 工具（read / history 查询类只读操作）直接重放执行，无缝续接上一轮；
-     *   NEVER 工具（写操作 / 外部副作用）写占位结果交由模型重新发起——
-     *   防止崩溃前的写操作在未经用户确认的情况下被再次执行。
-     */
     private suspend fun repairDanglingToolCalls(sessId: String, interrupted: Boolean, workspace: String = "") {
-        val liveFlow = getOrCreateLiveMessages(sessId)
-        val msgs = liveFlow.value
-        val answeredIds = msgs.filterIsInstance<ToolResult>().mapTo(mutableSetOf()) { it.toolCallId }
-        val dangling = msgs.filterIsInstance<ToolCall>().filter { it.id !in answeredIds }
-        if (dangling.isEmpty()) return
-        dangling.forEach { call ->
-            val replayable = !interrupted &&
-                ToolReplayPolicy.forTool(call.tool, call.rawToolName) == top.wkbin.taixu.harness.operation.ReplayPolicy.SAFE
-            val result = if (replayable) {
-                logAgentEvent(sessId, "ToolReplay", "重放中断的只读工具 ${call.rawToolName ?: call.tool.name.lowercase()}")
-                try {
-                    toolExecutor.execute(call, sessId, workspace)
-                } catch (cancellation: CancellationException) {
-                    throw cancellation
-                } catch (throwable: Throwable) {
-                    ToolResult(
-                        id = newId(),
-                        createdAt = now(),
-                        toolCallId = call.id,
-                        success = false,
-                        output = "重放中断的只读工具失败：${friendly(throwable)}",
+        val actions = DanglingToolCallPlanner.plan(getOrCreateLiveMessages(sessId).value, interrupted)
+        if (actions.isEmpty()) return
+        actions.forEach { action ->
+            val result = when (action) {
+                is DanglingToolCallPlanner.Replay -> {
+                    logAgentEvent(
+                        sessId,
+                        "ToolReplay",
+                        "重放中断的只读工具 ${action.call.rawToolName ?: action.call.tool.name.lowercase()}",
                     )
+                    try {
+                        toolExecutor.execute(action.call, sessId, workspace)
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (throwable: Throwable) {
+                        ToolResult(
+                            id = newId(),
+                            createdAt = now(),
+                            toolCallId = action.call.id,
+                            success = false,
+                            output = "重放中断的只读工具失败：${friendly(throwable)}",
+                        )
+                    }
                 }
-            } else {
-                val note = if (interrupted) {
-                    "用户停止了本次执行，工具被中断。"
-                } else {
-                    "工具执行期间应用进程中断。该工具不可自动重放，未再次执行；如仍需要请重新发起。"
-                }
-                ToolResult(
+                is DanglingToolCallPlanner.Stubbed -> ToolResult(
                     id = newId(),
                     createdAt = now(),
-                    toolCallId = call.id,
+                    toolCallId = action.call.id,
                     success = false,
-                    output = note,
+                    output = action.note,
                 )
             }
             append(sessId, result)
@@ -537,10 +487,9 @@ class HarnessLoop @Inject constructor(
         // finishRun removes only its own job via sessionJobs.remove(sessId, selfJob).
         sessionJobs[sessId]?.cancel()
         setSessionState(sessId, SessionRunState.IDLE)
-        if (sessId == _currentSessionId.value) {
+        if (sessId == sessionTracker.foregroundId) {
             _pendingMessages.value = emptyList()
-            _status.value = "正在停止…"
-            _running.value = false
+            stateMirrors.setForegroundRunning(false)
         }
     }
 
@@ -590,14 +539,7 @@ class HarnessLoop @Inject constructor(
     private suspend fun finishRun(sessId: String, job: Job) {
         // Only remove ourselves; never clobber a newer job that started after cancel().
         sessionJobs.remove(sessId, job)
-        _sessionThinkingLives[sessId]?.value = false
-        val waitingApproval = _sessionRunStates.value[sessId] == SessionRunState.WAITING_APPROVAL
-        if (!waitingApproval) setStatus(sessId, null)
-        if (sessId == _currentSessionId.value) {
-            _running.value = false
-            if (!waitingApproval) _status.value = null
-            _thinkingLive.value = false
-        }
+        val waitingApproval = stateMirrors.onRunFinished(sessId)
         if (waitingApproval) return
         if (tombstonedSessions.contains(sessId)) return
         val (queueItemId, next) = promptQueueManager.first(sessId, PromptQueue.NEXT_RUN) ?: return
@@ -741,7 +683,7 @@ class HarnessLoop @Inject constructor(
             val msgs = getOrCreateLiveMessages(sessId).value
             val latestUserMessage = msgs.filterIsInstance<UserMessage>().lastOrNull()
             val latestUserText = latestUserMessage?.text.orEmpty()
-            val mentionedNames = extractMentionedNames(latestUserText)
+            val mentionedNames = MentionExtractor.parse(latestUserText)
             val effectiveModel = if (mentionedNames.isNotEmpty()) {
                 val matchedTools = model.dynamicMcpTools.filter { tool ->
                     val sName = tool.serverName.lowercase()
@@ -753,7 +695,7 @@ class HarnessLoop @Inject constructor(
             } else {
                 model
             }
-            appendCapabilityEvents(sessId, latestUserMessage?.id.orEmpty(), mentionedNames, effectiveModel)
+            capabilityWriter.writeIfMentioned(sessId, latestUserMessage?.id.orEmpty(), mentionedNames, effectiveModel)
             val assistantId = newId()
             val assistantAt = now()
             val streamText = StringBuilder()
@@ -773,14 +715,16 @@ class HarnessLoop @Inject constructor(
                     )
                     streamed = providerClient.chatStream(
                         effectiveModel,
-                        apiMessages(sessId, effectiveModel),
+                        contextAssembler.assemble(
+                            sessId = sessId,
+                            model = effectiveModel,
+                            workspacePath = sessionWorkspace,
+                            projectTypeOverride = sessionEntity?.projectType.orEmpty(),
+                            thinkingMode = stateMirrors.requestThinkingMode(sessId),
+                        ),
                         onReasoning = { chunk ->
                             streamReasoning.append(chunk)
-                            sessionThinkingModes[sessId] = true
-                            getOrCreateThinkingLiveFlow(sessId).value = true
-                            if (sessId == _currentSessionId.value) {
-                                _thinkingLive.value = true
-                            }
+                            stateMirrors.setThinkingLive(sessId, true)
                             val now = System.currentTimeMillis()
                             if (now - lastReasoningFlushTime >= STREAM_FLUSH_INTERVAL_MS) {
                                 lastReasoningFlushTime = now
@@ -809,8 +753,7 @@ class HarnessLoop @Inject constructor(
                 } catch (rateLimit: LlmRateLimitException) {
                     currentCoroutineContext().ensureActive()
                     if (rateLimit.quotaExhausted) {
-                        getOrCreateThinkingLiveFlow(sessId).value = false
-                        if (sessId == _currentSessionId.value) _thinkingLive.value = false
+                        stateMirrors.setThinkingLive(sessId, false)
                         logAgentEvent(sessId, "QuotaExhausted", rateLimit.message.orEmpty(), rateLimit)
                         // 移除空的流式气泡；错误通过 error state 展示，不写入消息历史，避免下一轮注入模型上下文
                         removeLiveMessage(sessId, assistantId)
@@ -819,8 +762,7 @@ class HarnessLoop @Inject constructor(
                     }
                     netRetry++
                     if (netRetry > retryPolicy.maxRetries) throw rateLimit
-                    getOrCreateThinkingLiveFlow(sessId).value = false
-                    if (sessId == _currentSessionId.value) _thinkingLive.value = false
+                    stateMirrors.setThinkingLive(sessId, false)
                     val waitSeconds = rateLimit.retryAfterSeconds ?: (netRetry * RETRY_BACKOFF_SEC).coerceAtMost(60L)
                     setStatus(sessId, "请求受限，${waitSeconds} 秒后自动重试（$netRetry/$MAX_STREAM_RETRIES）")
                     logAgentEvent(sessId, "RateLimitRetry", "限流退避 ${waitSeconds}s，重试 $netRetry/$MAX_STREAM_RETRIES", rateLimit)
@@ -837,20 +779,14 @@ class HarnessLoop @Inject constructor(
                     netRetry++
                     logAgentEvent(sessId, "NetworkRetry", "网络中断重试 $netRetry/$MAX_STREAM_RETRIES: ${io.message}", io)
                     if (netRetry > retryPolicy.maxRetries) throw io
-                    getOrCreateThinkingLiveFlow(sessId).value = false
-                    if (sessId == _currentSessionId.value) {
-                        _thinkingLive.value = false
-                    }
+                    stateMirrors.setThinkingLive(sessId, false)
                     setStatus(sessId, "网络中断，重试中（$netRetry/$MAX_STREAM_RETRIES）")
                     streamText.clear()
                     streamReasoning.clear()
                     streamAssistant(sessId, assistantId, assistantAt, "")
                     delay(retryPolicy.delayForRetry(netRetry).milliseconds)
                 } catch (throwable: Throwable) {
-                    getOrCreateThinkingLiveFlow(sessId).value = false
-                    if (sessId == _currentSessionId.value) {
-                        _thinkingLive.value = false
-                    }
+                    stateMirrors.setThinkingLive(sessId, false)
                     logAgentEvent(sessId, "ModelError", "LLM 调用失败: ${throwable.message}", throwable)
                     if (streamText.isNotEmpty()) {
                         persistAssistant(
@@ -875,8 +811,8 @@ class HarnessLoop @Inject constructor(
             val rawText = streamText.toString()
             // JSON 文本模式：从回复文本中解析 [[tool_call]]{...}[[/tool_call]] 标记，
             // 展示给用户与持久化时剥离标记（标记仅作为模型↔引擎的调用协议）
-            val jsonCalls = if (jsonMode) extractJsonToolCalls(rawText) else emptyList()
-            val displayText = if (jsonMode) stripToolCallMarkers(rawText) else rawText
+            val jsonCalls = if (jsonMode) JsonTextToolCallCodec.extract(json, rawText) else emptyList()
+            val displayText = if (jsonMode) JsonTextToolCallCodec.stripMarkers(rawText) else rawText
             logAgentEvent(
                 sessId,
                 "ModelResponse",
@@ -908,10 +844,7 @@ class HarnessLoop @Inject constructor(
                 }
                 operationCoordinator.providerSettled(activeOperationId, null, usage = usageEntity, round = round)
             }
-            getOrCreateThinkingLiveFlow(sessId).value = false
-            if (sessId == _currentSessionId.value) {
-                _thinkingLive.value = false
-            }
+            stateMirrors.setThinkingLive(sessId, false)
             val allCalls = result.toolCalls + jsonCalls
             if (allCalls.isEmpty()) {
                 val followUps = promptQueueManager.consume(sessId, PromptQueue.FOLLOW_UP)
@@ -1061,7 +994,7 @@ class HarnessLoop @Inject constructor(
                     round = round,
                 )
                 publishPersistedMessage(sessId, toolCall)
-                setStatus(sessId, describeToolCall(tool, args, toolNameTrimmed))
+                setStatus(sessId, ToolStatusDescriber.describe(tool, args, toolNameTrimmed))
                 val toolStart = now()
                 val outcome = try {
                     toolExecutor.execute(
@@ -1129,58 +1062,8 @@ class HarnessLoop @Inject constructor(
         return RunResult.Completed
     }
 
-    /** JSON 文本模式专用调用标记：模型在回复中输出 [[tool_call]]{JSON}[[/tool_call]]。 */
-    private fun extractJsonToolCalls(text: String): List<ApiToolCallSpec> {
-        if (text.isBlank()) return emptyList()
-        val regex = Regex("""\[\[tool_call\]\](.*?)\[\[/tool_call\]\]""", RegexOption.DOT_MATCHES_ALL)
-        return regex.findAll(text).mapNotNull { match ->
-            val payload = match.groupValues[1].trim()
-            runCatching {
-                val obj = json.parseToJsonElement(payload) as? JsonObject ?: return@runCatching null
-                val name = obj["name"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
-                if (name.isBlank()) return@runCatching null
-                ApiToolCallSpec(
-                    id = "json-" + UUID.randomUUID().toString(),
-                    name = name,
-                    argumentsJson = obj["arguments"]?.toString() ?: "{}",
-                )
-            }.getOrNull()
-        }.toList()
-    }
-
-    /** 从展示文本中剥离工具调用标记，只留下模型真正写给用户看的内容。 */
-    private fun stripToolCallMarkers(text: String): String =
-        text.replace(Regex("""\[\[tool_call\]\].*?\[\[/tool_call\]\]""", RegexOption.DOT_MATCHES_ALL), "").trim()
-
-    private fun describeToolCall(tool: HarnessTool, args: JsonObject, rawToolName: String? = null): String {
-        fun arg(name: String): String? =
-            runCatching { args[name]?.jsonPrimitive?.content }.getOrNull()?.takeIf { it.isNotBlank() }
-        return when (tool) {
-            HarnessTool.BASE -> {
-                val command = arg("command")?.lineSequence()?.first()?.trim().orEmpty()
-                if (command.isEmpty()) "执行命令" else "执行命令：${command.take(MAX_STATUS_ARG_LENGTH)}"
-            }
-            HarnessTool.PROCESS -> "管理后台进程：${arg("action") ?: "process"}${arg("id")?.let { " · ${it.take(MAX_STATUS_ARG_LENGTH)}" }.orEmpty()}"
-            HarnessTool.HOST -> "正在使用宿主权限：${arg("action") ?: "host"}${arg("command")?.let { " · ${it.take(MAX_STATUS_ARG_LENGTH)}" }.orEmpty()}"
-            HarnessTool.DOWNLOAD -> arg("destination")?.let { "下载文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "下载文件"
-            HarnessTool.READ -> arg("path")?.let { "读取文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "读取文件"
-            HarnessTool.WRITE -> arg("path")?.let { "写入文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "写入文件"
-            HarnessTool.EDIT -> arg("path")?.let { "编辑文件：${it.takeLast(MAX_STATUS_ARG_LENGTH)}" } ?: "编辑文件"
-            HarnessTool.MEMORY -> "正在存取长期记忆：${arg("key") ?: arg("action") ?: "memory"}"
-            HarnessTool.PLAN -> "正在更新任务执行规划：${arg("goal") ?: arg("action") ?: "plan"}"
-            HarnessTool.SCRATCHPAD -> "正在记录工作草稿便签：${arg("key") ?: arg("action") ?: "scratchpad"}"
-            HarnessTool.HISTORY_SEARCH -> "正在检索历史消息：${arg("query")?.take(MAX_STATUS_ARG_LENGTH).orEmpty()}"
-            HarnessTool.HISTORY_READ -> "正在读取历史消息：${arg("message_id") ?: arg("index") ?: "history"}"
-            HarnessTool.SUBAGENT -> "正在派发并执行子智能体协同任务…"
-            HarnessTool.MCP -> "正在调用 MCP 插件工具：${rawToolName ?: "mcp"}…"
-        }
-    }
-
     private suspend fun logAgentEvent(sessId: String, tag: String, message: String, throwable: Throwable? = null) {
-        val enabled = runCatching { settingsDataStore.agentLoggingEnabled.first() }.getOrDefault(false)
-        if (enabled) {
-            logger.logAgent(sessId, tag, message, throwable)
-        }
+        agentEventLogger.log(sessId, tag, message, throwable)
     }
 
     private suspend fun drainSteeringMessages(sessId: String) {
@@ -1195,511 +1078,26 @@ class HarnessLoop @Inject constructor(
     private fun friendly(throwable: Throwable): String =
         throwable.message?.take(200) ?: throwable::class.simpleName.orEmpty()
 
-    private suspend fun buildSystemPrompt(
-        workspacePath: String,
-        toolCallMode: ToolCallMode = ToolCallMode.NATIVE,
-        mentionedNames: Set<String> = emptySet(),
-        sessionId: String = "",
-    ): String {
-        val distroId = runCatching { settingsDataStore.selectedDistribution.first() }.getOrDefault("debian")
-        val distroName = when (distroId.lowercase()) {
-            "ubuntu" -> "Ubuntu 24.04 (Noble Numbat)"
-            "debian" -> "Debian 12 (Bookworm)"
-            "alpine" -> "Alpine Linux 3.19"
-            "archlinux", "arch" -> "Arch Linux"
-            "fedora" -> "Fedora 40"
-            "void" -> "Void Linux"
-            else -> "$distroId Linux"
-        }
-        val pkgManager = when (distroId.lowercase()) {
-            "alpine" -> "apk add <package>"
-            "archlinux", "arch" -> "pacman -S <package>"
-            "fedora" -> "dnf install -y <package>"
-            "void" -> "xbps-install -S -y <package>"
-            else -> "apt-get install -y <package>"
-        }
-        val customPromptEnabled = runCatching { settingsDataStore.customSystemPromptEnabled.first() }.getOrDefault(false)
-        val customPrompt = runCatching { settingsDataStore.customSystemPrompt.first() }.getOrDefault("")
-        val baseRawTemplate = if (customPromptEnabled && customPrompt.isNotBlank()) {
-            customPrompt
-        } else {
-            promptAssets.read("prompts/agent_system.md")
-        }
-
-        val providerModelId = runCatching { settingsDataStore.providerModel.first() }.getOrDefault("")
-        val resolvedTemplate = top.wkbin.taixu.harness.prompt.PromptVariableResolver.resolve(
-            template = baseRawTemplate,
-            context = context,
-            modelId = providerModelId,
-            modelName = providerModelId,
-            charName = "太墟智枢",
-            userName = "用户",
-        )
-
-        val allSkills = runCatching { skillRepository.allSkills.first() }.getOrDefault(emptyList())
-        val selectedSkills = if (mentionedNames.isNotEmpty()) {
-            val matched = allSkills.filter { skill ->
-                val nameLower = skill.name.lowercase()
-                val idLower = skill.id.lowercase()
-                val cmdLower = skill.triggerCommand?.removePrefix("/")?.lowercase().orEmpty()
-                nameLower in mentionedNames || idLower in mentionedNames || (cmdLower.isNotEmpty() && cmdLower in mentionedNames)
-            }
-            if (matched.isNotEmpty()) matched else allSkills.filter { it.isEnabled }
-        } else {
-            allSkills.filter { it.isEnabled }
-        }
-
-        val skillSection = if (selectedSkills.isNotEmpty()) {
-            "## 当前生效的专精技能指导规则 (Active Skills)\n\n" + selectedSkills.joinToString("\n\n") { skill ->
-                "### [专精技能] " + skill.name + " (" + skill.category + ")\n" + skill.systemPrompt.trim()
-            }
-        } else ""
-
-        val installedTools = runCatching { toolRepository.getForDistro(distroId).filter { it.state == top.wkbin.taixu.core.model.ToolState.INSTALLED.name } }
-            .getOrDefault(emptyList())
-        val installedToolsSection = if (installedTools.isNotEmpty()) {
-            "\n\n## 当前 Linux 沙箱已就绪的开发套件与工具环境（已安装就绪，直接调用即可，切勿重复下载或重新安装）：\n" +
-                installedTools.joinToString("\n") { tool ->
-                    val ver = tool.installedVersion?.let { " (v$it)" } ?: ""
-                    "- ${tool.name}$ver: ${tool.description}"
-                }
-        } else ""
-
-        val memories = runCatching { agentContextDao.getMemoriesByScopes(listOf("global", "project", "session")) }.getOrDefault(emptyList())
-        val memorySection = if (memories.isNotEmpty()) {
-            "\n\n## 长期事实与偏好记忆 (Long-Term Memory)\n" +
-                memories.joinToString("\n") { "- [${it.scope}/${it.kind}] ${it.key}: ${it.value}" }
-        } else ""
-
-        val activePlan = runCatching { agentContextDao.getActivePlan(sessionId) }.getOrNull()
-        val planSection = if (activePlan != null && activePlan.status == "active") {
-            "\n\n## 当前任务多步骤执行规划与进度看板 (Active Plan)\n目标：${activePlan.goal}\n步骤与状态：\n${activePlan.stepsJson}"
-        } else ""
-
-        val subagentSection = buildSubagentGuidance(toolCallMode)
-
-        val projectContext = loadProjectContext(workspacePath)
-        val workspaceSection = if (workspacePath.isNotBlank()) {
-            "\n\n当前工作区：$workspacePath（base 命令默认在此目录执行；read/write/edit 的相对路径以此为根）"
-        } else ""
-        val workspaceGuidance = buildWorkspaceGuidance(
-            workspacePath = workspacePath,
-            projectTypeOverride = sessionId.let { id -> sessionDao.findById(id)?.projectType.orEmpty() },
-            distroName = distroName,
-            toolCallMode = toolCallMode,
-            installedTools = installedTools,
-        )
-
-        val toolCallSection = when (toolCallMode) {
-            ToolCallMode.JSON_TEXT -> promptAssets.render("prompts/tool_call_json.md")
-            ToolCallMode.DISABLED -> context.getString(R.string.harness_prompt_tool_call_disabled)
-            ToolCallMode.NATIVE -> ""
-        }
-
-        val thinkingLang = runCatching { settingsDataStore.thinkingLanguage.first() }.getOrDefault("zh")
-        val thinkingLanguageSection = when (thinkingLang) {
-            "zh" -> context.getString(R.string.harness_prompt_thinking_language_zh)
-            "en" -> context.getString(R.string.harness_prompt_thinking_language_en)
-            else -> ""
-        }
-
-        val privilegeInfo = runCatching { privilegeManager.getPrivilegeInfo() }.getOrNull()
-        val privilegeSection = when {
-            privilegeInfo == null -> context.getString(R.string.harness_prompt_privilege_unavailable)
-            privilegeInfo.mode == ExecutionMode.PROOT || !privilegeInfo.modeActive ->
-                context.getString(R.string.harness_prompt_privilege_proot)
-            privilegeInfo.mode == ExecutionMode.SHIZUKU ->
-                promptAssets.render("prompts/privilege_shizuku.md")
-            else ->
-                promptAssets.render("prompts/privilege_root.md")
-        }
-
-        val baseVariables = mapOf(
-            "DISTRO_NAME" to distroName,
-            "PKG_MANAGER" to pkgManager,
-            "ACTIVE_SKILLS" to skillSection,
-        )
-        val basePrompt = if (customPromptEnabled && customPrompt.isNotBlank()) {
-            baseVariables.entries.fold(resolvedTemplate) { prompt, (name, value) ->
-                prompt.replace("{{$name}}", value)
-            }.trim()
-        } else {
-            promptAssets.renderTemplate(
-                path = "prompts/agent_system.md",
-                template = resolvedTemplate,
-                variables = baseVariables,
-            )
-        }
-        return listOf(
-            basePrompt,
-            installedToolsSection,
-            memorySection,
-            planSection,
-            subagentSection,
-            toolCallSection,
-            workspaceSection,
-            workspaceGuidance,
-            projectContext,
-            privilegeSection,
-            thinkingLanguageSection,
-        ).filter { it.isNotBlank() }.joinToString("\n\n") { it.trim() }
-    }
-
-    private suspend fun buildSubagentGuidance(toolCallMode: ToolCallMode): String {
-        if (toolCallMode == ToolCallMode.DISABLED) return ""
-        val profiles = runCatching { subagentRepository.enabledProfiles() }.getOrDefault(emptyList())
-        if (profiles.isEmpty()) {
-            return context.getString(R.string.harness_prompt_subagent_none)
-        }
-        val autoEnabled = runCatching { subagentRepository.autoDelegationEnabled.first() }.getOrDefault(true)
-        val roleList = profiles.joinToString("\n") { profile ->
-            "- role=\"${profile.id}\"：${profile.name}。${profile.description}"
-        }
-        val triggerPolicy = if (autoEnabled) {
-            promptAssets.render("prompts/subagent_trigger_auto.md")
-        } else {
-            context.getString(R.string.harness_prompt_subagent_trigger_manual)
-        }
-        return promptAssets.render(
-            "prompts/subagent_guidance.md",
-            mapOf("TRIGGER_POLICY" to triggerPolicy, "ROLE_LIST" to roleList),
-        )
-    }
-
-    private fun extractMentionedNames(text: String): Set<String> {
-        if (!text.contains("@")) return emptySet()
-        val regex = Regex("""@([^\s@,，:：\n]+)""")
-        return regex.findAll(text).map { it.groupValues[1].trim().lowercase() }.toSet()
-    }
-
-    private suspend fun loadProjectContext(workspacePath: String): String {
-        if (workspacePath.isBlank()) return ""
-        val sections = buildList {
-            for (name in listOf("AGENTS.md", "CLAUDE.md", "README.md")) {
-                val content = runCatching {
-                    // WorkspaceFileAccess understands the canonical /workspace/... form.
-                    fileAccess.read("$workspacePath/$name").getOrNull()
-                }.getOrNull() ?: continue
-                val trimmed = content.take(PROJECT_CONTEXT_MAX_BYTES)
-                add(
-                    "<project_instructions path=\"" + name + "\">\n" + trimmed +
-                        (if (content.length > PROJECT_CONTEXT_MAX_BYTES) "\n…（文件过长已截断）" else "") +
-                        "\n</project_instructions>",
-                )
-            }
-        }
-        if (sections.isEmpty()) return ""
-        return "\n\n<project_context>\n当前工作区的项目说明与约定（自动加载，编码时务必遵守）：\n\n" +
-            sections.joinToString("\n\n") + "\n</project_context>"
-    }
-
-    /**
-     * Workspace context is deliberately injected independently of user skills.
-     * A linked project must remain actionable even when the user has disabled
-     * optional skills or never mentions them in the first message.
-     */
-    private suspend fun buildWorkspaceGuidance(
-        workspacePath: String,
-        projectTypeOverride: String = "",
-        distroName: String,
-        toolCallMode: ToolCallMode,
-        installedTools: List<top.wkbin.taixu.core.database.ToolEntity>,
-    ): String {
-        if (workspacePath.isBlank()) return ""
-        val entries = fileAccess.list(workspacePath).getOrNull().orEmpty().map { it.name }.toSet()
-        val appEntries = if ("app" in entries) {
-            fileAccess.list("$workspacePath/app").getOrNull().orEmpty().map { it.name }.toSet()
-        } else {
-            emptySet()
-        }
-        val detectedProjectType = when {
-            "pubspec.yaml" in entries -> "Flutter"
-            "settings.gradle.kts" in entries || "settings.gradle" in entries ||
-                "build.gradle.kts" in entries || "build.gradle" in entries ||
-                ("app" in entries && appEntries.any { it == "build.gradle" || it == "build.gradle.kts" }) -> "Android"
-            "apk-info.properties" in entries || entries.any { it.endsWith(".apk", ignoreCase = true) } -> "Android APK 逆向"
-            else -> "通用工程"
-        }
-        val projectType = when (projectTypeOverride.trim().uppercase()) {
-            "ANDROID" -> "Android"
-            "FLUTTER" -> "Flutter"
-            "REVERSE" -> "Android APK 逆向"
-            "GENERAL" -> "通用工程"
-            else -> detectedProjectType
-        }
-        val markerText = entries.sorted().joinToString(", ").ifBlank { "（目录为空或暂时不可读）" }
-        val toolNames = if (toolCallMode == ToolCallMode.DISABLED) {
-            "工具调用已禁用"
-        } else {
-            "read, write, edit, base, memory, plan, scratchpad, history_search, history_read, invoke_subagent" +
-                if (toolCallMode == ToolCallMode.JSON_TEXT) "（JSON 文本调用模式）" else ""
-        }
-        val installedToolNames = installedTools.joinToString(", ") { it.name }.ifBlank { "暂无已安装套件记录" }
-        val typeAsset = when (projectType) {
-            "Android" -> "prompts/workspace_android.md"
-            "Flutter" -> "prompts/workspace_flutter.md"
-            "Android APK 逆向" -> "prompts/workspace_reverse.md"
-            else -> "prompts/workspace_general.md"
-        }
-        val typeGuidance = promptAssets.render(
-            typeAsset,
-            mapOf("MARKER_TEXT" to markerText, "WORKSPACE_PATH" to workspacePath),
-        )
-        return promptAssets.render(
-            "prompts/workspace_context.md",
-            mapOf(
-                "WORKSPACE_PATH" to workspacePath,
-                "DISTRO_NAME" to distroName,
-                "TOOL_NAMES" to toolNames,
-                "INSTALLED_TOOL_NAMES" to installedToolNames,
-                "TYPE_GUIDANCE" to typeGuidance,
-            ),
-        )
-    }
-
-    private suspend fun apiMessages(sessId: String, model: ModelConfig): List<ApiMessage> {
-        val compactionEnabled = runCatching { settingsDataStore.contextCompactionEnabled.first() }.getOrDefault(true)
-        val budgetTokens = model.contextTokens
-            ?: runCatching { settingsDataStore.contextBudgetTokens.first() }.getOrDefault(128_000)
-        val sessionEntity = sessionDao.findById(sessId)
-        val sessionWorkspace = sessionEntity?.workspace.orEmpty()
-        val thinkingMode = sessionThinkingModes[sessId] ?: false
-        val toolCallMode = if (model.pureChatMode) ToolCallMode.DISABLED else model.toolCallMode
-
-        var compactedContext = compactionManager.project(sessId)
-        var msgs = compactedContext.messages
-        val latestUserText = msgs.filterIsInstance<UserMessage>().lastOrNull()?.text.orEmpty()
-        val mentionedNames = extractMentionedNames(latestUserText)
-
-        val systemPrompt = if (!model.pureChatMode) {
-            buildSystemPrompt(sessionWorkspace, toolCallMode, mentionedNames, sessId)
-        } else {
-            ""
-        }
-        return buildList {
-            if (systemPrompt.isNotEmpty()) {
-                add(ApiMessage(role = "system", content = systemPrompt))
-            }
-            val answeredIds = msgs.filterIsInstance<ToolResult>().mapTo(mutableSetOf()) { it.toolCallId }
-            val toolCallDetails = msgs.filterIsInstance<ToolCall>().associate {
-                it.id to ((it.rawToolName ?: HarnessApiMapper.apiName(it.tool)) to it.args)
-            }
-
-            // 预算驱动的滑动窗口：从最近一轮往回累加 token，超出预算则更早的历史进入压缩态。
-            // 是否裁剪原文只由真实 token 预算决定，不再按用户轮次阈值强制折叠。
-            val computedKeepFromIndex = if (compactionEnabled) {
-                ContextWindowPolicy.computeKeepFromIndex(
-                    msgs,
-                    budgetTokens,
-                    ContextWindowPolicy.estimateTokens(systemPrompt),
-                )
-            } else {
-                0
-            }
-            if (computedKeepFromIndex > 0) {
-                compactedContext = compactionManager.compact(sessId, compactedContext, computedKeepFromIndex)
-                msgs = compactedContext.messages
-            }
-            val shouldCompact = !compactedContext.summary.isNullOrBlank()
-            val recentTurnCutoffIndex = 0
-
-            if (shouldCompact) {
-                add(
-                    ApiMessage(
-                        role = "system",
-                        content = compactedContext.summary,
-                    ),
-                )
-            }
-
-            // JSON 文本模式：工具调用以文本表达，tool 消息需转成 user 文本（API 不认识 tool 角色）
-            val toolNames = toolCallDetails.mapValuesTo(mutableMapOf()) { it.value.first }
-
-            var i = 0
-            fun apiToolCall(tc: ToolCall) = ApiToolCall(
-                id = tc.id,
-                function = ApiFunctionCall(name = HarnessApiMapper.apiName(tc.tool), arguments = tc.args.toString()),
-            )
-            val isCollapsed = { index: Int -> shouldCompact && index < recentTurnCutoffIndex }
-            while (i < msgs.size) {
-                val message = msgs[i]
-                if (isCollapsed(i)) {
-                    i++
-                    continue
-                }
-                if (message is CapabilityEvent) {
-                    i++
-                    continue
-                }
-                if (toolCallMode == ToolCallMode.JSON_TEXT) {
-                    when (message) {
-                        is ToolCall -> {
-                            toolNames[message.id] = message.rawToolName ?: HarnessApiMapper.apiName(message.tool)
-                            i++
-                        }
-                        is ToolResult -> {
-                            val name = toolNames[message.toolCallId] ?: "工具"
-                            val status = if (message.success) "成功" else "失败"
-                            val args = toolCallDetails[message.toolCallId]?.second
-                            val content = if (isCollapsed(i) && message.output.length > ContextWindowPolicy.compactThresholdFor(name)) {
-                                ContextWindowPolicy.compactToolOutput(name, args, message.output, message.success)
-                            } else {
-                                "【工具 $name 执行结果·$status】\n${message.output}"
-                            }
-                            add(ApiMessage(role = "user", content = content))
-                            i++
-                        }
-                        else -> {
-                            val mapped = when {
-                                isCollapsed(i) && message is AssistantText && message.text.length > 120 ->
-                                    ApiMessage(
-                                        role = "assistant",
-                                        content = ContextWindowPolicy.foldMessageText("助手", message.text),
-                                        reasoning_content = null,
-                                    )
-                                isCollapsed(i) && message is UserMessage && message.text.length > 120 ->
-                                    ApiMessage(
-                                        role = "user",
-                                        content = ContextWindowPolicy.foldMessageText("用户", message.text),
-                                        imageUrls = message.imageUrls,
-                                    )
-                                isCollapsed(i) && message is AssistantText ->
-                                    HarnessApiMapper.toApiMessage(message).copy(reasoning_content = null)
-                                else -> HarnessApiMapper.toApiMessage(message)
-                            }
-                            add(if (message is UserMessage && !model.visionEnabled) mapped.copy(imageUrls = emptyList()) else mapped)
-                            i++
-                        }
-                    }
-                    continue
-                }
-                if (message is AssistantText || message is ToolCall) {
-                    if (message is ToolCall && message.id !in answeredIds) {
-                        i++
-                        continue
-                    }
-                    // 预算折叠态：早期 assistant 文本压缩为一行占位，避免撑爆上下文。
-                    val text = if (isCollapsed(i) && message is AssistantText && message.text.length > 120) {
-                        ContextWindowPolicy.foldMessageText("助手", message.text)
-                    } else {
-                        (message as? AssistantText)?.text
-                    }
-                    // collapsed 历史不携带 reasoning：它是执行过程数据，不应成为长期上下文负担。
-                    val reasoning = if (isCollapsed(i)) null else when (message) {
-                        is AssistantText -> message.reasoning
-                        is ToolCall -> message.reasoning
-                    }
-                    val toolCalls = mutableListOf<ApiToolCall>()
-                    if (message is ToolCall) toolCalls.add(apiToolCall(message))
-                    var j = i + 1
-                    while (j < msgs.size && msgs[j] is ToolCall) {
-                        val tc = msgs[j] as ToolCall
-                        if (tc.id in answeredIds) toolCalls.add(apiToolCall(tc))
-                        j++
-                    }
-                    add(
-                        ApiMessage(
-                            role = "assistant",
-                            content = text,
-                            reasoning_content = when {
-                                isCollapsed(i) -> null
-                                reasoning != null -> reasoning
-                                thinkingMode -> ""
-                                else -> null
-                            },
-                            tool_calls = toolCalls.takeIf { it.isNotEmpty() },
-                        ),
-                    )
-                    i = j
-                } else if (message is ToolResult) {
-                    val detail = toolCallDetails[message.toolCallId]
-                    val content = if (isCollapsed(i) && message.output.length > ContextWindowPolicy.compactThresholdFor(detail?.first)) {
-                        ContextWindowPolicy.compactToolOutput(detail?.first, detail?.second, message.output, message.success)
-                    } else {
-                        message.output
-                    }
-                    add(
-                        ApiMessage(
-                            role = "tool",
-                            content = content,
-                            tool_call_id = message.toolCallId,
-                        ),
-                    )
-                    i++
-                } else {
-                    // 用户消息在早期历史中同样折叠，仅保留极简占位。
-                    val folded = if (isCollapsed(i) && message is UserMessage && message.text.length > 120) {
-                        ContextWindowPolicy.foldMessageText("用户", message.text)
-                    } else {
-                        null
-                    }
-                    if (folded != null) {
-                        add(ApiMessage(role = "user", content = folded))
-                    } else {
-                        val mapped = HarnessApiMapper.toApiMessage(message)
-                        add(if (message is UserMessage && !model.visionEnabled) mapped.copy(imageUrls = emptyList()) else mapped)
-                    }
-                    i++
-                }
-            }
-        }
-    }
-
     private suspend fun append(sessId: String, message: HarnessMessage) {
-        messageStore.append(sessId, message)
-        publishPersistedMessage(sessId, message)
+        messageProjector.append(sessId, message)
     }
 
     /** Publish a message already committed by an atomic operation transaction. */
-    private fun publishPersistedMessage(sessId: String, message: HarnessMessage) {
-        val liveFlow = getOrCreateLiveMessages(sessId)
-        liveFlow.update { current ->
-            if (current.any { it.id == message.id }) current.map { if (it.id == message.id) message else it }
-            else current + message
-        }
-        if (sessId == _currentSessionId.value) _messages.value = liveFlow.value
+    private suspend fun publishPersistedMessage(sessId: String, message: HarnessMessage) {
+        messageProjector.publishPersisted(sessId, message)
     }
 
     /** Remove a live-only message (e.g. empty streaming bubble after fatal error). */
     private fun removeLiveMessage(sessId: String, messageId: String) {
-        val liveFlow = getOrCreateLiveMessages(sessId)
-        liveFlow.update { current -> current.filterNot { it.id == messageId } }
-        if (sessId == _currentSessionId.value) _messages.value = liveFlow.value
+        messageProjector.remove(sessId, messageId)
     }
 
     private fun streamAssistant(sessId: String, id: String, createdAt: Long, text: String) {
-        val liveFlow = getOrCreateLiveMessages(sessId)
-        liveFlow.update { current ->
-            val existing = current.firstOrNull { it.id == id }
-            val message = AssistantText(
-                id = id,
-                createdAt = createdAt,
-                text = text,
-                reasoning = (existing as? AssistantText)?.reasoning,
-            )
-            if (existing != null) current.map { if (it.id == id) message else it } else current + message
-        }
-        if (sessId == _currentSessionId.value) {
-            _messages.value = liveFlow.value
-        }
+        messageProjector.streamText(sessId, id, createdAt, text)
     }
 
     private fun streamAssistantReasoning(sessId: String, id: String, createdAt: Long, reasoning: String) {
-        val liveFlow = getOrCreateLiveMessages(sessId)
-        liveFlow.update { current ->
-            val idx = current.indexOfFirst { it.id == id }
-            if (idx >= 0) {
-                val existing = current[idx]
-                (existing as? AssistantText)?.let {
-                    current.toMutableList().apply { this[idx] = it.copy(reasoning = reasoning) }
-                } ?: (current + AssistantText(id = id, createdAt = createdAt, text = "", reasoning = reasoning))
-            } else {
-                current + AssistantText(id = id, createdAt = createdAt, text = "", reasoning = reasoning)
-            }
-        }
-        if (sessId == _currentSessionId.value) {
-            _messages.value = liveFlow.value
-        }
+        messageProjector.streamReasoning(sessId, id, createdAt, reasoning)
     }
 
     private suspend fun persistAssistant(
@@ -1780,31 +1178,21 @@ class HarnessLoop @Inject constructor(
 
             // —— 审批有效性校验：过期 / 参数摘要 / 工作区 / operation 归属 ——
             // 防止“用户批准的是旧参数、旧环境下的请求，实际执行的却是别的东西”。
-            val invalidation = approvalInvalidation(request)
-            val claimedStatus = when {
-                invalidation != null && request.expiresAt <= now() ->
-                    top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_EXPIRED
-                invalidation != null ->
-                    top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_FAILED
-                approved ->
-                    top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_APPROVED
-                else ->
-                    top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_REJECTED
-            }
-            if (!approvalRepository.claimPending(request.id, claimedStatus)) return@launch
+            val verdict = resumePolicy.evaluate(request, approved)
+            if (!approvalRepository.claimPending(request.id, verdict.claimStatus)) return@launch
 
             // Approval resumption is the legitimate successor to a WAITING_APPROVAL run;
             // claim the slot unconditionally (that state still reports busy to senders).
             startClaimedSessionRun(sessId) {
                 var approvalResultPersisted = false
                 try {
-                    val result = if (invalidation != null) {
+                    val result = if (verdict.isInvalid) {
                         ToolResult(
                             id = newId(),
                             createdAt = now(),
                             toolCallId = request.toolCallId,
                             success = false,
-                            output = "$invalidation。该工具调用未执行；如仍需要，请重新发起。",
+                            output = resumePolicy.invalidationResultMessage(verdict.invalidationReason.orEmpty()),
                         )
                     } else if (approved) {
                         val args = json.parseToJsonElement(request.argumentsJson) as? JsonObject
@@ -1823,7 +1211,7 @@ class HarnessLoop @Inject constructor(
                             createdAt = now(),
                             toolCallId = request.toolCallId,
                             success = false,
-                            output = "用户拒绝了该工具操作。请尊重用户决定，并选择不需要该权限的替代方案。",
+                            output = resumePolicy.rejectionResultMessage(),
                         )
                     }
                     val activeOperation = operationCoordinator.active(sessId)
@@ -1833,12 +1221,10 @@ class HarnessLoop @Inject constructor(
                     } else {
                         append(sessId, result)
                     }
-                    if (invalidation == null) {
+                    if (!verdict.isInvalid) {
                         approvalRepository.mark(
                             request.id,
-                            if (approved && result.success) top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_EXECUTED
-                            else if (approved) top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_FAILED
-                            else top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_REJECTED,
+                            resumePolicy.finalStatus(approved, result.success),
                         )
                     }
                     approvalResultPersisted = true
@@ -1880,93 +1266,15 @@ class HarnessLoop @Inject constructor(
         }
     }
 
-    /**
-     * 审批恢复执行前的四重校验；返回 null 表示有效，非 null 为拒绝原因
-     * （会作为 ToolResult 写回，让模型知晓未执行的理由并重新发起）。
-     */
-    private suspend fun approvalInvalidation(
-        request: top.wkbin.taixu.core.database.AgentApprovalRequestEntity,
-    ): String? {
-        if (request.expiresAt <= now()) {
-            val ttlMinutes = ApprovalPolicyEngine.APPROVAL_TTL_MS / 60_000L
-            return "该审批已过期（等待超过 $ttlMinutes 分钟）"
-        }
-        if (request.argsHash.isNotBlank() && request.argsHash != ApprovalPolicyEngine.argsHash(request.argumentsJson)) {
-            return "审批记录的参数摘要校验不一致，审批可能已损坏"
-        }
-        val currentWorkspace = sessionDao.findById(request.sessionId)?.workspace.orEmpty()
-        if (currentWorkspace != request.workspace) {
-            return "会话工作区已变更（审批时：${request.workspace.ifBlank { "无" }}，当前：${currentWorkspace.ifBlank { "无" }}）"
-        }
-        val boundOperationId = request.operationId
-        if (boundOperationId != null && !operationCoordinator.operationExists(boundOperationId)) {
-            return "该审批所属的运行已结束或被新运行接管"
-        }
-        return null
-    }
-
-    private suspend fun appendCapabilityEvents(
-        sessId: String,
-        userMessageId: String,
-        mentionedNames: Set<String>,
-        model: ModelConfig,
-    ) {
-        if (mentionedNames.isEmpty()) return
-        val messages = getOrCreateLiveMessages(sessId).value
-        if (userMessageId.isBlank()) return
-        val skills = runCatching { skillRepository.allSkills.first() }.getOrDefault(emptyList())
-            .filter { skill ->
-                val names = setOf(skill.name.lowercase(), skill.id.lowercase(), skill.triggerCommand?.removePrefix("/")?.lowercase().orEmpty())
-                names.any { it.isNotBlank() && it in mentionedNames }
-            }
-        skills.forEach { skill ->
-            val key = "skill:$userMessageId:${skill.id}"
-            if (messages.filterIsInstance<CapabilityEvent>().none { it.id == key }) {
-                append(
-                    sessId,
-                    CapabilityEvent(key, now(), CapabilityEvent.Kind.SKILL, skill.name, skill.description),
-                )
-            }
-        }
-        val configuredMcp = runCatching { mcpServerRepository.servers.first() }
-            .getOrDefault(emptyList())
-            .map { it.id to it.name }
-        val discoveredMcp = model.dynamicMcpTools.map { it.serverId to it.serverName }
-        (configuredMcp + discoveredMcp)
-            .distinctBy { it.first }
-            .filter { (serverId, serverName) -> serverId.lowercase() in mentionedNames || serverName.lowercase() in mentionedNames }
-            .forEach { (serverId, serverName) ->
-                val key = "mcp:$userMessageId:$serverId"
-                if (messages.filterIsInstance<CapabilityEvent>().none { it.id == key }) {
-                    append(
-                        sessId,
-                        CapabilityEvent(
-                            key,
-                            now(),
-                            CapabilityEvent.Kind.MCP,
-                            serverName,
-                            if (model.dynamicMcpTools.any { it.serverId == serverId }) {
-                                "MCP 工具已挂载，模型可按需调用"
-                            } else {
-                                "已选择 MCP 服务，正在尝试发现工具；若服务离线，后续会显示连接错误"
-                            },
-                        ),
-                    )
-                }
-            }
-    }
-
     companion object {
         const val STREAM_FLUSH_INTERVAL_MS = 80L
         const val MAX_ROUNDS = 200
         val KNOWN_TOOL_NAMES: Set<String> = HarnessTool.entries
             .map { HarnessApiMapper.apiName(it) }
             .toSet() + "subagent"
-        const val PROJECT_CONTEXT_MAX_BYTES = 16 * 1024
         const val MAX_STREAM_RETRIES = 5
         const val RETRY_BACKOFF_MS = 1_000L
         const val RETRY_BACKOFF_SEC = 2L
-        const val MAX_STATUS_ARG_LENGTH = 60
 
     }
 }

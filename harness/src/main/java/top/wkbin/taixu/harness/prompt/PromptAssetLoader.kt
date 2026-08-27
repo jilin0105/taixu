@@ -28,6 +28,8 @@ class PromptAssetLoader @Inject constructor(
     }
 
     private companion object {
-        val PLACEHOLDER = Regex("""\{\{([A-Z][A-Z0-9_]*)}}""")
+        // NOTE: Android 的 java.util.regex 底层是 ICU4C，未转义的 '}' 会抛
+        // PatternSyntaxException（标准 JVM 则容忍），因此两侧花括号都必须转义。
+        val PLACEHOLDER = Regex("""\{\{([A-Z][A-Z0-9_]*)\}\}""")
     }
 }
