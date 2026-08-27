@@ -520,7 +520,6 @@ class ChatViewModel @Inject constructor(
         } else {
             when (_sendMode.value) {
                 ComposerSendMode.STEER -> harnessLoop.steer(text, imageUrls = imageUrls)
-                ComposerSendMode.FOLLOW_UP -> harnessLoop.followUp(text, imageUrls = imageUrls)
                 ComposerSendMode.NEXT_RUN -> harnessLoop.send(text, imageUrls = imageUrls)
             }
         }
@@ -760,7 +759,6 @@ class ChatViewModel @Inject constructor(
 
 enum class ComposerSendMode(val queue: PromptQueue) {
     STEER(PromptQueue.STEER),
-    FOLLOW_UP(PromptQueue.FOLLOW_UP),
     NEXT_RUN(PromptQueue.NEXT_RUN),
 }
 

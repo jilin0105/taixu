@@ -739,7 +739,6 @@ internal fun ComposerModeSelector(mode: ComposerSendMode, onModeChange: (Compose
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ComposerModeChip(ComposerSendMode.STEER, mode, R.string.chat_label_steer, RuntimeIconName.Tune, Color(0xFF7C4DFF), onModeChange, Modifier.weight(1f))
-            ComposerModeChip(ComposerSendMode.FOLLOW_UP, mode, R.string.chat_label_follow_up, RuntimeIconName.Link, MaterialTheme.colorScheme.tertiary, onModeChange, Modifier.weight(1f))
             ComposerModeChip(ComposerSendMode.NEXT_RUN, mode, R.string.chat_label_queued, RuntimeIconName.List, MaterialTheme.colorScheme.secondary, onModeChange, Modifier.weight(1f))
         }
     }

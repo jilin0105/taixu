@@ -36,6 +36,9 @@ class TaiXuApplication : Application() {
         super.onCreate()
         crashReporter.install()
         appScope.launch(Dispatchers.IO) {
+            // 上一次未捕获崩溃会先落在应用私有目录；下次启动后复制到公共下载目录，
+            // 方便测试用户直接从 Download/TaiXu/crash-reports 取出并反馈。
+            runCatching { crashReporter.exportPendingReports() }
             runCatching { privilegeManager.reconcilePersistedMode() }
             agentSkillRepositoryLazy.get().ensureInitialized()
             mcpServerRepositoryLazy.get().ensureInitialized()

@@ -1289,12 +1289,10 @@ private fun ChatPaneContent(
                             if (canSend) {
                                 val sendTint = when (sendMode) {
                                     ComposerSendMode.STEER -> Color(0xFF7C4DFF)
-                                    ComposerSendMode.FOLLOW_UP -> MaterialTheme.colorScheme.tertiary
                                     ComposerSendMode.NEXT_RUN -> MaterialTheme.colorScheme.secondary
                                 }
                                 val sendIcon = when (sendMode) {
                                     ComposerSendMode.STEER -> RuntimeIconName.Tune
-                                    ComposerSendMode.FOLLOW_UP -> RuntimeIconName.Link
                                     ComposerSendMode.NEXT_RUN -> RuntimeIconName.List
                                 }
                                 Surface(
