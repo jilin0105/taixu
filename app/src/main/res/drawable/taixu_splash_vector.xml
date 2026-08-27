@@ -1,5 +1,6 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="180dp" android:height="209dp" android:viewportWidth="714" android:viewportHeight="828">
-    <group android:name="logo" android:pivotX="357" android:pivotY="414">
+<!-- 缩小闪屏 Logo：不改动路径，通过放大视口让内容只占约 40%，系统会自动居中。想再小就继续调大这两个视口值。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="180dp" android:height="209dp" android:viewportWidth="1785" android:viewportHeight="2070">
+    <group android:name="logo" android:translateX="535.5" android:translateY="621" android:pivotX="357" android:pivotY="414">
         <path android:fillColor="#000000" android:fillType="evenOdd" android:pathData="M358,25 L60,203 L328,343 L358,325 L124,202 L358,71 L592,202 L358,341 L388,359 L656,203 Z M328,341 L27,232 L27,572 L322,804 L322,426 L27,232 Z M392,341 L687,232 L687,572 L393,804 L393,426 L687,232 Z" />
     </group>
 </vector>
