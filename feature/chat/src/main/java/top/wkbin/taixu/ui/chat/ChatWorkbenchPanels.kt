@@ -371,10 +371,17 @@ private fun buildRoundGroups(
         toolIndexByCallId.clear()
     }
 
+    fun getOrCreateGroup(): RoundGroup {
+        return current ?: RoundGroup(System.nanoTime(), 0, null, System.currentTimeMillis()).also {
+            rounds += it
+            current = it
+        }
+    }
+
     for (event in events) {
         when (event) {
             is HarnessEvent.ProviderRoundStarted -> newGroup(event)
-            is HarnessEvent.ProviderRoundSettled -> current?.entries?.add(
+            is HarnessEvent.ProviderRoundSettled -> getOrCreateGroup().entries.add(
                 TimelineEntry.Assistant(
                     event.timestamp,
                     event.entryId.orEmpty(),
@@ -384,6 +391,7 @@ private fun buildRoundGroups(
                 ),
             )
             is HarnessEvent.ToolCallStarted -> {
+                val group = getOrCreateGroup()
                 val entry = TimelineEntry.Tool(
                     timestamp = event.timestamp,
                     callId = event.toolCallId,
@@ -392,17 +400,18 @@ private fun buildRoundGroups(
                     callMessage = callsById[event.toolCallId],
                     result = toolResultsById[event.toolCallId],
                 )
-                current?.entries?.add(entry)
-                toolIndexByCallId[event.toolCallId] = current!!.entries.lastIndex
+                group.entries.add(entry)
+                toolIndexByCallId[event.toolCallId] = group.entries.lastIndex
             }
             is HarnessEvent.ToolCallSettled -> {
+                val group = getOrCreateGroup()
                 val index = toolIndexByCallId[event.toolCallId]
-                val entry = (index?.let { current?.entries?.getOrNull(it) } as? TimelineEntry.Tool)
+                val entry = (index?.let { group.entries.getOrNull(it) } as? TimelineEntry.Tool)
                     ?: TimelineEntry.Tool(event.timestamp, event.toolCallId, event.toolName, null, callsById[event.toolCallId], toolResultsById[event.toolCallId])
-                        .also { current?.entries?.add(it); toolIndexByCallId[event.toolCallId] = current!!.entries.lastIndex }
+                        .also { group.entries.add(it); toolIndexByCallId[event.toolCallId] = group.entries.lastIndex }
                 entry.settled = event
             }
-            is HarnessEvent.ApprovalRequested -> current?.entries?.add(
+            is HarnessEvent.ApprovalRequested -> getOrCreateGroup().entries.add(
                 TimelineEntry.Approval(event.timestamp, event.toolName, event.riskLevel),
             )
             else -> lifecycle += event

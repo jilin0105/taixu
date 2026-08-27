@@ -141,7 +141,12 @@ class StatsRepository @Inject constructor(
         // 4. 热力图（近 180 天打卡矩阵）
         val heatmapStartEpoch = now.minusDays(180).atStartOfDay(zone).toInstant().toEpochMilli()
         val rawHeatmapRows = runtimeRepository.listEntriesInRange(heatmapStartEpoch, null)
-            .groupingBy { Instant.ofEpochMilli(it.createdAt).atZone(zone).toLocalDate().toString() }
+            .filter { it.createdAt > 0L }
+            .groupingBy {
+                runCatching {
+                    Instant.ofEpochMilli(it.createdAt).atZone(zone).toLocalDate().toString()
+                }.getOrDefault("")
+            }
             .eachCount()
 
         val heatmapDays = mutableListOf<StatsHeatmapDay>()
