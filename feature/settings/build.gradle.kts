@@ -49,4 +49,5 @@ dependencies {
     implementation(project(":tools"))
     implementation(project(":harness"))
     debugImplementation(libs.androidx.compose.ui.tooling)
+    testImplementation(libs.junit)
 }

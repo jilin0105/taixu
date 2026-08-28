@@ -179,26 +179,177 @@ private fun ManagedScriptEditorDialog(script: BuildScriptEntity?, onDismiss: () 
 @Composable
 fun WorkshopEnvironmentSettingsScreen(onBack: () -> Unit, viewModel: WorkshopSettingsViewModel = hiltViewModel()) {
     val draft by viewModel.draft.collectAsStateWithLifecycle()
-    Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = { RuntimeTopBar("开发环境", onBack, "沙箱内执行路径") }) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            item { SectionHeader("工具链路径", "路径均位于当前 Linux 沙箱内，保存后用于环境预检和构建") }
-            item { RuntimeCard { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                PathField("Android SDK", draft.androidSdkPath) { viewModel.update(draft.copy(androidSdkPath = it)) }
-                PathField("Android NDK", draft.ndkPath) { viewModel.update(draft.copy(ndkPath = it)) }
-                PathField("Flutter SDK", draft.flutterSdkPath) { viewModel.update(draft.copy(flutterSdkPath = it)) }
-                PathField("Java / JDK", draft.javaPath) { viewModel.update(draft.copy(javaPath = it)) }
-                PathField("Gradle", draft.gradlePath) { viewModel.update(draft.copy(gradlePath = it)) }
-                PathField("CMake", draft.cmakePath) { viewModel.update(draft.copy(cmakePath = it)) }
-                PathField("Ninja", draft.ninjaPath) { viewModel.update(draft.copy(ninjaPath = it)) }
-                PathField("AAPT2", draft.aapt2Path) { viewModel.update(draft.copy(aapt2Path = it)) }
-                PathField("Gradle 缓存", draft.gradleUserHome) { viewModel.update(draft.copy(gradleUserHome = it)) }
-                PathField("Flutter Pub 缓存", draft.pubCache) { viewModel.update(draft.copy(pubCache = it)) }
-                PathField("Android 工具目录 / ADB", draft.toolDir) { viewModel.update(draft.copy(toolDir = it)) }
-            } } }
-            item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                RuntimeOutlinedButton(onClick = viewModel::resetEnvironment, modifier = Modifier.weight(1f)) { Text("重置") }
-                RuntimeButton(onClick = viewModel::saveEnvironment, modifier = Modifier.weight(1f)) { Text("保存") }
-            } }
+    val detected by viewModel.detectedToolchains.collectAsStateWithLifecycle()
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            RuntimeTopBar(
+                "开发环境",
+                onBack,
+                if (detected.isScanning) "正在探测沙箱工具链…" else "沙箱内执行路径",
+            )
+        },
+    ) { padding ->
+        LazyColumn(
+            Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        SectionHeader("工具链路径", "路径均位于当前 Linux 沙箱内，保存后用于环境预检和构建")
+                    }
+                    RuntimeOutlinedButton(
+                        onClick = viewModel::rescanToolchains,
+                        enabled = !detected.isScanning,
+                    ) {
+                        Text(if (detected.isScanning) "扫描中…" else "探测沙箱")
+                    }
+                }
+            }
+            item {
+                RuntimeCard {
+                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        ToolchainPathDropdownField("Gradle", draft.gradlePath, detected.gradleOptions) { viewModel.update(draft.copy(gradlePath = it)) }
+                        ToolchainPathDropdownField("Java / JDK", draft.javaPath, detected.javaOptions) { viewModel.update(draft.copy(javaPath = it)) }
+                        ToolchainPathDropdownField("Android NDK", draft.ndkPath, detected.ndkOptions) { viewModel.update(draft.copy(ndkPath = it)) }
+                        ToolchainPathDropdownField("AAPT2", draft.aapt2Path, detected.aapt2Options) { viewModel.update(draft.copy(aapt2Path = it)) }
+                        PathField("Android SDK", draft.androidSdkPath) { viewModel.update(draft.copy(androidSdkPath = it)) }
+                        PathField("Flutter SDK", draft.flutterSdkPath) { viewModel.update(draft.copy(flutterSdkPath = it)) }
+                        PathField("CMake", draft.cmakePath) { viewModel.update(draft.copy(cmakePath = it)) }
+                        PathField("Ninja", draft.ninjaPath) { viewModel.update(draft.copy(ninjaPath = it)) }
+                        PathField("Gradle 缓存", draft.gradleUserHome) { viewModel.update(draft.copy(gradleUserHome = it)) }
+                        PathField("Flutter Pub 缓存", draft.pubCache) { viewModel.update(draft.copy(pubCache = it)) }
+                        PathField("Android 工具目录 / ADB", draft.toolDir) { viewModel.update(draft.copy(toolDir = it)) }
+                    }
+                }
+            }
+            item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    RuntimeOutlinedButton(onClick = viewModel::resetEnvironment, modifier = Modifier.weight(1f)) { Text("重置") }
+                    RuntimeButton(onClick = viewModel::saveEnvironment, modifier = Modifier.weight(1f)) { Text("保存") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToolchainPathDropdownField(
+    label: String,
+    value: String,
+    options: List<ToolchainOption>,
+    onValueChange: (String) -> Unit,
+) {
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+    var expanded by remember { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (options.isNotEmpty()) {
+                Surface(
+                    onClick = { expanded = true },
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            "切换版本",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                        RuntimeIcon(RuntimeIconName.ChevronDown, Modifier.size(14.dp), MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                }
+            }
+        }
+
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceContainerLow, shape)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f), shape)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall.copy(
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            )
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            options.forEach { option ->
+                val isSelected = option.path == value
+                DropdownMenuItem(
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text(
+                                    option.label,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                )
+                                if (option.isDetected) {
+                                    Surface(
+                                        shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp),
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                    ) {
+                                        Text(
+                                            "已检测",
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                }
+                            }
+                            Text(
+                                option.path,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                ),
+                            )
+                        }
+                    },
+                    onClick = {
+                        onValueChange(option.path)
+                        expanded = false
+                    },
+                )
+            }
         }
     }
 }

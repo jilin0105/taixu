@@ -42,6 +42,12 @@ import java.io.File
 import java.util.UUID
 import java.util.zip.ZipInputStream
 import java.io.BufferedOutputStream
+import top.wkbin.taixu.core.model.AiModelProfileExport
+import top.wkbin.taixu.core.model.AiModelProfileBundle
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
@@ -1001,6 +1007,170 @@ class SettingsViewModel @Inject constructor(
             aiModelDao.delete(id)
         }
     }
+
+    private val modelProfileJson = Json {
+        prettyPrint = true
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+        isLenient = true
+        coerceInputValues = true
+    }
+
+    suspend fun exportAllProfilesJson(includeApiKeys: Boolean): String {
+        val models = aiModelDao.observeAll().first()
+        val exports = models.map { entity ->
+            val keys = if (includeApiKeys && entity.secretRef.isNotBlank()) {
+                providerRepository.readModelApiKeys(entity.secretRef)
+            } else {
+                emptyList()
+            }
+            AiModelProfileExport(
+                id = entity.id,
+                name = entity.name,
+                provider = entity.provider,
+                model = entity.model,
+                baseUrl = entity.baseUrl,
+                apiKeys = keys,
+                apiKey = keys.firstOrNull(),
+                requestsPerMinutePerKey = entity.requestsPerMinutePerKey,
+                temperature = entity.temperature,
+                maxTokens = entity.maxTokens,
+                topP = entity.topP,
+                reasoningMode = entity.reasoningMode,
+                reasoningEffort = entity.reasoningEffort,
+                toolCallMode = entity.toolCallMode,
+                contextTokens = entity.contextTokens,
+                customHeaders = entity.customHeaders,
+                pureChatMode = entity.pureChatMode,
+                visionEnabled = entity.visionEnabled,
+                responseApiEnabled = entity.responseApiEnabled,
+            )
+        }
+        val bundle = AiModelProfileBundle(
+            schemaVersion = 1,
+            exportedAt = System.currentTimeMillis(),
+            source = "TaiXu",
+            profiles = exports,
+        )
+        return modelProfileJson.encodeToString(bundle)
+    }
+
+    suspend fun exportSingleProfileJson(modelId: String, includeApiKeys: Boolean): String? {
+        val entity = aiModelDao.findById(modelId) ?: return null
+        val keys = if (includeApiKeys && entity.secretRef.isNotBlank()) {
+            providerRepository.readModelApiKeys(entity.secretRef)
+        } else {
+            emptyList()
+        }
+        val export = AiModelProfileExport(
+            id = entity.id,
+            name = entity.name,
+            provider = entity.provider,
+            model = entity.model,
+            baseUrl = entity.baseUrl,
+            apiKeys = keys,
+            apiKey = keys.firstOrNull(),
+            requestsPerMinutePerKey = entity.requestsPerMinutePerKey,
+            temperature = entity.temperature,
+            maxTokens = entity.maxTokens,
+            topP = entity.topP,
+            reasoningMode = entity.reasoningMode,
+            reasoningEffort = entity.reasoningEffort,
+            toolCallMode = entity.toolCallMode,
+            contextTokens = entity.contextTokens,
+            customHeaders = entity.customHeaders,
+            pureChatMode = entity.pureChatMode,
+            visionEnabled = entity.visionEnabled,
+            responseApiEnabled = entity.responseApiEnabled,
+        )
+        return modelProfileJson.encodeToString(export)
+    }
+
+    fun parseProfilesFromJson(rawJson: String): Result<List<AiModelProfileExport>> {
+        val trimmed = rawJson.trim()
+        if (trimmed.isBlank()) return Result.failure(IllegalArgumentException("导入内容为空"))
+        return runCatching {
+            when {
+                trimmed.startsWith("{") -> {
+                    val bundleResult = runCatching { modelProfileJson.decodeFromString<AiModelProfileBundle>(trimmed) }
+                    if (bundleResult.isSuccess && bundleResult.getOrThrow().profiles.isNotEmpty()) {
+                        bundleResult.getOrThrow().profiles
+                    } else {
+                        val single = modelProfileJson.decodeFromString<AiModelProfileExport>(trimmed)
+                        listOf(single)
+                    }
+                }
+                trimmed.startsWith("[") -> {
+                    modelProfileJson.decodeFromString<List<AiModelProfileExport>>(trimmed)
+                }
+                else -> throw IllegalArgumentException("JSON 格式无效，内容必须以 { 或 [ 开头")
+            }
+        }
+    }
+
+    suspend fun importProfilesFromJson(rawJson: String): Result<Int> {
+        val parseResult = parseProfilesFromJson(rawJson)
+        if (parseResult.isFailure) return Result.failure(parseResult.exceptionOrNull() ?: RuntimeException("JSON 解析失败"))
+        val profiles = parseResult.getOrThrow()
+        if (profiles.isEmpty()) return Result.failure(IllegalArgumentException("未检测到有效的模型档案配置"))
+
+        val existing = aiModelDao.observeAll().first()
+        var importedCount = 0
+
+        for (profile in profiles) {
+            val modelStr = profile.model.trim()
+            val providerStr = profile.provider.trim().ifBlank { "Custom" }
+            if (modelStr.isBlank() && profile.name.isBlank()) continue
+
+            val modelId = profile.id?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
+            val secretRef = "model_${modelId.replace("-", "")}"
+            val keys = (profile.apiKeys + listOfNotNull(profile.apiKey))
+                .flatMap { it.lineSequence() }
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .distinct()
+
+            val nameStr = profile.name.trim().ifBlank {
+                val firstModel = modelStr.split(",").firstOrNull()?.trim().orEmpty()
+                firstModel.ifBlank { providerStr }
+            }
+
+            aiModelDao.upsert(
+                AiModelEntity(
+                    id = modelId,
+                    name = nameStr,
+                    provider = providerStr,
+                    model = modelStr.ifBlank { nameStr },
+                    baseUrl = profile.baseUrl.trim(),
+                    secretRef = secretRef,
+                    isActive = existing.none { it.isActive } && importedCount == 0,
+                    createdAt = System.currentTimeMillis() + importedCount,
+                    temperature = profile.temperature,
+                    maxTokens = profile.maxTokens,
+                    topP = profile.topP,
+                    reasoningMode = profile.reasoningMode?.ifBlank { null },
+                    reasoningEffort = profile.reasoningEffort?.ifBlank { null },
+                    toolCallMode = profile.toolCallMode?.ifBlank { null },
+                    contextTokens = profile.contextTokens,
+                    customHeaders = profile.customHeaders.trim(),
+                    pureChatMode = profile.pureChatMode,
+                    visionEnabled = profile.visionEnabled,
+                    responseApiEnabled = profile.responseApiEnabled,
+                    apiKeyCount = keys.size,
+                    requestsPerMinutePerKey = profile.requestsPerMinutePerKey.coerceAtLeast(0),
+                )
+            )
+
+            if (keys.isNotEmpty()) {
+                providerRepository.setModelApiKeys(secretRef, keys)
+            }
+            importedCount++
+        }
+
+        return if (importedCount > 0) Result.success(importedCount)
+        else Result.failure(IllegalArgumentException("未解析到任何有效模型"))
+    }
+
 
     // ---- 宿主与沙箱存储挂载配置 (PRoot -b) ----
     val mountDownloadEnabled: StateFlow<Boolean> = settingsDataStore.mountDownloadEnabled

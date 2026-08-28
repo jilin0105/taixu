@@ -26,6 +26,21 @@ import top.wkbin.taixu.runtime.scripts.RuntimeAssetSynchronizer
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import java.util.UUID
 
+data class ToolchainOption(
+    val path: String,
+    val label: String,
+    val isDetected: Boolean = false,
+    val description: String = "",
+)
+
+data class DetectedToolchains(
+    val gradleOptions: List<ToolchainOption> = emptyList(),
+    val javaOptions: List<ToolchainOption> = emptyList(),
+    val ndkOptions: List<ToolchainOption> = emptyList(),
+    val aapt2Options: List<ToolchainOption> = emptyList(),
+    val isScanning: Boolean = false,
+)
+
 data class WorkshopEnvironmentDraft(
     val androidSdkPath: String = "",
     val ndkPath: String = "",
@@ -52,6 +67,7 @@ class WorkshopSettingsViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val preferences: WorkshopPreferences,
     private val linuxRuntime: LinuxRuntime,
+    private val pathManager: RuntimePathManager,
     private val assetSynchronizer: RuntimeAssetSynchronizer,
     private val buildScripts: BuildScriptRepository,
     workspaceManager: WorkspaceManager,
@@ -88,9 +104,161 @@ class WorkshopSettingsViewModel @Inject constructor(
     val projectBindings: StateFlow<List<ProjectBuildScriptBindingEntity>> = buildScripts.observeBindings()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    private val _detectedToolchains = MutableStateFlow(DetectedToolchains())
+    val detectedToolchains: StateFlow<DetectedToolchains> = _detectedToolchains.asStateFlow()
+
     init {
         reload()
         viewModelScope.launch { ensureBuiltinScripts() }
+        rescanToolchains()
+    }
+
+    fun rescanToolchains() = viewModelScope.launch(Dispatchers.IO) {
+        _detectedToolchains.value = _detectedToolchains.value.copy(isScanning = true)
+        val distroId = linuxRuntime.activeDistroId.value
+        // 1. 优先直接扫描宿主文件系统，0 延迟获取真实存在的目录
+        val initialDetected = scanLocalDistroToolchains(distroId)
+        _detectedToolchains.value = initialDetected.copy(isScanning = true)
+
+        // 2. 结合沙箱环境内部探针补全挂载路径
+        val probeCmd = """
+            sh -c '
+            echo "===GRADLE==="
+            ls -d /opt/gradle* /opt/taixu/toolchains/gradle* /usr/share/gradle* /usr/lib/gradle* 2>/dev/null || true
+            echo "===JAVA==="
+            ls -d /opt/taixu/toolchains/android/jdk /usr/lib/jvm/* /opt/jdk* 2>/dev/null || true
+            echo "===NDK==="
+            ls -d /opt/taixu/toolchains/android/ndk /opt/android-sdk/ndk/* 2>/dev/null || true
+            echo "===AAPT2==="
+            ls /opt/android-sdk/build-tools/*/aapt2 2>/dev/null || true
+            '
+        """.trimIndent()
+        val result = runCatching {
+            linuxRuntime.execute(ShellCommand(probeCmd, timeoutMs = 8_000L))
+        }.getOrNull()
+
+        if (result != null && result.isSuccess) {
+            val lines = result.stdout.lines().map { it.trim() }.filter { it.isNotBlank() }
+            var section = ""
+            val detectedGradle = initialDetected.gradleOptions.map { it.path }.toMutableSet()
+            val detectedJava = initialDetected.javaOptions.map { it.path }.toMutableSet()
+            val detectedNdk = initialDetected.ndkOptions.map { it.path }.toMutableSet()
+            val detectedAapt2 = initialDetected.aapt2Options.map { it.path }.toMutableSet()
+
+            for (line in lines) {
+                when {
+                    line.startsWith("===GRADLE===") -> section = "GRADLE"
+                    line.startsWith("===JAVA===") -> section = "JAVA"
+                    line.startsWith("===NDK===") -> section = "NDK"
+                    line.startsWith("===AAPT2===") -> section = "AAPT2"
+                    line.startsWith("===") -> section = ""
+                    else -> when (section) {
+                        "GRADLE" -> if (line.startsWith("/")) detectedGradle.add(line)
+                        "JAVA" -> if (line.startsWith("/")) detectedJava.add(line)
+                        "NDK" -> if (line.startsWith("/")) detectedNdk.add(line)
+                        "AAPT2" -> if (line.startsWith("/")) detectedAapt2.add(line)
+                    }
+                }
+            }
+
+            fun toOptions(paths: Set<String>, labelBuilder: (String) -> String): List<ToolchainOption> =
+                paths.map { path -> ToolchainOption(path = path, label = labelBuilder(path), isDetected = true) }
+                    .sortedBy { it.path }
+
+            _detectedToolchains.value = DetectedToolchains(
+                gradleOptions = toOptions(detectedGradle) { path ->
+                    val ver = path.substringAfterLast("gradle-", "").takeIf { it.isNotEmpty() }
+                    if (ver != null) "Gradle $ver" else path
+                },
+                javaOptions = toOptions(detectedJava) { path ->
+                    if (path.contains("taixu/toolchains/android/jdk")) "Adoptium OpenJDK 17 (内置)"
+                    else "JDK ${path.substringAfterLast('/')}"
+                },
+                ndkOptions = toOptions(detectedNdk) { path ->
+                    if (path.contains("taixu/toolchains/android/ndk")) "固定 ARM64 NDK r29 (内置)"
+                    else "NDK ${path.substringAfterLast('/')}"
+                },
+                aapt2Options = toOptions(detectedAapt2) { path ->
+                    "AAPT2 ${path.removeSuffix("/aapt2").substringAfterLast('/')}"
+                },
+                isScanning = false,
+            )
+        } else {
+            _detectedToolchains.value = initialDetected.copy(isScanning = false)
+        }
+    }
+
+    private fun scanLocalDistroToolchains(distroId: String): DetectedToolchains {
+        val safeDistro = distroId.lowercase().trim().ifBlank { "ubuntu" }
+        val rootfs = pathManager.rootfsDir(safeDistro)
+        val hostOpt = pathManager.distroOptDir(safeDistro)
+        val guestOpt = File(rootfs, "opt")
+
+        val gradlePaths = mutableSetOf<String>()
+        val javaPaths = mutableSetOf<String>()
+        val ndkPaths = mutableSetOf<String>()
+        val aapt2Paths = mutableSetOf<String>()
+
+        // 1. 扫描 /opt 下存在的 Gradle
+        listOf(hostOpt, guestOpt).forEach { dir ->
+            dir.listFiles()?.filter { it.isDirectory && it.name.startsWith("gradle") }?.forEach {
+                gradlePaths.add("/opt/${it.name}")
+            }
+        }
+        if (File(rootfs, "usr/share/gradle/bin/gradle").exists() || File(rootfs, "usr/bin/gradle").exists()) {
+            gradlePaths.add("/usr/share/gradle")
+        }
+
+        // 2. 扫描 Java / JDK
+        val jvmDir = File(rootfs, "usr/lib/jvm")
+        jvmDir.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }?.forEach {
+            javaPaths.add("/usr/lib/jvm/${it.name}")
+        }
+        val taixuJdk = File(hostOpt, "taixu/toolchains/android/jdk")
+        if (taixuJdk.exists() || File(guestOpt, "taixu/toolchains/android/jdk").exists()) {
+            javaPaths.add("/opt/taixu/toolchains/android/jdk")
+        }
+
+        // 3. 扫描 NDK
+        val taixuNdk = File(hostOpt, "taixu/toolchains/android/ndk")
+        if (taixuNdk.exists() || File(guestOpt, "taixu/toolchains/android/ndk").exists()) {
+            ndkPaths.add("/opt/taixu/toolchains/android/ndk")
+        }
+        listOf(File(hostOpt, "android-sdk/ndk"), File(guestOpt, "android-sdk/ndk")).forEach { ndkParent ->
+            ndkParent.listFiles()?.filter { it.isDirectory }?.forEach {
+                ndkPaths.add("/opt/android-sdk/ndk/${it.name}")
+            }
+        }
+
+        // 4. 扫描 AAPT2
+        listOf(File(hostOpt, "android-sdk/build-tools"), File(guestOpt, "android-sdk/build-tools")).forEach { btParent ->
+            btParent.listFiles()?.filter { it.isDirectory && File(it, "aapt2").exists() }?.forEach {
+                aapt2Paths.add("/opt/android-sdk/build-tools/${it.name}/aapt2")
+            }
+        }
+
+        fun toOptions(paths: Set<String>, labelBuilder: (String) -> String): List<ToolchainOption> =
+            paths.map { path -> ToolchainOption(path = path, label = labelBuilder(path), isDetected = true) }
+                .sortedBy { it.path }
+
+        return DetectedToolchains(
+            gradleOptions = toOptions(gradlePaths) { path ->
+                val ver = path.substringAfterLast("gradle-", "").takeIf { it.isNotEmpty() }
+                if (ver != null) "Gradle $ver" else path
+            },
+            javaOptions = toOptions(javaPaths) { path ->
+                if (path.contains("taixu/toolchains/android/jdk")) "Adoptium OpenJDK 17 (内置)"
+                else "JDK ${path.substringAfterLast('/')}"
+            },
+            ndkOptions = toOptions(ndkPaths) { path ->
+                if (path.contains("taixu/toolchains/android/ndk")) "固定 ARM64 NDK r29 (内置)"
+                else "NDK ${path.substringAfterLast('/')}"
+            },
+            aapt2Options = toOptions(aapt2Paths) { path ->
+                "AAPT2 ${path.removeSuffix("/aapt2").substringAfterLast('/')}"
+            },
+            isScanning = false,
+        )
     }
 
     private suspend fun ensureBuiltinScripts() {
