@@ -198,21 +198,32 @@ class AgentForegroundService : Service() {
     }
 
     private fun sessionNotificationId(sessionId: String): Int {
-        return PRIMARY_NOTIFICATION_ID + (sessionId.hashCode().absoluteValue % 9000) + 1
+        val primary = activeNotifSessionIds.firstOrNull()
+        return if (primary == null || primary == sessionId) {
+            PRIMARY_NOTIFICATION_ID
+        } else {
+            PRIMARY_NOTIFICATION_ID + (sessionId.hashCode().absoluteValue % 9000) + 1
+        }
     }
 
-    private fun placeholderNotification(status: String): Notification =
-        NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.taixu_logo)
-            .setContentTitle(status)
-            .setContentText(getString(R.string.taixu_agent_background_running))
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .build()
+    private fun placeholderNotification(status: String): Notification {
+        val stopPending = PendingIntent.getService(
+            this,
+            PRIMARY_NOTIFICATION_ID,
+            Intent(this, AgentForegroundService::class.java)
+                .setAction(ACTION_STOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return LiveCapsuleHelper.buildRunningCapsuleNotification(
+            context = this,
+            channelId = CHANNEL_ID,
+            sessionId = "taixu_primary_session",
+            sessionTitle = getString(R.string.taixu_agent_default_title),
+            rawStatus = status,
+            elapsedSeconds = 0L,
+            stopPendingIntent = stopPending,
+        )
+    }
 
     private fun sessionNotification(
         sessionId: String,

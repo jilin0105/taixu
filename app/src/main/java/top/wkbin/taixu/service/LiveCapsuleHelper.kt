@@ -228,8 +228,28 @@ object LiveCapsuleHelper {
         extras.putBoolean("miui.focus.show_when", true)
         extras.putLong("miui.focus.time", System.currentTimeMillis())
 
-        // 2. vivo / iQOO (OriginOS 3/4/5) 原子通知 / 原子岛官方规范 (vivo.atomic.param)
+        // 2. vivo / iQOO (OriginOS 3/4/5) 原子通知 / 原子岛官方规范 (notification.superx.* & vivo.atomic.param)
         runCatching {
+            val operationCode = if (isOngoing) 0 else 2
+            extras.putInt("notification.superx.operation", operationCode)
+            extras.putString("notification.superx.scene", "ai_agent_status")
+            extras.putString("notification.superx.template", "capsule")
+            extras.putString("notification.superx.title", title)
+            extras.putString("notification.superx.content", statusText)
+
+            val liveMessage = org.json.JSONObject().apply {
+                put("operation", operationCode)
+                put("title", title)
+                put("content", statusText)
+                put("subTitle", "太墟 AI")
+                put("capsule", org.json.JSONObject().apply {
+                    put("text", statusText)
+                    put("color", "#2C7FEB")
+                })
+            }
+            extras.putString("notification.superx.liveMessage", liveMessage.toString())
+            extras.putString("notification.superx.capsule", liveMessage.toString())
+
             val vivoParam = org.json.JSONObject().apply {
                 put("operation", if (isOngoing) 0 else 1)
                 put("scene", "ai_agent_status")
