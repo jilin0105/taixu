@@ -2955,7 +2955,10 @@ fun WebChatBridgeDialog(
             }
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 Text(
                     text = "在同一 Wi-Fi / 局域网下，可以通过电脑 PC 浏览器直接访问太墟 Agent 与工作区，享受桌面端大屏协作与长代码审阅体验。",
                     style = MaterialTheme.typography.bodyMedium,
