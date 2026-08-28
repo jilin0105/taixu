@@ -97,6 +97,9 @@ import top.wkbin.taixu.ui.components.liquidGlassContent
 import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
+import top.wkbin.taixu.ui.components.SpotlightGuideOverlay
+import top.wkbin.taixu.ui.components.rememberSpotlightAnchor
+import top.wkbin.taixu.ui.components.spotlightAnchor
 import top.wkbin.taixu.ui.components.RuntimeTopBar
 import top.wkbin.taixu.ui.components.SectionHeader
 import top.wkbin.taixu.ui.theme.LocalLiquidGlassBackdrop
@@ -263,6 +266,10 @@ fun WorkspaceScreen(
     var showTemplateManager by remember { mutableStateOf(false) }
     var showTemplateSpec by remember { mutableStateOf(false) }
     var actionsExpanded by remember { mutableStateOf(false) }
+
+    // 首次进入引导：高亮右上角「更多」菜单（内含插件中心与工坊设置入口）
+    val firstUseGuidesShown by viewModel.firstUseGuidesShown.collectAsStateWithLifecycle()
+    val moreAnchor = rememberSpotlightAnchor()
     var selectedTemplate by remember { mutableStateOf(top.wkbin.taixu.runtime.ProjectTemplate.EMPTY) }
     var createProjectStep by remember { mutableStateOf(CreateProjectStep.PROJECT_TYPE) }
     var selectedProjectType by remember { mutableStateOf<TemplateProjectType?>(null) }
@@ -374,6 +381,8 @@ fun WorkspaceScreen(
     }
 
     val glassBackdrop = LocalLiquidGlassBackdrop.current
+    // 首次引导遮罩与 Scaffold 放在同一 Box 下（同层兄弟节点），保证聚光灯坐标与按钮 boundsInRoot 同一参照系
+    Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -382,7 +391,11 @@ fun WorkspaceScreen(
                 statusText = stringResource(R.string.workspace_active_projects, projects.size),
             ) {
                 Box {
-                    IconButton(onClick = { actionsExpanded = true }, enabled = !busy) {
+                    IconButton(
+                        onClick = { actionsExpanded = true },
+                        enabled = !busy,
+                        modifier = Modifier.spotlightAnchor(moreAnchor),
+                    ) {
                         RuntimeIcon(RuntimeIconName.More, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                     }
                     DropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }) {
@@ -601,6 +614,17 @@ fun WorkspaceScreen(
             item { Spacer(Modifier.height(16.dp)) }
         }
     }
+
+    // 首次进入引导：高亮右上角「更多」菜单（内含插件中心与工坊设置入口）
+    if ("workspace_more_menu" !in firstUseGuidesShown) {
+        SpotlightGuideOverlay(
+            anchor = moreAnchor,
+            title = "更多工作坊能力",
+            message = "这里藏着「插件中心」和「工坊设置」：安装在线/离线开发环境插件、配置构建 SDK 路径与 APK 签名。点击右上角按钮即可展开。",
+            onDismiss = { viewModel.markFirstUseGuideShown("workspace_more_menu") },
+        )
+    }
+    } // Box
 
     // 运行/构建进度与实时日志弹窗 (支持后台运行与随时最小化)
     if (isBuildDialogVisible && buildProgress != null) {

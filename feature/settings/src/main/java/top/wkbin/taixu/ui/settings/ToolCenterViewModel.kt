@@ -7,9 +7,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import top.wkbin.taixu.core.common.logging.AppLogger
+import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.core.database.InstallLogEntity
 import top.wkbin.taixu.core.database.ToolEntity
 import top.wkbin.taixu.core.tools.ToolInstallProgress
@@ -23,6 +25,7 @@ import android.net.Uri
 class ToolCenterViewModel @Inject constructor(
     private val toolManager: ToolManager,
     private val linuxRuntime: LinuxRuntime,
+    private val settingsDataStore: SettingsDataStore,
     private val logger: AppLogger,
 ) : ViewModel() {
 
@@ -42,6 +45,17 @@ class ToolCenterViewModel @Inject constructor(
     val toolLogs: StateFlow<List<InstallLogEntity>> = _toolLogs.asStateFlow()
 
     val localPluginImport: StateFlow<top.wkbin.taixu.core.tools.LocalPluginImportState> = toolManager.localPluginImportState
+
+    /** 首次进入插件中心的离线包导入引导：false 表示尚未看过，需要展示遮罩引导。 */
+    val importGuideShown: StateFlow<Boolean> = settingsDataStore.firstUseGuidesShown
+        .map { it.contains(GUIDE_IMPORT_OFFLINE) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun markImportGuideShown() {
+        viewModelScope.launch {
+            settingsDataStore.markFirstUseGuideShown(GUIDE_IMPORT_OFFLINE)
+        }
+    }
 
     fun syncRegistry() {
         viewModelScope.launch {
@@ -208,4 +222,9 @@ class ToolCenterViewModel @Inject constructor(
     fun closeSuiteDialog() = closeBundleSetup()
     fun toggleSuite(id: String) {}
     fun installSelectedSuites() {}
+
+    companion object {
+        /** 首次引导登记 ID：插件中心「导入离线插件包」入口。 */
+        const val GUIDE_IMPORT_OFFLINE = "tool_center_import_offline"
+    }
 }

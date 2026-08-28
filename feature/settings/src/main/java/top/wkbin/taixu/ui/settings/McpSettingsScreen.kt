@@ -376,28 +376,7 @@ private fun McpServerDetailDialog(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    val jsonConfig = remember(server) {
-        buildString {
-            appendLine("{")
-            appendLine("  \"${server.id}\": {")
-            if (server.transportType == McpTransportType.STDIO) {
-                appendLine("    \"command\": \"${server.command}\",")
-                appendLine("    \"args\": [${server.args.joinToString(", ") { "\"$it\"" }}]")
-                if (server.env.isNotEmpty()) {
-                    appendLine("    \"env\": {")
-                    server.env.entries.forEachIndexed { i, (k, v) ->
-                        val comma = if (i == server.env.size - 1) "" else ","
-                        appendLine("      \"$k\": \"$v\"$comma")
-                    }
-                    appendLine("    }")
-                }
-            } else {
-                appendLine("    \"url\": \"${server.serverUrl}\"")
-            }
-            appendLine("  }")
-            append("}")
-        }
-    }
+    val jsonConfig = remember(server) { server.toExportJsonConfig() }
 
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,

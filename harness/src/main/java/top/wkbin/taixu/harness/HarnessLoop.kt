@@ -7,6 +7,7 @@ import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.database.HarnessSessionRepository
 import top.wkbin.taixu.core.database.HarnessSessionEntity
 import top.wkbin.taixu.core.model.SessionRunState
+import top.wkbin.taixu.harness.mcp.McpToolApiName
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -36,6 +37,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import top.wkbin.taixu.harness.validation.ToolSchemaValidator
+import top.wkbin.taixu.harness.validation.ToolCallLoopDetector
 
 import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.harness.session.SessionTreeStore
@@ -99,6 +101,7 @@ class HarnessLoop @Inject constructor(
 
     private val sessionJobs = ConcurrentHashMap<String, Job>()
     private val sessionMutexes = ConcurrentHashMap<String, Mutex>()
+    private val sessionLoopDetectors = ConcurrentHashMap<String, ToolCallLoopDetector>()
     /** Sessions being deleted; reject new runs and skip pending drainage. */
     private val tombstonedSessions = ConcurrentHashMap.newKeySet<String>()
     private val recoveredSessions = ConcurrentHashMap.newKeySet<String>()
@@ -299,6 +302,7 @@ class HarnessLoop @Inject constructor(
         messageStore.deleteSession(id)
         approvalRepository.deleteForSession(id)
         sessionDao.deleteSession(id)
+        sessionLoopDetectors.remove(id)
         tombstonedSessions.remove(id)
         if (sessionTracker.currentSessionId.value == id) {
             val remaining = sessionDao.observeAll().first()
@@ -645,6 +649,7 @@ class HarnessLoop @Inject constructor(
     }
 
     private suspend fun runLoop(sessId: String, userText: String, imageUrls: List<String> = emptyList()): RunResult {
+        sessionLoopDetectors.getOrPut(sessId) { ToolCallLoopDetector() }.reset()
         agentEventLogger.log(sessId, "UserPrompt", userText)
         val userMessage = UserMessage(id = newId(), createdAt = now(), text = userText, imageUrls = imageUrls)
         val operationId = operationCoordinator.acceptRun(sessId, userMessage)
@@ -679,369 +684,92 @@ class HarnessLoop @Inject constructor(
                 return RunResult.Failed("无法获取模型配置：${friendly(throwable)}")
             }
             agentEventLogger.log(sessId, "ModelRequest", "Round=$round, Model=${model.name}, Provider=${model.provider}")
-            val msgs = messageProjector.messagesFlow(sessId).value
-            val latestUserMessage = msgs.filterIsInstance<UserMessage>().lastOrNull()
-            val latestUserText = latestUserMessage?.text.orEmpty()
-            val mentionedNames = MentionExtractor.parse(latestUserText)
-            val effectiveModel = if (mentionedNames.isNotEmpty()) {
-                val matchedTools = model.dynamicMcpTools.filter { tool ->
-                    val sName = tool.serverName.lowercase()
-                    val sId = tool.serverId.lowercase()
-                    val tName = tool.name.lowercase()
-                    sName in mentionedNames || sId in mentionedNames || tName in mentionedNames
-                }
-                if (matchedTools.isNotEmpty()) model.copy(dynamicMcpTools = matchedTools) else model
-            } else {
-                model
-            }
-            capabilityWriter.writeIfMentioned(sessId, latestUserMessage?.id.orEmpty(), mentionedNames, effectiveModel)
+            val effectiveModel = resolveEffectiveModel(sessId, model)
             val assistantId = newId()
             val assistantAt = now()
-            val streamText = StringBuilder()
-            val streamReasoning = StringBuilder()
-            var streamed: ChatResult? = null
-            var netRetry = 0
-            while (streamed == null) {
-                try {
-                    operationCoordinator.providerIntent(
-                        operationId = activeOperationId,
-                        effectId = assistantId,
+
+            when (val call = callProviderWithRetry(
+                sessId = sessId,
+                model = effectiveModel,
+                sessionEntity = sessionEntity,
+                sessionWorkspace = sessionWorkspace,
+                operationId = activeOperationId,
+                assistantId = assistantId,
+                assistantAt = assistantAt,
+                round = round,
+                startedAt = startedAt,
+                retryPolicy = retryPolicy,
+            )) {
+                is ProviderCallOutcome.Failed -> return RunResult.Failed(call.message)
+                is ProviderCallOutcome.Success -> {
+                    val result = call.result
+                    val jsonMode = model.toolCallMode == ToolCallMode.JSON_TEXT
+                    val rawText = call.streamText
+                    // JSON 文本模式：从回复文本中解析 [[tool_call]]{...}[[/tool_call]] 标记，
+                    // 展示给用户与持久化时剥离标记（标记仅作为模型↔引擎的调用协议）
+                    val jsonCalls = if (jsonMode) JsonTextToolCallCodec.extract(json, rawText) else emptyList()
+                    val displayText = if (jsonMode) JsonTextToolCallCodec.stripMarkers(rawText) else rawText
+                    agentEventLogger.log(
+                        sessId,
+                        "ModelResponse",
+                        "TextLength=${rawText.length}, ReasoningLength=${result.reasoningContent?.length ?: 0}, ToolCallsCount=${result.toolCalls.size}, JsonTextCalls=${jsonCalls.size}",
+                    )
+                    persistAssistantOutput(
+                        sessId = sessId,
+                        assistantId = assistantId,
+                        assistantAt = assistantAt,
                         round = round,
-                        attempt = netRetry + 1,
-                        maxAttempts = retryPolicy.maxAttempts,
+                        startedAt = startedAt,
+                        operationId = activeOperationId,
+                        result = result,
+                        effectiveModel = effectiveModel,
+                        displayText = displayText,
+                        hasToolCalls = result.toolCalls.isNotEmpty() || jsonCalls.isNotEmpty(),
                     )
-                    streamed = providerClient.chatStream(
-                        effectiveModel,
-                        contextAssembler.assemble(
-                            sessId = sessId,
-                            model = effectiveModel,
-                            workspacePath = sessionWorkspace,
-                            projectTypeOverride = sessionEntity?.projectType.orEmpty(),
-                            thinkingMode = stateMirrors.requestThinkingMode(sessId),
-                        ),
-                        onReasoning = { chunk ->
-                            streamReasoning.append(chunk)
-                            stateMirrors.setThinkingLive(sessId, true)
-                            stateMirrors.recordThinkingObserved(sessId)
-                            // 纯内存投影（不落库），逐增量即时发布；重组频率由帧率自然兑底。
-                            if (chunk.isNotEmpty()) {
-                                messageProjector.streamReasoning(sessId, assistantId, assistantAt, streamReasoning.toString())
-                            }
-                        },
-                    ) { chunk ->
-                        stateMirrors.setStatus(sessId, "回复中")
-                        streamText.append(chunk)
-                        if (chunk.isNotEmpty()) {
-                            messageProjector.streamText(sessId, assistantId, assistantAt, streamText.toString())
+                    stateMirrors.setThinkingLive(sessId, false)
+
+                    val allCalls = result.toolCalls + jsonCalls
+                    if (allCalls.isEmpty()) {
+                        val followUps = promptQueueManager.consume(sessId, PromptQueue.FOLLOW_UP)
+                        refreshPendingProjection(sessId)
+                        followUps.forEach { messageProjector.publishPersisted(sessId, it) }
+                        if (followUps.isEmpty()) return RunResult.Completed
+                        round++
+                        continue
+                    }
+                    // 单轮工具数上限：超出部分回填空结果并提示模型，避免一次性爆发失控。
+                    val effectiveCalls = enforceToolRoundLimit(sessId, allCalls, maxToolsPerRound, result.reasoningContent)
+                    val roundHadSuccess = executeToolCalls(
+                        sessId = sessId,
+                        specs = effectiveCalls,
+                        reasoning = result.reasoningContent,
+                        sessionWorkspace = sessionWorkspace,
+                        autoCwd = autoCwd,
+                        effectiveModel = effectiveModel,
+                        operationId = activeOperationId,
+                        round = round,
+                    )
+                    // 连续失败熔断：当一轮内所有工具调用均失败时计数，连续超过阈值则主动终止，
+                    // 避免模型在"调用→失败→再调用"中死循环空转，浪费资源且无法自拔。
+                    if (effectiveCalls.isNotEmpty() && !roundHadSuccess) {
+                        consecutiveFailures++
+                        if (consecutiveFailures >= maxConsecutiveFailures) {
+                            messageProjector.append(
+                                sessId,
+                                AssistantText(
+                                    id = newId(),
+                                    createdAt = now(),
+                                    text = "连续 $consecutiveFailures 轮工具调用均失败，已主动停止以避免陷入死循环。" +
+                                        "请检查：命令是否正确、工作区路径是否存在、依赖是否已安装，或简化任务后重试。",
+                                    totalMs = now() - startedAt,
+                                ),
+                            )
+                            return RunResult.Failed("连续 $consecutiveFailures 轮工具调用均失败，已主动停止")
                         }
-                    }
-                    // 流式传输完毕，无条件刷新一次完整内容
-                    if (streamReasoning.isNotEmpty()) {
-                        messageProjector.streamReasoning(sessId, assistantId, assistantAt, streamReasoning.toString())
-                    }
-                    if (streamText.isNotEmpty()) {
-                        messageProjector.streamText(sessId, assistantId, assistantAt, streamText.toString())
-                    }
-                } catch (cancellation: CancellationException) {
-                    agentEventLogger.log(sessId, "Cancelled", "用户主动取消执行")
-                    throw cancellation
-                } catch (rateLimit: LlmRateLimitException) {
-                    currentCoroutineContext().ensureActive()
-                    if (rateLimit.quotaExhausted) {
-                        stateMirrors.setThinkingLive(sessId, false)
-                        agentEventLogger.log(sessId, "QuotaExhausted", rateLimit.message.orEmpty(), rateLimit)
-                        // 移除空的流式气泡；错误通过 error state 展示，不写入消息历史，避免下一轮注入模型上下文
-                        messageProjector.remove(sessId, assistantId)
-                        val detail = rateLimit.message?.takeIf { it.isNotBlank() }?.let { "\n\n$it" }.orEmpty()
-                        return RunResult.Failed("模型服务商额度已耗尽，无法继续执行。请充值、切换可用模型或更新 API Key。$detail")
-                    }
-                    netRetry++
-                    if (netRetry > retryPolicy.maxRetries) throw rateLimit
-                    stateMirrors.setThinkingLive(sessId, false)
-                    val waitSeconds = rateLimit.retryAfterSeconds ?: (netRetry * RETRY_BACKOFF_SEC).coerceAtMost(60L)
-                    stateMirrors.setStatus(sessId, "请求受限，${waitSeconds} 秒后自动重试（$netRetry/$MAX_STREAM_RETRIES）")
-                    agentEventLogger.log(sessId, "RateLimitRetry", "限流退避 ${waitSeconds}s，重试 $netRetry/$MAX_STREAM_RETRIES", rateLimit)
-                    streamText.clear()
-                    streamReasoning.clear()
-                    messageProjector.streamText(sessId, assistantId, assistantAt, "")
-                    for (remaining in waitSeconds downTo 1L) {
-                        currentCoroutineContext().ensureActive()
-                        stateMirrors.setStatus(sessId, "请求受限，${remaining} 秒后自动重试（$netRetry/$MAX_STREAM_RETRIES）")
-                        delay(1000L.milliseconds)
-                    }
-                } catch (io: IOException) {
-                    currentCoroutineContext().ensureActive()
-                    netRetry++
-                    agentEventLogger.log(sessId, "NetworkRetry", "网络中断重试 $netRetry/$MAX_STREAM_RETRIES: ${io.message}", io)
-                    if (netRetry > retryPolicy.maxRetries) throw io
-                    stateMirrors.setThinkingLive(sessId, false)
-                    stateMirrors.setStatus(sessId, "网络中断，重试中（$netRetry/$MAX_STREAM_RETRIES）")
-                    streamText.clear()
-                    streamReasoning.clear()
-                    messageProjector.streamText(sessId, assistantId, assistantAt, "")
-                    delay(retryPolicy.delayForRetry(netRetry).milliseconds)
-                } catch (throwable: Throwable) {
-                    stateMirrors.setThinkingLive(sessId, false)
-                    agentEventLogger.log(sessId, "ModelError", "LLM 调用失败: ${throwable.message}", throwable)
-                    if (streamText.isNotEmpty()) {
-                        persistAssistant(
-                            sessId,
-                            assistantId,
-                            assistantAt,
-                            streamText.toString(),
-                            streamReasoning.toString().ifBlank { null },
-                            totalMs = now() - startedAt,
-                            operationId = activeOperationId,
-                            round = round,
-                        )
                     } else {
-                        // 移除空的流式气泡；错误通过 error state 展示，不写入消息历史
-                        messageProjector.remove(sessId, assistantId)
-                    }
-                    return RunResult.Failed(friendly(throwable))
-                }
-            }
-            val result = streamed
-            val jsonMode = model.toolCallMode == ToolCallMode.JSON_TEXT
-            val rawText = streamText.toString()
-            // JSON 文本模式：从回复文本中解析 [[tool_call]]{...}[[/tool_call]] 标记，
-            // 展示给用户与持久化时剥离标记（标记仅作为模型↔引擎的调用协议）
-            val jsonCalls = if (jsonMode) JsonTextToolCallCodec.extract(json, rawText) else emptyList()
-            val displayText = if (jsonMode) JsonTextToolCallCodec.stripMarkers(rawText) else rawText
-            agentEventLogger.log(
-                sessId,
-                "ModelResponse",
-                "TextLength=${rawText.length}, ReasoningLength=${result.reasoningContent?.length ?: 0}, ToolCallsCount=${result.toolCalls.size}, JsonTextCalls=${jsonCalls.size}",
-            )
-            if (displayText.isNotEmpty()) {
-                persistAssistant(
-                    sessId,
-                    assistantId,
-                    assistantAt,
-                    displayText,
-                    result.reasoningContent,
-                    totalMs = if (result.toolCalls.isEmpty() && jsonCalls.isEmpty()) now() - startedAt else null,
-                    operationId = activeOperationId,
-                    round = round,
-                    usage = result.usage,
-                    model = effectiveModel,
-                )
-            } else {
-                val usageEntity = result.usage.takeIf { it.hasData }?.let {
-                    operationCoordinator.usageEntity(
-                        sessionId = sessId,
-                        operationId = activeOperationId,
-                        entryId = null,
-                        provider = effectiveModel.provider,
-                        modelId = effectiveModel.model,
-                        usage = it,
-                    )
-                }
-                operationCoordinator.providerSettled(activeOperationId, null, usage = usageEntity, round = round)
-            }
-            stateMirrors.setThinkingLive(sessId, false)
-            val allCalls = result.toolCalls + jsonCalls
-            if (allCalls.isEmpty()) {
-                val followUps = promptQueueManager.consume(sessId, PromptQueue.FOLLOW_UP)
-                refreshPendingProjection(sessId)
-                followUps.forEach { messageProjector.publishPersisted(sessId, it) }
-                if (followUps.isEmpty()) return RunResult.Completed
-                round++
-                continue
-            }
-            // 单轮工具数上限：超出部分回填空结果并提示模型，避免一次性爆发失控。
-            val effectiveCalls = if (allCalls.size > maxToolsPerRound) {
-                val dropped = allCalls.size - maxToolsPerRound
-                allCalls.drop(maxToolsPerRound).forEach { spec ->
-                    messageProjector.append(
-                        sessId,
-                        ToolCall(
-                            id = spec.id,
-                            createdAt = now(),
-                            tool = HarnessApiMapper.toolByName(spec.name),
-                            args = buildJsonObject {},
-                            reasoning = result.reasoningContent,
-                            rawToolName = spec.name.trim(),
-                        ),
-                    )
-                    messageProjector.append(
-                        sessId,
-                        ToolResult(
-                            id = newId(),
-                            createdAt = now(),
-                            toolCallId = spec.id,
-                            success = false,
-                            output = "本回合工具调用数量（${allCalls.size}）超过单轮上限（$maxToolsPerRound），已跳过本次多余的 $dropped 个调用。" +
-                                "请拆分任务、分步调用工具，避免一次性发起过多工具请求。",
-                        ),
-                    )
-                }
-                allCalls.take(maxToolsPerRound)
-            } else {
-                allCalls
-            }
-            var roundHadSuccess = false
-            effectiveCalls.forEach { spec ->
-                val parsedArgs = try {
-                    json.parseToJsonElement(spec.argumentsJson) as? JsonObject
-                        ?: throw IllegalArgumentException("参数不是 JSON 对象")
-                } catch (parseError: Throwable) {
-                    messageProjector.append(
-                        sessId,
-                        ToolCall(
-                            id = spec.id,
-                            createdAt = now(),
-                            tool = HarnessApiMapper.toolByName(spec.name),
-                            args = buildJsonObject {},
-                            reasoning = result.reasoningContent,
-                        ),
-                    )
-                    messageProjector.append(
-                        sessId,
-                        ToolResult(
-                            id = newId(),
-                            createdAt = now(),
-                            toolCallId = spec.id,
-                            success = false,
-                            output = "工具参数 JSON 解析失败（${friendly(parseError)}），参数可能被截断。" +
-                                "请重新发起完整的工具调用，参数必须是合法的 JSON 对象。",
-                        ),
-                    )
-                    return@forEach
-                }
-                val toolNameTrimmed = spec.name.trim()
-                if (toolNameTrimmed.lowercase() !in KNOWN_TOOL_NAMES && !toolNameTrimmed.startsWith("mcp__")) {
-                    messageProjector.append(
-                        sessId,
-                        ToolCall(
-                            id = spec.id,
-                            createdAt = now(),
-                            tool = HarnessApiMapper.toolByName(spec.name),
-                            args = buildJsonObject {},
-                            reasoning = result.reasoningContent,
-                            rawToolName = toolNameTrimmed,
-                        ),
-                    )
-                    messageProjector.append(
-                        sessId,
-                        ToolResult(
-                            id = newId(),
-                            createdAt = now(),
-                            toolCallId = spec.id,
-                            success = false,
-                            output = "未知工具：${spec.name}。可用工具包含 read / write / edit / base / process / invoke_subagent 以及已启用的 MCP 插件工具。",
-                        ),
-                    )
-                    return@forEach
-                }
-                val tool = HarnessApiMapper.toolByName(spec.name)
-                var args = parsedArgs
-                if (tool == HarnessTool.BASE && autoCwd && sessionWorkspace.isNotBlank() && args["cwd"] == null) {
-                    args = buildJsonObject {
-                        put("cwd", sessionWorkspace)
-                        args.forEach { (key, value) -> put(key, value) }
+                        consecutiveFailures = 0
                     }
                 }
-                // 执行前 JSON Schema 校验：必填/枚举/范围/格式/组合约束。
-                // 失败时写回可读问题清单，让模型按 schema 自我纠正，而不是带着坏参数进入执行层。
-                val schemaProblems = ToolSchemaValidator.problemsFor(toolNameTrimmed, args, effectiveModel.dynamicMcpTools)
-                if (schemaProblems.isNotEmpty()) {
-                    messageProjector.append(
-                        sessId,
-                        ToolCall(
-                            id = spec.id,
-                            createdAt = now(),
-                            tool = tool,
-                            args = args,
-                            reasoning = result.reasoningContent,
-                            rawToolName = toolNameTrimmed,
-                        ),
-                    )
-                    messageProjector.append(
-                        sessId,
-                        ToolResult(
-                            id = newId(),
-                            createdAt = now(),
-                            toolCallId = spec.id,
-                            success = false,
-                            output = "工具参数校验未通过：${schemaProblems.joinToString("；")}。" +
-                                "请按工具定义修正参数后重新调用，必填字段不可省略。",
-                        ),
-                    )
-                    return@forEach
-                }
-                val toolCall = ToolCall(
-                    // Preserve the provider protocol id across execution, approval,
-                    // persistence and the subsequent tool result.
-                    id = spec.id,
-                    createdAt = now(),
-                    tool = tool,
-                    args = args,
-                    reasoning = result.reasoningContent,
-                    rawToolName = toolNameTrimmed,
-                )
-                agentEventLogger.log(sessId, "ToolCall", "Tool=${tool.name}, RawName=$toolNameTrimmed, Args=$args")
-                operationCoordinator.toolIntent(
-                    operationId = activeOperationId,
-                    message = toolCall,
-                    payloadJson = spec.argumentsJson,
-                    replay = ToolReplayPolicy.forTool(tool, toolNameTrimmed),
-                    round = round,
-                )
-                messageProjector.publishPersisted(sessId, toolCall)
-                stateMirrors.setStatus(sessId, ToolStatusDescriber.describe(tool, args, toolNameTrimmed))
-                val toolStart = now()
-                val outcome = try {
-                    toolExecutor.execute(
-                        toolCall,
-                        sessId,
-                        sessionWorkspace,
-                        progressReporter = { progress -> stateMirrors.setStatus(sessId, progress) },
-                        operationId = activeOperationId,
-                    )
-                } catch (cancellation: CancellationException) {
-                    throw cancellation
-                } catch (throwable: Throwable) {
-                    ToolResult(
-                        id = newId(),
-                        createdAt = now(),
-                        toolCallId = toolCall.id,
-                        success = false,
-                        output = "工具执行异常：${friendly(throwable)}",
-                    )
-                }
-                val duration = now() - toolStart
-                agentEventLogger.log(sessId, "ToolResult", "Tool=${tool.name}, Success=${outcome.success}, Duration=${duration}ms, Output=${outcome.output.take(300)}")
-                if (outcome.awaitingApproval) {
-                    operationCoordinator.waitingApproval(activeOperationId)
-                    stateMirrors.setStatus(sessId, "等待用户批准")
-                    throw ApprovalPauseException()
-                }
-                val settledOutcome = outcome.copy(durationMs = duration)
-                operationCoordinator.toolSettled(activeOperationId, settledOutcome, round, toolName = toolCall.rawToolName ?: tool.name)
-                messageProjector.publishPersisted(sessId, settledOutcome)
-                if (outcome.success) roundHadSuccess = true
-                touchSession(sessId)
-            }
-            // 连续失败熔断：当一轮内所有工具调用均失败时计数，连续超过阈值则主动终止，
-            // 避免模型在"调用→失败→再调用"中死循环空转，浪费资源且无法自拔。
-            if (effectiveCalls.isNotEmpty() && !roundHadSuccess) {
-                consecutiveFailures++
-                if (consecutiveFailures >= maxConsecutiveFailures) {
-                    messageProjector.append(
-                        sessId,
-                        AssistantText(
-                            id = newId(),
-                            createdAt = now(),
-                            text = "连续 $consecutiveFailures 轮工具调用均失败，已主动停止以避免陷入死循环。" +
-                                "请检查：命令是否正确、工作区路径是否存在、依赖是否已安装，或简化任务后重试。",
-                            totalMs = now() - startedAt,
-                        ),
-                    )
-                    return RunResult.Failed("连续 $consecutiveFailures 轮工具调用均失败，已主动停止")
-                }
-            } else {
-                consecutiveFailures = 0
             }
             round++
         }
@@ -1055,6 +783,399 @@ class HarnessLoop @Inject constructor(
             ),
         )
         return RunResult.Completed
+    }
+
+    /** 单轮流式调用的终态：Success 携带完整回复；Failed 直接终止运行循环（配额耗尽、无法恢复的调用错误） */
+    private sealed interface ProviderCallOutcome {
+        data class Success(val result: ChatResult, val streamText: String) : ProviderCallOutcome
+        data class Failed(val message: String) : ProviderCallOutcome
+    }
+
+    /** 按最新用户消息中的 @提及 过滤动态 MCP 工具，并写入能力挂载记录 */
+    private suspend fun resolveEffectiveModel(sessId: String, model: ModelConfig): ModelConfig {
+        val msgs = messageProjector.messagesFlow(sessId).value
+        val latestUserMessage = msgs.filterIsInstance<UserMessage>().lastOrNull()
+        val latestUserText = latestUserMessage?.text.orEmpty()
+        val mentionedNames = MentionExtractor.parse(latestUserText)
+        val effectiveModel = if (mentionedNames.isNotEmpty()) {
+            val matchedTools = model.dynamicMcpTools.filter { tool ->
+                val sName = tool.serverName.lowercase()
+                val sId = tool.serverId.lowercase()
+                val tName = tool.name.lowercase()
+                sName in mentionedNames || sId in mentionedNames || tName in mentionedNames
+            }
+            if (matchedTools.isNotEmpty()) model.copy(dynamicMcpTools = matchedTools) else model
+        } else {
+            model
+        }
+        capabilityWriter.writeIfMentioned(sessId, latestUserMessage?.id.orEmpty(), mentionedNames, effectiveModel)
+        return effectiveModel
+    }
+
+    /** 流式调用 + 限流/网络退避重试。恢复不了的失败以 Failed 终态返回；取消与超过重试上限的原样抛出 */
+    private suspend fun callProviderWithRetry(
+        sessId: String,
+        model: ModelConfig,
+        sessionEntity: HarnessSessionEntity?,
+        sessionWorkspace: String,
+        operationId: String,
+        assistantId: String,
+        assistantAt: Long,
+        round: Int,
+        startedAt: Long,
+        retryPolicy: RetryPolicy,
+    ): ProviderCallOutcome {
+        val streamText = StreamBuffer()
+        val streamReasoning = StreamBuffer(maxChars = ProviderClient.MAX_STREAM_REASONING_CHARS)
+        var streamed: ChatResult? = null
+        var netRetry = 0
+        while (streamed == null) {
+            try {
+                operationCoordinator.providerIntent(
+                    operationId = operationId,
+                    effectId = assistantId,
+                    round = round,
+                    attempt = netRetry + 1,
+                    maxAttempts = retryPolicy.maxAttempts,
+                )
+                streamed = providerClient.chatStream(
+                    model,
+                    contextAssembler.assemble(
+                        sessId = sessId,
+                        model = model,
+                        workspacePath = sessionWorkspace,
+                        projectTypeOverride = sessionEntity?.projectType.orEmpty(),
+                        thinkingMode = stateMirrors.requestThinkingMode(sessId),
+                    ),
+                    onReasoning = { chunk ->
+                        streamReasoning.append(chunk)
+                        stateMirrors.setThinkingLive(sessId, true)
+                        stateMirrors.recordThinkingObserved(sessId)
+                        streamReasoning.publishIfDue(now(), ProviderClient.STREAM_PUBLISH_INTERVAL_MS)?.let {
+                            messageProjector.streamReasoning(sessId, assistantId, assistantAt, it)
+                        }
+                    },
+                ) { chunk ->
+                    stateMirrors.setStatus(sessId, "回复中")
+                    streamText.append(chunk)
+                    streamText.publishIfDue(now(), ProviderClient.STREAM_PUBLISH_INTERVAL_MS)?.let {
+                        messageProjector.streamText(sessId, assistantId, assistantAt, it)
+                    }
+                }
+                // 流式传输完毕，无条件刷新一次完整内容
+                if (streamReasoning.length > 0) {
+                    messageProjector.streamReasoning(sessId, assistantId, assistantAt, streamReasoning.toString())
+                }
+                if (streamText.length > 0) {
+                    messageProjector.streamText(sessId, assistantId, assistantAt, streamText.toString())
+                }
+            } catch (cancellation: CancellationException) {
+                agentEventLogger.log(sessId, "Cancelled", "用户主动取消执行")
+                throw cancellation
+            } catch (rateLimit: LlmRateLimitException) {
+                currentCoroutineContext().ensureActive()
+                if (rateLimit.quotaExhausted) {
+                    stateMirrors.setThinkingLive(sessId, false)
+                    agentEventLogger.log(sessId, "QuotaExhausted", rateLimit.message.orEmpty(), rateLimit)
+                    // 移除空的流式气泡；错误通过 error state 展示，不写入消息历史，避免下一轮注入模型上下文
+                    messageProjector.remove(sessId, assistantId)
+                    val detail = rateLimit.message?.takeIf { it.isNotBlank() }?.let { "\n\n$it" }.orEmpty()
+                    return ProviderCallOutcome.Failed("模型服务商额度已耗尽，无法继续执行。请充值、切换可用模型或更新 API Key。$detail")
+                }
+                netRetry++
+                if (netRetry > retryPolicy.maxRetries) throw rateLimit
+                stateMirrors.setThinkingLive(sessId, false)
+                val waitSeconds = rateLimit.retryAfterSeconds ?: (netRetry * RETRY_BACKOFF_SEC).coerceAtMost(60L)
+                stateMirrors.setStatus(sessId, "请求受限，${waitSeconds} 秒后自动重试（$netRetry/$MAX_STREAM_RETRIES）")
+                agentEventLogger.log(sessId, "RateLimitRetry", "限流退避 ${waitSeconds}s，重试 $netRetry/$MAX_STREAM_RETRIES", rateLimit)
+                streamText.clear()
+                streamReasoning.clear()
+                messageProjector.streamText(sessId, assistantId, assistantAt, "")
+                for (remaining in waitSeconds downTo 1L) {
+                    currentCoroutineContext().ensureActive()
+                    stateMirrors.setStatus(sessId, "请求受限，${remaining} 秒后自动重试（$netRetry/$MAX_STREAM_RETRIES）")
+                    delay(1000L.milliseconds)
+                }
+            } catch (io: IOException) {
+                currentCoroutineContext().ensureActive()
+                netRetry++
+                agentEventLogger.log(sessId, "NetworkRetry", "网络中断重试 $netRetry/$MAX_STREAM_RETRIES: ${io.message}", io)
+                if (netRetry > retryPolicy.maxRetries) throw io
+                stateMirrors.setThinkingLive(sessId, false)
+                stateMirrors.setStatus(sessId, "网络中断，重试中（$netRetry/$MAX_STREAM_RETRIES）")
+                streamText.clear()
+                streamReasoning.clear()
+                messageProjector.streamText(sessId, assistantId, assistantAt, "")
+                delay(retryPolicy.delayForRetry(netRetry).milliseconds)
+            } catch (throwable: Throwable) {
+                stateMirrors.setThinkingLive(sessId, false)
+                agentEventLogger.log(sessId, "ModelError", "LLM 调用失败: ${throwable.message}", throwable)
+                if (streamText.length > 0) {
+                    persistAssistant(
+                        sessId,
+                        assistantId,
+                        assistantAt,
+                        streamText.toString(),
+                        streamReasoning.toString().ifBlank { null },
+                        totalMs = now() - startedAt,
+                        operationId = operationId,
+                        round = round,
+                    )
+                } else {
+                    // 移除空的流式气泡；错误通过 error state 展示，不写入消息历史
+                    messageProjector.remove(sessId, assistantId)
+                }
+                return ProviderCallOutcome.Failed(friendly(throwable))
+            }
+        }
+        return ProviderCallOutcome.Success(streamed, streamText.toString())
+    }
+
+    /** 回合结束后落库助手回复；无文本时只结算 usage 记录 */
+    private suspend fun persistAssistantOutput(
+        sessId: String,
+        assistantId: String,
+        assistantAt: Long,
+        round: Int,
+        startedAt: Long,
+        operationId: String,
+        result: ChatResult,
+        effectiveModel: ModelConfig,
+        displayText: String,
+        hasToolCalls: Boolean,
+    ) {
+        if (displayText.isNotEmpty()) {
+            persistAssistant(
+                sessId,
+                assistantId,
+                assistantAt,
+                displayText,
+                result.reasoningContent,
+                totalMs = if (!hasToolCalls) now() - startedAt else null,
+                operationId = operationId,
+                round = round,
+                usage = result.usage,
+                model = effectiveModel,
+            )
+        } else {
+            val usageEntity = result.usage.takeIf { it.hasData }?.let {
+                operationCoordinator.usageEntity(
+                    sessionId = sessId,
+                    operationId = operationId,
+                    entryId = null,
+                    provider = effectiveModel.provider,
+                    modelId = effectiveModel.model,
+                    usage = it,
+                )
+            }
+            operationCoordinator.providerSettled(operationId, null, usage = usageEntity, round = round)
+        }
+    }
+
+    /** 单轮工具数上限：超出部分回填空结果并提示模型，返回保留执行的前 maxToolsPerRound 个调用 */
+    private suspend fun enforceToolRoundLimit(
+        sessId: String,
+        allCalls: List<ApiToolCallSpec>,
+        maxToolsPerRound: Int,
+        reasoning: String?,
+    ): List<ApiToolCallSpec> {
+        if (allCalls.size <= maxToolsPerRound) return allCalls
+        val dropped = allCalls.size - maxToolsPerRound
+        allCalls.drop(maxToolsPerRound).forEach { spec ->
+            appendToolCallAndResult(
+                sessId = sessId,
+                spec = spec,
+                tool = HarnessApiMapper.toolByName(spec.name),
+                args = buildJsonObject {},
+                reasoning = reasoning,
+                rawToolName = spec.name.trim(),
+                output = "本回合工具调用数量（${allCalls.size}）超过单轮上限（$maxToolsPerRound），已跳过本次多余的 $dropped 个调用。" +
+                    "请拆分任务、分步调用工具，避免一次性发起过多工具请求。",
+            )
+        }
+        return allCalls.take(maxToolsPerRound)
+    }
+
+    /** 失败工具调用的统一样板：先回放 ToolCall 气泡，再写回失败 ToolResult 让模型自我纠正 */
+    private suspend fun appendToolCallAndResult(
+        sessId: String,
+        spec: ApiToolCallSpec,
+        tool: HarnessTool,
+        args: JsonObject,
+        reasoning: String?,
+        rawToolName: String?,
+        output: String,
+    ) {
+        messageProjector.append(
+            sessId,
+            ToolCall(
+                id = spec.id,
+                createdAt = now(),
+                tool = tool,
+                args = args,
+                reasoning = reasoning,
+                rawToolName = rawToolName,
+            ),
+        )
+        messageProjector.append(
+            sessId,
+            ToolResult(
+                id = newId(),
+                createdAt = now(),
+                toolCallId = spec.id,
+                success = false,
+                output = output,
+            ),
+        )
+    }
+
+    /** 参数解析 → 未知工具 → Schema 校验 → 死循环检测 → 执行 → 结果落盘 的完整单回合工具执行；返回本回合是否有成功调用 */
+    private suspend fun executeToolCalls(
+        sessId: String,
+        specs: List<ApiToolCallSpec>,
+        reasoning: String?,
+        sessionWorkspace: String,
+        autoCwd: Boolean,
+        effectiveModel: ModelConfig,
+        operationId: String,
+        round: Int,
+    ): Boolean {
+        var roundHadSuccess = false
+        val loopDetector = sessionLoopDetectors.getOrPut(sessId) { ToolCallLoopDetector() }
+        specs.forEach { spec ->
+            val tool = HarnessApiMapper.toolByName(spec.name)
+            val toolNameTrimmed = spec.name.trim()
+            val parsedArgs = try {
+                json.parseToJsonElement(spec.argumentsJson) as? JsonObject
+                    ?: throw IllegalArgumentException("参数不是 JSON 对象")
+            } catch (parseError: Throwable) {
+                appendToolCallAndResult(
+                    sessId = sessId,
+                    spec = spec,
+                    tool = tool,
+                    args = buildJsonObject {},
+                    reasoning = reasoning,
+                    rawToolName = null,
+                    output = "工具参数 JSON 解析失败（${friendly(parseError)}），参数可能被截断。" +
+                        "请重新发起完整的工具调用，参数必须是合法的 JSON 对象。",
+                )
+                loopDetector.recordSettled(toolNameTrimmed, buildJsonObject {}, success = false)
+                return@forEach
+            }
+            if (toolNameTrimmed.lowercase() !in KNOWN_TOOL_NAMES && !toolNameTrimmed.startsWith("mcp__")) {
+                appendToolCallAndResult(
+                    sessId = sessId,
+                    spec = spec,
+                    tool = tool,
+                    args = buildJsonObject {},
+                    reasoning = reasoning,
+                    rawToolName = toolNameTrimmed,
+                    output = unknownToolGuidance(toolNameTrimmed, effectiveModel),
+                )
+                loopDetector.recordSettled(toolNameTrimmed, buildJsonObject {}, success = false)
+                return@forEach
+            }
+            var args = parsedArgs
+            if (tool == HarnessTool.BASE && autoCwd && sessionWorkspace.isNotBlank() && args["cwd"] == null) {
+                args = buildJsonObject {
+                    put("cwd", sessionWorkspace)
+                    args.forEach { (key, value) -> put(key, value) }
+                }
+            }
+            // 执行前 JSON Schema 校验：必填/枚举/范围/格式/组合约束。
+            // 失败时写回可读问题清单，让模型按 schema 自我纠正，而不是带着坏参数进入执行层。
+            val schemaProblems = ToolSchemaValidator.problemsFor(toolNameTrimmed, args, effectiveModel.dynamicMcpTools)
+            if (schemaProblems.isNotEmpty()) {
+                // 常见错配定向提示：模型想把 url 交给通用 shell 时，直接指向正确的专用工具
+                val urlHint = if (args.containsKey("url") && tool != HarnessTool.DOWNLOAD) {
+                    "提示：url 是 download 工具的参数，下载网页/图片/文件请调用 download(url, destination)。"
+                } else ""
+                appendToolCallAndResult(
+                    sessId = sessId,
+                    spec = spec,
+                    tool = tool,
+                    args = args,
+                    reasoning = reasoning,
+                    rawToolName = toolNameTrimmed,
+                    output = "工具参数校验未通过：${schemaProblems.joinToString("；")}。" +
+                        "请按工具定义修正参数后重新调用，必填字段不可省略。$urlHint",
+                )
+                loopDetector.recordSettled(toolNameTrimmed, args, success = false)
+                return@forEach
+            }
+
+            // 执行前死循环与重复无进展调用检测：阻断重复错误重试与空转
+            val loopVerdict = loopDetector.evaluate(toolNameTrimmed, args)
+            if (loopVerdict is ToolCallLoopDetector.LoopVerdict.Block) {
+                appendToolCallAndResult(
+                    sessId = sessId,
+                    spec = spec,
+                    tool = tool,
+                    args = args,
+                    reasoning = reasoning,
+                    rawToolName = toolNameTrimmed,
+                    output = loopVerdict.guidance,
+                )
+                loopDetector.recordSettled(toolNameTrimmed, args, success = false)
+                return@forEach
+            }
+
+            loopDetector.recordIntent(toolNameTrimmed, args)
+            val toolCall = ToolCall(
+                // Preserve the provider protocol id across execution, approval,
+                // persistence and the subsequent tool result.
+                id = spec.id,
+                createdAt = now(),
+                tool = tool,
+                args = args,
+                reasoning = reasoning,
+                rawToolName = toolNameTrimmed,
+            )
+            agentEventLogger.log(sessId, "ToolCall", "Tool=${tool.name}, RawName=$toolNameTrimmed, Args=$args")
+            operationCoordinator.toolIntent(
+                operationId = operationId,
+                message = toolCall,
+                payloadJson = spec.argumentsJson,
+                replay = ToolReplayPolicy.forTool(tool, toolNameTrimmed),
+                round = round,
+            )
+            messageProjector.publishPersisted(sessId, toolCall)
+            stateMirrors.setStatus(sessId, ToolStatusDescriber.describe(tool, args, toolNameTrimmed))
+            val toolStart = now()
+            val outcome = try {
+                toolExecutor.execute(
+                    toolCall,
+                    sessId,
+                    sessionWorkspace,
+                    progressReporter = { progress -> stateMirrors.setStatus(sessId, progress) },
+                    operationId = operationId,
+                )
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (throwable: Throwable) {
+                ToolResult(
+                    id = newId(),
+                    createdAt = now(),
+                    toolCallId = toolCall.id,
+                    success = false,
+                    output = "工具执行异常：${friendly(throwable)}",
+                )
+            }
+            val duration = now() - toolStart
+            agentEventLogger.log(sessId, "ToolResult", "Tool=${tool.name}, Success=${outcome.success}, Duration=${duration}ms, Output=${outcome.output.take(300)}")
+            loopDetector.recordSettled(toolNameTrimmed, args, success = outcome.success)
+            if (outcome.awaitingApproval) {
+                operationCoordinator.waitingApproval(operationId)
+                stateMirrors.setStatus(sessId, "等待用户批准")
+                throw ApprovalPauseException()
+            }
+            val settledOutcome = outcome.copy(durationMs = duration)
+            operationCoordinator.toolSettled(operationId, settledOutcome, round, toolName = toolCall.rawToolName ?: tool.name)
+            messageProjector.publishPersisted(sessId, settledOutcome)
+            if (outcome.success) roundHadSuccess = true
+            touchSession(sessId)
+        }
+        return roundHadSuccess
     }
 
     private suspend fun drainSteeringMessages(sessId: String) {
@@ -1233,6 +1354,60 @@ class HarnessLoop @Inject constructor(
                 }
             }
         }
+    }
+
+    /**
+     * 未知工具的可纠正错误：不写死固定话术，而是列出当前真实可用的全部工具名
+     * （原生工具 + 已启用 MCP 的实际 API 名），并按编辑距离提示最接近的候选。
+     * 模型幻觉出工具名（如 fetchWebContent）时能一次拿到正确名字，不再反复编造。
+     */
+    private fun unknownToolGuidance(called: String, model: ModelConfig): String {
+        val nativeTools = listOf(
+            "read", "write", "edit", "base", "process", "host", "download", "memory",
+            "plan", "scratchpad", "history_search", "history_read", "build_script",
+            "invoke_subagent", "load_rule",
+        )
+        val mcpTools = model.dynamicMcpTools
+        val mcpList = if (mcpTools.isEmpty()) {
+            "（当前没有已启用的 MCP 工具）"
+        } else {
+            mcpTools.joinToString("；") { tool ->
+                "${McpToolApiName.encode(tool)}（${tool.serverName}·${tool.name}）"
+            }
+        }
+        val target = called.lowercase()
+        val nearest = (nativeTools + mcpTools.map { McpToolApiName.encode(it) })
+            .mapNotNull { candidate ->
+                val distance = levenshtein(target, candidate.lowercase())
+                if (distance <= (target.length / 2).coerceAtLeast(3)) candidate else null
+            }
+            .minOrNull()
+        return buildString {
+            append("未知工具：$called。工具名不可编造或猜测，必须从下列清单中原样选取。")
+            append("原生工具：${nativeTools.joinToString(" / ")}。")
+            append("已启用 MCP 工具：$mcpList。")
+            nearest?.let { append("最接近的候选是 $it，是否想调用它？") }
+        }
+    }
+
+    private fun levenshtein(a: String, b: String): Int {
+        if (a == b) return 0
+        if (a.isEmpty()) return b.length
+        if (b.isEmpty()) return a.length
+        var prev = IntArray(b.length + 1) { it }
+        for (i in 1..a.length) {
+            val current = IntArray(b.length + 1)
+            current[0] = i
+            for (j in 1..b.length) {
+                current[j] = minOf(
+                    prev[j] + 1,
+                    current[j - 1] + 1,
+                    prev[j - 1] + if (a[i - 1] == b[j - 1]) 0 else 1,
+                )
+            }
+            prev = current
+        }
+        return prev[b.length]
     }
 
     companion object {

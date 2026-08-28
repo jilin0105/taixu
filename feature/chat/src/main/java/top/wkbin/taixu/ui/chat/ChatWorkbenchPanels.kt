@@ -794,7 +794,11 @@ private fun ComposerModeChip(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun QueuedPromptStack(prompts: List<QueuedPrompt>, onRemove: (QueuedPrompt) -> Unit) {
+internal fun QueuedPromptStack(
+    prompts: List<QueuedPrompt>,
+    onEdit: (QueuedPrompt) -> Unit,
+    onRemove: (QueuedPrompt) -> Unit,
+) {
     if (prompts.isEmpty()) return
     Column(Modifier.fillMaxWidth().padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
         prompts.forEach { prompt ->
@@ -819,6 +823,9 @@ internal fun QueuedPromptStack(prompts: List<QueuedPrompt>, onRemove: (QueuedPro
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
+                    Surface(onClick = { onEdit(prompt) }, color = Color.Transparent, shape = CircleShape) {
+                        RuntimeIcon(RuntimeIconName.Edit, Modifier.padding(3.dp).size(14.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     Surface(onClick = { onRemove(prompt) }, color = Color.Transparent, shape = CircleShape) {
                         RuntimeIcon(RuntimeIconName.Close, Modifier.padding(3.dp).size(14.dp), MaterialTheme.colorScheme.onSurfaceVariant)
                     }

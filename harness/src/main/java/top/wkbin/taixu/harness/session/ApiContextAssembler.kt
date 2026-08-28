@@ -51,7 +51,15 @@ class ApiContextAssembler @Inject constructor(
         val mentionedNames = MentionExtractor.parse(latestUserText)
 
         val systemPrompt = if (!model.pureChatMode) {
-            systemPromptBuilder.build(workspacePath, toolCallMode, mentionedNames, sessId, projectTypeOverride, latestUserText)
+            systemPromptBuilder.build(
+                workspacePath,
+                toolCallMode,
+                mentionedNames,
+                sessId,
+                projectTypeOverride,
+                latestUserText,
+                mcpTools = model.dynamicMcpTools,
+            )
         } else {
             ""
         }
@@ -97,7 +105,10 @@ class ApiContextAssembler @Inject constructor(
             var i = 0
             fun apiToolCall(tc: ToolCall) = ApiToolCall(
                 id = tc.id,
-                function = ApiFunctionCall(name = HarnessApiMapper.apiName(tc.tool), arguments = tc.args.toString()),
+                function = ApiFunctionCall(
+                    name = tc.rawToolName ?: HarnessApiMapper.apiName(tc.tool),
+                    arguments = tc.args.toString(),
+                ),
             )
             val isCollapsed = { index: Int -> shouldCompact && index < recentTurnCutoffIndex }
             while (i < msgs.size) {

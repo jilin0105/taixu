@@ -98,6 +98,9 @@ import top.wkbin.taixu.ui.components.NoticeBanner
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
+import top.wkbin.taixu.ui.components.SpotlightGuideOverlay
+import top.wkbin.taixu.ui.components.rememberSpotlightAnchor
+import top.wkbin.taixu.ui.components.spotlightAnchor
 import top.wkbin.taixu.runtime.terminal.TerminalLine
 import top.wkbin.taixu.runtime.terminal.TerminalSessionHandle
 import kotlin.math.roundToInt
@@ -191,6 +194,10 @@ fun TerminalScreen(
     var isLeaving by remember { mutableStateOf(false) }
     var followOutput by remember { mutableStateOf(true) }
     var showSessions by remember { mutableStateOf(false) }
+
+    // 首次进入引导：高亮顶栏「会话列表」按钮
+    val firstUseGuidesShown by viewModel.firstUseGuidesShown.collectAsStateWithLifecycle()
+    val sessionsAnchor = rememberSpotlightAnchor()
     var showCreateSession by remember { mutableStateOf(false) }
 
     LaunchedEffect(project) {
@@ -273,6 +280,8 @@ fun TerminalScreen(
         terminalFocusRequester.requestFocus()
     }
 
+    // 首次引导遮罩与 Scaffold 放在同一 Box 下（同层兄弟节点），保证聚光灯坐标与按钮 boundsInRoot 同一参照系
+    Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -281,7 +290,10 @@ fun TerminalScreen(
                 onBack = navigateBack,
                 statusText = "$distributionName · PRoot",
             ) {
-                IconButton(onClick = { showSessions = true }) {
+                IconButton(
+                    onClick = { showSessions = true },
+                    modifier = Modifier.spotlightAnchor(sessionsAnchor),
+                ) {
                     RuntimeIcon(RuntimeIconName.List, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                 }
             }
@@ -512,6 +524,17 @@ fun TerminalScreen(
             error?.let { NoticeBanner(it, isError = true) }
         }
     }
+
+    // 首次进入引导：高亮顶栏「会话列表」按钮
+    if ("terminal_sessions" !in firstUseGuidesShown) {
+        SpotlightGuideOverlay(
+            anchor = sessionsAnchor,
+            title = "多会话并行终端",
+            message = "点击顶栏的列表按钮即可管理多个终端会话：一边编译一边继续敲命令，或同时操作多个项目，互不干扰。",
+            onDismiss = { viewModel.markFirstUseGuideShown("terminal_sessions") },
+        )
+    }
+    } // Box
 
     if (showSessions) {
         SessionListDialog(

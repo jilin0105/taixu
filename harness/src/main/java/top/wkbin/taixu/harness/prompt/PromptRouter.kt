@@ -90,7 +90,10 @@ class PromptRouter @Inject constructor(
             "异常", "exception", "stacktrace", "堆栈", "逆向", "反编译", "重构",
             "构建失败", "编译失败", "安装并", "配置并", "部署", "为什么不", "不工作",
             "doesn't work", "does not work", "not working", "troubleshoot", "fix",
-            "一步步", "多步", "复杂",
+            "一步步", "多步", "复杂", "规划", "计划", "plan",
+            "实现", "开发", "编写", "创建", "构建", "设计", "新增", "添加",
+            "爬虫", "爬取", "批量", "调研", "方案", "迁移", "集成", "重写", "改造", "优化",
+            "implement", "develop", "create", "build", "design", "crawler", "scrape", "batch", "migrate", "integrate",
         )
 
         private val SECURITY_SIGNALS = listOf(

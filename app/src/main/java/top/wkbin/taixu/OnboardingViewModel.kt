@@ -2,8 +2,6 @@ package top.wkbin.taixu
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import top.wkbin.taixu.core.database.AiModelRepository
-import top.wkbin.taixu.core.database.AiModelEntity
 import top.wkbin.taixu.core.datastore.OnboardingPreferences
 import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.core.tools.ProviderRepository
@@ -13,7 +11,6 @@ import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.RegistryRoute
 import top.wkbin.taixu.runtime.RuntimeInstallRequest
 import dagger.hilt.android.lifecycle.HiltViewModel
-import java.util.UUID
 import android.content.Context
 import android.net.Uri
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -50,10 +47,11 @@ class OnboardingViewModel @Inject constructor(
     private val settings: OnboardingPreferences,
     private val linuxRuntime: LinuxRuntime,
     private val providerRepository: ProviderRepository,
-    private val modelDao: AiModelRepository,
     private val providerCatalogRepository: AgentProviderCatalog,
     private val modelDiscovery: AgentModelDiscovery,
     private val toolManager: top.wkbin.taixu.core.tools.ToolManager,
+    private val profileWriter: top.wkbin.taixu.core.tools.AiProfileWriter,
+    private val profileBackupCodec: top.wkbin.taixu.core.tools.AiProfileBackupCodec,
 ) : ViewModel() {
     val providerCatalog = providerCatalogRepository.providers
 
@@ -298,27 +296,8 @@ class OnboardingViewModel @Inject constructor(
     }
 
     fun importProfileFromJson(rawJson: String): Result<top.wkbin.taixu.core.model.AiModelProfileExport> {
-        return runCatching {
-            val trimmed = rawJson.trim()
-            require(trimmed.isNotBlank()) { "导入内容不能为空" }
-            val jsonParser = kotlinx.serialization.json.Json {
-                ignoreUnknownKeys = true
-                isLenient = true
-                coerceInputValues = true
-            }
-
-            val profile: top.wkbin.taixu.core.model.AiModelProfileExport = try {
-                jsonParser.decodeFromString<top.wkbin.taixu.core.model.AiModelProfileBundle>(trimmed).profiles.firstOrNull()
-                    ?: error("导入包中没有模型档案")
-            } catch (_: Exception) {
-                try {
-                    jsonParser.decodeFromString<List<top.wkbin.taixu.core.model.AiModelProfileExport>>(trimmed).firstOrNull()
-                        ?: error("模型列表为空")
-                } catch (_: Exception) {
-                    jsonParser.decodeFromString<top.wkbin.taixu.core.model.AiModelProfileExport>(trimmed)
-                }
-            }
-
+        return profileBackupCodec.parseProfiles(rawJson).mapCatching { profiles ->
+            val profile = profiles.firstOrNull() ?: error("导入包中没有模型档案")
             require(profile.model.isNotBlank() || profile.name.isNotBlank()) { "模型配置缺少模型名称或 ID" }
 
             _modelProvider.value = profile.provider.ifBlank { "OpenAI" }
@@ -340,9 +319,6 @@ class OnboardingViewModel @Inject constructor(
         if (model.isBlank()) return
         val imported = _importedProfile.value
         viewModelScope.launch {
-            val existing = modelDao.observeAll().first()
-            val id = UUID.randomUUID().toString()
-            val secretRef = "model_${id.replace("-", "")}"
             val keyToSave = if (_apiKey.value.isNotBlank()) {
                 _apiKey.value.trim()
             } else if (imported != null && imported.apiKeys.isNotEmpty()) {
@@ -350,23 +326,18 @@ class OnboardingViewModel @Inject constructor(
             } else {
                 imported?.apiKey.orEmpty()
             }
-            if (keyToSave.isNotBlank()) settings.setModelApiKey(secretRef, keyToSave)
-
             val modelList = if (imported != null && imported.model.isNotBlank()) {
                 imported.model
             } else {
                 model
             }
-
-            modelDao.upsert(
-                AiModelEntity(
-                    id = id,
+            profileWriter.upsertProfile(
+                top.wkbin.taixu.core.tools.AiProfileWriter.UpsertRequest(
                     name = _modelName.value.ifBlank { model },
-                    provider = _modelProvider.value.trim(),
+                    provider = _modelProvider.value,
                     model = modelList,
-                    baseUrl = _baseUrl.value.trim(),
-                    secretRef = secretRef,
-                    apiKeyCount = if (keyToSave.isNotBlank()) keyToSave.lineSequence().count { it.isNotBlank() } else 0,
+                    baseUrl = _baseUrl.value,
+                    apiKey = keyToSave,
                     requestsPerMinutePerKey = imported?.requestsPerMinutePerKey ?: 0,
                     temperature = imported?.temperature,
                     maxTokens = imported?.maxTokens,
@@ -379,11 +350,8 @@ class OnboardingViewModel @Inject constructor(
                     pureChatMode = imported?.pureChatMode ?: false,
                     visionEnabled = imported?.visionEnabled ?: true,
                     responseApiEnabled = imported?.responseApiEnabled ?: false,
-                    isActive = existing.none { it.isActive },
-                    createdAt = System.currentTimeMillis(),
                 ),
             )
-            if (existing.none { it.isActive }) modelDao.setActive(id)
             finish()
         }
     }

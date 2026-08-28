@@ -31,6 +31,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import top.wkbin.taixu.ui.components.SpotlightGuideOverlay
+import top.wkbin.taixu.ui.components.rememberSpotlightAnchor
+import top.wkbin.taixu.ui.components.spotlightAnchor
 import top.wkbin.taixu.ui.components.RuntimeButton as Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -108,6 +111,10 @@ fun ToolCenterScreen(
         uri?.let(viewModel::importLocalPlugin)
     }
 
+    // 首次进入引导：高亮顶栏「导入离线插件包」文件夹按钮
+    val importGuideShown by viewModel.importGuideShown.collectAsStateWithLifecycle()
+    val importAnchor = rememberSpotlightAnchor()
+
     val categories = listOf(
         "ALL" to "全部生态",
         "BUNDLES" to "全栈开发套件",
@@ -129,6 +136,8 @@ fun ToolCenterScreen(
         }
     }
 
+    // 遮罩与 Scaffold 放在同一 Box 下（同层兄弟节点），保证遮罩坐标与按钮 boundsInRoot 同一参照系
+    Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -137,7 +146,10 @@ fun ToolCenterScreen(
                 statusText = "已集成 ${tools.count { it.state == ToolState.INSTALLED.name }} 个已就绪工具",
                 onBack = onBack,
                 actions = {
-                    IconButton(onClick = { importLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) }) {
+                    IconButton(
+                        onClick = { importLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
+                        modifier = Modifier.spotlightAnchor(importAnchor),
+                    ) {
                         RuntimeIcon(
                             name = RuntimeIconName.FolderOpen,
                             modifier = Modifier.size(20.dp),
@@ -917,6 +929,19 @@ fun ToolCenterScreen(
             )
         }
     }
+
+    // 首次进入引导遮罩：高亮顶栏「导入离线插件包」入口（组件内部等待按钮完成布局测量后才绘制）
+    if (!importGuideShown) {
+        SpotlightGuideOverlay(
+            anchor = importAnchor,
+            title = "导入离线插件包",
+            message = "已从 QQ 群下载好全量离线插件包？点击右上角的文件夹图标，选择 zip 文件即可导入，" +
+                "一次装齐 Android、Flutter、反编译环境，全程无需联网。",
+            icon = RuntimeIconName.FolderOpen,
+            onDismiss = viewModel::markImportGuideShown,
+        )
+    }
+    } // Box
 }
 
 private fun formatBytes(bytes: Long): String = when {

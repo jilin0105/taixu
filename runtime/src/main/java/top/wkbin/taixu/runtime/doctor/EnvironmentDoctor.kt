@@ -69,6 +69,9 @@ class EnvironmentDoctor @Inject constructor(
         // 6. Node.js 运行时检查
         items.add(checkNodeRuntime())
 
+        // 7. Android 开发环境检查（可选插件，未安装时引导获取离线/在线插件包）
+        items.add(checkAndroidEnvironment())
+
         val healthyCount = items.count { it.status == DoctorStatus.HEALTHY }
         val warningCount = items.count { it.status == DoctorStatus.WARNING }
         val errorCount = items.count { it.status == DoctorStatus.ERROR }
@@ -292,6 +295,50 @@ class EnvironmentDoctor @Inject constructor(
                 status = DoctorStatus.WARNING,
                 summary = "缺少常用基础工具: ${missingTools.joinToString(", ")}",
                 detail = "部分安装脚本或插件依赖上述工具进行解压与代码拉取",
+            )
+        }
+    }
+
+    /**
+     * 复用插件中心 android-core 组件的同一探针命令，保证体检与插件安装的状态判定口径一致。
+     */
+    private suspend fun checkAndroidEnvironment(): DoctorItem {
+        val checkCommand = top.wkbin.taixu.core.model.BuiltinPluginBundles.bundles
+            .firstOrNull { it.id == "android-suite" }
+            ?.components?.firstOrNull { it.id == "android-core" }
+            ?.checkCommand
+
+        val installed = if (checkCommand.isNullOrBlank()) {
+            false
+        } else {
+            val res = runCatching {
+                linuxRuntime.execute(
+                    ShellCommand(
+                        commandLine = checkCommand,
+                        timeoutMs = 8000L,
+                    ),
+                )
+            }.getOrNull()
+            res != null && res.isSuccess
+        }
+
+        return if (installed) {
+            DoctorItem(
+                id = "android_environment",
+                category = DoctorCategory.DEV_RUNTIMES,
+                title = "Android 开发环境",
+                status = DoctorStatus.HEALTHY,
+                summary = "JDK 17 / Android SDK / Gradle / NDK 已就绪，可构建与反编译 APK",
+            )
+        } else {
+            DoctorItem(
+                id = "android_environment",
+                category = DoctorCategory.DEV_RUNTIMES,
+                title = "Android 开发环境",
+                status = DoctorStatus.WARNING,
+                summary = "未安装 Android / Flutter / 反编译环境",
+                detail = "可加入官方 QQ 群下载全量离线插件包（已集成 Android、Flutter、反编译三大环境，免在线安装），或前往插件中心在线安装。",
+                fixable = false,
             )
         }
     }

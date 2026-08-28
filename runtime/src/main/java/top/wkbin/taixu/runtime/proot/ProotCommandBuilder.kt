@@ -125,27 +125,30 @@ class ProotCommandBuilder private constructor(
         add(config.workingDirectory)
         add(GUEST_SHELL)
         add("-lc")
-        val interactiveCommand = config.commandLine.replace("'", "'\\\"'\\\"'")
         val environment = environmentResolver.merge(
             provider = config.environment,
             interactive = true,
         )
         if (nativePty) {
-            // 真 PTY：App 侧 JNI master/slave 已提供控制终端与行规则，不再套
-            // Debian `script` 包装，避免二次 PTY 与 stty 注入。
-            add(shellCommand(commandLine = interactiveCommand, environment = environment))
+            // 真 PTY：命令串直接交给 bash 解析。commandLine 已由调用方完成 shell 引用
+            // （如 MCP STDIO 的单引号包裹），此处严禁再做引号替换——单层 bash 下
+            // '\'' 类转义会把命令名变成带引号的字面量（exec: "'python3'": not found）。
+            add(shellCommand(commandLine = config.commandLine, environment = environment))
         } else {
             val marker = ptyMarker?.also {
                 require(PTY_MARKER.matches(it)) { "PTY marker path is invalid" }
             }
             val markerPrelude = marker?.let { "tty > $it; " }.orEmpty()
+            // fallback：整条命令会被塞进 script -qfec '...' 的单引号里，再由 script 内层
+            // shell 解析，需要 '\'' 双层转义。
+            val scriptEmbed = config.commandLine.replace("'", "'\\''")
             add(
                 shellCommand(
                     commandLine =
                         "if command -v script >/dev/null 2>&1; then " +
                             "exec script -qfec '$markerPrelude stty cols $columns rows $rows; " +
-                            "$interactiveCommand' /dev/null; " +
-                            "else $interactiveCommand; fi",
+                            "$scriptEmbed' /dev/null; " +
+                            "else ${config.commandLine}; fi",
                     environment = environment,
                 ),
             )

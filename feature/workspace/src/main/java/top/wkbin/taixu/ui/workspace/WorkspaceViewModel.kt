@@ -6,6 +6,7 @@ import top.wkbin.taixu.runtime.WorkspaceFileItem
 import top.wkbin.taixu.runtime.WorkspaceManager
 import top.wkbin.taixu.runtime.WorkspaceProject
 import top.wkbin.taixu.runtime.WorkspaceStorage
+import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.template.InstalledProjectTemplate
 import top.wkbin.taixu.template.ProjectTemplateStore
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -31,7 +32,16 @@ class WorkspaceViewModel @Inject constructor(
     private val linuxRuntime: top.wkbin.taixu.runtime.LinuxRuntime,
     private val workshopPreferences: top.wkbin.taixu.core.datastore.WorkshopPreferences,
     private val projectTemplateStore: ProjectTemplateStore,
+    private val settingsDataStore: top.wkbin.taixu.core.datastore.SettingsDataStore,
 ) : ViewModel() {
+
+    /** 首次使用引导登记（统一存于 SettingsDataStore，设置页可整体清空重看）。 */
+    val firstUseGuidesShown: StateFlow<Set<String>> = settingsDataStore.firstUseGuidesShown
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
+    fun markFirstUseGuideShown(id: String) {
+        viewModelScope.launch { settingsDataStore.markFirstUseGuideShown(id) }
+    }
 
     private val _projectTemplates = MutableStateFlow<List<InstalledProjectTemplate>>(emptyList())
     val projectTemplates: StateFlow<List<InstalledProjectTemplate>> = _projectTemplates.asStateFlow()
@@ -481,22 +491,35 @@ class WorkspaceViewModel @Inject constructor(
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         }
 
+    /** 文件增删改的统一模板：取项目 → 执行 → 成功刷新目录/失败写消息 → 复位 busy */
+    private fun runFileOp(
+        successMessage: suspend () -> String,
+        fallbackError: Int,
+        op: suspend () -> AppResult<Unit>,
+    ) {
+        val proj = _selectedProject.value ?: return
+        viewModelScope.launch {
+            _busy.value = true
+            val result = op()
+            if (result.isSuccess) {
+                _message.value = successMessage()
+                refreshDirectory()
+            } else {
+                _message.value = result.errorOrNull()?.message ?: context.getString(fallbackError)
+            }
+            _busy.value = false
+        }
+    }
+
     fun createFile(name: String) {
         val proj = _selectedProject.value ?: return
         val trimmed = name.trim()
         if (trimmed.isBlank()) return
         val fullRelative = if (_currentPath.value.isBlank()) trimmed else "${_currentPath.value}/$trimmed"
-        viewModelScope.launch {
-            _busy.value = true
-            val result = workspaceManager.createFile(proj, fullRelative)
-            if (result.isSuccess) {
-                _message.value = context.getString(R.string.workspace_file_created, trimmed)
-                refreshDirectory()
-            } else {
-                _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_create_file_failed)
-            }
-            _busy.value = false
-        }
+        runFileOp(
+            successMessage = { context.getString(R.string.workspace_file_created, trimmed) },
+            fallbackError = R.string.workspace_create_file_failed,
+        ) { workspaceManager.createFile(proj, fullRelative) }
     }
 
     fun createDirectory(name: String) {
@@ -504,49 +527,28 @@ class WorkspaceViewModel @Inject constructor(
         val trimmed = name.trim()
         if (trimmed.isBlank()) return
         val fullRelative = if (_currentPath.value.isBlank()) trimmed else "${_currentPath.value}/$trimmed"
-        viewModelScope.launch {
-            _busy.value = true
-            val result = workspaceManager.createDirectory(proj, fullRelative)
-            if (result.isSuccess) {
-                _message.value = context.getString(R.string.workspace_directory_created, trimmed)
-                refreshDirectory()
-            } else {
-                _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_create_directory_failed)
-            }
-            _busy.value = false
-        }
+        runFileOp(
+            successMessage = { context.getString(R.string.workspace_directory_created, trimmed) },
+            fallbackError = R.string.workspace_create_directory_failed,
+        ) { workspaceManager.createDirectory(proj, fullRelative) }
     }
 
     fun renameItem(oldRelativePath: String, newName: String) {
         val proj = _selectedProject.value ?: return
         val trimmed = newName.trim()
         if (trimmed.isBlank()) return
-        viewModelScope.launch {
-            _busy.value = true
-            val result = workspaceManager.renameItem(proj, oldRelativePath, trimmed)
-            if (result.isSuccess) {
-                _message.value = context.getString(R.string.workspace_renamed, trimmed)
-                refreshDirectory()
-            } else {
-                _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_rename_failed)
-            }
-            _busy.value = false
-        }
+        runFileOp(
+            successMessage = { context.getString(R.string.workspace_renamed, trimmed) },
+            fallbackError = R.string.workspace_rename_failed,
+        ) { workspaceManager.renameItem(proj, oldRelativePath, trimmed) }
     }
 
     fun deleteItem(relativePath: String) {
         val proj = _selectedProject.value ?: return
-        viewModelScope.launch {
-            _busy.value = true
-            val result = workspaceManager.deleteItem(proj, relativePath)
-            if (result.isSuccess) {
-                _message.value = context.getString(R.string.workspace_deleted)
-                refreshDirectory()
-            } else {
-                _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_delete_failed)
-            }
-            _busy.value = false
-        }
+        runFileOp(
+            successMessage = { context.getString(R.string.workspace_deleted) },
+            fallbackError = R.string.workspace_delete_failed,
+        ) { workspaceManager.deleteItem(proj, relativePath) }
     }
 
     // ==================== 编辑器操作 ====================

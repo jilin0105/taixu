@@ -132,6 +132,7 @@ fun TaiXuNavHost() {
                 HomeScreen(
                     onNavigate = ::navigateMain,
                     onOpenTerminal = { homeStack.push(TerminalDestination()) },
+                    onOpenToolCenter = { homeStack.push(ToolCenterDestination) },
                 )
             }
             entry<AgentDestination> {

@@ -32,7 +32,29 @@ data class McpServerConfig(
     val isEnabled: Boolean = true,
     /** 是否为内置预设服务 */
     val isBuiltin: Boolean = false,
-)
+) {
+    /** 导出为 mcpServers JSON 配置片段（键为服务 id）；配置格式约定归模型层，View 只读展示 */
+    fun toExportJsonConfig(): String = buildString {
+        appendLine("{")
+        appendLine("  \"$id\": {")
+        if (transportType == McpTransportType.STDIO) {
+            appendLine("    \"command\": \"$command\",")
+            appendLine("    \"args\": [${args.joinToString(", ") { "\"$it\"" }}]")
+            if (env.isNotEmpty()) {
+                appendLine("    \"env\": {")
+                env.entries.forEachIndexed { i, (k, v) ->
+                    val comma = if (i == env.size - 1) "" else ","
+                    appendLine("      \"$k\": \"$v\"$comma")
+                }
+                appendLine("    }")
+            }
+        } else {
+            appendLine("    \"url\": \"$serverUrl\"")
+        }
+        appendLine("  }")
+        append("}")
+    }
+}
 
 /**
  * MCP 服务连通性检测状态（运行时状态，不持久化）
@@ -118,13 +140,13 @@ object BuiltinMcpPresets {
         McpServerConfig(
             id = "mcp_websearch",
             name = "Web 搜索（Open-WebSearch）",
-            description = "免 API Key 的多引擎网络搜索与正文抓取：支持 bing / duckduckgo / baidu / exa / brave / sogou / startpage 等引擎，由沙箱内 npx 启动 open-websearch，无需任何密钥；网络受限时可自行在 env 中追加 USE_PROXY=true / PROXY_URL 或切换 DEFAULT_SEARCH_ENGINE",
+            description = "免 API Key 的多引擎网络搜索与正文抓取：默认使用国内可直连的 baidu 引擎，可在 env 中切换 bing / duckduckgo / sogou / startpage 等；npx 已加 --prefer-offline，首次安装后启动不再联网检查版本。需要代理时在 env 中追加 USE_PROXY=true / PROXY_URL",
             transportType = McpTransportType.STDIO,
             command = "npx",
-            args = listOf("-y", "open-websearch@latest"),
+            args = listOf("-y", "--prefer-offline", "open-websearch@latest"),
             env = mapOf(
                 "MODE" to "stdio",
-                "DEFAULT_SEARCH_ENGINE" to "duckduckgo",
+                "DEFAULT_SEARCH_ENGINE" to "baidu",
             ),
             isEnabled = false,
             isBuiltin = true,

@@ -2,6 +2,7 @@ package top.wkbin.taixu.ui.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import top.wkbin.taixu.core.tools.AiProfileWriter
 import top.wkbin.taixu.core.model.ExecutionMode
 import top.wkbin.taixu.core.model.McpConnectionState
 import top.wkbin.taixu.core.model.ApprovalMode
@@ -38,6 +39,7 @@ import top.wkbin.taixu.core.tools.ProviderRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import android.content.Context
+import android.net.Uri
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import top.wkbin.taixu.feature.chat.R
@@ -88,6 +90,7 @@ class ChatViewModel @Inject constructor(
     private val modelDiscovery: AgentModelDiscovery,
     private val providerCatalog: AgentProviderCatalog,
     private val providerRepository: ProviderRepository,
+    private val profileWriter: top.wkbin.taixu.core.tools.AiProfileWriter,
     private val privilegeManager: top.wkbin.taixu.runtime.privilege.PrivilegeManager,
 ) : ViewModel() {
 
@@ -376,6 +379,27 @@ class ChatViewModel @Inject constructor(
         else emptyList()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    private fun skillToMentionItem(skill: top.wkbin.taixu.core.model.AgentSkill): MentionItem = MentionItem(
+        id = skill.id,
+        name = skill.name,
+        description = skill.description,
+        category = context.getString(R.string.chat_skill_category),
+        type = MentionType.SKILL,
+        icon = top.wkbin.taixu.ui.components.RuntimeIconName.Brain,
+    )
+
+    private fun mcpToMentionItem(
+        mcp: top.wkbin.taixu.core.model.McpServerConfig,
+        description: String = mcp.description,
+    ): MentionItem = MentionItem(
+        id = mcp.id,
+        name = mcp.name,
+        description = description,
+        category = context.getString(R.string.chat_mcp_category),
+        type = MentionType.MCP_SERVER,
+        icon = top.wkbin.taixu.ui.components.RuntimeIconName.Cpu,
+    )
+
     /** @ 艾特唤醒建议列表（当输入包含 @ 时实时过滤技能与 MCP 插件）。 */
     val matchingMentions: StateFlow<List<MentionItem>> = kotlinx.coroutines.flow.combine(
         _input,
@@ -388,25 +412,9 @@ class ChatViewModel @Inject constructor(
         if (mentionToken.any { it.isWhitespace() }) return@combine emptyList()
         val query = mentionToken.lowercase()
 
-        val skillMentions = skills.filter { it.isEnabled }.map { skill ->
-            MentionItem(
-                id = skill.id,
-                name = skill.name,
-                description = skill.description,
-                category = context.getString(R.string.chat_skill_category),
-                type = MentionType.SKILL,
-                icon = top.wkbin.taixu.ui.components.RuntimeIconName.Brain,
-            )
-        }
+        val skillMentions = skills.filter { it.isEnabled }.map(::skillToMentionItem)
         val mcpMentions = mcps.filter { it.isEnabled && !it.isBuiltin }.map { mcp ->
-            MentionItem(
-                id = mcp.id,
-                name = mcp.name,
-                description = context.getString(R.string.chat_mcp_service_description, mcp.transportType),
-                category = context.getString(R.string.chat_mcp_category),
-                type = MentionType.MCP_SERVER,
-                icon = top.wkbin.taixu.ui.components.RuntimeIconName.Cpu,
-            )
+            mcpToMentionItem(mcp, context.getString(R.string.chat_mcp_service_description, mcp.transportType))
         }
         val all = skillMentions + mcpMentions
         if (query.isEmpty()) all
@@ -424,26 +432,12 @@ class ChatViewModel @Inject constructor(
         mcpServerRepository.servers,
     ) { pinnedIds, skills, mcps ->
         if (pinnedIds.isEmpty()) return@combine emptyList()
-        val skillItems = skills.filter { it.isEnabled && (it.id in pinnedIds || it.name.lowercase() in pinnedIds) }.map { skill ->
-            MentionItem(
-                id = skill.id,
-                name = skill.name,
-                description = skill.description,
-                category = context.getString(R.string.chat_skill_category),
-                type = MentionType.SKILL,
-                icon = top.wkbin.taixu.ui.components.RuntimeIconName.Brain,
-            )
-        }
-        val mcpItems = mcps.filter { it.isEnabled && !it.isBuiltin && (it.id in pinnedIds || it.name.lowercase() in pinnedIds) }.map { mcp ->
-            MentionItem(
-                id = mcp.id,
-                name = mcp.name,
-                description = mcp.description,
-                category = context.getString(R.string.chat_mcp_category),
-                type = MentionType.MCP_SERVER,
-                icon = top.wkbin.taixu.ui.components.RuntimeIconName.Cpu,
-            )
-        }
+        val skillItems = skills
+            .filter { it.isEnabled && (it.id in pinnedIds || it.name.lowercase() in pinnedIds) }
+            .map(::skillToMentionItem)
+        val mcpItems = mcps
+            .filter { it.isEnabled && !it.isBuiltin && (it.id in pinnedIds || it.name.lowercase() in pinnedIds) }
+            .map(::mcpToMentionItem)
         skillItems + mcpItems
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -481,35 +475,21 @@ class ChatViewModel @Inject constructor(
         val matchedNames = regex.findAll(text).map { it.groupValues[1].trim().lowercase() }.toSet()
         if (matchedNames.isEmpty()) return@combine emptyList()
 
-        val matchedSkills = skills.filter { skill ->
-            skill.isEnabled && (
-                skill.name.lowercase() in matchedNames || skill.id.lowercase() in matchedNames
-            )
-        }.map { skill ->
-            MentionItem(
-                id = skill.id,
-                name = skill.name,
-                description = skill.description,
-                category = context.getString(R.string.chat_skill_category),
-                type = MentionType.SKILL,
-                icon = top.wkbin.taixu.ui.components.RuntimeIconName.Brain,
-            )
-        }
+        val matchedSkills = skills
+            .filter { skill ->
+                skill.isEnabled && (
+                    skill.name.lowercase() in matchedNames || skill.id.lowercase() in matchedNames
+                    )
+            }
+            .map(::skillToMentionItem)
 
-        val matchedMcps = mcps.filter { mcp ->
-            mcp.isEnabled && !mcp.isBuiltin && (
-                mcp.name.lowercase() in matchedNames || mcp.id.lowercase() in matchedNames
-            )
-        }.map { mcp ->
-            MentionItem(
-                id = mcp.id,
-                name = mcp.name,
-                description = mcp.description,
-                category = context.getString(R.string.chat_mcp_category),
-                type = MentionType.MCP_SERVER,
-                icon = top.wkbin.taixu.ui.components.RuntimeIconName.Cpu,
-            )
-        }
+        val matchedMcps = mcps
+            .filter { mcp ->
+                mcp.isEnabled && !mcp.isBuiltin && (
+                    mcp.name.lowercase() in matchedNames || mcp.id.lowercase() in matchedNames
+                    )
+            }
+            .map(::mcpToMentionItem)
 
         matchedSkills + matchedMcps
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -580,6 +560,52 @@ class ChatViewModel @Inject constructor(
 
     fun setSendMode(mode: ComposerSendMode) {
         _sendMode.value = mode
+    }
+
+    private val _pendingAttachments = MutableStateFlow<List<ChatAttachment>>(emptyList())
+
+    /** 待发送附件；处理（复制/压缩/编码）在 IO 线程完成 */
+    val pendingAttachments: StateFlow<List<ChatAttachment>> = _pendingAttachments.asStateFlow()
+
+    fun onAttachmentsPicked(uris: List<Uri>, isImage: Boolean) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val items = uris.mapNotNull { AttachmentHelper.processUri(context, it, isImage) }
+            _pendingAttachments.update { it + items }
+        }
+    }
+
+    fun removeAttachment(attachment: ChatAttachment) {
+        _pendingAttachments.update { list -> list.filter { it.id != attachment.id } }
+    }
+
+    /** 组装附件挂载说明并委托 send() 发送；View 只需在输入框非空或有附件时触发 */
+    fun sendFromComposer() {
+        val trimmedInput = _input.value.trim()
+        val attachments = _pendingAttachments.value
+        if (trimmedInput.isBlank() && attachments.isEmpty()) return
+        val imageUrls = attachments.mapNotNull { it.base64DataUrl }
+        val nonImageFiles = attachments.filter { !it.isImage }
+        val fullMessage = buildString {
+            if (trimmedInput.isNotBlank()) {
+                append(trimmedInput)
+            } else if (nonImageFiles.isNotEmpty()) {
+                append(context.getString(R.string.chat_attachment_files_prompt))
+            } else if (imageUrls.isNotEmpty()) {
+                append(context.getString(R.string.chat_attachment_images_prompt))
+            }
+            if (attachments.isNotEmpty()) {
+                append(context.getString(R.string.chat_attachment_mount_header))
+                attachments.forEachIndexed { i, att ->
+                    val guestPath = att.guestFilePath ?: "/attachments/${att.name}"
+                    val kind = context.getString(if (att.isImage) R.string.chat_attachment_image else R.string.chat_attachment_file)
+                    append(context.getString(R.string.chat_attachment_line, i + 1, kind, att.name, AttachmentHelper.formatFileSize(att.sizeBytes), guestPath))
+                }
+                append(context.getString(R.string.chat_attachment_access_hint))
+            }
+        }
+        _pendingAttachments.value = emptyList()
+        send(fullMessage, imageUrls)
     }
 
     fun send(customText: String? = null, imageUrls: List<String> = emptyList()) {
@@ -676,6 +702,12 @@ class ChatViewModel @Inject constructor(
         if (index >= 0) harnessLoop.removeQueuedPrompt(prompt.queue, index)
     }
 
+    /** 编辑排队消息：先移出队列（不发送），把原文回显到输入框，修改后由用户手动发送。 */
+    fun editQueuedPrompt(prompt: QueuedPrompt) {
+        removeQueuedPrompt(prompt)
+        _input.value = prompt.message.text
+    }
+
     fun clearPendingMessages() = harnessLoop.clearPendingMessages()
 
     fun clearError() = harnessLoop.clearError()
@@ -718,23 +750,17 @@ class ChatViewModel @Inject constructor(
         val trimmedModel = model.trim()
         if (trimmedModel.isBlank()) return
         viewModelScope.launch {
-            val existing = aiModelDao.observeAll().first()
-            val isFirst = existing.isEmpty()
             val id = "${provider.trim().lowercase()}-${trimmedModel.lowercase()}"
                 .replace(Regex("[^a-z0-9-]"), "-")
-            aiModelDao.upsert(
-                AiModelEntity(
+            profileWriter.upsertProfile(
+                AiProfileWriter.UpsertRequest(
                     id = id,
                     name = trimmedName,
                     provider = provider.trim().ifBlank { trimmedModel },
                     model = trimmedModel,
                     baseUrl = baseUrl.trim(),
-                    secretRef = "",
-                    isActive = isFirst,
-                    createdAt = System.currentTimeMillis(),
                 ),
             )
-            if (isFirst) aiModelDao.setActive(id)
         }
     }
 
@@ -838,8 +864,7 @@ class ChatViewModel @Inject constructor(
 
     fun deleteModel(id: String) {
         viewModelScope.launch {
-            aiModelDao.findById(id)?.secretRef?.takeIf { it.isNotBlank() }?.let { settingsDataStore.removeModelApiKey(it) }
-            aiModelDao.delete(id)
+            profileWriter.deleteProfile(id)
         }
     }
 }

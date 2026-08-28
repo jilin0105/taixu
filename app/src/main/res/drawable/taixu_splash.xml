@@ -5,6 +5,13 @@
     android:viewportWidth="1024"
     android:viewportHeight="1024">
 
+    <!-- 缩小 logo：整体内容按中心缩放，想再小就继续调低 scale -->
+    <group
+        android:scaleX="0.6"
+        android:scaleY="0.6"
+        android:pivotX="512"
+        android:pivotY="512">
+
     <!-- Top diamond frame -->
     <path
         android:fillColor="#000000"
@@ -51,5 +58,7 @@
             L526,870
             L792,694
             Z" />
+
+    </group>
 
 </vector>

@@ -90,6 +90,18 @@ object ToolSchemaValidator {
             val propertySchema = definition as? JsonObject ?: return@forEach
             problems += validateValue(propertySchema, value, label = "${prefix}${name}", prefix = "$prefix$name.")
         }
+
+        // 多传/错传参数检测：模型把其他工具的参数（如 url/query）带进来时，明确指出
+        // 本工具接受哪些参数，让模型一次修正到位，而不是反复以错误参数重试。
+        val allowExtra = (schema["additionalProperties"] as? JsonPrimitive)?.contentOrNull == "true"
+        (schema["properties"] as? JsonObject)?.let { properties ->
+            val unknown = obj.keys.filter { it !in properties.keys }
+            if (unknown.isNotEmpty() && !allowExtra) {
+                val at = if (prefix.isEmpty()) "" else "（位于 $prefix 层）"
+                problems += "不接受参数 ${unknown.joinToString("、")}$at" +
+                    "（该工具可用参数: ${properties.keys.joinToString("、").ifEmpty { "无" }}）"
+            }
+        }
         return problems
     }
 

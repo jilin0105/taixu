@@ -68,13 +68,14 @@ class McpStdioTransport @Inject constructor(
 
     /**
      * 关闭所有空闲超时的连接；返回关闭数量。可见性放宽给单元测试直接驱动。
-     * 正在执行请求的连接因每次请求都会刷新 lastActivityMs，不会被误回收
-     * （单请求超时上限 120s，远小于空闲阈值）。
+     * 正在执行请求的连接直接跳过：tools/call（如 codegraph 全量同步）可合法运行
+     * 数分钟，不能按 lastActivityMs 误回收。
      */
     internal suspend fun sweepIdleOnce(nowMs: Long): Int {
         var closed = 0
         val entries = connections.entries.toList()
         for ((id, connection) in entries) {
+            if (connection.inFlight) continue
             if (nowMs - connection.lastActivityMs >= IDLE_TIMEOUT_MS) {
                 if (connections.remove(id, connection)) {
                     connection.close()
@@ -113,6 +114,9 @@ class McpStdioTransport @Inject constructor(
 
     private inner class Connection(val session: LinuxSession, val fingerprint: String) {
         private val mutex = Mutex()
+
+        /** 是否有请求正在执行（供空闲清扫跳过，避免误杀长调用）。 */
+        val inFlight: Boolean get() = mutex.isLocked
         private val lines = Channel<String>(Channel.UNLIMITED)
         private var initialized = false
         private var readerJob: Job? = null
@@ -155,21 +159,30 @@ class McpStdioTransport @Inject constructor(
             block()
         }
 
-        suspend fun request(method: String, params: kotlinx.serialization.json.JsonElement) = requestUnlocked(method, params)
+        suspend fun request(method: String, params: kotlinx.serialization.json.JsonElement) =
+            requestUnlocked(method, params, CALL_REQUEST_TIMEOUT_MS)
 
-        private suspend fun requestUnlocked(method: String, params: kotlinx.serialization.json.JsonElement): JsonRpcResponse {
+        private suspend fun requestUnlocked(
+            method: String,
+            params: kotlinx.serialization.json.JsonElement,
+            timeoutMs: Long = REQUEST_TIMEOUT_MS,
+        ): JsonRpcResponse {
             markActive()
             val id = UUID.randomUUID().toString()
             write(json.encodeToString(JsonRpcRequest.serializer(), JsonRpcRequest(id = id, method = method, params = params)))
-            return withTimeout(REQUEST_TIMEOUT_MS) {
+            return withTimeout(timeoutMs) {
                 while (true) {
-                    val parsed = runCatching { json.decodeFromString(JsonRpcResponse.serializer(), lines.receive()) }.getOrNull()
+                    val element = runCatching { json.parseToJsonElement(lines.receive()) }.getOrNull() ?: continue
+                    // PTY 会话的行规则可能回显请求原文、或透出服务器日志；带 method 字段的
+                    // 行是请求/通知，不可能是响应，跳过以避免同 id 无 result 的误匹配。
+                    if (element is JsonObject && element.containsKey("method")) continue
+                    val parsed = runCatching { json.decodeFromJsonElement(JsonRpcResponse.serializer(), element) }.getOrNull()
                     if (parsed?.id == id) {
                         parsed.error?.let { error("MCP JSON-RPC ${it.code}: ${it.message}") }
                         return@withTimeout parsed
                     }
                 }
-                error("unreachable")
+                @Suppress("UNREACHABLE_CODE") error("unreachable")
             }
         }
 
@@ -186,14 +199,23 @@ class McpStdioTransport @Inject constructor(
 
     private fun commandLine(server: McpServerConfig): String {
         require(server.command.isNotBlank())
-        return (listOf(server.command) + server.args).joinToString(" ", transform = ::shellQuote)
+        val argv = (listOf(server.command) + server.args).joinToString(" ", transform = ::shellQuote)
+        // 会话建立在 PTY 上而非管道：默认行规则会回显写入的 JSON-RPC 请求（同 id、无 result，
+        // 会被 reader 误判为响应导致 "MCP initialize did not return a result"）、把 \n 改写为
+        // \r\n，且 canonical 模式单行上限 4096 字节会截断大参数请求。raw -echo 恢复管道语义，
+        // 再用 exec 让服务器进程直接接管该 PTY。
+        return "stty raw -echo; exec $argv"
     }
 
     private fun fingerprint(server: McpServerConfig) = "${server.command}|${server.args}|${server.env}"
     private fun shellQuote(value: String) = "'${value.replace("'", "'\"'\"'")}'"
 
     companion object {
+        /** 连接/列表等轻量请求超时。 */
         private const val REQUEST_TIMEOUT_MS = 120_000L
+
+        /** tools/call 超时：codegraph_sync 等全量索引在手机沙箱上可合法运行数分钟。 */
+        private const val CALL_REQUEST_TIMEOUT_MS = 600_000L
 
         /** 空闲连接回收阈值与清扫周期。 */
         internal const val IDLE_TIMEOUT_MS = 10 * 60 * 1000L

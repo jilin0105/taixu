@@ -107,6 +107,7 @@ import top.wkbin.taixu.ui.components.isLiquidGlassThemeActive
 fun HomeScreen(
     onNavigate: (MainDestination) -> Unit,
     onOpenTerminal: () -> Unit,
+    onOpenToolCenter: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -252,6 +253,7 @@ fun HomeScreen(
                 },
                 onCancelRepair = viewModel::cancelAutoRepair,
                 onRequestAllFilesAccess = requestAllFilesAccess,
+                onOpenToolCenter = onOpenToolCenter,
             )
 
             // 3. 核心指标看板 (Live Resource Metrics Grid)
@@ -320,14 +322,24 @@ private fun EnvironmentDoctorCard(
     onStartAutoRepair: () -> Unit,
     onCancelRepair: () -> Unit,
     onRequestAllFilesAccess: () -> Unit = {},
+    onOpenToolCenter: () -> Unit = {},
 ) {
     var isCardExpanded by remember { mutableStateOf(false) }
     var expandedDetails by remember { mutableStateOf(false) }
     var showLogs by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     // 修复中时自动展开
     LaunchedEffect(isRepairing) {
         if (isRepairing) isCardExpanded = true
+    }
+
+    // 检测到 Android 环境未安装时自动展开，让获取引导卡立即可见
+    val missingAndroidEnv = report?.items?.any {
+        it.id == "android_environment" && it.status != DoctorStatus.HEALTHY
+    } == true
+    LaunchedEffect(missingAndroidEnv) {
+        if (missingAndroidEnv) isCardExpanded = true
     }
 
     Card(
@@ -552,6 +564,17 @@ private fun EnvironmentDoctorCard(
                                     )
                                 }
                             }
+
+                            // Android 环境未安装：展示离线包 / 在线插件两条获取路径
+                            val missingAndroidEnv = report.items.any {
+                                it.id == "android_environment" && it.status != DoctorStatus.HEALTHY
+                            }
+                            if (missingAndroidEnv) {
+                                AndroidEnvAcquisitionCard(
+                                    onJoinQqGroup = { joinQqGroup(context) },
+                                    onOpenToolCenter = onOpenToolCenter,
+                                )
+                            }
                         }
 
                         // 一键修复按钮或就绪横幅
@@ -705,6 +728,100 @@ private fun DoctorItemRow(
                 Text("去授权", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
             }
         }
+    }
+}
+
+/**
+ * Android 环境未安装引导卡：提供「QQ 群全量离线插件包」与「插件中心在线安装」两条获取路径。
+ */
+@Composable
+private fun AndroidEnvAcquisitionCard(
+    onJoinQqGroup: () -> Unit,
+    onOpenToolCenter: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    RuntimeIcon(
+                        name = RuntimeIconName.Android,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "获取 Android 全量开发环境",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = "离线包已集成 Android · Flutter · 反编译三大环境",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                RuntimeButton(
+                    onClick = onJoinQqGroup,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(vertical = 10.dp),
+                ) {
+                    RuntimeIcon(RuntimeIconName.Qq, Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("进QQ群取离线包", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold))
+                }
+                FilledTonalButton(
+                    onClick = onOpenToolCenter,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(vertical = 10.dp),
+                ) {
+                    RuntimeIcon(RuntimeIconName.Extension, Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("插件中心安装", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold))
+                }
+            }
+        }
+    }
+}
+
+private const val TAIXU_QQ_GROUP_ID = "964382207"
+
+/** 跳转 QQ 加群；未安装 QQ 时兜底复制群号并提示。 */
+private fun joinQqGroup(context: Context) {
+    val uri = Uri.parse(
+        "mqqapi://card/show_pslcard?src_type=internal&version=1&uin=$TAIXU_QQ_GROUP_ID&card_type=group&source=qrcode",
+    )
+    val intent = Intent(Intent.ACTION_VIEW, uri).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+    runCatching {
+        context.startActivity(intent)
+    }.onFailure {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        clipboard?.setPrimaryClip(ClipData.newPlainText("太墟官方交流群", TAIXU_QQ_GROUP_ID))
+        Toast.makeText(context, "已复制 QQ 群号：$TAIXU_QQ_GROUP_ID，可打开 QQ 搜索加入", Toast.LENGTH_LONG).show()
     }
 }
 

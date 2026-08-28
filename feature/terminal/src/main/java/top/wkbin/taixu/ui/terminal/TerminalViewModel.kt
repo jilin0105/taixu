@@ -40,9 +40,18 @@ class TerminalViewModel @Inject constructor(
     private val terminalManager: TerminalSessionManager,
     private val workspaceManager: WorkspaceManager,
     private val settingsDataStore: TerminalPreferences,
+    private val appSettingsDataStore: top.wkbin.taixu.core.datastore.SettingsDataStore,
     private val linuxRuntime: top.wkbin.taixu.runtime.LinuxRuntime,
 ) : ViewModel() {
     private var initialized = false
+
+    /** 首次使用引导登记（统一存于 SettingsDataStore，设置页可整体清空重看）。 */
+    val firstUseGuidesShown: StateFlow<Set<String>> = appSettingsDataStore.firstUseGuidesShown
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
+    fun markFirstUseGuideShown(id: String) {
+        viewModelScope.launch { appSettingsDataStore.markFirstUseGuideShown(id) }
+    }
 
     val installedDistros = linuxRuntime.installedDistros
     val activeDistroId = linuxRuntime.activeDistroId

@@ -247,6 +247,7 @@ private fun ModelEditorContent(
         )
     }
     var revealedKeyIndices by remember { mutableStateOf(setOf<Int>()) }
+    var showBatchImportKeysDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(initialApiKey) {
         if (keyList.all { it.isBlank() } && initialApiKey.isNotBlank()) {
@@ -331,6 +332,29 @@ private fun ModelEditorContent(
         visionEnabled = profile.visionEnabled
         responseApiEnabled = profile.responseApiEnabled
         if (profile.customHeaders.isNotBlank()) customHeaders = profile.customHeaders
+    }
+
+    if (showBatchImportKeysDialog) {
+        BatchImportKeysDialog(
+            onDismiss = { showBatchImportKeysDialog = false },
+            onConfirm = { batchText ->
+                val existingKeys = keyList.map { it.trim() }.filter { it.isNotEmpty() }
+                val importedKeys = batchText.lineSequence()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                    .distinct()
+                    .filter { it !in existingKeys }
+                    .toList()
+                if (importedKeys.isEmpty()) {
+                    Toast.makeText(context, "没有解析到新的密钥", Toast.LENGTH_SHORT).show()
+                } else {
+                    keyList = (existingKeys + importedKeys).ifEmpty { listOf("") }
+                    revealedKeyIndices = emptySet()
+                    Toast.makeText(context, "已导入 ${importedKeys.size} 个密钥", Toast.LENGTH_SHORT).show()
+                    showBatchImportKeysDialog = false
+                }
+            },
+        )
     }
 
     if (showImportDialog) {
@@ -629,15 +653,32 @@ private fun ModelEditorContent(
                         }
                     }
 
-                    // 添加备用 Key 按钮
-                    RuntimeOutlinedButton(
-                        onClick = { keyList = keyList + "" },
-                        modifier = Modifier.fillMaxWidth().height(38.dp),
-                        shape = RoundedCornerShape(10.dp),
+                    // 添加备用 Key / 批量导入
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            RuntimeIcon(RuntimeIconName.Plus, Modifier.size(14.dp), MaterialTheme.colorScheme.primary)
-                            Text("+ 添加备用 Key（自动轮询与故障转移）", style = MaterialTheme.typography.labelMedium)
+                        RuntimeOutlinedButton(
+                            onClick = { keyList = keyList + "" },
+                            modifier = Modifier.weight(1f).height(38.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                RuntimeIcon(RuntimeIconName.Plus, Modifier.size(14.dp), MaterialTheme.colorScheme.primary)
+                                Text("+ 添加备用 Key", style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                        RuntimeOutlinedButton(
+                            onClick = { showBatchImportKeysDialog = true },
+                            modifier = Modifier.weight(1f).height(38.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                RuntimeIcon(RuntimeIconName.Download, Modifier.size(14.dp), MaterialTheme.colorScheme.primary)
+                                Text("批量导入 Key", style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
                         }
                     }
 
@@ -1205,6 +1246,93 @@ private fun EditorToggleRow(
             )
         }
     }
+}
+
+@Composable
+private fun BatchImportKeysDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var text by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    val parsedCount = remember(text) {
+        text.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.distinct().count()
+    }
+
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RuntimeIcon(RuntimeIconName.Key, Modifier.size(20.dp), MaterialTheme.colorScheme.primary)
+                Text("批量导入密钥", fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "粘贴多个 API 密钥，一行一个，遇到换行即为下一个 Key：",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier.fillMaxWidth().height(160.dp),
+                    placeholder = { Text("sk-xxxxxxxxxxxxxxxx\nsk-yyyyyyyyyyyyyyyy\nsk-zzzzzzzzzzzzzzzz") },
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    shape = RoundedCornerShape(10.dp),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RuntimeOutlinedButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                            val clipText = clipboard?.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+                            if (clipText.isNotBlank()) {
+                                text = clipText
+                            } else {
+                                Toast.makeText(context, "剪贴板为空", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.weight(1f).height(36.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                    ) {
+                        Text("从剪贴板粘贴", style = MaterialTheme.typography.labelMedium)
+                    }
+                    if (parsedCount > 0) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                        ) {
+                            Text(
+                                text = "已识别 $parsedCount 个",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            RuntimeButton(
+                onClick = { onConfirm(text) },
+                enabled = parsedCount > 0,
+            ) {
+                Text("导入")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        },
+    )
 }
 
 @Composable

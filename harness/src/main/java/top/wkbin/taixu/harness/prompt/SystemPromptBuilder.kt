@@ -12,10 +12,12 @@ import top.wkbin.taixu.core.database.McpServerRepository
 import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.core.model.AgentSkill
 import top.wkbin.taixu.core.model.BuiltinMcpPresets
+import top.wkbin.taixu.core.model.McpToolInfo
 import top.wkbin.taixu.core.tools.ToolRepository
 import top.wkbin.taixu.harness.R
 import top.wkbin.taixu.harness.ToolCallMode
 import top.wkbin.taixu.harness.WorkspaceFileAccess
+import top.wkbin.taixu.harness.mcp.McpToolApiName
 
 /**
  * Agent 系统提示词的统一构建器。
@@ -46,6 +48,7 @@ class SystemPromptBuilder @Inject constructor(
         sessionId: String = "",
         projectTypeOverride: String = "",
         latestUserMessage: String = "",
+        mcpTools: List<McpToolInfo> = emptyList(),
     ): String {
         val distroId = runCatching { settingsDataStore.selectedDistribution.first() }.getOrDefault("debian")
         val distroName = DistroCatalog.displayName(distroId)
@@ -77,7 +80,7 @@ class SystemPromptBuilder @Inject constructor(
 
         // 系统核心 MCP 能力引导：内置 MCP 默认关闭，但 harness 必须知道其存在；
         // 未授权时引导 LLM 提示用户开启，授权开启后常驻本会话随时可调用。
-        val mcpCapabilitySection = buildMcpCapabilitySection()
+        val mcpCapabilitySection = buildMcpCapabilitySection(mcpTools)
 
         val memories = runCatching { agentContextDao.getMemoriesByScopes(listOf("global", "project", "session")) }
             .getOrDefault(emptyList())
@@ -180,21 +183,29 @@ class SystemPromptBuilder @Inject constructor(
     }
 
     /**
-     * 内置 MCP 能力引导章节：让 harness 知道太墟具备哪些系统核心 MCP 能力（即便默认关闭）。
-     * - 已启用：常驻本会话，可直接调用对应 mcp__ 工具；
-     * - 未启用：任务需要该能力时，先向用户说明并请求授权开启，待用户开启后再调用。
+     * MCP 能力引导章节：
+     * - 已启用的服务（内置 + 自定义）逐个列出**实际可调用的 mcp__ 工具名**，模型无需猜测；
+     * - 明确说明无需 @ 提及即可直接调用（@ 提及仅会把当轮注入裁剪到被提及的服务）；
+     * - 未启用的内置能力按「使用时机」引导请求授权，未授权前不得绕过或模拟。
      */
-    private suspend fun buildMcpCapabilitySection(): String {
+    private suspend fun buildMcpCapabilitySection(mcpTools: List<McpToolInfo>): String {
         val enabledIds = runCatching {
             mcpServerRepository.servers.first().filter { it.isEnabled }.map { it.id }.toSet()
         }.getOrDefault(emptySet())
-        val lines = BuiltinMcpPresets.presets.map { preset ->
+        val toolsByServer = mcpTools.groupBy { it.serverId }
+        fun apiNamesOf(serverId: String): String =
+            toolsByServer[serverId].orEmpty().joinToString("、") { "`${McpToolApiName.encode(it)}`" }
+
+        val builtinIds = BuiltinMcpPresets.presets.map { it.id }.toSet()
+        val builtinLines = BuiltinMcpPresets.presets.map { preset ->
             val enabled = preset.id in enabledIds
             val status = if (enabled) "已启用·常驻" else "未启用（默认关闭）"
             val trigger = mcpUsageGuidance[preset.id]
             val triggerLine = if (!trigger.isNullOrBlank()) "使用时机：$trigger。" else ""
             val usage = if (enabled) {
-                "已授权常驻，可直接调用对应 mcp__ 工具。"
+                val names = apiNamesOf(preset.id)
+                if (names.isBlank()) "已授权常驻，工具名见本轮工具列表。"
+                else "已授权常驻，可直接调用：$names。"
             } else {
                 "未授权：一旦任务命中上述使用时机，请先向用户说明该能力并请求其到「设置 → MCP 插件与协议生态」开启，授权常驻后再调用；未授权前不得绕过或模拟。"
             }
@@ -202,11 +213,17 @@ class SystemPromptBuilder @Inject constructor(
             val brief = if (desc.length > 120) desc.take(117) + "…" else desc
             "- [${status}] ${preset.name}：${brief}。${triggerLine}${usage}"
         }
-        if (lines.isEmpty()) return ""
+        // 自定义（非内置）已启用服务：内置章节不覆盖，这里按真实发现的工具列出
+        val customLines = toolsByServer.keys.filter { it !in builtinIds }.map { serverId ->
+            val serverName = toolsByServer[serverId]!!.firstOrNull()?.serverName ?: serverId
+            "- [已启用·常驻] $serverName：可直接调用 ${apiNamesOf(serverId)}。"
+        }
+        if (builtinLines.isEmpty() && customLines.isEmpty()) return ""
         return "\n\n## 系统核心 MCP 能力（内置，授权后常驻生效）\n" +
             "太墟内置以下系统级 MCP 能力，默认关闭。任务命中其「使用时机」时应优先考虑该能力：" +
             "若已启用则直接调用对应 mcp__ 工具（常驻本会话，随时可用）；若未启用则先向用户说明并请求授权开启，未授权前不得绕过。\n" +
-            lines.joinToString("\n")
+            "重要：已启用的 MCP 工具无需 @ 提及即可直接调用（@ 提及只会把当轮注入裁剪到被提及的服务，不是启用开关）；工具名必须原样使用，不可编造。\n" +
+            (builtinLines + customLines).joinToString("\n")
     }
 
     /**

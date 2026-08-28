@@ -195,6 +195,9 @@ val bundledProot = layout.projectDirectory.file(
 val bundledProotLoader = layout.projectDirectory.file(
     "src/main/jniLibs/arm64-v8a/libproot-loader.so",
 )
+val bundledPtyNative = layout.projectDirectory.file(
+    "src/main/jniLibs/arm64-v8a/libpty_native.so",
+)
 
 tasks.configureEach {
     if (name == "preBuild") {
@@ -205,6 +208,17 @@ tasks.configureEach {
             }
             check(bundledProotLoader.asFile.isFile && bundledProotLoader.asFile.length() > 4096L) {
                 "Missing ARM64 PRoot loader. Run tools/prepare-proot-runtime.ps1 before building."
+            }
+            // libpty_native 必须是 NDK/Bionic 构建：若依赖 glibc 的 libc.so.6，设备上
+            // dlopen 必失败并静默回退到 script PTY 路径（PTY 回显问题会随之复发）。
+            val ptyNativeBytes = bundledPtyNative.asFile.readBytes()
+            val glibcMarker = "libc.so.6".toByteArray()
+            check(ptyNativeBytes.size < glibcMarker.size ||
+                (0..ptyNativeBytes.size - glibcMarker.size).none { offset ->
+                    (0 until glibcMarker.size).all { ptyNativeBytes[offset + it] == glibcMarker[it] }
+                }) {
+                "libpty_native.so is linked against glibc (libc.so.6). Rebuild it with the NDK " +
+                    "aarch64-linux-android clang (see app/src/main/cpp/CMakeLists.txt)."
             }
         }
     }

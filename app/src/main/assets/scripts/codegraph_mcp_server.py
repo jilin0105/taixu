@@ -21,6 +21,7 @@ import os
 import re
 import sqlite3
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -35,6 +36,9 @@ if hasattr(sys.stderr, "reconfigure"):
 PROTOCOL_VERSION = "2025-06-18"
 MAX_EXPLORE_LINES = 120
 MAX_SNIPPET_LINES = 35
+# 超过该大小的源文件直接跳过索引（minified JS / 生成产物 / 数据转储）
+MAX_INDEX_FILE_BYTES = 1_000_000
+STDOUT_WRITE_LOCK = threading.Lock()
 
 # ==============================================================================
 # Database & Graph Store
@@ -43,7 +47,8 @@ MAX_SNIPPET_LINES = 35
 class CodeGraphDB:
     def __init__(self, db_path=":memory:"):
         self.db_path = db_path
-        self.conn = sqlite3.connect(db_path)
+        # 后台线程初始索引与主线程请求共用连接；访问由 CodeIndexer 的锁串行化
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self._init_schema()
 
@@ -449,60 +454,117 @@ class CodeIndexer:
             cg_dir.mkdir(exist_ok=True)
             db_path = str(cg_dir / "index.db")
         self.db = CodeGraphDB(db_path)
+        # 索引/查询串行化锁 + 后台初始索引进度状态
+        self.lock = threading.Lock()
+        self.indexing = False
+        self.progress_done = 0
+        self.progress_total = 0
+        self.initial_index_done = False
+        self.initial_index_error = None
 
-    def scan_and_index(self, force=False):
+    def status_text(self):
+        if self.indexing:
+            done, total = self.progress_done, self.progress_total
+            pct = int(done * 100 / total) if total else 0
+            return f"后台初始索引进行中: {done}/{total} 个文件 ({pct}%)，请稍后重试同步或查询"
+        if not self.initial_index_done:
+            return "初始索引尚未开始"
+        if self.initial_index_error:
+            return f"初始索引失败: {self.initial_index_error}"
+        return "索引就绪"
+
+    def start_background_initial_index(self):
+        def run():
+            self.indexing = True
+            try:
+                with self.lock:
+                    self.scan_and_index(force=False, progress=True)
+                self.initial_index_done = True
+            except Exception as exc:
+                self.initial_index_error = str(exc)
+            finally:
+                self.indexing = False
+
+        threading.Thread(target=run, daemon=True, name="codegraph-initial-index").start()
+
+    def scan_and_index(self, force=False, progress=False):
         t0 = time.time()
         indexed_count = 0
         total_symbols = 0
 
+        # 预扫描统计文件总数，供进度展示
+        candidates = []
         for root, dirs, files in os.walk(self.repo_dir):
             dirs[:] = [d for d in dirs if d not in self.IGNORE_DIRS]
             for file in files:
                 ext = os.path.splitext(file)[1].lower()
-                lang = self.EXT_MAP.get(ext)
-                if not lang:
+                if self.EXT_MAP.get(ext):
+                    candidates.append(os.path.join(root, file))
+        total = len(candidates)
+        self.progress_total = total
+        self.progress_done = 0
+
+        pending = 0
+        for abs_path in candidates:
+            self.progress_done += 1
+            rel_path = os.path.relpath(abs_path, self.repo_dir).replace("\\", "/")
+
+            try:
+                mtime = os.path.getmtime(abs_path)
+            except OSError:
+                continue
+
+            # 跳过异常大的生成文件（minified 产物/数据转储），解析性价比极低
+            try:
+                if os.path.getsize(abs_path) > MAX_INDEX_FILE_BYTES:
+                    continue
+            except OSError:
+                continue
+
+            # Check if already indexed
+            if not force:
+                cur = self.db.conn.cursor()
+                cur.execute("SELECT mtime FROM files WHERE file_path = ?", (rel_path,))
+                row = cur.fetchone()
+                if row and abs(row["mtime"] - mtime) < 0.01:
                     continue
 
-                abs_path = os.path.join(root, file)
-                rel_path = os.path.relpath(abs_path, self.repo_dir).replace("\\", "/")
+            # Read and parse
+            try:
+                with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+            except Exception:
+                continue
 
-                try:
-                    mtime = os.path.getmtime(abs_path)
-                except OSError:
-                    continue
+            self.db.clear_file(rel_path)
 
-                # Check if already indexed
-                if not force:
-                    cur = self.db.conn.cursor()
-                    cur.execute("SELECT mtime FROM files WHERE file_path = ?", (rel_path,))
-                    row = cur.fetchone()
-                    if row and abs(row["mtime"] - mtime) < 0.01:
-                        continue
+            lang = self.EXT_MAP.get(os.path.splitext(abs_path)[1].lower())
+            if lang == "python":
+                symbols, refs = LanguageParser.parse_python(rel_path, content)
+            elif lang in ("kotlin", "java"):
+                symbols, refs = LanguageParser.parse_kotlin_java(rel_path, content)
+            elif lang == "smali":
+                symbols, refs = LanguageParser.parse_smali(rel_path, content)
+            else:
+                symbols, refs = LanguageParser.parse_generic_regex(rel_path, content, lang)
 
-                # Read and parse
-                try:
-                    with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
-                        content = f.read()
-                except Exception:
-                    continue
+            self.db.insert_file(rel_path, lang, mtime, len(symbols))
+            self.db.insert_symbols(symbols)
+            self.db.insert_refs(refs)
 
-                self.db.clear_file(rel_path)
+            indexed_count += 1
+            total_symbols += len(symbols)
 
-                if lang == "python":
-                    symbols, refs = LanguageParser.parse_python(rel_path, content)
-                elif lang in ("kotlin", "java"):
-                    symbols, refs = LanguageParser.parse_kotlin_java(rel_path, content)
-                elif lang == "smali":
-                    symbols, refs = LanguageParser.parse_smali(rel_path, content)
-                else:
-                    symbols, refs = LanguageParser.parse_generic_regex(rel_path, content, lang)
-
-                self.db.insert_file(rel_path, lang, mtime, len(symbols))
-                self.db.insert_symbols(symbols)
-                self.db.insert_refs(refs)
-
-                indexed_count += 1
-                total_symbols += len(symbols)
+            # 分批提交：大仓库上避免单事务过大，也让进度可观察
+            pending += 1
+            if pending >= 200:
+                self.db.commit()
+                pending = 0
+            if progress and indexed_count % 25 == 0:
+                pct = int(self.progress_done * 100 / total) if total else 100
+                sys.stderr.write(f"[codegraph] indexing {self.progress_done}/{total} files ({pct}%), "
+                                 f"{indexed_count} parsed, {total_symbols} symbols\n")
+                sys.stderr.flush()
 
         self.db.commit()
         duration = time.time() - t0
@@ -660,11 +722,11 @@ TOOLS_DEF = [
     },
     {
         "name": "codegraph_sync",
-        "description": "重新扫描并增量同步工作区代码图谱数据库（.codegraph/index.db）。",
+        "description": "增量同步工作区代码图谱数据库（.codegraph/index.db）。默认按文件 mtime 只解析改动的文件，通常几秒内完成；force=true 会强制全量重新解析所有文件，大仓库在手机上可能耗时数分钟，仅在怀疑索引损坏或首次建库失败时使用。",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "force": {"type": "boolean", "description": "是否强制全量重新解析所有文件"}
+                "force": {"type": "boolean", "description": "强制全量重建（很慢，仅在索引疑似损坏时使用）"}
             }
         }
     }
@@ -683,8 +745,9 @@ def main():
     args = parser.parse_args()
 
     indexer = CodeIndexer(args.repository)
-    # Background initial quick index
-    indexer.scan_and_index(force=False)
+    # 初始索引进后台线程：让 initialize/tools/list 立即可响应，避免大仓库上
+    # 客户端等首个请求等到超时。索引进度写 stderr，状态可经 codegraph_sync/查询获取。
+    indexer.start_background_initial_index()
 
     for line in sys.stdin:
         line = line.strip()
@@ -712,22 +775,26 @@ def main():
 
                 try:
                     if tool_name == "codegraph_explore":
-                        res_text = indexer.explore(tool_args.get("query", ""), tool_args.get("scope"))
+                        res_text = guarded_call(indexer, lambda: indexer.explore(
+                            tool_args.get("query", ""), tool_args.get("scope")))
                     elif tool_name == "codegraph_search":
-                        res = indexer.db.search_symbols(tool_args.get("query", ""), tool_args.get("kind"))
-                        res_text = json.dumps(res, ensure_ascii=False, indent=2) if res else "未检索到匹配符号"
+                        res_text = guarded_call(indexer, lambda: to_json_text(
+                            indexer.db.search_symbols(tool_args.get("query", ""), tool_args.get("kind")),
+                            "未检索到匹配符号"))
                     elif tool_name == "codegraph_callers":
-                        res = indexer.db.get_callers(tool_args.get("target", ""))
-                        res_text = json.dumps(res, ensure_ascii=False, indent=2) if res else "未发现调用者引用"
+                        res_text = guarded_call(indexer, lambda: to_json_text(
+                            indexer.db.get_callers(tool_args.get("target", "")),
+                            "未发现调用者引用"))
                     elif tool_name == "codegraph_callees":
-                        res = indexer.db.get_callees(tool_args.get("target", ""))
-                        res_text = json.dumps(res, ensure_ascii=False, indent=2) if res else "未发现下游调用"
+                        res_text = guarded_call(indexer, lambda: to_json_text(
+                            indexer.db.get_callees(tool_args.get("target", "")),
+                            "未发现下游调用"))
                     elif tool_name == "codegraph_impact":
-                        res = indexer.db.get_impact(tool_args.get("target", ""))
-                        res_text = json.dumps(res, ensure_ascii=False, indent=2) if res else "未发现外部受影响模块"
+                        res_text = guarded_call(indexer, lambda: to_json_text(
+                            indexer.db.get_impact(tool_args.get("target", "")),
+                            "未发现外部受影响模块"))
                     elif tool_name == "codegraph_sync":
-                        res = indexer.scan_and_index(force=bool(tool_args.get("force", False)))
-                        res_text = f"图谱同步成功: 扫描更新 {res['indexed_files']} 个文件，现有总符号数: {res['total_symbols']}，总引用数: {res['total_refs']} (耗时 {res['duration_sec']}s)"
+                        res_text = guarded_call(indexer, lambda: run_sync(indexer, tool_args))
                     else:
                         raise ValueError(f"未知工具: {tool_name}")
 
@@ -739,13 +806,37 @@ def main():
             else:
                 continue
 
-            sys.stdout.write(json.dumps(out, ensure_ascii=False) + "\n")
-            sys.stdout.flush()
+            with STDOUT_WRITE_LOCK:
+                sys.stdout.write(json.dumps(out, ensure_ascii=False) + "\n")
+                sys.stdout.flush()
 
         except Exception as exc:
             err_resp = response(None, error={"code": -32603, "message": str(exc)})
-            sys.stdout.write(json.dumps(err_resp, ensure_ascii=False) + "\n")
-            sys.stdout.flush()
+            with STDOUT_WRITE_LOCK:
+                sys.stdout.write(json.dumps(err_resp, ensure_ascii=False) + "\n")
+                sys.stdout.flush()
+
+
+def to_json_text(data, empty_hint):
+    return json.dumps(data, ensure_ascii=False, indent=2) if data else empty_hint
+
+
+def guarded_call(indexer, fn):
+    """所有触达图谱 DB 的工具共用非阻塞锁：后台初始索引进行中时立即返回进度状态，
+    而不是让请求排队数分钟无响应。"""
+    if not indexer.lock.acquire(blocking=False):
+        raise RuntimeError(indexer.status_text())
+    try:
+        return fn()
+    finally:
+        indexer.lock.release()
+
+
+def run_sync(indexer, tool_args):
+    res = indexer.scan_and_index(force=bool(tool_args.get("force", False)))
+    return (f"图谱同步成功: 扫描更新 {res['indexed_files']} 个文件，"
+            f"现有总符号数: {res['total_symbols']}，总引用数: {res['total_refs']} "
+            f"(耗时 {res['duration_sec']}s)")
 
 
 if __name__ == "__main__":

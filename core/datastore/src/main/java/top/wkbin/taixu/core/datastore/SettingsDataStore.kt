@@ -357,6 +357,25 @@ class SettingsDataStore @Inject constructor(
 
     val onboardingCompleted: Flow<Boolean> = context.settingsDataStore.data.map { it[onboardingCompletedKey] ?: false }
     suspend fun setOnboardingCompleted(value: Boolean) { context.settingsDataStore.edit { it[onboardingCompletedKey] = value } }
+
+    /** 首次使用引导统一登记：已展示过的引导 ID 集合（设置页「重看引导」可整体清空）。 */
+    private val firstUseGuidesShownKey = stringSetPreferencesKey("first_use_guides_shown")
+
+    val firstUseGuidesShown: Flow<Set<String>> = context.settingsDataStore.data.map {
+        it[firstUseGuidesShownKey] ?: emptySet()
+    }
+
+    suspend fun markFirstUseGuideShown(id: String) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[firstUseGuidesShownKey] = (prefs[firstUseGuidesShownKey] ?: emptySet()) + id
+        }
+    }
+
+    suspend fun clearFirstUseGuides() {
+        context.settingsDataStore.edit { prefs ->
+            prefs.remove(firstUseGuidesShownKey)
+        }
+    }
     val selectedDistribution: Flow<String> = context.settingsDataStore.data.map { it[selectedDistributionKey] ?: "ubuntu" }
     suspend fun setSelectedDistribution(value: String) { context.settingsDataStore.edit { it[selectedDistributionKey] = value } }
 

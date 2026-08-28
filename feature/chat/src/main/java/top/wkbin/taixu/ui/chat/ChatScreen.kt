@@ -194,6 +194,7 @@ fun ChatScreen(
     val running by viewModel.running.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val input by viewModel.input.collectAsStateWithLifecycle()
+    val pendingAttachments by viewModel.pendingAttachments.collectAsStateWithLifecycle()
     val status by viewModel.status.collectAsStateWithLifecycle()
     val thinkingLive by viewModel.thinkingLive.collectAsStateWithLifecycle()
     val thinkingExpanded by viewModel.thinkingExpanded.collectAsStateWithLifecycle()
@@ -301,7 +302,9 @@ fun ChatScreen(
     }
 
     // 🌟 1. 消息发送与流式输出跟随滚动
-    LaunchedEffect(messages.size, lastMessageSignature, running) {
+    // 仅当用户本来就停在底部附近时才跟随输出滚动；上滑阅读历史时不打扰，
+    // 重新滑回底部（或新发消息）后恢复自动跟随。
+    LaunchedEffect(messages.size, lastMessageSignature) {
         if (messages.isNotEmpty()) {
             delay(30)
             val totalCount = listState.layoutInfo.totalItemsCount
@@ -313,12 +316,8 @@ fun ChatScreen(
                     val layoutInfo = listState.layoutInfo
                     val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()
                     val isNearBottom = lastVisible == null || lastVisible.index >= totalCount - 3
-                    if (isNearBottom || running) {
-                        if (running) {
-                            listState.scrollToItem(totalCount - 1)
-                        } else {
-                            listState.animateScrollToItem(totalCount - 1)
-                        }
+                    if (isNearBottom) {
+                        listState.scrollToItem(totalCount - 1)
                     }
                 }
             }
@@ -534,6 +533,7 @@ fun ChatScreen(
                         attachedMentions = attachedMentions,
                         knownMentionNames = knownMentionNames,
                         queuedPrompts = queuedPrompts,
+                        onEditQueuedPrompt = viewModel::editQueuedPrompt,
                         onRemoveQueuedPrompt = viewModel::removeQueuedPrompt,
                         sendMode = sendMode,
                         onSendModeChange = viewModel::setSendMode,
@@ -543,7 +543,10 @@ fun ChatScreen(
                         onApplyMention = viewModel::applyMention,
                         onRemoveMention = viewModel::removeMention,
                         onTriggerMention = viewModel::triggerMentionInput,
-                        onSend = { customText, images -> viewModel.send(customText, images) },
+                        attachments = pendingAttachments,
+                        onAttachmentsPicked = viewModel::onAttachmentsPicked,
+                        onRemoveAttachment = viewModel::removeAttachment,
+                        onSend = viewModel::sendFromComposer,
                         onStop = viewModel::stop,
                         currentBranch = currentBranch,
                         runtimeEvents = runtimeEvents,
@@ -625,6 +628,7 @@ fun ChatScreen(
                     attachedMentions = attachedMentions,
                     knownMentionNames = knownMentionNames,
                     queuedPrompts = queuedPrompts,
+                    onEditQueuedPrompt = viewModel::editQueuedPrompt,
                     onRemoveQueuedPrompt = viewModel::removeQueuedPrompt,
                     sendMode = sendMode,
                     onSendModeChange = viewModel::setSendMode,
@@ -634,7 +638,10 @@ fun ChatScreen(
                     onApplyMention = viewModel::applyMention,
                     onRemoveMention = viewModel::removeMention,
                     onTriggerMention = viewModel::triggerMentionInput,
-                    onSend = { customText, images -> viewModel.send(customText, images) },
+                    attachments = pendingAttachments,
+                    onAttachmentsPicked = viewModel::onAttachmentsPicked,
+                    onRemoveAttachment = viewModel::removeAttachment,
+                    onSend = viewModel::sendFromComposer,
                     onStop = viewModel::stop,
                     currentBranch = currentBranch,
                     runtimeEvents = runtimeEvents,
@@ -907,6 +914,7 @@ private fun ChatPaneContent(
     attachedMentions: List<MentionItem> = emptyList(),
     knownMentionNames: List<String> = emptyList(),
     queuedPrompts: List<top.wkbin.taixu.harness.QueuedPrompt>,
+    onEditQueuedPrompt: (top.wkbin.taixu.harness.QueuedPrompt) -> Unit,
     onRemoveQueuedPrompt: (top.wkbin.taixu.harness.QueuedPrompt) -> Unit,
     sendMode: ComposerSendMode,
     onSendModeChange: (ComposerSendMode) -> Unit,
@@ -916,7 +924,10 @@ private fun ChatPaneContent(
     onApplyMention: (MentionItem) -> Unit = {},
     onRemoveMention: (MentionItem) -> Unit = {},
     onTriggerMention: () -> Unit = {},
-    onSend: (String?, List<String>) -> Unit,
+    attachments: List<ChatAttachment> = emptyList(),
+    onAttachmentsPicked: (List<android.net.Uri>, Boolean) -> Unit = { _, _ -> },
+    onRemoveAttachment: (ChatAttachment) -> Unit = {},
+    onSend: () -> Unit,
     onStop: () -> Unit,
     currentBranch: top.wkbin.taixu.harness.session.ConversationBranch?,
     runtimeEvents: List<top.wkbin.taixu.harness.events.HarnessEvent>,
@@ -948,8 +959,6 @@ private fun ChatPaneContent(
     quickPhrases: List<top.wkbin.taixu.core.model.QuickPhrase> = emptyList(),
     onSelectPhrase: (top.wkbin.taixu.core.model.QuickPhrase) -> Unit = {},
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    var attachments by remember { mutableStateOf<List<ChatAttachment>>(emptyList()) }
     var showReasoningSlider by remember { mutableStateOf(false) }
     var expandedOverrides by rememberSaveable { mutableStateOf(mapOf<String, Boolean>()) }
 
@@ -994,52 +1003,20 @@ private fun ChatPaneContent(
     val imagePickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.GetMultipleContents(),
     ) { uris ->
-        if (uris.isNotEmpty()) {
-            val newItems = uris.mapNotNull { uri ->
-                AttachmentHelper.processUri(context, uri, isImage = true)
-            }
-            attachments = attachments + newItems
-        }
+        onAttachmentsPicked(uris.toList(), true)
     }
 
     val filePickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.GetMultipleContents(),
     ) { uris ->
-        if (uris.isNotEmpty()) {
-            val newItems = uris.mapNotNull { uri ->
-                AttachmentHelper.processUri(context, uri, isImage = false)
-            }
-            attachments = attachments + newItems
-        }
+        onAttachmentsPicked(uris.toList(), false)
     }
 
     val coroutineScope = rememberCoroutineScope()
 
     val doSend = {
-        val trimmedInput = input.trim()
-        if (trimmedInput.isNotBlank() || attachments.isNotEmpty()) {
-            val imageBase64List = attachments.mapNotNull { it.base64DataUrl }
-            val nonImageFiles = attachments.filter { !it.isImage }
-            val fullMessage = buildString {
-                if (trimmedInput.isNotBlank()) {
-                    append(trimmedInput)
-                } else if (nonImageFiles.isNotEmpty()) {
-                    append(context.getString(R.string.chat_attachment_files_prompt))
-                } else if (imageBase64List.isNotEmpty()) {
-                    append(context.getString(R.string.chat_attachment_images_prompt))
-                }
-                if (attachments.isNotEmpty()) {
-                    append(context.getString(R.string.chat_attachment_mount_header))
-                    attachments.forEachIndexed { i, att ->
-                        val guestPath = att.guestFilePath ?: "/attachments/${att.name}"
-                        val kind = context.getString(if (att.isImage) R.string.chat_attachment_image else R.string.chat_attachment_file)
-                        append(context.getString(R.string.chat_attachment_line, i + 1, kind, att.name, AttachmentHelper.formatFileSize(att.sizeBytes), guestPath))
-                    }
-                    append(context.getString(R.string.chat_attachment_access_hint))
-                }
-            }
-            onSend(fullMessage, imageBase64List)
-            attachments = emptyList()
+        if (input.isNotBlank() || attachments.isNotEmpty()) {
+            onSend()
             coroutineScope.launch {
                 delay(60)
                 val count = listState.layoutInfo.totalItemsCount
@@ -1219,12 +1196,12 @@ private fun ChatPaneContent(
             )
         }
 
-        QueuedPromptStack(prompts = queuedPrompts, onRemove = onRemoveQueuedPrompt)
+        QueuedPromptStack(prompts = queuedPrompts, onEdit = onEditQueuedPrompt, onRemove = onRemoveQueuedPrompt)
 
         // 待发送附件预览栏
         AttachmentPreviewRow(
             attachments = attachments,
-            onRemove = { att -> attachments = attachments.filter { it.id != att.id } },
+            onRemove = onRemoveAttachment,
         )
 
         // 🌟 思考/推理强度浮动调节胶囊 (ChatGPT 同款滑块面板)
@@ -3750,6 +3727,7 @@ private fun toolName(tool: HarnessTool, rawToolName: String? = null): String {
         HarnessTool.BUILD_SCRIPT -> "build_script"
         HarnessTool.SUBAGENT -> "invoke_subagent"
         HarnessTool.MCP -> "mcp"
+        HarnessTool.LOAD_RULE -> "load_rule"
     }
 }
 

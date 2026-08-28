@@ -249,4 +249,29 @@ class ApiContextAssemblerTest {
         assertTrue(out.none { it.role == "system" })
         assertEquals("你好", out.single().content)
     }
+
+    @Test
+    fun `mcp rawToolName is preserved in native assistant tool calls`() = runBlocking {
+        val mcpCall = ToolCall(
+            id = "call-mcp",
+            createdAt = 2L,
+            tool = HarnessTool.MCP,
+            args = buildJsonObject { put("query", kotlinx.serialization.json.JsonPrimitive("Kotlin coroutines")) },
+            rawToolName = "mcp__mcp_websearch__search",
+        )
+        val mcpResult = ToolResult(
+            id = "res-mcp",
+            createdAt = 3L,
+            toolCallId = "call-mcp",
+            success = true,
+            output = "搜索结果: Kotlin Coroutines 指南",
+        )
+        push("s-mcp", UserMessage("u1", 1L, "搜索一下"), mcpCall, mcpResult)
+        val out = assembler.assemble("s-mcp", nativeModel(), "")
+
+        val assistantMsg = out.first { it.role == "assistant" }
+        val apiCall = assistantMsg.tool_calls?.single()
+        assertEquals("call-mcp", apiCall?.id)
+        assertEquals("mcp__mcp_websearch__search", apiCall?.function?.name)
+    }
 }

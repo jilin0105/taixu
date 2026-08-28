@@ -100,7 +100,39 @@ class WorkspaceFileAccessTest {
     fun `read rejects oversized file`() = runTest {
         val big = File(root, "big.txt")
         big.writeText("x".repeat((WorkspaceFileAccess.MAX_READ_BYTES + 1).toInt()))
-        assertFalse(access.read("big.txt").isSuccess)
+        val result = access.read("big.txt")
+        assertFalse(result.isSuccess)
+        assertTrue(result.errorOrNull()?.message?.contains("grep -n") == true)
+    }
+
+    @Test
+    fun `read defaults to windowed output for large files`() = runTest {
+        val lines = (1..WorkspaceFileAccess.DEFAULT_READ_LINES + 500).joinToString("\n") { "line-$it" }
+        access.write("large.txt", lines)
+        val read = access.read("large.txt").getOrNull().orEmpty()
+        assertTrue(read.contains("共 ${WorkspaceFileAccess.DEFAULT_READ_LINES + 500} 行"))
+        assertTrue(read.contains("当前显示第 1-${WorkspaceFileAccess.DEFAULT_READ_LINES} 行"))
+        assertTrue(read.contains("offset=${WorkspaceFileAccess.DEFAULT_READ_LINES + 1}"))
+        assertTrue(read.contains("line-1"))
+        assertFalse(read.contains("line-${WorkspaceFileAccess.DEFAULT_READ_LINES + 1}"))
+    }
+
+    @Test
+    fun `read returns full content for small files without header`() = runTest {
+        access.write("small.txt", "alpha\nbravo\ncharlie")
+        assertEquals("alpha\nbravo\ncharlie", access.read("small.txt").getOrNull())
+    }
+
+    @Test
+    fun `read continues from offset and caps limit`() = runTest {
+        val lines = (1..5000).joinToString("\n") { "line-$it" }
+        access.write("page.txt", lines)
+        val secondPage = access.read("page.txt", offset = 2001).getOrNull().orEmpty()
+        assertTrue(secondPage.contains("当前显示第 2001-4000 行"))
+        assertTrue(secondPage.contains("line-2001"))
+        assertFalse(secondPage.contains("line-2000\n"))
+        val explicitLimit = access.read("page.txt", offset = 1, limit = 5000).getOrNull().orEmpty()
+        assertTrue(explicitLimit.contains("当前显示第 1-${WorkspaceFileAccess.DEFAULT_READ_LINES} 行"))
     }
 
     @Test

@@ -133,21 +133,7 @@ fun SettingsScreen(
     }
 
     val context = androidx.compose.ui.platform.LocalContext.current
-    val appVersionName = remember {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                context.packageManager.getPackageInfo(
-                    context.packageName,
-                    PackageManager.PackageInfoFlags.of(0),
-                ).versionName
-            } else {
-                @Suppress("DEPRECATION")
-                context.packageManager.getPackageInfo(context.packageName, 0).versionName
-            }
-        } catch (_: Exception) {
-            null
-        } ?: "unknown"
-    }
+    val appVersionName = rememberAppVersion()
 
     val glassBackdrop = LocalLiquidGlassBackdrop.current
     Scaffold(
@@ -1055,21 +1041,7 @@ fun AboutCommunityScreen(
     val isDownloading by viewModel.isDownloading.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
     var showAboutDialog by remember { mutableStateOf(false) }
-    val currentVersion = remember {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                context.packageManager.getPackageInfo(
-                    context.packageName,
-                    PackageManager.PackageInfoFlags.of(0),
-                ).versionName
-            } else {
-                @Suppress("DEPRECATION")
-                context.packageManager.getPackageInfo(context.packageName, 0).versionName
-            }
-        } catch (_: Exception) {
-            null
-        } ?: "unknown"
-    }
+    val currentVersion = rememberAppVersion()
 
     // 版本更新弹窗
     when (val state = updateCheckState) {
@@ -1158,6 +1130,20 @@ fun AboutCommunityScreen(
                         subtitle = "应用启动时在后台静默检测新版本",
                         checked = autoCheckUpdates,
                         change = viewModel::setAutoCheckUpdates,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(
+                        icon = RuntimeIconName.Sparkles,
+                        title = "重看功能引导",
+                        subtitle = "重新展示插件中心、工作坊、多会话终端等首次使用引导",
+                        onClick = {
+                            viewModel.replayFirstUseGuides()
+                            android.widget.Toast.makeText(
+                                context,
+                                "已重置功能引导，下次进入相应页面会重新展示",
+                                android.widget.Toast.LENGTH_SHORT,
+                            ).show()
+                        },
                     )
                 }
             }
@@ -1665,21 +1651,7 @@ private fun ThemeOptionItem(
 @Composable
 private fun AboutAppDialog(onDismiss: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val appVersion = remember {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                context.packageManager.getPackageInfo(
-                    context.packageName,
-                    PackageManager.PackageInfoFlags.of(0),
-                ).versionName
-            } else {
-                @Suppress("DEPRECATION")
-                context.packageManager.getPackageInfo(context.packageName, 0).versionName
-            }
-        } catch (_: Exception) {
-            null
-        } ?: "unknown"
-    }
+    val appVersion = rememberAppVersion()
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -2076,4 +2048,25 @@ fun WebChatBridgeDialog(
             }
         },
     )
+}
+
+/** 应用版本号；三处界面共用一份查询逻辑 */
+@Composable
+fun rememberAppVersion(): String {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    return remember {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(
+                    context.packageName,
+                    PackageManager.PackageInfoFlags.of(0),
+                ).versionName
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName
+            }
+        } catch (_: Exception) {
+            null
+        } ?: "unknown"
+    }
 }

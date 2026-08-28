@@ -144,7 +144,9 @@ internal class ChatApi(
                         ?.let { it as? JsonPrimitive }?.contentOrNull
                     reasoningChunk?.let { chunk ->
                         if (chunk.isNotEmpty()) {
-                            reasoningText.append(chunk)
+                            if (reasoningText.length < ProviderClient.MAX_STREAM_REASONING_CHARS) {
+                                reasoningText.append(chunk.take(ProviderClient.MAX_STREAM_REASONING_CHARS - reasoningText.length))
+                            }
                             onReasoning(chunk)
                         }
                     }
@@ -577,6 +579,15 @@ class ProviderClient @Inject constructor(
         const val DEFAULT_BASE_URL = "https://api.openai.com/v1"
         const val DEFAULT_MODEL = "gpt-4o-mini"
         private const val CALL_TIMEOUT_MS = 3 * 60 * 1000L
+
+        /**
+         * 单回合推理内容的累积上限（字符）。推理是执行过程草稿，不是长期上下文；
+         * 超限后停止累积，防止异常模型的无界推理把会话内存与历史存储拖垮。
+         */
+        const val MAX_STREAM_REASONING_CHARS = 128 * 1024
+
+        /** 流式增量上屏的发布间隔：SSE chunk 频率远高于帧率，逐 chunk 全量发布是 O(n²) 分配。 */
+        const val STREAM_PUBLISH_INTERVAL_MS = 100L
 
         /** Room 实体 → 运行配置：推理参数原样透传，协议按 Base URL / 厂商名自动推断。 */
         private suspend fun top.wkbin.taixu.core.database.AiModelEntity.toModelConfig(

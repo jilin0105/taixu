@@ -121,7 +121,9 @@ internal class AnthropicApi(
                                 }
                                 "thinking_delta" -> delta["thinking"]?.jsonPrimitive?.contentOrNull?.let { chunk ->
                                     if (chunk.isNotEmpty()) {
-                                        reasoningText.append(chunk)
+                                        if (reasoningText.length < ProviderClient.MAX_STREAM_REASONING_CHARS) {
+                                            reasoningText.append(chunk.take(ProviderClient.MAX_STREAM_REASONING_CHARS - reasoningText.length))
+                                        }
                                         onReasoning(chunk)
                                     }
                                 }
