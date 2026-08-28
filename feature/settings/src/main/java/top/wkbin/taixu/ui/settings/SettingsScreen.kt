@@ -3003,7 +3003,7 @@ fun WebChatBridgeDialog(
                                         onClick = {
                                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                             clipboard.setPrimaryClip(ClipData.newPlainText("WebChat URL", status.accessUrl))
-                                            Toast.makeText(context, "已复制访问链接", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, "已复制基础链接", Toast.LENGTH_SHORT).show()
                                         }
                                     ) { Text("复制") }
                                 }
@@ -3031,8 +3031,24 @@ fun WebChatBridgeDialog(
                                 }
                             }
 
+                            val directUrl = "${status.accessUrl}?token=${status.pinCode}"
+                            Button(
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("WebChat Direct URL", directUrl))
+                                    Toast.makeText(context, "已复制免密直达链接，在电脑浏览器打开即可！", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                shape = RoundedCornerShape(10.dp),
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    RuntimeIcon(RuntimeIconName.Copy, Modifier.size(16.dp))
+                                    Text("一键复制免密直达链接 (免输PIN)")
+                                }
+                            }
+
                             Text(
-                                text = "当前已连接设备：${status.activeConnections} 台",
+                                text = "💡 提示：确保电脑与手机处于同一 Wi-Fi；当前在线设备：${status.activeConnections} 台",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
