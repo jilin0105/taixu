@@ -15,8 +15,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -34,7 +32,9 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.ui.components.NoticeBanner
+import top.wkbin.taixu.ui.components.RuntimeButton
 import top.wkbin.taixu.ui.components.RuntimeCard
+import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator
 import top.wkbin.taixu.ui.components.RuntimeTopBar
 import top.wkbin.taixu.ui.components.SectionHeader
 
@@ -114,7 +114,7 @@ fun CustomIterationScreen(
             Spacer(Modifier.height(8.dp))
 
             // 启动按钮
-            Button(
+            RuntimeButton(
                 onClick = {
                     viewModel.startCustomIteration { prompt ->
                         onNavigateToChat(prompt)
@@ -124,13 +124,13 @@ fun CustomIterationScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp),
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(12.dp),
             ) {
                 if (uiState.isBusy) {
-                    CircularProgressIndicator(
+                    RuntimeCircularProgressIndicator(
                         modifier = Modifier.size(20.dp),
                         color = MaterialTheme.colorScheme.onPrimary,
-                        strokeWidth = 2.dp
+                        strokeWidth = 2.dp,
                     )
                     Spacer(Modifier.width(8.dp))
                     Text("正在准备迭代工作区…")

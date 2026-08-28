@@ -5,6 +5,7 @@ import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -437,11 +438,31 @@ private fun RuntimeControlCard(
             Button(onClick = onInitialize, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                 Text(if (state is RuntimeState.Error) "重试初始化" else if (state is RuntimeState.Ready) "重新检查初始化" else "下载并初始化")
             }
-            Spacer(Modifier.height(9.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                OutlinedButton(onClick = onHealthCheck, enabled = !busy, modifier = Modifier.weight(1f)) { Text("健康检查") }
-                OutlinedButton(onClick = onCheckUpdate, enabled = !busy && state is RuntimeState.Ready, modifier = Modifier.weight(1f)) { Text("检查更新") }
-                OutlinedButton(onClick = onUpdate, enabled = !busy && state is RuntimeState.Ready, modifier = Modifier.weight(1f)) { Text("更新 RootFS") }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = onHealthCheck,
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
+                ) {
+                    Text("健康检查", style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                }
+                OutlinedButton(
+                    onClick = onCheckUpdate,
+                    enabled = !busy && state is RuntimeState.Ready,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
+                ) {
+                    Text("检查更新", style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                }
+                OutlinedButton(
+                    onClick = onUpdate,
+                    enabled = !busy && state is RuntimeState.Ready,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
+                ) {
+                    Text("更新RootFS", style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                }
             }
             Spacer(Modifier.height(9.dp))
             OutlinedButton(

@@ -166,10 +166,13 @@ object ToolSchemaValidator {
         "object" -> value is JsonObject
         "array" -> value is JsonArray
         "string" -> value is JsonPrimitive && value.isString
-        "boolean" -> value is JsonPrimitive && !value.isString && (value.content == "true" || value.content == "false")
-        "integer" -> value is JsonPrimitive && !value.isString &&
+        "boolean" -> value is JsonPrimitive && (
+            (!value.isString && (value.content == "true" || value.content == "false")) ||
+                (value.isString && (value.content.equals("true", ignoreCase = true) || value.content.equals("false", ignoreCase = true)))
+            )
+        "integer" -> value is JsonPrimitive &&
             value.contentOrNull?.toDoubleOrNull()?.let { it % 1.0 == 0.0 } == true
-        "number" -> value is JsonPrimitive && !value.isString && value.contentOrNull?.toDoubleOrNull() != null
+        "number" -> value is JsonPrimitive && value.contentOrNull?.toDoubleOrNull() != null
         "null" -> value is JsonNull
         else -> true // 未知类型声明宽容放行
     }

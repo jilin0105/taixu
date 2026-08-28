@@ -140,4 +140,14 @@ class ToolSchemaValidatorTest {
         val schema = schema("""{"type":"object","properties":{"a":{"type":"string"}},"additionalProperties":true}""")
         assertTrue(ToolSchemaValidator.validate(schema, args("a" to "x", "extra" to "y")).isEmpty())
     }
+
+    @Test
+    fun `string encoded numbers and booleans pass type validation smoothly`() {
+        val schema = schema("""{"type":"object","properties":{"count":{"type":"integer","minimum":1,"maximum":100},"flag":{"type":"boolean"}}}""")
+        val validArgs = buildJsonObject {
+            put("count", kotlinx.serialization.json.JsonPrimitive("50"))
+            put("flag", kotlinx.serialization.json.JsonPrimitive("true"))
+        }
+        assertTrue(ToolSchemaValidator.validate(schema, validArgs).isEmpty())
+    }
 }
