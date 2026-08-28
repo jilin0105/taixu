@@ -14,8 +14,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
@@ -38,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 import top.wkbin.taixu.ui.components.RuntimeButton
 import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeIcon
@@ -147,30 +149,37 @@ private fun ManagedScriptEditorDialog(script: BuildScriptEntity?, onDismiss: () 
     var type by remember(script) { mutableStateOf(runCatching { ProjectType.valueOf(script?.projectType ?: ProjectType.ANDROID.name) }.getOrDefault(ProjectType.ANDROID)) }
     var content by remember(script) { mutableStateOf(script?.content ?: if (type == ProjectType.FLUTTER) defaultFlutterTemplate else defaultAndroidTemplate) }
     var typeExpanded by remember { mutableStateOf(false) }
-    AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (script == null) "新建构建脚本" else "编辑构建脚本") },
-        text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedTextField(name, { name = it }, label = { Text("名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(description, { description = it }, label = { Text("用途与适用版本") }, modifier = Modifier.fillMaxWidth())
-            RuntimeOutlinedButton(onClick = { typeExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text("类型：${type.displayName}") }
-            DropdownMenu(expanded = typeExpanded, onDismissRequest = { typeExpanded = false }) {
-                listOf(ProjectType.ANDROID, ProjectType.FLUTTER).forEach { candidate ->
-                    DropdownMenuItem(
-                        text = { Text(candidate.displayName) },
-                        onClick = {
-                            if (script == null && (content == defaultAndroidTemplate || content == defaultFlutterTemplate || content.isBlank())) {
-                                content = if (candidate == ProjectType.FLUTTER) defaultFlutterTemplate else defaultAndroidTemplate
-                            }
-                            type = candidate
-                            typeExpanded = false
-                        },
-                    )
+        title = { Text(if (script == null) "新建构建脚本" else "编辑构建脚本", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                OutlinedTextField(name, { name = it }, label = { Text("名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(description, { description = it }, label = { Text("用途与适用版本") }, modifier = Modifier.fillMaxWidth())
+                RuntimeOutlinedButton(onClick = { typeExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text("类型：${type.displayName}") }
+                DropdownMenu(expanded = typeExpanded, onDismissRequest = { typeExpanded = false }) {
+                    listOf(ProjectType.ANDROID, ProjectType.FLUTTER).forEach { candidate ->
+                        DropdownMenuItem(
+                            text = { Text(candidate.displayName) },
+                            onClick = {
+                                if (script == null && (content == defaultAndroidTemplate || content == defaultFlutterTemplate || content.isBlank())) {
+                                    content = if (candidate == ProjectType.FLUTTER) defaultFlutterTemplate else defaultAndroidTemplate
+                                }
+                                type = candidate
+                                typeExpanded = false
+                            },
+                        )
+                    }
                 }
+                CodeEditorPanel(content, { content = it }, "build.sh", Modifier.fillMaxWidth().height(260.dp))
+                Text("接口约定：${'$'}1 为项目目录；Android 的 ${'$'}2 为 Gradle task，Flutter 的 ${'$'}2 为完整 build 参数。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            CodeEditorPanel(content, { content = it }, "build.sh", Modifier.fillMaxWidth().height(260.dp))
-            Text("接口约定：${'$'}1 为项目目录；Android 的 ${'$'}2 为 Gradle task，Flutter 的 ${'$'}2 为完整 build 参数。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } },
+        },
         confirmButton = { RuntimeButton(onClick = { onSave(name, description, type, content) }, enabled = name.isNotBlank() && content.isNotBlank()) { Text("保存") } },
         dismissButton = { RuntimeOutlinedButton(onClick = onDismiss) { Text("取消") } },
     )

@@ -150,13 +150,14 @@ class ToolExecutor @Inject constructor(
 
     private suspend fun executeTool(
         tool: HarnessTool,
-        args: JsonObject,
+        rawArgs: JsonObject,
         rawToolName: String?,
         sessionId: String,
         workspace: String,
         progressReporter: (suspend (String) -> Unit)?,
         operationId: String?,
     ): Pair<Boolean, String> {
+        val args = top.wkbin.taixu.harness.validation.ToolSchemaValidator.normalizeArgs(rawArgs)
         val activeFileAccess = if (workspace.isNotBlank()) fileAccess.withBase(workspace) else fileAccess
         return when (tool) {
             HarnessTool.READ -> {

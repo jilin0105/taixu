@@ -1,7 +1,9 @@
-package top.wkbin.taixu.core.database
+﻿package top.wkbin.taixu.core.database
 
 import androidx.room.Database
 import androidx.room.RoomDatabase
+import top.wkbin.taixu.core.database.task.AgentTaskEntity
+import top.wkbin.taixu.core.database.task.AgentTaskDao
 
 @Database(
     entities = [
@@ -35,8 +37,9 @@ import androidx.room.RoomDatabase
         AndroidAppEntity::class,
         BuildScriptEntity::class,
         ProjectBuildScriptBindingEntity::class,
+        AgentTaskEntity::class,
     ],
-    version = 36,
+    version = 37,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -59,4 +62,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun harnessRuntimeDao(): HarnessRuntimeDao
     abstract fun androidAppDao(): AndroidAppDao
     abstract fun buildScriptDao(): BuildScriptDao
+    abstract fun agentTaskDao(): AgentTaskDao
 }
+

@@ -1049,18 +1049,26 @@ class HarnessLoop @Inject constructor(
                 json.parseToJsonElement(spec.argumentsJson) as? JsonObject
                     ?: throw IllegalArgumentException("参数不是 JSON 对象")
             } catch (parseError: Throwable) {
-                appendToolCallAndResult(
-                    sessId = sessId,
-                    spec = spec,
-                    tool = tool,
-                    args = buildJsonObject {},
-                    reasoning = reasoning,
-                    rawToolName = null,
-                    output = "工具参数 JSON 解析失败（${friendly(parseError)}），参数可能被截断。" +
-                        "请重新发起完整的工具调用，参数必须是合法的 JSON 对象。",
-                )
-                loopDetector.recordSettled(toolNameTrimmed, buildJsonObject {}, success = false)
-                return@forEach
+                // 尝试自动修复因 Token 截断或网络抖动未闭合的 JSON
+                val repaired = runCatching {
+                    json.parseToJsonElement(repairTruncatedJson(spec.argumentsJson)) as? JsonObject
+                }.getOrNull()
+                if (repaired != null && repaired.isNotEmpty()) {
+                    repaired
+                } else {
+                    appendToolCallAndResult(
+                        sessId = sessId,
+                        spec = spec,
+                        tool = tool,
+                        args = buildJsonObject {},
+                        reasoning = reasoning,
+                        rawToolName = null,
+                        output = "工具参数 JSON 解析失败（${friendly(parseError)}），参数可能被截断。" +
+                            "请重新发起完整的工具调用，参数必须是合法的 JSON 对象。",
+                    )
+                    loopDetector.recordSettled(toolNameTrimmed, buildJsonObject {}, success = false)
+                    return@forEach
+                }
             }
             if (toolNameTrimmed.lowercase() !in KNOWN_TOOL_NAMES && !toolNameTrimmed.startsWith("mcp__")) {
                 appendToolCallAndResult(
@@ -1185,6 +1193,41 @@ class HarnessLoop @Inject constructor(
             agentEventLogger.log(sessId, "SteeringMessage", message.text)
             messageProjector.publishPersisted(sessId, message)
         }
+    }
+
+    private fun repairTruncatedJson(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return "{}"
+        var inString = false
+        var escape = false
+        val stack = mutableListOf<Char>()
+        for (ch in trimmed) {
+            if (escape) {
+                escape = false
+                continue
+            }
+            if (ch == '\\') {
+                escape = true
+                continue
+            }
+            if (ch == '"') {
+                inString = !inString
+                continue
+            }
+            if (!inString) {
+                if (ch == '{' || ch == '[') stack.add(ch)
+                else if (ch == '}' && stack.isNotEmpty() && stack.last() == '{') stack.removeAt(stack.lastIndex)
+                else if (ch == ']' && stack.isNotEmpty() && stack.last() == '[') stack.removeAt(stack.lastIndex)
+            }
+        }
+        val builder = StringBuilder(trimmed)
+        if (inString) builder.append('"')
+        while (stack.isNotEmpty()) {
+            val open = stack.removeAt(stack.lastIndex)
+            if (open == '{') builder.append('}')
+            else if (open == '[') builder.append(']')
+        }
+        return builder.toString()
     }
 
     private fun friendly(throwable: Throwable): String =

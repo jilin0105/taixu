@@ -134,9 +134,22 @@ private fun StorageCategoryCard(category: StorageCategory, color: Color) {
             category.entries.forEachIndexed { index, entry ->
                 if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        androidx.compose.material3.Text(entry.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-                        if (entry.detail.isNotBlank()) androidx.compose.material3.Text(entry.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Column(Modifier.weight(1f).padding(end = 8.dp)) {
+                        androidx.compose.material3.Text(
+                            entry.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        )
+                        if (entry.detail.isNotBlank()) {
+                            androidx.compose.material3.Text(
+                                entry.detail,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                     androidx.compose.material3.Text(entry.bytes.readableSize(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                 }

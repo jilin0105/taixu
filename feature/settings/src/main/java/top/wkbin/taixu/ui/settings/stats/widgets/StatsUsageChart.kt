@@ -121,6 +121,9 @@ fun StatsUsageChart(
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     ),
+                                    modifier = Modifier.weight(1f).padding(end = 8.dp),
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                 )
                                 Text(
                                     text = formatTokens(bucket.totalTokens),

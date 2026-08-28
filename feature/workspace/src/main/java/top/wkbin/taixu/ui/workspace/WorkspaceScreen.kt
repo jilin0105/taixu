@@ -41,8 +41,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import top.wkbin.taixu.ui.components.RuntimeButton as Button
 import top.wkbin.taixu.ui.components.RuntimeFilledTonalButton as FilledTonalButton
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import top.wkbin.taixu.ui.components.RuntimeCheckbox as Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -2365,20 +2363,21 @@ private fun AppPickerDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.workspace_choose_installed_app), fontWeight = FontWeight.Bold) },
         text = {
-            if (apps.isEmpty()) {
-                Text(
-                    stringResource(R.string.workspace_apps_unavailable),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                Text(
-                    stringResource(R.string.workspace_choose_app_description),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(6.dp))
-                LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                if (apps.isEmpty()) {
+                    Text(
+                        stringResource(R.string.workspace_apps_unavailable),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Text(
+                        stringResource(R.string.workspace_choose_app_description),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
                     items(apps, key = { it.packageName }) { app ->
                         val label = app.appLabel(context)
                         Row(
@@ -2429,6 +2428,7 @@ private fun AppPickerDialog(
                     }
                 }
             }
+        }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.workspace_cancel)) } },
     )

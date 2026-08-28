@@ -25,19 +25,51 @@ import top.wkbin.taixu.harness.mcp.McpToolApiName
 object ToolSchemaValidator {
     private val json = Json { ignoreUnknownKeys = true }
 
+    /** 智能参数解包与别名规整（自动展开单层 params/arguments，映射下划线/驼峰命名别名） */
+    fun normalizeArgs(raw: JsonObject): JsonObject {
+        val base = if (raw.size == 1 && (raw.containsKey("params") || raw.containsKey("arguments") || raw.containsKey("input"))) {
+            (raw["params"] as? JsonObject) ?: (raw["arguments"] as? JsonObject) ?: (raw["input"] as? JsonObject) ?: raw
+        } else raw
+
+        return kotlinx.serialization.json.buildJsonObject {
+            base.forEach { (k, v) -> put(k, v) }
+            if (!base.containsKey("path")) {
+                val alias = base["file_path"] ?: base["filePath"] ?: base["file"] ?: base["target"]
+                alias?.let { put("path", it) }
+            }
+            if (!base.containsKey("command")) {
+                val alias = base["cmd"] ?: base["script"]
+                alias?.let { put("command", it) }
+            }
+            if (!base.containsKey("oldText")) {
+                val alias = base["old_text"] ?: base["original_text"]
+                alias?.let { put("oldText", it) }
+            }
+            if (!base.containsKey("newText")) {
+                val alias = base["new_text"] ?: base["replacement"]
+                alias?.let { put("newText", it) }
+            }
+            if (!base.containsKey("timeout_seconds")) {
+                val alias = base["timeout"] ?: base["timeoutSeconds"] ?: base["timeout_sec"]
+                alias?.let { put("timeout_seconds", it) }
+            }
+        }
+    }
+
     /** 校验工具参数；空列表 = 通过。 */
     fun problemsFor(
         toolName: String,
         args: JsonObject,
         mcpTools: List<McpToolInfo> = emptyList(),
     ): List<String> {
+        val normalized = normalizeArgs(args)
         val schema = resolveSchema(toolName, mcpTools) ?: return emptyList()
-        return validateObject(schema, args, prefix = "")
+        return validateObject(schema, normalized, prefix = "")
     }
 
     /** 直接对给定 schema 校验（供自定义 schema 场景与测试使用）。 */
     fun validate(schema: JsonObject, args: JsonObject): List<String> =
-        validateObject(schema, args, prefix = "")
+        validateObject(schema, normalizeArgs(args), prefix = "")
 
     private fun resolveSchema(toolName: String, mcpTools: List<McpToolInfo>): JsonObject? {
         if (toolName.startsWith("mcp__")) {

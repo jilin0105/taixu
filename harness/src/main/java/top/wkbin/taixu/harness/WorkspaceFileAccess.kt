@@ -145,15 +145,14 @@ class WorkspaceFileAccess(
     }
 
     private fun resolve(path: String): File? {
-        val trimmed = path.trim()
+        val trimmed = path.trim().replace('\\', '/')
         val segments = trimmed.split('/').filter { it.isNotEmpty() && it != "." }
         if (segments.any { it == ".." }) return null
-        if (trimmed.startsWith("/") && segments.first() != "workspace") return null
-        
-        // 如果是 /workspace/xxx 绝对路径，从全局工作区顶层根目录 globalRootCanonical 开始解析
-        val isAbsoluteWorkspace = trimmed.startsWith("/workspace")
-        val baseRoot = if (isAbsoluteWorkspace) (globalRootCanonical ?: rootCanonical) else root
-        val relative = if (isAbsoluteWorkspace) segments.drop(1) else segments
+        if (trimmed.startsWith("/") && segments.isNotEmpty() && segments.first() != "workspace") return null
+
+        val isWorkspacePrefixed = segments.isNotEmpty() && segments.first() == "workspace"
+        val baseRoot = if (isWorkspacePrefixed) (globalRootCanonical ?: rootCanonical) else root
+        val relative = if (isWorkspacePrefixed) segments.drop(1) else segments
         var candidate = baseRoot
         for (segment in relative) {
             candidate = File(candidate, segment)

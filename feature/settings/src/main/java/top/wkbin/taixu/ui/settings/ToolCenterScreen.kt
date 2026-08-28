@@ -36,8 +36,6 @@ import top.wkbin.taixu.ui.components.rememberSpotlightAnchor
 import top.wkbin.taixu.ui.components.spotlightAnchor
 import top.wkbin.taixu.ui.components.RuntimeButton as Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import top.wkbin.taixu.ui.components.RuntimeFilledTonalButton as FilledTonalButton
@@ -584,11 +582,12 @@ fun ToolCenterScreen(
                 onDismissRequest = { viewModel.viewLogs(null) },
                 title = { Text("工具执行日志 ($toolName)") },
                 text = {
-                    Card(
+                    Surface(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 200.dp, max = 360.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLowest,
                     ) {
                         Column(
                             modifier = Modifier
@@ -677,9 +676,10 @@ fun ToolCenterScreen(
                 onDismissRequest = { showBundleInstallLog = false },
                 title = { Text("开发套件安装日志") },
                 text = {
-                    Card(
+                    Surface(
                         modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp, max = 420.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLowest,
                     ) {
                         Column(
                             modifier = Modifier.fillMaxSize().padding(10.dp).verticalScroll(rememberScrollState()),
@@ -759,10 +759,10 @@ fun ToolCenterScreen(
                         )
 
                         if (isInstallingComponents) {
-                            Card(
+                            Surface(
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(10.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
+                                color = MaterialTheme.colorScheme.surfaceContainerHighest,
                             ) {
                                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -790,7 +790,7 @@ fun ToolCenterScreen(
                                 val isUninstalledRequired = comp.isRequired
                                 val isChecked = isUninstalledRequired || comp.id in selectedComponents
 
-                                Card(
+                                Surface(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(10.dp))
@@ -802,10 +802,8 @@ fun ToolCenterScreen(
                                         1.dp,
                                         if (isChecked) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                                     ),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = if (isChecked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
-                                        else MaterialTheme.colorScheme.surfaceContainerLow,
-                                    ),
+                                    color = if (isChecked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
+                                    else MaterialTheme.colorScheme.surfaceContainerLow,
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(10.dp),
@@ -852,11 +850,11 @@ fun ToolCenterScreen(
                             )
 
                             installedComponentsList.forEach { comp ->
-                                Card(
+                                Surface(
                                     modifier = Modifier.fillMaxWidth(),
                                     shape = RoundedCornerShape(10.dp),
                                     border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2E7D32).copy(alpha = 0.25f)),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.45f)),
+                                    color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.45f),
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(10.dp),

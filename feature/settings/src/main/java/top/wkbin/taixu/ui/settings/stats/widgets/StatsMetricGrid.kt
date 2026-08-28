@@ -120,6 +120,7 @@ private fun MetricTile(
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                     ),
                     maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 )
             }
             Text(
@@ -130,6 +131,7 @@ private fun MetricTile(
                     color = MaterialTheme.colorScheme.onSurface,
                 ),
                 maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             )
         }
     }

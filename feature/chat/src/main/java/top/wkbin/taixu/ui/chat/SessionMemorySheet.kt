@@ -2,6 +2,7 @@ package top.wkbin.taixu.ui.chat
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -231,13 +232,19 @@ private fun MemoryRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            RuntimeIcon(
-                RuntimeIconName.Close,
-                Modifier
-                    .size(18.dp)
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
                     .clickable(onClick = onDelete),
-                MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+                contentAlignment = Alignment.Center,
+            ) {
+                RuntimeIcon(
+                    RuntimeIconName.Close,
+                    Modifier.size(16.dp),
+                    MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

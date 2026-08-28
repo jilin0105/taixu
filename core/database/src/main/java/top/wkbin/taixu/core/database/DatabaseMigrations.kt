@@ -1,4 +1,4 @@
-package top.wkbin.taixu.core.database
+﻿package top.wkbin.taixu.core.database
 
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
@@ -77,5 +77,13 @@ val MIGRATION_34_35 = object : Migration(34, 35) {
 val MIGRATION_35_36 = object : Migration(35, 36) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("UPDATE mcp_servers SET isEnabled = 0 WHERE id = 'mcp_codegraph' AND isBuiltin = 1")
+    }
+}
+
+val MIGRATION_36_37 = object : Migration(36, 37) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS agent_tasks (id TEXT NOT NULL PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL, status TEXT NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL, errorMessage TEXT, progress REAL NOT NULL)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_agent_tasks_status ON agent_tasks(status)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_agent_tasks_updatedAt ON agent_tasks(updatedAt)")
     }
 }

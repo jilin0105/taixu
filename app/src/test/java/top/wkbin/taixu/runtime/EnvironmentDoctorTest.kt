@@ -45,12 +45,18 @@ class EnvironmentDoctorTest {
             CommandResult(0, "", "", 1)
         runtime.commandResults["node --version 2>/dev/null || /opt/taixu/bin/node --version 2>/dev/null || /usr/bin/node --version 2>/dev/null"] =
             CommandResult(0, "v22.22.3\n", "", 1)
+        top.wkbin.taixu.core.model.BuiltinPluginBundles.bundles
+            .firstOrNull { it.id == "android-suite" }
+            ?.components?.firstOrNull { it.id == "android-core" }
+            ?.checkCommand?.let { cmd ->
+                runtime.commandResults[cmd] = CommandResult(0, "android env ok", "", 1)
+            }
 
         val doctor = EnvironmentDoctor(linuxRuntime = runtime)
         val report = doctor.check()
 
         assertEquals(DoctorStatus.HEALTHY, report.overallStatus)
-        assertEquals(7, report.healthyCount)
+        assertEquals(8, report.healthyCount)
         assertEquals(0, report.warningCount)
         assertEquals(0, report.errorCount)
         assertTrue(report.isAllHealthy)
@@ -79,7 +85,7 @@ class EnvironmentDoctorTest {
         val report = doctor.check()
 
         assertEquals(DoctorStatus.WARNING, report.overallStatus)
-        assertEquals(2, report.healthyCount) // sandbox_storage 与 allFilesAccessItem healthy
+        assertEquals(3, report.healthyCount)
         assertEquals(5, report.warningCount)
         assertTrue(report.needsFix)
     }

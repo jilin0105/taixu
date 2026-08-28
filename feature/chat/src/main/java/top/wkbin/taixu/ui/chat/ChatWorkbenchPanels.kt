@@ -20,7 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
+import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -28,7 +28,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -839,12 +839,16 @@ internal fun QueuedPromptStack(
 internal fun CreateBranchDialog(messageId: String, onDismiss: () -> Unit, onCreate: (String, String) -> Unit) {
     var name by remember { mutableStateOf("") }
     val defaultName = stringResource(R.string.chat_branch_default_name)
-    AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = onDismiss,
-        icon = { RuntimeIcon(RuntimeIconName.Hub, Modifier.size(24.dp), MaterialTheme.colorScheme.primary) },
         title = { Text(stringResource(R.string.chat_create_branch)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Text(stringResource(R.string.chat_create_branch_description), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(
                     value = name,
@@ -852,6 +856,7 @@ internal fun CreateBranchDialog(messageId: String, onDismiss: () -> Unit, onCrea
                     label = { Text(stringResource(R.string.chat_branch_name)) },
                     placeholder = { Text(stringResource(R.string.chat_branch_name_placeholder)) },
                     singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         },

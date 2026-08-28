@@ -110,13 +110,13 @@ private val orderedListRegex = Regex("^\\s*\\d+\\.\\s+(.*)$")
 private val unorderedListRegex = Regex("^\\s*[-*+]\\s+(.*)$")
 private val hrRegex = Regex("^\\s*(?:-{3,}|\\*{3,}|_{3,})\\s*$")
 private val markdownImageRegex = Regex(
-    pattern = "^\\s*!\\[([^]\\n]*)]\\((https?://[^)\\s]+)\\)\\s*$",
+    pattern = """^\s*!\[([^]\n]*)]\(((?:https?://|file://|data:image/|/|\./|\\|\.\\)[^)\s]+)\)\s*$""",
     option = RegexOption.IGNORE_CASE,
 )
 /** 行内图片（不要求独占一行），用于从段落文本中拆出图片块。 */
-private val inlineImageRegex = Regex("!\\[([^]\\n]*)]\\((https?://[^)\\s]+)\\)", RegexOption.IGNORE_CASE)
+private val inlineImageRegex = Regex("""!\[([^]\n]*)]\(((?:https?://|file://|data:image/|/|\./|\\|\.\\)[^)\s]+)\)""", RegexOption.IGNORE_CASE)
 /** HTML <img> 标签，兼容模型直接输出 img 标签的情况。 */
-private val htmlImgRegex = Regex("""<img[^>]+src\s*=\s*["'](https?://[^"'\s]+)["'][^>]*>""", RegexOption.IGNORE_CASE)
+private val htmlImgRegex = Regex("""<img[^>]+src\s*=\s*["']((?:https?://|file://|data:image/|/|\./|\\|\.\\)[^"'\s]+)["'][^>]*>""", RegexOption.IGNORE_CASE)
 private val standaloneWebUrlRegex = Regex("^https?://\\S+$", RegexOption.IGNORE_CASE)
 private val inlineMarkdownLinkRegex = Regex("\\[([^]\\n]+)]\\((https?://[^)\\s]+)\\)", RegexOption.IGNORE_CASE)
 private val inlineWebUrlRegex = Regex("https?://[^\\s<>\\[\\]{}\"']+", RegexOption.IGNORE_CASE)
@@ -418,8 +418,16 @@ private fun RemoteMediaBlock(block: MdRemoteMedia) {
         Column {
             SubcomposeAsyncImage(
                 model = remember(block.url) {
+                    val dataModel: Any = when {
+                        block.url.startsWith("http://", ignoreCase = true) ||
+                            block.url.startsWith("https://", ignoreCase = true) ||
+                            block.url.startsWith("data:", ignoreCase = true) ||
+                            block.url.startsWith("file://", ignoreCase = true) -> block.url
+                        block.url.startsWith("/") -> java.io.File(block.url)
+                        else -> block.url
+                    }
                     ImageRequest.Builder(context)
-                        .data(block.url)
+                        .data(dataModel)
                         .crossfade(true)
                         .build()
                 },
