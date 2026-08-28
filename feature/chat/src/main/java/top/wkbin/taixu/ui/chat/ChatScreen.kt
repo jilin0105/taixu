@@ -2067,7 +2067,7 @@ private fun UserBubble(
                     color = MaterialTheme.colorScheme.primaryContainer,
                     shape = RoundedCornerShape(16.dp, 4.dp, 16.dp, 16.dp),
                     modifier = Modifier
-                        .widthIn(max = 300.dp)
+                        .widthIn(max = 560.dp)
                         .clickable { showMenu = true },
                 ) {
                     val mentionColor = MaterialTheme.colorScheme.primary
