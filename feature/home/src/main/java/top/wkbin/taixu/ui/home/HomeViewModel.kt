@@ -79,10 +79,12 @@ class HomeViewModel @Inject constructor(
         webChatBridgeServer?.status ?: MutableStateFlow(top.wkbin.taixu.runtime.webchat.WebChatServerStatus()).asStateFlow()
 
     fun toggleWebChat(enabled: Boolean) {
-        if (enabled) {
-            webChatBridgeServer?.start()
-        } else {
-            webChatBridgeServer?.stop()
+        viewModelScope.launch(Dispatchers.IO) {
+            if (enabled) {
+                webChatBridgeServer?.start()
+            } else {
+                webChatBridgeServer?.stop()
+            }
         }
     }
 

@@ -1,9 +1,6 @@
 package top.wkbin.taixu.runtime.webchat
 
 import android.content.Context
-import com.sun.net.httpserver.HttpExchange
-import com.sun.net.httpserver.HttpHandler
-import com.sun.net.httpserver.HttpServer
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -56,14 +53,14 @@ class WebChatBridgeServer @Inject constructor(
     private val logger: AppLogger,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var httpServer: HttpServer? = null
+    private var httpServer: AndroidHttpServer? = null
     private val executor = Executors.newFixedThreadPool(8)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     private val _status = MutableStateFlow(WebChatServerStatus())
     val status: StateFlow<WebChatServerStatus> = _status.asStateFlow()
 
-    private val sseEmitters = ConcurrentHashMap.newKeySet<HttpExchange>()
+    private val sseEmitters = ConcurrentHashMap.newKeySet<AndroidHttpExchange>()
     private var wakeLock: android.os.PowerManager.WakeLock? = null
     private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
 
@@ -74,7 +71,7 @@ class WebChatBridgeServer @Inject constructor(
         if (_status.value.isRunning) return true
         return try {
             val generatedPin = pin ?: generatePin()
-            val server = HttpServer.create(InetSocketAddress(port), 0)
+            val server = AndroidHttpServer.create(InetSocketAddress(port), 0)
             server.executor = executor
 
             // 1. 静态资源路由（托管 assets/webchat 前端）
@@ -211,8 +208,8 @@ class WebChatBridgeServer @Inject constructor(
     /**
      * 静态 Web 资源处理器：从 assets/webchat 加载 index.html 及 assets
      */
-    private inner class StaticAssetHandler : HttpHandler {
-        override fun handle(exchange: HttpExchange) {
+    private inner class StaticAssetHandler : AndroidHttpHandler {
+        override fun handle(exchange: AndroidHttpExchange) {
             try {
                 val path = exchange.requestURI.path.removePrefix("/").trimStart('/')
                 val assetPath = if (path.isBlank() || !hasFileExtension(path)) {
@@ -245,8 +242,8 @@ class WebChatBridgeServer @Inject constructor(
     /**
      * Bootstrap 基础信息
      */
-    private inner class BootstrapHandler : HttpHandler {
-        override fun handle(exchange: HttpExchange) {
+    private inner class BootstrapHandler : AndroidHttpHandler {
+        override fun handle(exchange: AndroidHttpExchange) {
             scope.launch {
                 try {
                     val tokenParam = getQueryParam(exchange, "token") ?: getHeader(exchange, "Authorization")?.removePrefix("Bearer ")
@@ -300,8 +297,8 @@ class WebChatBridgeServer @Inject constructor(
     /**
      * 会话列表与创建
      */
-    private inner class ConversationsHandler : HttpHandler {
-        override fun handle(exchange: HttpExchange) {
+    private inner class ConversationsHandler : AndroidHttpHandler {
+        override fun handle(exchange: AndroidHttpExchange) {
             scope.launch {
                 try {
                     when (exchange.requestMethod.uppercase()) {
@@ -352,8 +349,8 @@ class WebChatBridgeServer @Inject constructor(
     /**
      * SSE 实时事件流
      */
-    private inner class SseEventsHandler : HttpHandler {
-        override fun handle(exchange: HttpExchange) {
+    private inner class SseEventsHandler : AndroidHttpHandler {
+        override fun handle(exchange: AndroidHttpExchange) {
             exchange.responseHeaders.add("Content-Type", "text/event-stream")
             exchange.responseHeaders.add("Cache-Control", "no-cache")
             exchange.responseHeaders.add("Connection", "keep-alive")
@@ -371,8 +368,8 @@ class WebChatBridgeServer @Inject constructor(
     /**
      * 工作区文件管理
      */
-    private inner class WorkspacesHandler : HttpHandler {
-        override fun handle(exchange: HttpExchange) {
+    private inner class WorkspacesHandler : AndroidHttpHandler {
+        override fun handle(exchange: AndroidHttpExchange) {
             scope.launch {
                 try {
                     val root = File("/data/data/${context.packageName}/files/workspaces")
@@ -400,7 +397,7 @@ class WebChatBridgeServer @Inject constructor(
 
     // ============================= 辅助方法 =============================
 
-    private fun sendResponse(exchange: HttpExchange, code: Int, contentType: String, bytes: ByteArray) {
+    private fun sendResponse(exchange: AndroidHttpExchange, code: Int, contentType: String, bytes: ByteArray) {
         exchange.responseHeaders.add("Content-Type", contentType)
         exchange.responseHeaders.add("Access-Control-Allow-Origin", "*")
         exchange.responseHeaders.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
@@ -423,7 +420,7 @@ class WebChatBridgeServer @Inject constructor(
 
     private fun hasFileExtension(path: String): Boolean = path.substringAfterLast('/', "").contains('.')
 
-    private fun getQueryParam(exchange: HttpExchange, key: String): String? {
+    private fun getQueryParam(exchange: AndroidHttpExchange, key: String): String? {
         val query = exchange.requestURI.query ?: return null
         return query.split('&')
             .map { it.split('=') }
@@ -431,7 +428,7 @@ class WebChatBridgeServer @Inject constructor(
             ?.get(1)
     }
 
-    private fun getHeader(exchange: HttpExchange, key: String): String? = exchange.requestHeaders.getFirst(key)
+    private fun getHeader(exchange: AndroidHttpExchange, key: String): String? = exchange.requestHeaders.getFirst(key)
 
     private fun generatePin(): String = (100000..999999).random().toString()
 
