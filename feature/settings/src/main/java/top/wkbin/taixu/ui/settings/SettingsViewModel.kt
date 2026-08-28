@@ -65,6 +65,7 @@ class SettingsViewModel @Inject constructor(
     private val approvalRepository: top.wkbin.taixu.core.database.AgentApprovalRepository,
     private val toolManager: ToolManager,
     private val quickPhraseRepository: top.wkbin.taixu.core.database.QuickPhraseRepository,
+    private val webChatBridgeServer: top.wkbin.taixu.runtime.webchat.WebChatBridgeServer? = null,
 ) : ViewModel() {
     val installedDistros = linuxRuntime.installedDistros
     val activeDistroId = linuxRuntime.activeDistroId
@@ -199,6 +200,17 @@ class SettingsViewModel @Inject constructor(
     // ---- 应用版本更新机制 ----
     val autoCheckUpdates: StateFlow<Boolean> = settingsDataStore.autoCheckUpdates
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    val webChatStatus: StateFlow<top.wkbin.taixu.runtime.webchat.WebChatServerStatus> =
+        webChatBridgeServer?.status ?: MutableStateFlow(top.wkbin.taixu.runtime.webchat.WebChatServerStatus()).asStateFlow()
+
+    fun toggleWebChatServer(enabled: Boolean, port: Int = 8899) {
+        if (enabled) {
+            webChatBridgeServer?.start(port)
+        } else {
+            webChatBridgeServer?.stop()
+        }
+    }
 
     private val _updateCheckState = MutableStateFlow<top.wkbin.taixu.core.model.UpdateCheckState>(top.wkbin.taixu.core.model.UpdateCheckState.Idle)
     val updateCheckState: StateFlow<top.wkbin.taixu.core.model.UpdateCheckState> = _updateCheckState.asStateFlow()

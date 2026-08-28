@@ -454,8 +454,10 @@ fun LinuxEnvironmentSettingsScreen(
     val privilegeState by viewModel.privilegeState.collectAsStateWithLifecycle()
     val switchingMode by viewModel.switchingMode.collectAsStateWithLifecycle()
     val installedDistros by viewModel.installedDistros.collectAsStateWithLifecycle()
+    val webChatStatus by viewModel.webChatStatus.collectAsStateWithLifecycle()
 
     var showExecutionModeDialog by remember { mutableStateOf(false) }
+    var showWebChatDialog by remember { mutableStateOf(false) }
     var privilegeResultMessage by remember { mutableStateOf<String?>(null) }
 
     if (showExecutionModeDialog) {
@@ -487,6 +489,14 @@ fun LinuxEnvironmentSettingsScreen(
                     Text("知道了")
                 }
             },
+        )
+    }
+
+    if (showWebChatDialog) {
+        WebChatBridgeDialog(
+            status = webChatStatus,
+            onToggle = { enabled -> viewModel.toggleWebChatServer(enabled) },
+            onDismiss = { showWebChatDialog = false },
         )
     }
 
@@ -541,6 +551,18 @@ fun LinuxEnvironmentSettingsScreen(
                         title = "SSH 远程访问",
                         subtitle = "公钥认证 · 端口与局域网监听 · 随运行时启动",
                         onClick = onOpenSshSettings,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(
+                        icon = RuntimeIconName.Globe,
+                        title = "WebChat 局域网大屏协作",
+                        subtitle = if (webChatStatus.isRunning) {
+                            "运行中 · ${webChatStatus.accessUrl} (PIN: ${webChatStatus.pinCode})"
+                        } else {
+                            "在同一 Wi-Fi 下使用电脑浏览器访问太墟 Agent 与工作区"
+                        },
+                        value = if (webChatStatus.isRunning) "已开启" else "未开启",
+                        onClick = { showWebChatDialog = true },
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     SettingsRow(
@@ -2915,4 +2937,111 @@ private fun ModelEditor(
             }
         }
     }
+}
+
+@Composable
+fun WebChatBridgeDialog(
+    status: top.wkbin.taixu.runtime.webchat.WebChatServerStatus,
+    onToggle: (Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RuntimeIcon(RuntimeIconName.Globe, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary)
+                Text("WebChat 局域网大屏协作")
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "在同一 Wi-Fi / 局域网下，可以通过电脑 PC 浏览器直接访问太墟 Agent 与工作区，享受桌面端大屏协作与长代码审阅体验。",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+
+                RuntimeCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "协作服务状态",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                            )
+                            RuntimeSwitch(
+                                checked = status.isRunning,
+                                onCheckedChange = onToggle,
+                            )
+                        }
+
+                        if (status.isRunning) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("浏览器访问地址", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = status.accessUrl,
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace),
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                    TextButton(
+                                        onClick = {
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                            clipboard.setPrimaryClip(ClipData.newPlainText("WebChat URL", status.accessUrl))
+                                            Toast.makeText(context, "已复制访问链接", Toast.LENGTH_SHORT).show()
+                                        }
+                                    ) { Text("复制") }
+                                }
+                            }
+
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("安全配对码 (PIN)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = status.pinCode,
+                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace),
+                                        color = MaterialTheme.colorScheme.secondary,
+                                    )
+                                    TextButton(
+                                        onClick = {
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                            clipboard.setPrimaryClip(ClipData.newPlainText("PIN", status.pinCode))
+                                            Toast.makeText(context, "已复制配对码", Toast.LENGTH_SHORT).show()
+                                        }
+                                    ) { Text("复制") }
+                                }
+                            }
+
+                            Text(
+                                text = "当前已连接设备：${status.activeConnections} 台",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("完成")
+            }
+        },
+    )
 }
