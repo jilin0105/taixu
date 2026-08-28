@@ -8,8 +8,10 @@ import kotlinx.coroutines.flow.first
 import top.wkbin.taixu.core.database.AgentContextRepository
 import top.wkbin.taixu.core.database.AgentSkillRepository
 import top.wkbin.taixu.core.database.AgentSubagentRepository
+import top.wkbin.taixu.core.database.McpServerRepository
 import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.core.model.AgentSkill
+import top.wkbin.taixu.core.model.BuiltinMcpPresets
 import top.wkbin.taixu.core.tools.ToolRepository
 import top.wkbin.taixu.harness.R
 import top.wkbin.taixu.harness.ToolCallMode
@@ -30,6 +32,7 @@ class SystemPromptBuilder @Inject constructor(
     private val toolRepository: ToolRepository,
     private val agentContextDao: AgentContextRepository,
     private val subagentRepository: AgentSubagentRepository,
+    private val mcpServerRepository: McpServerRepository,
     private val promptAssets: PromptAssetLoader,
     private val fileAccess: WorkspaceFileAccess,
     private val privilegeRenderer: PrivilegeSectionRenderer,
@@ -83,6 +86,10 @@ class SystemPromptBuilder @Inject constructor(
                     "- ${tool.name}$ver: ${tool.description}"
                 }
         } else ""
+
+        // 系统核心 MCP 能力引导：内置 MCP 默认关闭，但 harness 必须知道其存在；
+        // 未授权时引导 LLM 提示用户开启，授权开启后常驻本会话随时可调用。
+        val mcpCapabilitySection = buildMcpCapabilitySection()
 
         val memories = runCatching { agentContextDao.getMemoriesByScopes(listOf("global", "project", "session")) }
             .getOrDefault(emptyList())
@@ -148,6 +155,7 @@ class SystemPromptBuilder @Inject constructor(
         return listOf(
             basePrompt,
             installedToolsSection,
+            mcpCapabilitySection,
             memorySection,
             planSection,
             subagentSection,
@@ -158,6 +166,36 @@ class SystemPromptBuilder @Inject constructor(
             privilegeSection,
             thinkingLanguageSection,
         ).filter { it.isNotBlank() }.joinToString("\n\n") { it.trim() }
+    }
+
+    /**
+     * 内置 MCP 能力引导章节：让 harness 知道太墟具备哪些系统核心 MCP 能力（即便默认关闭）。
+     * - 已启用：常驻本会话，可直接调用对应 mcp__ 工具；
+     * - 未启用：任务需要该能力时，先向用户说明并请求授权开启，待用户开启后再调用。
+     */
+    private suspend fun buildMcpCapabilitySection(): String {
+        val enabledIds = runCatching {
+            mcpServerRepository.servers.first().filter { it.isEnabled }.map { it.id }.toSet()
+        }.getOrDefault(emptySet())
+        val lines = BuiltinMcpPresets.presets.map { preset ->
+            val enabled = preset.id in enabledIds
+            val status = if (enabled) "已启用·常驻" else "未启用（默认关闭）"
+            val trigger = mcpUsageGuidance[preset.id]
+            val triggerLine = if (!trigger.isNullOrBlank()) "使用时机：$trigger。" else ""
+            val usage = if (enabled) {
+                "已授权常驻，可直接调用对应 mcp__ 工具。"
+            } else {
+                "未授权：一旦任务命中上述使用时机，请先向用户说明该能力并请求其到「设置 → MCP 插件与协议生态」开启，授权常驻后再调用；未授权前不得绕过或模拟。"
+            }
+            val desc = preset.description.replace(Regex("\\s+"), " ").trim()
+            val brief = if (desc.length > 120) desc.take(117) + "…" else desc
+            "- [${status}] ${preset.name}：${brief}。${triggerLine}${usage}"
+        }
+        if (lines.isEmpty()) return ""
+        return "\n\n## 系统核心 MCP 能力（内置，授权后常驻生效）\n" +
+            "太墟内置以下系统级 MCP 能力，默认关闭。任务命中其「使用时机」时应优先考虑该能力：" +
+            "若已启用则直接调用对应 mcp__ 工具（常驻本会话，随时可用）；若未启用则先向用户说明并请求授权开启，未授权前不得绕过。\n" +
+            lines.joinToString("\n")
     }
 
     /**
@@ -280,6 +318,18 @@ class SystemPromptBuilder @Inject constructor(
 
     companion object {
         const val PROJECT_CONTEXT_MAX_BYTES = 16 * 1024
+
+        /**
+         * 内置 MCP 的「使用时机」引导：让 harness 在任务发生前就知道该优先调用哪个系统核心能力，
+         * 而不是等用户点名。key = 内置 MCP 的 serverId。
+         */
+        internal val mcpUsageGuidance: Map<String, String> = mapOf(
+            "mcp_codegraph" to "代码检索（查找类/函数/符号定义、搜索代码实现）、项目重构、架构分析、代码理解、定位符号定义、梳理调用链与影响面时【优先使用】，替代盲目全量 grep",
+            "mcp_websearch" to "需要联网搜索、获取最新信息、查找外部资料，或搜索到结果后抓取对应网页正文时使用",
+            "mcp_git" to "分析 Git 历史提交、分支拓扑、Diff 差异与仓库状态时使用",
+            "mcp_sqlite" to "查询、分析沙箱或工作区内的 SQLite 数据库时使用",
+            "mcp_apktool" to "APK 逆向、清单权限解析、硬编码凭据提取、Smali 敏感代码检索时使用",
+        )
 
         internal fun detectProjectType(entries: Set<String>, appEntries: Set<String>): String = when {
             "pubspec.yaml" in entries -> "Flutter"

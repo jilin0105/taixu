@@ -398,7 +398,7 @@ class ChatViewModel @Inject constructor(
                 icon = top.wkbin.taixu.ui.components.RuntimeIconName.Brain,
             )
         }
-        val mcpMentions = mcps.filter { it.isEnabled }.map { mcp ->
+        val mcpMentions = mcps.filter { it.isEnabled && !it.isBuiltin }.map { mcp ->
             MentionItem(
                 id = mcp.id,
                 name = mcp.name,
@@ -434,7 +434,7 @@ class ChatViewModel @Inject constructor(
                 icon = top.wkbin.taixu.ui.components.RuntimeIconName.Brain,
             )
         }
-        val mcpItems = mcps.filter { it.isEnabled && (it.id in pinnedIds || it.name.lowercase() in pinnedIds) }.map { mcp ->
+        val mcpItems = mcps.filter { it.isEnabled && !it.isBuiltin && (it.id in pinnedIds || it.name.lowercase() in pinnedIds) }.map { mcp ->
             MentionItem(
                 id = mcp.id,
                 name = mcp.name,
@@ -497,7 +497,7 @@ class ChatViewModel @Inject constructor(
         }
 
         val matchedMcps = mcps.filter { mcp ->
-            mcp.isEnabled && (
+            mcp.isEnabled && !mcp.isBuiltin && (
                 mcp.name.lowercase() in matchedNames || mcp.id.lowercase() in matchedNames
             )
         }.map { mcp ->

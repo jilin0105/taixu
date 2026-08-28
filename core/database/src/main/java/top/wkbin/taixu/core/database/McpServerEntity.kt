@@ -60,6 +60,12 @@ interface McpServerDao {
     @Query("UPDATE mcp_servers SET isEnabled = :enabled WHERE id = :id")
     suspend fun setEnabled(id: String, enabled: Boolean)
 
+    @Query("SELECT id FROM mcp_servers WHERE isBuiltin = 1")
+    suspend fun findAllBuiltinIds(): List<String>
+
+    @Query("DELETE FROM mcp_servers WHERE id = :id AND isBuiltin = 1")
+    suspend fun deleteBuiltin(id: String)
+
     @Query("DELETE FROM mcp_servers WHERE id = :id AND isBuiltin = 0")
     suspend fun deleteCustom(id: String)
 }
@@ -93,6 +99,10 @@ class McpServerRepository @Inject constructor(
                 )
             }
         }
+        // 清理已被移除的内置预设：代码不再提供的系统核心 MCP 从库中移除，
+        // 避免升级后残留幽灵服务（内置定义以当前代码为准）。
+        val activeBuiltinIds = BuiltinMcpPresets.presets.map { it.id }.toSet()
+        dao.findAllBuiltinIds().filterNot { it in activeBuiltinIds }.forEach { dao.deleteBuiltin(it) }
     }
 
     suspend fun setEnabled(id: String, enabled: Boolean) {
