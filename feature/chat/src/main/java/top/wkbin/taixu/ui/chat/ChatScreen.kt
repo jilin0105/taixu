@@ -218,6 +218,7 @@ fun ChatScreen(
     val activeDistroId by viewModel.activeDistroId.collectAsStateWithLifecycle()
     val installedDistros by viewModel.installedDistros.collectAsStateWithLifecycle()
     val allSkills by viewModel.allSkills.collectAsStateWithLifecycle()
+    val activeCapabilities by viewModel.activeCapabilities.collectAsStateWithLifecycle()
     val memories by viewModel.memories.collectAsStateWithLifecycle()
     val scratchpads by viewModel.scratchpads.collectAsStateWithLifecycle()
     val mcpServers by viewModel.mcpServers.collectAsStateWithLifecycle()
@@ -554,7 +555,10 @@ fun ChatScreen(
                         initializing = initializing,
                         activeSkillsCount = activeSkillsCount,
                         activeMcpCount = activeMcpCount,
+                        activeCapabilities = activeCapabilities,
                         onOpenSkillsMcp = { showSkillsMcpSheet = true },
+                        onToggleSkill = viewModel::setSkillEnabled,
+                        onToggleMcpServer = viewModel::setMcpServerEnabled,
                         activePlan = activePlan,
                         pendingApprovals = pendingApprovals,
                         onResolveApproval = viewModel::resolveApproval,
@@ -640,7 +644,10 @@ fun ChatScreen(
                     initializing = initializing,
                     activeSkillsCount = activeSkillsCount,
                     activeMcpCount = activeMcpCount,
+                    activeCapabilities = activeCapabilities,
                     onOpenSkillsMcp = { showSkillsMcpSheet = true },
+                    onToggleSkill = viewModel::setSkillEnabled,
+                    onToggleMcpServer = viewModel::setMcpServerEnabled,
                     activePlan = activePlan,
                     pendingApprovals = pendingApprovals,
                     onResolveApproval = viewModel::resolveApproval,
@@ -732,11 +739,9 @@ fun ChatScreen(
             onDismiss = { showSkillsMcpSheet = false },
             onToggleSkill = { id, enabled ->
                 viewModel.setSkillEnabled(id, enabled)
-                showSkillsMcpSheet = false
             },
             onToggleMcpServer = { id, enabled ->
                 viewModel.setMcpServerEnabled(id, enabled)
-                showSkillsMcpSheet = false
             },
             onNavigateToSettings = {
                 showSkillsMcpSheet = false
@@ -917,7 +922,10 @@ private fun ChatPaneContent(
     initializing: Boolean = false,
     activeSkillsCount: Int = 0,
     activeMcpCount: Int = 0,
+    activeCapabilities: List<MentionItem> = emptyList(),
     onOpenSkillsMcp: () -> Unit = {},
+    onToggleSkill: (String, Boolean) -> Unit = { _, _ -> },
+    onToggleMcpServer: (String, Boolean) -> Unit = { _, _ -> },
     activeModel: top.wkbin.taixu.core.database.AiModelEntity? = null,
     onUpdateReasoning: (mode: String?, effort: String?) -> Unit = { _, _ -> },
     pendingApprovals: List<top.wkbin.taixu.core.database.AgentApprovalRequestEntity> = emptyList(),
@@ -1283,6 +1291,106 @@ private fun ChatPaneContent(
                 if (running && input.isNotBlank()) {
                     ComposerModeSelector(mode = sendMode, onModeChange = onSendModeChange)
                 }
+
+                // 🌟 常驻/已激活能力与临时挂载胶囊栏 (Pinned & Active Capabilities Strip)
+                val allDisplayItems = remember(activeCapabilities, attachedMentions) {
+                    (activeCapabilities + attachedMentions).distinctBy { it.id }
+                }
+                if (allDisplayItems.isNotEmpty()) {
+                    LazyRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 2.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        items(allDisplayItems.size) { index ->
+                            val item = allDisplayItems[index]
+                            val isSkill = item.type == MentionType.SKILL
+                            val isAttached = attachedMentions.any { it.id == item.id }
+                            val isPinned = activeCapabilities.any { it.id == item.id }
+                            val tagBg = if (isSkill) Color(0xFF1E293B) else Color(0xFF0D332B)
+                            val tagBorder = if (isSkill) Color(0xFF6366F1).copy(alpha = 0.75f) else Color(0xFF10B981).copy(alpha = 0.75f)
+                            val tagColor = if (isSkill) Color(0xFFA5B4FC) else Color(0xFF6EE7B7)
+
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = tagBg,
+                                border = androidx.compose.foundation.BorderStroke(0.8.dp, tagBorder),
+                                modifier = Modifier.clickable {
+                                    if (isAttached) {
+                                        onRemoveMention(item)
+                                    } else if (isPinned) {
+                                        if (isSkill) onToggleSkill(item.id, false)
+                                        else onToggleMcpServer(item.id, false)
+                                    }
+                                },
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    RuntimeIcon(
+                                        item.icon,
+                                        Modifier.size(12.dp),
+                                        tint = tagColor,
+                                    )
+                                    Text(
+                                        item.name,
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold),
+                                        color = tagColor,
+                                    )
+                                    if (isPinned) {
+                                        Surface(
+                                            color = tagColor.copy(alpha = 0.2f),
+                                            shape = RoundedCornerShape(4.dp),
+                                        ) {
+                                            Text(
+                                                "常驻",
+                                                modifier = Modifier.padding(horizontal = 3.5.dp, vertical = 0.5.dp),
+                                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.5.sp, fontWeight = FontWeight.Bold),
+                                                color = tagColor,
+                                            )
+                                        }
+                                    }
+                                    RuntimeIcon(
+                                        RuntimeIconName.Close,
+                                        Modifier.size(10.dp),
+                                        tint = tagColor.copy(alpha = 0.65f),
+                                    )
+                                }
+                            }
+                        }
+
+                        item {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                border = androidx.compose.foundation.BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+                                modifier = Modifier.clickable { onOpenSkillsMcp() },
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                ) {
+                                    RuntimeIcon(
+                                        RuntimeIconName.Plus,
+                                        Modifier.size(11.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Text(
+                                        "挂载",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // 🌟 上排主体：弹性文本输入框
                 Box(
                     modifier = Modifier

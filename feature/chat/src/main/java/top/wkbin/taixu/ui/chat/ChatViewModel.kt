@@ -411,6 +411,34 @@ class ChatViewModel @Inject constructor(
         else all.filter { it.name.lowercase().contains(query) || it.description.lowercase().contains(query) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /** 当前全局或会话中已常驻激活的技能与 MCP 列表。 */
+    val activeCapabilities: StateFlow<List<MentionItem>> = kotlinx.coroutines.flow.combine(
+        agentSkillRepository.activeSkills,
+        mcpServerRepository.servers,
+    ) { skills, mcps ->
+        val skillItems = skills.map { skill ->
+            MentionItem(
+                id = skill.id,
+                name = skill.name,
+                description = skill.description,
+                category = context.getString(R.string.chat_skill_category),
+                type = MentionType.SKILL,
+                icon = top.wkbin.taixu.ui.components.RuntimeIconName.Brain,
+            )
+        }
+        val mcpItems = mcps.filter { it.isEnabled }.map { mcp ->
+            MentionItem(
+                id = mcp.id,
+                name = mcp.name,
+                description = mcp.description,
+                category = context.getString(R.string.chat_mcp_category),
+                type = MentionType.MCP_SERVER,
+                icon = top.wkbin.taixu.ui.components.RuntimeIconName.Cpu,
+            )
+        }
+        skillItems + mcpItems
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     /** 当前输入框中已挂载的技能与 MCP 标签列表（用于输入框顶部展示高亮双排 Chips）。 */
     val attachedMentions: StateFlow<List<MentionItem>> = kotlinx.coroutines.flow.combine(
         _input,
