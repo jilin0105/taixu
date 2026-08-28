@@ -113,8 +113,8 @@ class EnvironmentDoctor @Inject constructor(
                 title = "所有文件访问权限",
                 status = DoctorStatus.WARNING,
                 summary = "未授权「所有文件访问」权限",
-                detail = "Android 会过滤共享存储中其他应用的文件，文件浏览器 /sdcard 入口可能只显示文件夹而看不到文件。可在文件浏览器顶部横幅点击「去授权」，或前往 系统设置 → 应用 → 太墟 → 权限 开启「所有文件访问」。",
-                fixable = false,
+                detail = "Android 会过滤共享存储中其他应用的文件，文件浏览器 /sdcard 入口可能只显示文件夹而看不到文件。点击右侧「去授权」立即前往系统设置开启。",
+                fixable = true,
             )
         }
     }

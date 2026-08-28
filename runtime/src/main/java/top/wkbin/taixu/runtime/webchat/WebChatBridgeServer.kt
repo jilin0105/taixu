@@ -64,11 +64,13 @@ class WebChatBridgeServer @Inject constructor(
     val status: StateFlow<WebChatServerStatus> = _status.asStateFlow()
 
     private val sseEmitters = ConcurrentHashMap.newKeySet<HttpExchange>()
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
+    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
 
     /**
-     * 启动局域网 WebChat HTTP/SSE 服务
+     * 启动局域网 WebChat HTTP/SSE 服务（默认手动开启，并进行进程与 Wi-Fi 保活）
      */
-    fun start(port: Int = DEFAULT_PORT, pin: String? = null): Boolean {
+    fun start(port: Int = DEFAULT_WEBCHAT_PORT, pin: String? = null): Boolean {
         if (_status.value.isRunning) return true
         return try {
             val generatedPin = pin ?: generatePin()
@@ -98,6 +100,11 @@ class WebChatBridgeServer @Inject constructor(
                 localIp = localIp,
                 pinCode = generatedPin,
             )
+
+            // 开启电源与 Wi-Fi 保活锁，并发送常驻通知
+            acquireLocks()
+            showNotification("http://$localIp:$port", generatedPin)
+
             logger.i("WebChat 局域网协作服务启动成功：http://$localIp:$port (PIN: $generatedPin)")
             true
         } catch (e: Exception) {
@@ -107,18 +114,76 @@ class WebChatBridgeServer @Inject constructor(
     }
 
     /**
-     * 停止局域网 WebChat 服务
+     * 停止局域网 WebChat 服务并释放所有保活资源
      */
     fun stop() {
         try {
+            releaseLocks()
+            hideNotification()
             sseEmitters.forEach { runCatching { it.close() } }
             sseEmitters.clear()
             httpServer?.stop(0)
             httpServer = null
             _status.value = _status.value.copy(isRunning = false)
-            logger.i("WebChat 局域网协作服务已停止")
+            logger.i("WebChat 局域网协作服务已停止，已释放所有保活锁")
         } catch (e: Exception) {
             logger.e("WebChat 停止异常", e)
+        }
+    }
+
+    private fun acquireLocks() {
+        runCatching {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+            wakeLock = pm?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "taixu:webchat_bridge_wake")?.apply {
+                setReferenceCounted(false)
+                acquire(24 * 60 * 60 * 1000L)
+            }
+            val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+            wifiLock = wm?.createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "taixu:webchat_bridge_wifi")?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        }
+    }
+
+    private fun releaseLocks() {
+        runCatching {
+            wakeLock?.let { if (it.isHeld) it.release() }
+            wakeLock = null
+            wifiLock?.let { if (it.isHeld) it.release() }
+            wifiLock = null
+        }
+    }
+
+    private fun showNotification(url: String, pin: String) {
+        runCatching {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager ?: return
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val channel = android.app.NotificationChannel(
+                    NOTIFICATION_CHANNEL_ID,
+                    "太墟 WebChat 电脑大屏协作",
+                    android.app.NotificationManager.IMPORTANCE_LOW,
+                ).apply {
+                    description = "展示 WebChat 电脑大屏协作服务后台运行状态与连接地址"
+                    setShowBadge(false)
+                }
+                nm.createNotificationChannel(channel)
+            }
+            val notif = androidx.core.app.NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_notify_sync)
+                .setContentTitle("太墟 WebChat 电脑大屏协作运行中")
+                .setContentText("$url (配对码: $pin)")
+                .setOngoing(true)
+                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
+                .build()
+            nm.notify(NOTIFICATION_ID, notif)
+        }
+    }
+
+    private fun hideNotification() {
+        runCatching {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+            nm?.cancel(NOTIFICATION_ID)
         }
     }
 
@@ -397,5 +462,7 @@ class WebChatBridgeServer @Inject constructor(
 
     companion object {
         const val DEFAULT_PORT = 8899
+        const val NOTIFICATION_CHANNEL_ID = "taixu_webchat_bridge"
+        const val NOTIFICATION_ID = 8899
     }
 }

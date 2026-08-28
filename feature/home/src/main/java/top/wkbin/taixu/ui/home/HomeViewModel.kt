@@ -15,8 +15,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -74,14 +72,24 @@ class HomeViewModel @Inject constructor(
     private val backgroundTaskRegistry: BackgroundTaskRegistry,
     private val privilegeManager: PrivilegeManager,
     private val logger: AppLogger,
+    private val webChatBridgeServer: top.wkbin.taixu.runtime.webchat.WebChatBridgeServer? = null,
 ) : ViewModel() {
+
+    val webChatStatus: StateFlow<top.wkbin.taixu.runtime.webchat.WebChatServerStatus> =
+        webChatBridgeServer?.status ?: MutableStateFlow(top.wkbin.taixu.runtime.webchat.WebChatServerStatus()).asStateFlow()
+
+    fun toggleWebChat(enabled: Boolean) {
+        if (enabled) {
+            webChatBridgeServer?.start()
+        } else {
+            webChatBridgeServer?.stop()
+        }
+    }
 
     val runtimeState: StateFlow<RuntimeState> = linuxRuntime.state
     val installedDistros = linuxRuntime.installedDistros
     val activeDistroId = linuxRuntime.activeDistroId
 
-    // 当前运行特权模式（PRoot / Shizuku / Root）：模式值来自 DataStore 即时生效，
-    // 授权是否真正生效由 PrivilegeManager 探测；未来同步给 Agent 时直接消费该状态。
     private val _executionModeStatus = MutableStateFlow(ExecutionModeStatus())
     val executionModeStatus: StateFlow<ExecutionModeStatus> = _executionModeStatus.asStateFlow()
 
