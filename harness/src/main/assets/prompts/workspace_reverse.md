@@ -23,8 +23,9 @@
 - **资源与 Smali 修改**：使用 `apktool d <APK路径> -o unpacked/` 解包，修改后用 `apktool b` 回编译。
 - **DEX 转 JAR**：若需使用其他 Java 字节码分析工具，可执行 `d2j-dex2jar <APK/DEX路径> -o out.jar`。
 
-#### 4. 毫秒级极速检索 (Ripgrep Search)
-- **严禁** 使用 `find | xargs grep` 遍历！沙箱已内置 `rg` (ripgrep)，搜索速度提升 100 倍。
+#### 4. 毫秒级极速检索与代码知识图谱 (Ripgrep & CodeGraph)
+- **代码知识图谱导航 (CodeGraph)**：若挂载了 CodeGraph MCP，反编译后可直接调用 `mcp__codegraph__codegraph_explore(query="...")` 一步获取函数定义、调用方 (Callers)、下游引用 (Callees) 与代码切片，亦可通过 `codegraph_callers` 追踪指定方法的全部调用方。
+- **Ripgrep 毫秒检索**：**严禁** 使用 `find | xargs grep` 遍历！沙箱已内置 `rg` (ripgrep)，搜索速度提升 100 倍。
 - 检索范例：
   - 搜索类名/方法名/常量：`rg "quickPhoneLogin" out/java/`
   - 仅搜索 Java 文件：`rg -t java "isNewUser" out/java/`

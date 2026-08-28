@@ -235,5 +235,27 @@ object BuiltinSkills {
             isBuiltin = true,
             category = "跨端开发",
         ),
+        AgentSkill(
+            id = "code_graph",
+            name = "CodeGraph 代码知识图谱",
+            description = "精通利用本地代码知识图谱进行毫秒级符号搜索、调用链路（Call Graph）追踪与架构探索，1 步获取代码切片与波及范围",
+            systemPrompt = """
+                【CodeGraph 代码知识图谱导航指导】：
+                1. 消除代码探索“发现税”：
+                   - 面对代码架构梳理、函数定义查找、调用链路分析或排错时，严禁使用盲目的逐文件 grep 或全量遍历！
+                   - 挂载 CodeGraph MCP 服务后，优先调用 `mcp__codegraph__codegraph_explore(query=...)`，单次工具调用即可获得目标符号定义、调用链拓扑（Callers/Callees）与精准代码切片。
+                2. 关系追踪与影响面分析：
+                   - 向上溯源：调用 `mcp__codegraph__codegraph_callers(target=...)` 查询指定函数的所有调用方；
+                   - 向下追踪：调用 `mcp__codegraph__codegraph_callees(target=...)` 列出下游依赖；
+                   - 重构波及范围：修改核心接口或函数前，调用 `mcp__codegraph__codegraph_impact(target=...)` 评估直接和间接受影响模块（Blast Radius）。
+                3. 图谱增量同步：
+                   - 大规模修改或新增代码文件后，可调用 `mcp__codegraph__codegraph_sync()` 增量刷新图谱索引。
+            """.trimIndent(),
+            triggerCommand = "/codegraph",
+            iconName = "Star",
+            isEnabled = true,
+            isBuiltin = true,
+            category = "编程开发",
+        ),
     )
 }

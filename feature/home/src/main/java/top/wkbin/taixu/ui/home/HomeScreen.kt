@@ -54,8 +54,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import android.Manifest
 import android.content.ClipData
@@ -1332,33 +1335,61 @@ private fun WebChatDashboardCard(
             if (status.isRunning) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("电脑浏览器访问地址", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(
-                            text = status.accessUrl,
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.ExtraBold,
-                                fontFamily = FontFamily.Monospace,
-                            ),
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text("配对码 (PIN)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(
-                            text = status.pinCode,
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.ExtraBold,
-                                fontFamily = FontFamily.Monospace,
-                            ),
-                            color = MaterialTheme.colorScheme.secondary,
-                        )
-                    }
+                // 访问地址独立成行：协议段小字淡化，主机端口醒目（避免与配对码挤在一起换行）
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        text = "电脑浏览器访问地址",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    val schemeMuted = MaterialTheme.colorScheme.onSurfaceVariant
+                    val hostAccent = MaterialTheme.colorScheme.primary
+                    val schemeFont = MaterialTheme.typography.labelMedium.fontSize
+                    val hostFont = MaterialTheme.typography.bodyMedium.fontSize
+                    val scheme = status.accessUrl.takeIf { it.contains("://") }
+                        ?.let { it.substringBefore("://") + "://" } ?: ""
+                    val hostPort = if (scheme.isNotEmpty()) status.accessUrl.substringAfter("://") else status.accessUrl
+                    Text(
+                        text = buildAnnotatedString {
+                            if (scheme.isNotEmpty()) {
+                                withStyle(
+                                    SpanStyle(
+                                        color = schemeMuted,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = schemeFont,
+                                    ),
+                                ) { append(scheme) }
+                            }
+                            withStyle(
+                                SpanStyle(
+                                    color = hostAccent,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = hostFont,
+                                ),
+                            ) { append(hostPort) }
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+
+                // 配对码独立成行显示
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        text = "配对码 (PIN)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = status.pinCode,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 2.sp,
+                        ),
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
                 }
 
                 Button(
@@ -1368,15 +1399,11 @@ private fun WebChatDashboardCard(
                         Toast.makeText(context, "已复制免密链接，发到电脑打开即可自动进入工作台！", Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(vertical = 10.dp),
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        RuntimeIcon(RuntimeIconName.Copy, Modifier.size(16.dp))
-                        Text("一键复制免密直达链接 (发到电脑打开)")
-                    }
+                    RuntimeIcon(RuntimeIconName.Copy, Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("一键复制", fontWeight = FontWeight.SemiBold)
                 }
 
                 Text(
