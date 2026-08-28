@@ -34,9 +34,11 @@ import java.util.concurrent.Executors
 import javax.inject.Inject
 import javax.inject.Singleton
 
+const val DEFAULT_WEBCHAT_PORT = 8899
+
 data class WebChatServerStatus(
     val isRunning: Boolean = false,
-    val port: Int = DEFAULT_PORT,
+    val port: Int = DEFAULT_WEBCHAT_PORT,
     val localIp: String = "127.0.0.1",
     val pinCode: String = "",
     val activeConnections: Int = 0,
@@ -186,7 +188,7 @@ class WebChatBridgeServer @Inject constructor(
                     val isAuthenticated = tokenParam.isNullOrBlank() || tokenParam == _status.value.pinCode
 
                     val sessions = sessionDao.listAll()
-                    val models = aiModelDao.listAll()
+                    val models = aiModelDao.observeAll().first()
 
                     val responseJson = buildJsonObject {
                         put("authenticated", isAuthenticated)
@@ -213,8 +215,9 @@ class WebChatBridgeServer @Inject constructor(
                                 add(
                                     buildJsonObject {
                                         put("id", m.id)
-                                        put("name", m.displayName)
+                                        put("name", m.name)
                                         put("provider", m.provider)
+                                        put("model", m.model)
                                     }
                                 )
                             }
