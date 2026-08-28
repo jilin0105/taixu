@@ -1058,13 +1058,6 @@ private fun ChatPaneContent(
                 expandedOverrides = expandedOverrides,
             )
         }
-        val renderItems = remember(messages, toolResults, expandedOverrides) {
-            projectChatMessages(
-                messages = messages,
-                toolResults = toolResults,
-                expandedOverrides = expandedOverrides,
-            )
-        }
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -3757,6 +3750,7 @@ private fun toolName(tool: HarnessTool, rawToolName: String? = null): String {
         HarnessTool.BUILD_SCRIPT -> "build_script"
         HarnessTool.SUBAGENT -> "invoke_subagent"
         HarnessTool.MCP -> "mcp"
+        HarnessTool.LOAD_RULE -> "load_rule"
     }
 }
 
