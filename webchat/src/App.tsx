@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { request } from "./api";
+import { request, setAuthToken } from "./api";
 import { ChatPanel } from "./components/ChatPanel";
 import { ContextPane } from "./components/ContextPane";
 import { ConversationSidebar } from "./components/ConversationSidebar";
@@ -11,15 +11,12 @@ import {
 } from "./conversationDraft";
 import { conversationKey } from "./format";
 import { useRealtime } from "./hooks/useRealtime";
-import { reconcileCodexMessages } from "./messageReconciliation";
 import type {
+  ApprovalRequest,
+  ApprovalResult,
   Attachment,
-  AgentProfile,
   BootstrapPayload,
-  BrowserActionResult,
-  BrowserSnapshot,
   ChatMessage,
-  ContextPanelName,
   Conversation,
   ConversationCreateTarget,
   ConversationMode,
@@ -33,17 +30,16 @@ import type {
   WorkspaceListing,
 } from "./types";
 
-const TOKEN_STORAGE_KEY = "omnibot_webchat_token";
+const TOKEN_STORAGE_KEY = "taixu_webchat_token";
 const MOBILE_SECTION_ICON = {
   chat: "agent",
   workspace: "workspace",
-  browser: "browser",
 } as const;
-const CONVERSATION_MODES = new Set<ConversationMode>(["normal", "codex", "chat_only"]);
+const CONVERSATION_MODES = new Set<ConversationMode>(["normal"]);
 
 function normalizeConversationMode(mode: string | undefined): ConversationMode {
   return CONVERSATION_MODES.has(mode as ConversationMode)
-    ? mode as ConversationMode
+    ? (mode as ConversationMode)
     : "normal";
 }
 
@@ -67,24 +63,18 @@ export default function App() {
   const [loginError, setLoginError] = useState("");
   const [globalError, setGlobalError] = useState("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
-  const [archivedConversations, setArchivedConversations] = useState<Conversation[]>([]);
-  const [archivedLoading, setArchivedLoading] = useState(false);
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [sending, setSending] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [activeRenderTaskId, setActiveRenderTaskId] = useState<string | null>(null);
-  const [clarifyTaskId, setClarifyTaskId] = useState<string | null>(null);
   const [workspaceInfo, setWorkspaceInfo] = useState<WorkspaceInfo | null>(null);
   const [workspacePath, setWorkspacePath] = useState("");
   const [workspaceItems, setWorkspaceItems] = useState<WorkspaceItem[]>([]);
   const [workspaceFilePath, setWorkspaceFilePath] = useState<string | null>(null);
   const [workspaceContent, setWorkspaceContent] = useState("");
   const [workspaceDirty, setWorkspaceDirty] = useState(false);
-  const [browserSnapshot, setBrowserSnapshot] = useState<BrowserSnapshot | null>(null);
-  const [browserFrameSeed, setBrowserFrameSeed] = useState(0);
-  const [contextPanel, setContextPanel] = useState<ContextPanelName>("workspace");
   const [mobileSection, setMobileSectionState] = useState<MobileSection>("chat");
   const [conversationsOpen, setConversationsOpen] = useState(false);
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
@@ -112,16 +102,16 @@ export default function App() {
     if (!isPersistedConversation(conversation)) return;
     setConversations((current) => [
       conversation,
-      ...current.filter((item) => Number(item.id) !== Number(conversation.id)),
+      ...current.filter((item) => String(item.id) !== String(conversation.id)),
     ].sort((left, right) => Number(right.updatedAt ?? 0) - Number(left.updatedAt ?? 0)));
-    if (Number(selectedRef.current?.id ?? 0) === Number(conversation.id)) {
+    if (String(selectedRef.current?.id ?? "") === String(conversation.id)) {
       selectedRef.current = conversation;
       setSelectedConversation(conversation);
     }
   }
 
   function recordConversationNavigation(conversation: Conversation | null) {
-    if (!conversation || Number(conversation.id ?? 0) <= 0) return;
+    if (!isPersistedConversation(conversation)) return;
     const key = conversationKey(conversation);
     const history = conversationHistoryRef.current;
     const index = conversationHistoryIndexRef.current;
@@ -153,7 +143,11 @@ export default function App() {
     conversationHistoryIndexRef.current = target.index;
     selectedRef.current = target.conversation;
     setSelectedConversation(target.conversation);
-    await loadMessages(target.conversation);
+    setApprovals([]);
+    await Promise.all([
+      loadMessages(target.conversation),
+      loadApprovals(target.conversation),
+    ]);
   }
 
   async function loadMessages(conversation = selectedRef.current) {
@@ -164,24 +158,55 @@ export default function App() {
       });
       if (conversationKey(conversation) === conversationKey(selectedRef.current)) {
         const incoming = Array.isArray(payload) ? payload : [];
-        setMessages((current) => (
-          normalizeConversationMode(conversation.mode) === "codex"
-            ? reconcileCodexMessages(current, incoming)
-            : incoming
-        ));
+        setMessages(incoming);
       }
     } catch (error) {
       showError(error);
     }
   }
 
+  async function loadApprovals(conversation = selectedRef.current) {
+    if (!conversation || !isPersistedConversation(conversation)) {
+      setApprovals([]);
+      return;
+    }
+    try {
+      const payload = await request<ApprovalRequest[]>(`/conversations/${conversation.id}/approvals`);
+      if (conversationKey(conversation) === conversationKey(selectedRef.current)) {
+        setApprovals(Array.isArray(payload) ? payload : []);
+      }
+    } catch {
+      setApprovals([]);
+    }
+  }
+
+  async function resolveApproval(requestId: string, approved: boolean) {
+    const conversation = selectedRef.current;
+    if (!conversation || !isPersistedConversation(conversation)) return;
+    try {
+      const result = await request<ApprovalResult>(
+        `/conversations/${conversation.id}/approvals/${encodeURIComponent(requestId)}`,
+        {
+          method: "POST",
+          body: { approved },
+        },
+      );
+      setApprovals((current) => current.filter((item) => item.id !== requestId));
+      if (result?.taskId) {
+        setActiveTaskId(result.taskId);
+        setActiveRenderTaskId(result.taskId);
+      }
+      showToast(approved ? "已批准并继续执行" : "已拒绝执行");
+      await loadMessages(conversation);
+    } catch (error) {
+      showError(error);
+    }
+  }
+
   async function loadConversations(preserveSelection = true) {
-    const payload = await request<Conversation[]>("/conversations", {
-      query: { includeArchived: false },
-    });
+    const payload = await request<Conversation[]>("/conversations");
     const previousKey = preserveSelection ? conversationKey(selectedRef.current) : null;
     const nextConversations = (Array.isArray(payload) ? payload : [])
-      .filter((item) => !item.isArchived)
       .sort((left, right) => Number(right.updatedAt ?? 0) - Number(left.updatedAt ?? 0));
     const currentSelection = selectedRef.current;
     if (
@@ -202,27 +227,17 @@ export default function App() {
     setSelectedConversation(nextSelected);
     recordConversationNavigation(nextSelected);
     if (nextSelected) {
-      if (selectionChanged) setMessages([]);
-      await loadMessages(nextSelected);
-    }
-    else setMessages([]);
-  }
-
-  async function loadArchivedConversations(reportError = true) {
-    setArchivedLoading(true);
-    try {
-      const payload = await request<Conversation[]>("/conversations", {
-        query: { includeArchived: true, archivedOnly: true },
-      });
-      setArchivedConversations(
-        (Array.isArray(payload) ? payload : [])
-          .filter((item) => item.isArchived)
-          .sort((left, right) => Number(right.updatedAt ?? 0) - Number(left.updatedAt ?? 0)),
-      );
-    } catch (error) {
-      if (reportError) showError(error);
-    } finally {
-      setArchivedLoading(false);
+      if (selectionChanged) {
+        setMessages([]);
+        setApprovals([]);
+      }
+      await Promise.all([
+        loadMessages(nextSelected),
+        loadApprovals(nextSelected),
+      ]);
+    } else {
+      setMessages([]);
+      setApprovals([]);
     }
   }
 
@@ -244,6 +259,7 @@ export default function App() {
     setAuthenticating(true);
     try {
       await request("/session/bootstrap", { method: "POST", body: { token } });
+      setAuthToken(token);
       localStorage.setItem(TOKEN_STORAGE_KEY, token);
       const bootstrap = await request<BootstrapPayload>("/bootstrap");
       const info = bootstrap?.workspace?.workspace ?? null;
@@ -251,10 +267,6 @@ export default function App() {
       setWorkspaceInfo(info);
       workspacePathRef.current = rootPath;
       setWorkspacePath(rootPath);
-      setBrowserSnapshot(bootstrap?.browser ?? null);
-      setAgentProfiles(
-        Array.isArray(bootstrap?.agentProfiles) ? bootstrap.agentProfiles : [],
-      );
       setAuthenticated(true);
 
       const url = new URL(window.location.href);
@@ -267,6 +279,7 @@ export default function App() {
         rootPath ? loadWorkspace(rootPath, false) : Promise.resolve(),
       ]);
     } catch (error) {
+      setAuthToken("");
       localStorage.removeItem(TOKEN_STORAGE_KEY);
       setLoginError(errorMessage(error));
       setAuthenticated(false);
@@ -280,14 +293,13 @@ export default function App() {
     const draftConversation = createConversationDraft(
       target.mode,
       Date.now(),
-      target.agentId,
     );
     selectedRef.current = draftConversation;
     setSelectedConversation(draftConversation);
     setMessages([]);
+    setApprovals([]);
     setActiveTaskId(null);
     setActiveRenderTaskId(null);
-    setClarifyTaskId(null);
     setConversationsOpen(false);
   }
 
@@ -295,44 +307,13 @@ export default function App() {
     selectedRef.current = conversation;
     setSelectedConversation(conversation);
     setMessages([]);
+    setApprovals([]);
     recordConversationNavigation(conversation);
     setConversationsOpen(false);
-    await loadMessages(conversation);
-  }
-
-  async function updateArchiveState(
-    conversation: Conversation | null = selectedRef.current,
-    nextArchived?: boolean,
-  ) {
-    if (!conversation || !isPersistedConversation(conversation)) return;
-    const archived = nextArchived ?? !conversation.isArchived;
-    try {
-      await request(`/conversations/${conversation.id}`, {
-        method: "PATCH",
-        body: { isArchived: archived },
-      });
-      await Promise.all([
-        loadConversations(true),
-        loadArchivedConversations(false),
-      ]);
-      showToast(archived ? "已归档" : "已恢复到会话列表");
-    } catch (error) {
-      showError(error);
-    }
-  }
-
-  async function updatePinState(conversation: Conversation, pinned: boolean) {
-    if (!isPersistedConversation(conversation)) return;
-    try {
-      await request(`/conversations/${conversation.id}`, {
-        method: "PATCH",
-        body: { isPinned: pinned },
-      });
-      await loadConversations(true);
-      showToast(pinned ? "已置顶" : "已取消置顶");
-    } catch (error) {
-      showError(error);
-    }
+    await Promise.all([
+      loadMessages(conversation),
+      loadApprovals(conversation),
+    ]);
   }
 
   async function deleteConversation(conversation: Conversation | null = selectedRef.current) {
@@ -340,10 +321,7 @@ export default function App() {
     if (!window.confirm(`删除“${conversation.title || "当前对话"}”？此操作无法撤销。`)) return;
     try {
       await request(`/conversations/${conversation.id}`, { method: "DELETE" });
-      await Promise.all([
-        loadConversations(true),
-        loadArchivedConversations(false),
-      ]);
+      await loadConversations(true);
       showToast("会话已删除");
     } catch (error) {
       showError(error);
@@ -356,31 +334,23 @@ export default function App() {
     let conversationCreatedForSend: Conversation | null = null;
     let optimisticUserEntryId: string | null = null;
     try {
-      if (clarifyTaskId) {
-        await request(`/tasks/${encodeURIComponent(clarifyTaskId)}/clarify`, {
-          method: "POST",
-          body: { reply: text },
-        });
-        setClarifyTaskId(null);
-        return true;
-      }
-
       let conversation = selectedRef.current;
       if (!isPersistedConversation(conversation)) {
         const draftMode = normalizeConversationMode(conversation?.mode);
-        const draftAgentId = conversation?.agentId?.trim() || undefined;
+        const currentWorkspace = workspacePathRef.current.startsWith("/workspace/")
+          ? workspacePathRef.current.split("/").slice(0, 3).join("/")
+          : "";
         conversation = await request<Conversation>("/conversations", {
           method: "POST",
           body: {
-            title: "新对话",
+            title: text.trim().split(/\r?\n/, 1)[0].slice(0, 48) || "图片任务",
             mode: draftMode,
-            agentId: draftAgentId,
+            ...(currentWorkspace ? { workspace: currentWorkspace } : {}),
           },
         });
         conversation = {
           ...conversation,
           mode: draftMode,
-          agentId: conversation.agentId ?? draftAgentId,
         };
         conversationCreatedForSend = conversation;
         selectedRef.current = conversation;
@@ -407,11 +377,7 @@ export default function App() {
       completedTaskIdsRef.current.delete(taskId);
       setActiveTaskId(taskId);
       setActiveRenderTaskId(taskId);
-      setMessages((current) => (
-        conversationMode === "codex"
-          ? reconcileCodexMessages(current, [optimisticUserMessage])
-          : [...current, optimisticUserMessage]
-      ));
+      setMessages((current) => [...current, optimisticUserMessage]);
       const result = await request<RunResult>(`/conversations/${conversation.id}/runs`, {
         method: "POST",
         body: {
@@ -419,7 +385,6 @@ export default function App() {
           userMessage: text,
           userMessageCreatedAt,
           conversationMode,
-          agentId: conversation.agentId,
           attachments,
         },
       });
@@ -427,7 +392,6 @@ export default function App() {
         const updatedConversation = {
           ...result.conversation,
           mode: result.conversationMode ?? conversationMode,
-          agentId: result.conversation.agentId ?? conversation.agentId,
         };
         selectedRef.current = updatedConversation;
         setSelectedConversation(updatedConversation);
@@ -464,17 +428,17 @@ export default function App() {
           if (!persistedMessages.length) {
             await request(`/conversations/${createdConversation.id}`, { method: "DELETE" });
             if (
-              Number(selectedRef.current?.id ?? 0) ===
-              Number(createdConversation.id)
+              String(selectedRef.current?.id ?? "") ===
+              String(createdConversation.id)
             ) {
               const draft = createConversationDraft(
                 normalizeConversationMode(createdConversation.mode),
                 Date.now(),
-                createdConversation.agentId,
               );
               selectedRef.current = draft;
               setSelectedConversation(draft);
               setMessages([]);
+              setApprovals([]);
             }
           }
         } catch {
@@ -484,6 +448,7 @@ export default function App() {
       const current = selectedRef.current;
       if (isPersistedConversation(current)) {
         void loadMessages(current);
+        void loadApprovals(current);
       }
       return false;
     } finally {
@@ -538,30 +503,11 @@ export default function App() {
     }
   }
 
-  async function refreshBrowser(reportError = true) {
-    try {
-      setBrowserSnapshot(await request<BrowserSnapshot>("/browser/snapshot"));
-      setBrowserFrameSeed((seed) => seed + 1);
-    } catch (error) {
-      if (reportError) showError(error);
-    }
-  }
-
-  async function browserAction(payload: Record<string, unknown>) {
-    try {
-      const result = await request<BrowserActionResult>("/browser/action", { method: "POST", body: payload });
-      if (result?.snapshot !== undefined) setBrowserSnapshot(result.snapshot);
-      setBrowserFrameSeed((seed) => seed + 1);
-    } catch (error) {
-      showError(error);
-    }
-  }
-
   function sameSelectedConversation(data: RealtimeEventData): boolean {
     const selected = selectedRef.current;
     return Boolean(
       selected
-      && Number(data.conversationId ?? 0) === Number(selected.id)
+      && String(data.conversationId ?? "") === String(selected.id)
       && String(data.conversationMode ?? data.mode ?? "normal") === String(selected.mode ?? "normal"),
     );
   }
@@ -569,28 +515,15 @@ export default function App() {
   function handleRealtimeEvent(eventName: RealtimeEventName, data: RealtimeEventData) {
     if (["conversation_created", "conversation_updated", "conversation_deleted"].includes(eventName)) {
       void loadConversations(true).catch(showError);
-      void loadArchivedConversations(false);
       return;
     }
     if (eventName === "messages_replaced" && sameSelectedConversation(data)) {
       const incoming = Array.isArray(data.messages) ? data.messages : [];
-      const mode = normalizeConversationMode(
-        String(data.conversationMode ?? data.mode ?? selectedRef.current?.mode ?? "normal"),
-      );
-      setMessages((current) => (
-        mode === "codex"
-          ? reconcileCodexMessages(current, incoming)
-          : incoming
-      ));
+      setMessages(incoming);
       return;
     }
     if (eventName === "workspace_changed" && workspacePathRef.current) {
       void loadWorkspace(workspacePathRef.current, false);
-      return;
-    }
-    if (eventName === "browser_snapshot_updated") {
-      setBrowserSnapshot(data.snapshot ?? null);
-      setBrowserFrameSeed((seed) => seed + 1);
       return;
     }
     if (eventName === "chat_task_event") {
@@ -600,25 +533,17 @@ export default function App() {
         if (taskId) completedTaskIdsRef.current.add(taskId);
         setActiveTaskId(null);
         setActiveRenderTaskId(null);
-        setClarifyTaskId(null);
+        setApprovals([]);
+      } else if (kind === "waiting_approval") {
+        setActiveTaskId(null);
+        setActiveRenderTaskId(null);
+        if (Array.isArray(data.approvals)) {
+          setApprovals(data.approvals as ApprovalRequest[]);
+        } else if (selectedRef.current && isPersistedConversation(selectedRef.current)) {
+          void loadApprovals(selectedRef.current);
+        }
       }
       return;
-    }
-    if (eventName !== "acp_event") return;
-    const presentation = data.presentation && typeof data.presentation === "object"
-      ? data.presentation as Record<string, unknown>
-      : null;
-    const kind = String(presentation?.kind ?? "");
-    const turnId = String(data.turnId ?? presentation?.turnId ?? "");
-    if (kind === "approval_requested") setClarifyTaskId(turnId || activeTaskId);
-    if (["turn_completed", "turn_failed"].includes(kind)) {
-      if (turnId) completedTaskIdsRef.current.add(turnId);
-      setActiveTaskId(null);
-      setActiveRenderTaskId(null);
-      setClarifyTaskId(null);
-    }
-    if (kind === "tool_completed" && String(data.toolType ?? "") === "browser") {
-      void refreshBrowser(false);
     }
   }
 
@@ -626,7 +551,6 @@ export default function App() {
 
   function selectMobileSection(section: MobileSection) {
     setMobileSectionState(section);
-    if (section !== "chat") setContextPanel(section);
   }
 
   useEffect(() => {
@@ -706,16 +630,6 @@ export default function App() {
           </nav>
           <div className="desktop-navigation-group desktop-navigation-end">
             <button
-              className="topbar-icon"
-              type="button"
-              aria-label={selectedConversation?.isArchived ? "取消归档" : "归档对话"}
-              title={selectedConversation?.isArchived ? "取消归档" : "归档对话"}
-              disabled={!isPersistedConversation(selectedConversation)}
-              onClick={() => void updateArchiveState()}
-            >
-              <Icon name="archive" size={16} />
-            </button>
-            <button
               className="topbar-icon danger"
               type="button"
               aria-label="删除对话"
@@ -739,45 +653,34 @@ export default function App() {
         </header>
         <ConversationSidebar
           conversations={conversations}
-          archivedConversations={archivedConversations}
-          archivedLoading={archivedLoading}
           selected={selectedConversation}
-          agentProfiles={agentProfiles}
           connectionStatus={connectionStatus}
           onCreate={createConversation}
           onSelect={(conversation) => void selectConversation(conversation)}
-          onLoadArchived={() => loadArchivedConversations()}
-          onArchive={(conversation) => updateArchiveState(conversation, true)}
-          onRestore={(conversation) => updateArchiveState(conversation, false)}
-          onSetPinned={(conversation, pinned) => updatePinState(conversation, pinned)}
           onDelete={(conversation) => deleteConversation(conversation)}
         />
         <ChatPanel
           conversation={selectedConversation}
           messages={messages}
+          approvals={approvals}
           globalError={globalError}
           sending={sending}
           activeTaskId={activeRenderTaskId ?? activeTaskId}
-          clarifyTaskId={clarifyTaskId}
           onOpenConversations={() => setConversationsOpen(true)}
-          onArchive={() => void updateArchiveState()}
           onDelete={() => void deleteConversation()}
           onSend={sendMessage}
           onCancel={() => void cancelRun()}
+          onResolveApproval={resolveApproval}
           onClearError={() => setGlobalError("")}
           onAttachmentError={showError}
         />
         <ContextPane
-          activePanel={contextPanel}
           workspacePath={workspacePath}
           workspaceItems={workspaceItems}
           workspaceFilePath={workspaceFilePath}
           workspaceContent={workspaceContent}
           workspaceDirty={workspaceDirty}
-          browserSnapshot={browserSnapshot}
-          browserFrameSeed={browserFrameSeed}
           onOpenConversations={() => setConversationsOpen(true)}
-          onSelectPanel={setContextPanel}
           onWorkspacePath={() => {
             const parent = workspaceParentPath();
             if (parent && parent !== workspacePathRef.current) void loadWorkspace(parent);
@@ -792,12 +695,10 @@ export default function App() {
             setWorkspaceDirty(true);
           }}
           onWorkspaceSave={() => void saveWorkspaceFile()}
-          onBrowserAction={(payload) => void browserAction(payload)}
-          onBrowserRefresh={() => void refreshBrowser()}
         />
 
         <nav className="mobile-nav" aria-label="Web Chat 区域">
-          {(["chat", "workspace", "browser"] as MobileSection[]).map((section) => (
+          {(["chat", "workspace"] as MobileSection[]).map((section) => (
             <button
               className={mobileSection === section ? "active" : ""}
               type="button"
@@ -805,7 +706,7 @@ export default function App() {
               key={section}
             >
               <Icon name={MOBILE_SECTION_ICON[section]} size={18} />
-              <span>{{ chat: "聊天", workspace: "工作区", browser: "浏览器" }[section]}</span>
+              <span>{{ chat: "智枢", workspace: "工作区" }[section]}</span>
             </button>
           ))}
         </nav>

@@ -15,12 +15,16 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import top.wkbin.taixu.core.datastore.WorkshopPreferences
+import top.wkbin.taixu.core.database.BuildScriptEntity
+import top.wkbin.taixu.core.database.BuildScriptRepository
+import top.wkbin.taixu.core.database.ProjectBuildScriptBindingEntity
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.ProjectType
 import top.wkbin.taixu.runtime.WorkspaceManager
 import top.wkbin.taixu.runtime.WorkspaceProject
 import top.wkbin.taixu.runtime.scripts.RuntimeAssetSynchronizer
 import top.wkbin.taixu.runtime.shell.ShellCommand
+import java.util.UUID
 
 data class WorkshopEnvironmentDraft(
     val androidSdkPath: String = "",
@@ -49,6 +53,7 @@ class WorkshopSettingsViewModel @Inject constructor(
     private val preferences: WorkshopPreferences,
     private val linuxRuntime: LinuxRuntime,
     private val assetSynchronizer: RuntimeAssetSynchronizer,
+    private val buildScripts: BuildScriptRepository,
     workspaceManager: WorkspaceManager,
 ) : ViewModel() {
     private val defaults = WorkshopEnvironmentDraft(
@@ -78,8 +83,55 @@ class WorkshopSettingsViewModel @Inject constructor(
     val output: StateFlow<String> = _output.asStateFlow()
     private val _customScripts = MutableStateFlow<Set<WorkshopScriptType>>(emptySet())
     val customScripts: StateFlow<Set<WorkshopScriptType>> = _customScripts.asStateFlow()
+    val managedScripts: StateFlow<List<BuildScriptEntity>> = buildScripts.observeScripts()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val projectBindings: StateFlow<List<ProjectBuildScriptBindingEntity>> = buildScripts.observeBindings()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    init { reload() }
+    init {
+        reload()
+        viewModelScope.launch { ensureBuiltinScripts() }
+    }
+
+    private suspend fun ensureBuiltinScripts() {
+        buildScripts.ensureBuiltinScripts(defaults.androidScript, defaults.flutterScript)
+    }
+
+    fun saveManagedScript(
+        id: String?,
+        name: String,
+        description: String,
+        projectType: ProjectType,
+        content: String,
+    ) = viewModelScope.launch {
+        require(name.isNotBlank()) { "脚本名称不能为空" }
+        require(content.isNotBlank()) { "脚本内容不能为空" }
+        require(content.length <= 200_000) { "脚本不能超过 200 KB" }
+        val old = id?.let { buildScripts.findScript(it) }
+        val now = System.currentTimeMillis()
+        buildScripts.upsertScript(
+            BuildScriptEntity(
+                id = old?.id ?: UUID.randomUUID().toString(),
+                name = name.trim(),
+                description = description.trim(),
+                projectType = projectType.name,
+                content = content.removePrefix("\uFEFF").replace("\r\n", "\n"),
+                isBuiltin = old?.isBuiltin ?: false,
+                createdAt = old?.createdAt ?: now,
+                updatedAt = now,
+            ),
+        )
+    }
+
+    fun cloneScript(script: BuildScriptEntity) = viewModelScope.launch {
+        val now = System.currentTimeMillis()
+        buildScripts.upsertScript(script.copy(id = UUID.randomUUID().toString(), name = "${script.name} 副本", isBuiltin = false, createdAt = now, updatedAt = now))
+    }
+
+    fun deleteManagedScript(id: String) = viewModelScope.launch { buildScripts.deleteScript(id) }
+    fun bindProject(projectName: String, scriptId: String?) = viewModelScope.launch {
+        if (scriptId == null) buildScripts.unbind(projectName) else buildScripts.bind(projectName, scriptId)
+    }
 
     fun reload() = viewModelScope.launch {
         val storedAndroidScript = preferences.androidScript.first()
@@ -173,8 +225,10 @@ class WorkshopSettingsViewModel @Inject constructor(
             _running.value = true
             _output.value = ""
             val d = _draft.value
-            val custom = if (project.projectType == ProjectType.FLUTTER) d.flutterScript else d.androidScript
-            val fileName = if (project.projectType == ProjectType.FLUTTER) "workshop-build-flutter.sh" else "workshop-build-android.sh"
+            val managed = buildScripts.resolvedScript(project.name)?.takeIf { it.projectType == project.projectType.name }
+            val custom = managed?.content ?: if (project.projectType == ProjectType.FLUTTER) d.flutterScript else d.androidScript
+            val fileName = managed?.id?.replace(Regex("[^A-Za-z0-9._-]"), "-")?.let { "workshop-managed-$it.sh" }
+                ?: if (project.projectType == ProjectType.FLUTTER) "workshop-build-flutter.sh" else "workshop-build-android.sh"
             val script = if (custom.isBlank()) "/opt/taixu/scripts/taixu-build.sh" else assetSynchronizer.syncWorkshopScript(linuxRuntime.activeDistroId.value, fileName, custom)
             val command = if (script.endsWith("taixu-build.sh")) {
                 "/bin/sh $script ${if (project.projectType == ProjectType.FLUTTER) "flutter" else "android"} \"${project.linuxPath}\" ${if (project.projectType == ProjectType.FLUTTER) "apk --debug --target-platform android-arm64" else "assembleDebug"}"

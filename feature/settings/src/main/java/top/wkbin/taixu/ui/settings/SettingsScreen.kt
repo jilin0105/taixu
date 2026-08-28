@@ -555,7 +555,7 @@ fun LinuxEnvironmentSettingsScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     SettingsRow(
                         icon = RuntimeIconName.Globe,
-                        title = "WebChat 局域网大屏协作",
+                        title = "太墟智枢 Web 协作台",
                         subtitle = if (webChatStatus.isRunning) {
                             "运行中 · ${webChatStatus.accessUrl} (PIN: ${webChatStatus.pinCode})"
                         } else {
@@ -2951,7 +2951,7 @@ fun WebChatBridgeDialog(
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 RuntimeIcon(RuntimeIconName.Globe, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary)
-                Text("WebChat 局域网大屏协作")
+                Text("太墟智枢 Web 协作台")
             }
         },
         text = {
@@ -2960,7 +2960,7 @@ fun WebChatBridgeDialog(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
-                    text = "在同一 Wi-Fi / 局域网下，可以通过电脑 PC 浏览器直接访问太墟 Agent 与工作区，享受桌面端大屏协作与长代码审阅体验。",
+                    text = "在同一 Wi-Fi / 局域网下，通过电脑浏览器连接太墟智枢，同步处理 Agent 任务、对话与 Linux 工作区文件。",
                     style = MaterialTheme.typography.bodyMedium,
                 )
 
@@ -3001,7 +3001,7 @@ fun WebChatBridgeDialog(
                                     TextButton(
                                         onClick = {
                                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                            clipboard.setPrimaryClip(ClipData.newPlainText("WebChat URL", status.accessUrl))
+                                            clipboard.setPrimaryClip(ClipData.newPlainText("太墟智枢协作地址", status.accessUrl))
                                             Toast.makeText(context, "已复制基础链接", Toast.LENGTH_SHORT).show()
                                         }
                                     ) { Text("复制") }
@@ -3034,7 +3034,7 @@ fun WebChatBridgeDialog(
                             Button(
                                 onClick = {
                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    clipboard.setPrimaryClip(ClipData.newPlainText("WebChat Direct URL", directUrl))
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("太墟智枢直连地址", directUrl))
                                     Toast.makeText(context, "已复制免密直达链接，在电脑浏览器打开即可！", Toast.LENGTH_SHORT).show()
                                 },
                                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),

@@ -1,6 +1,8 @@
 package top.wkbin.taixu.harness
 
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -8,6 +10,14 @@ import org.junit.Test
 import top.wkbin.taixu.core.model.McpToolInfo
 
 class BuiltinToolContractTest {
+    @Test
+    fun `build script tool exposes lifecycle and binding actions`() {
+        val tool = ProviderClient.TOOLS.single { it.function.name == "build_script" }
+        val action = tool.function.parameters["properties"]!!.jsonObject["action"]!!.jsonObject
+        val values = action["enum"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertEquals(listOf("list", "get", "create", "update", "delete", "bind", "unbind"), values)
+    }
+
     @Test
     fun baseExposesBoundedTimeoutOverride() {
         val base = ProviderClient.TOOLS.single { it.function.name == "base" }

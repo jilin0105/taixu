@@ -3747,6 +3747,7 @@ private fun toolName(tool: HarnessTool, rawToolName: String? = null): String {
         HarnessTool.SCRATCHPAD -> "scratchpad"
         HarnessTool.HISTORY_SEARCH -> "history.search"
         HarnessTool.HISTORY_READ -> "history.read"
+        HarnessTool.BUILD_SCRIPT -> "build_script"
         HarnessTool.SUBAGENT -> "invoke_subagent"
         HarnessTool.MCP -> "mcp"
     }

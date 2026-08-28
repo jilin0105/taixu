@@ -8,6 +8,8 @@ import top.wkbin.taixu.core.database.MIGRATION_28_29
 import top.wkbin.taixu.core.database.MIGRATION_30_31
 import top.wkbin.taixu.core.database.MIGRATION_31_32
 import top.wkbin.taixu.core.database.MIGRATION_33_34
+import top.wkbin.taixu.core.database.MIGRATION_34_35
+import top.wkbin.taixu.core.database.BuildScriptDao
 import top.wkbin.taixu.core.database.ToolDao
 import top.wkbin.taixu.core.database.InstallLogDao
 import top.wkbin.taixu.core.database.InstallTaskDao
@@ -71,7 +73,7 @@ object AppModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase {
         return Room.databaseBuilder(context, AppDatabase::class.java, "taixu.db")
-            .addMigrations(MIGRATION_27_28, MIGRATION_28_29, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_33_34)
+            .addMigrations(MIGRATION_27_28, MIGRATION_28_29, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_33_34, MIGRATION_34_35)
             .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
     }
@@ -147,6 +149,10 @@ object AppModule {
     @Provides
     @Singleton
     fun provideAndroidAppDao(database: AppDatabase): AndroidAppDao = database.androidAppDao()
+
+    @Provides
+    @Singleton
+    fun provideBuildScriptDao(database: AppDatabase): BuildScriptDao = database.buildScriptDao()
 
     @Provides
     @Singleton

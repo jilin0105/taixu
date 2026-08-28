@@ -5,17 +5,17 @@ import {
   isPersistedConversation,
 } from "../src/conversationDraft.ts";
 
-test("choosing a new conversation mode creates only a local draft", () => {
-  const draft = createConversationDraft("codex", 1234, "claude-code-acp");
+test("creating a new TaiXu conversation starts as a local draft", () => {
+  const draft = createConversationDraft("normal", 1234);
 
-  assert.equal(draft.id, 0);
-  assert.equal(draft.mode, "codex");
-  assert.equal(draft.agentId, "claude-code-acp");
+  assert.equal(draft.id, "");
+  assert.equal(draft.mode, "normal");
   assert.equal(draft.updatedAt, 1234);
   assert.equal(isPersistedConversation(draft), false);
 });
 
-test("only a positive server id is considered persisted", () => {
-  assert.equal(isPersistedConversation({ id: 17, mode: "normal" }), true);
+test("a non-empty TaiXu session id is considered persisted", () => {
+  assert.equal(isPersistedConversation({ id: "8da73f50-c83c-4eca-a735-e52a2328848d", mode: "normal" }), true);
+  assert.equal(isPersistedConversation({ id: "", mode: "normal" }), false);
   assert.equal(isPersistedConversation(null), false);
 });

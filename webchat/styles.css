@@ -1,10 +1,10 @@
 /* ---------------------------------------------------------------------------
- * 设计令牌 —— 与 Flutter 端 OmniThemePalette(light/dark) 完全对齐
+ * 太墟 WebChat 设计令牌，与 Android 端深浅色表面保持一致。
  * ------------------------------------------------------------------------- */
 :root {
   color-scheme: light;
 
-  /* 调色板 (OmniThemePalette.light) */
+  /* 太墟浅色调色板 */
   --page: #f4f7fb;
   --surface: #ffffff;
   --surface-secondary: #f0f5fc;
@@ -39,14 +39,14 @@
 
   /* 品牌渐变 (浅: #2DA5F0 -> #1930D9) */
   --grad-brand: linear-gradient(135deg, #2da5f0, #1930d9);
-  /* Composer 流动描边 (浅色彩虹, 水平线性渐变, stops 对齐 Flutter) */
+  /* 输入区流动描边 */
   --composer-flow: #ff6a01 0%, #f8c91c 20%, #8a2be2 40%, #00bfff 62%, #ff0055 82%, #ff6a01 100%;
   --composer-inner-border: rgb(255 255 255 / 10%);
   --composer-glow: rgb(47 123 255 / 10%);
   --composer-glow-hover: rgb(47 123 255 / 15%);
   --composer-glow-strong: rgb(47 123 255 / 20%);
 
-  /* 工具状态色 (agent_tool_transcript.dart) */
+  /* 智枢工具执行状态色 */
   --tool-success: #2f8f4e;
   --tool-error: #ff6464;
   --tool-timeout: #ff8a3d;
@@ -241,7 +241,6 @@ button:disabled {
 }
 
 .login-form input,
-.browser-address-form input,
 .search-field input {
   min-width: 0;
   border: 0;
@@ -531,294 +530,6 @@ button:disabled {
   transform: scale(.94);
 }
 
-.archive-popover-anchor,
-.new-conversation-anchor {
-  position: relative;
-  z-index: 10;
-  flex: 0 0 auto;
-}
-
-.archive-popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: -42px;
-  width: 228px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--surface);
-  box-shadow: 0 16px 40px rgb(26 36 51 / 16%);
-  transform-origin: top right;
-  animation: menu-in 160ms cubic-bezier(.22, 1, .36, 1) both;
-}
-
-.archive-popover-header {
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 7px 8px 7px 13px;
-  border-bottom: 1px solid var(--line);
-}
-
-.archive-popover-header > span {
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-}
-
-.archive-popover-header strong {
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.archive-popover-header small {
-  color: var(--subtle);
-  font-size: 10px;
-  font-weight: 500;
-}
-
-.archive-popover-header button {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  transition: background 150ms ease, color 150ms ease;
-}
-
-.archive-popover-header button:hover {
-  background: var(--surface-secondary);
-  color: var(--text);
-}
-
-.archive-popover-list {
-  max-height: min(330px, calc(100svh - 136px));
-  overflow: auto;
-  padding: 6px;
-  scrollbar-width: thin;
-  scrollbar-color: rgb(113 128 155 / 18%) transparent;
-}
-
-.archive-conversation-item {
-  min-height: 48px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 5px 6px 9px;
-  border-radius: 11px;
-  transition: background 150ms ease;
-}
-
-.archive-conversation-item:hover {
-  background: var(--surface-secondary);
-}
-
-.archive-conversation-copy {
-  min-width: 0;
-  flex: 1;
-  display: grid;
-  gap: 3px;
-}
-
-.archive-conversation-copy strong {
-  overflow: hidden;
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 550;
-  line-height: 1.3;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.archive-conversation-copy time {
-  color: var(--subtle);
-  font-size: 10px;
-  line-height: 1.2;
-}
-
-.archive-conversation-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex: 0 0 auto;
-}
-
-.archive-item-action {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  transition: background 150ms ease, color 150ms ease;
-}
-
-.archive-item-action.restore:hover,
-.archive-item-action.restore:focus-visible {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.archive-item-action.delete:hover,
-.archive-item-action.delete:focus-visible {
-  background: var(--danger-hover);
-  color: var(--danger);
-}
-
-.archive-item-action:disabled {
-  cursor: wait;
-  opacity: .42;
-}
-
-.archive-popover-status {
-  min-height: 104px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 18px 10px;
-  color: var(--muted);
-  font-size: 11px;
-  text-align: center;
-}
-
-.archive-popover-status.empty {
-  flex-direction: column;
-  gap: 7px;
-  color: var(--subtle);
-}
-
-.new-conversation-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  width: 164px;
-  padding: 6px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--surface);
-  box-shadow: 0 14px 36px rgb(26 36 51 / 14%);
-  transform-origin: top right;
-  animation: menu-in 160ms cubic-bezier(.22, 1, .36, 1) both;
-}
-
-@media (prefers-color-scheme: dark) {
-  .archive-popover,
-  .new-conversation-menu {
-    box-shadow: 0 16px 40px rgb(0 0 0 / 32%);
-  }
-}
-
-.new-conversation-menu-item {
-  width: 100%;
-  min-height: 38px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 5px 8px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 600;
-  text-align: left;
-  cursor: pointer;
-  transition: background 160ms ease, color 160ms ease;
-}
-
-.new-conversation-menu-item:hover,
-.new-conversation-menu-item:focus-visible {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.new-conversation-menu-icon {
-  width: 26px;
-  height: 26px;
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  border-radius: 8px;
-  background: var(--surface-secondary);
-  color: var(--text-secondary);
-}
-
-.new-conversation-menu-item:hover .new-conversation-menu-icon,
-.new-conversation-menu-item:focus-visible .new-conversation-menu-icon {
-  color: var(--accent);
-}
-
-.conversation-context-menu {
-  position: fixed;
-  z-index: 50;
-  width: 176px;
-  padding: 6px;
-  border: 1px solid var(--line);
-  border-radius: 13px;
-  background: var(--surface);
-  box-shadow: 0 16px 40px rgb(26 36 51 / 18%);
-  animation: menu-in 140ms cubic-bezier(.22, 1, .36, 1) both;
-}
-
-.conversation-context-menu button {
-  width: 100%;
-  min-height: 36px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 5px 9px;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
-  color: var(--text);
-  font-family: var(--font-main);
-  font-size: 12px;
-  font-weight: 550;
-  text-align: left;
-  cursor: pointer;
-  transition: background 150ms ease, color 150ms ease;
-}
-
-.conversation-context-menu button:hover,
-.conversation-context-menu button:focus-visible {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.conversation-context-menu button.danger {
-  color: var(--danger);
-}
-
-.conversation-context-menu button.danger:hover,
-.conversation-context-menu button.danger:focus-visible {
-  background: var(--danger-hover);
-}
-
-.conversation-context-menu-separator {
-  height: 1px;
-  margin: 4px 5px;
-  background: var(--line);
-}
-
-@media (prefers-color-scheme: dark) {
-  .conversation-context-menu {
-    box-shadow: 0 16px 40px rgb(0 0 0 / 34%);
-  }
-}
-
 .conversation-list {
   min-height: 0;
   flex: 1;
@@ -868,7 +579,7 @@ button.conversation-section-header:hover {
   opacity: .82;
 }
 
-/* chevron: 展开朝下, 折叠朝右(-90deg) — 复刻 AnimatedRotation turns:-0.25 */
+/* 分区折叠箭头状态 */
 .section-chevron {
   margin-left: auto;
   flex: 0 0 auto;
@@ -1205,7 +916,7 @@ button.conversation-section-header:hover {
   color: var(--danger);
 }
 
-/* 正文 Markdown 渲染 (OmnibotMarkdownBody) */
+/* 智枢消息的 Markdown 渲染 */
 .message-text {
   overflow-wrap: anywhere;
   color: var(--text);
@@ -1401,32 +1112,6 @@ button.conversation-section-header:hover {
   display: none;
 }
 
-.reasoning-avatar {
-  width: 30px;
-  height: 30px;
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--grad-brand);
-  color: white;
-  overflow: hidden;
-}
-
-.reasoning-avatar img,
-.agent-run-avatar img {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: cover;
-}
-
-@media (prefers-color-scheme: dark) {
-  .reasoning-avatar {
-    color: #151617;
-  }
-}
-
 .reasoning-toggle-label {
   display: flex;
   align-items: center;
@@ -1434,7 +1119,7 @@ button.conversation-section-header:hover {
   min-width: 0;
 }
 
-/* chevron: 展开朝下(0°), 折叠朝上(180°) — 复刻 keyboard_arrow_down_rounded 翻转 */
+/* 思考过程折叠箭头状态 */
 .reasoning-chevron {
   flex: 0 0 auto;
   color: var(--subtle);
@@ -1520,90 +1205,7 @@ button.conversation-section-header:hover {
 }
 
 /* ---------------------------------------------------------------------------
- * Agent 运行分组折叠 (agent_run_group_message.dart)
- * [30px头像] 已处理  47s [chevron] — 折叠时隐藏过程消息(思考+工具), 仅显示最终回复
- * ------------------------------------------------------------------------- */
-.agent-run-group {
-  margin-top: 8px;
-}
-
-.agent-run-header {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 2px;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  color: var(--subtle);
-  font-family: var(--font-main);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0;
-  transition: color 200ms ease;
-}
-
-.agent-run-group.expanded .agent-run-header {
-  color: var(--muted);
-}
-
-.agent-run-avatar {
-  width: 30px;
-  height: 30px;
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--grad-brand);
-  color: white;
-  overflow: hidden;
-}
-
-@media (prefers-color-scheme: dark) {
-  .agent-run-avatar {
-    color: #151617;
-  }
-}
-
-.agent-run-title {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-}
-
-.agent-run-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-run-chevron {
-  flex: 0 0 auto;
-  color: inherit;
-  transition: transform 260ms cubic-bezier(.4, 0, .2, 1);
-}
-
-.agent-run-group:not(.expanded) .agent-run-chevron {
-  transform: rotate(-90deg);
-}
-
-.agent-run-process {
-  overflow: hidden;
-  max-height: 5000px;
-  opacity: 1;
-  transition: max-height 260ms cubic-bezier(.4, 0, .2, 1), opacity 200ms ease;
-}
-
-.agent-run-group:not(.expanded) .agent-run-process {
-  max-height: 0;
-  opacity: 0;
-}
-
-/* ---------------------------------------------------------------------------
- * 工具调用卡片 (AgentToolSummaryCard) —— 胶囊式, 状态色 8% 底
+ * 太墟 Harness 工具调用卡片
  * ------------------------------------------------------------------------- */
 .card-message {
   margin: 8px 0 0;
@@ -1742,16 +1344,6 @@ button.conversation-section-header:hover {
   background: var(--chat-background);
 }
 
-.clarify-banner {
-  margin-bottom: 8px;
-  padding: 10px 12px;
-  border: 1px solid rgb(44 127 235 / 16%);
-  border-radius: 12px;
-  background: var(--accent-soft);
-  color: var(--muted);
-  font-size: 12px;
-}
-
 .composer {
   position: relative;
   min-height: 72px;
@@ -1765,7 +1357,7 @@ button.conversation-section-header:hover {
 
 /*
  * 1.5px 水平流动渐变描边
- * 复刻 Flutter _ComposerFlowBorderPainter: 水平 LinearGradient 沿圆角矩形路径 stroke,
+ * 太墟输入框流动描边：水平渐变沿圆角矩形路径移动，
  * idle 时 opacity 0.3→0.7 呼吸 (8s), hover 锁定 0.82, focus 拉满 1.0 并加速至 5s
  */
 .composer::before {
@@ -1871,7 +1463,7 @@ button.conversation-section-header:hover {
   text-align: right;
 }
 
-/* 发送/停止按钮直接复用 Flutter composer 的 24px/20px 图标结构。 */
+/* 发送与停止按钮统一使用 24px/20px 图标结构。 */
 .send-button {
   width: 28px;
   height: 28px;
@@ -2016,8 +1608,57 @@ button.conversation-section-header:hover {
  * ------------------------------------------------------------------------- */
 .context-pane {
   display: grid;
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   background: var(--app-chrome);
+}
+
+.conversation-item-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 14px;
+}
+
+.conversation-item-row .conversation-item {
+  min-width: 0;
+  flex: 1;
+}
+
+.conversation-item-row.active {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.conversation-item-row.active .conversation-item {
+  background: transparent;
+  box-shadow: none;
+}
+
+.conversation-delete-button {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  margin-right: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--subtle);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .15s ease, background .15s ease, color .15s ease;
+}
+
+.conversation-item-row:hover .conversation-delete-button,
+.conversation-delete-button:focus-visible {
+  opacity: 1;
+}
+
+.conversation-delete-button:hover {
+  background: var(--danger-hover);
+  color: var(--danger);
 }
 
 .context-tabs {
@@ -2228,82 +1869,6 @@ button.conversation-section-header:hover {
   color: var(--subtle);
 }
 
-.browser-controls {
-  display: grid;
-}
-
-.browser-address-form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 7px;
-}
-
-.browser-address-form input {
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--preview);
-  font-size: 11px;
-}
-
-.browser-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
-}
-
-#browser-panel.active {
-  grid-template-rows: auto auto minmax(0, 1fr);
-}
-
-.browser-summary {
-  display: grid;
-  gap: 4px;
-  padding: 11px 12px;
-  border-bottom: 1px solid var(--line);
-}
-
-.browser-summary strong,
-.browser-summary span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.browser-summary strong {
-  font-size: 12px;
-}
-
-.browser-summary span {
-  color: var(--muted);
-  font-size: 10px;
-}
-
-.browser-frame-wrap {
-  min-height: 0;
-  display: grid;
-  place-items: center;
-  overflow: auto;
-  padding: 12px;
-  background: var(--preview);
-}
-
-.browser-frame-wrap img {
-  max-width: 100%;
-  max-height: 100%;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
-  object-fit: contain;
-}
-
-.browser-frame-wrap p {
-  color: var(--muted);
-  font-size: 11px;
-  text-align: center;
-}
-
 /* ---------------------------------------------------------------------------
  * 移动端适配
  * ------------------------------------------------------------------------- */
@@ -2404,22 +1969,12 @@ button.conversation-section-header:hover {
     display: none;
   }
 
-  .app-view[data-mobile-section="workspace"] #browser-panel,
-  .app-view[data-mobile-section="browser"] #workspace-panel {
-    display: none;
-  }
-
-  .app-view[data-mobile-section="workspace"] #workspace-panel,
-  .app-view[data-mobile-section="browser"] #browser-panel {
+  .app-view[data-mobile-section="workspace"] #workspace-panel {
     display: grid;
   }
 
   .app-view[data-mobile-section="workspace"] #workspace-panel {
     grid-template-rows: auto minmax(0, 1fr);
-  }
-
-  .app-view[data-mobile-section="browser"] #browser-panel {
-    grid-template-rows: auto auto minmax(0, 1fr);
   }
 
   .context-tabs {
@@ -2452,7 +2007,7 @@ button.conversation-section-header:hover {
     display: grid;
     grid-column: 1;
     grid-row: 2;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
     padding: 4px 10px max(4px, env(safe-area-inset-bottom));
     border-top: 1px solid var(--line);
     background: var(--surface);
@@ -2533,7 +2088,7 @@ button.conversation-section-header:hover {
 }
 
 /* ---------------------------------------------------------------------------
- * 动画 (与 Flutter 曲线对齐: easeOutCubic ≈ cubic-bezier(.22,1,.36,1))
+ * 太墟 WebChat 动画曲线
  * ------------------------------------------------------------------------- */
 @keyframes composer-slide {
   from { background-position: 0% 0; }

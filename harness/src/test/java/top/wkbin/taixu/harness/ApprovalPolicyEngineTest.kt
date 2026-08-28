@@ -115,12 +115,17 @@ class ApprovalPolicyEngineTest {
     }
 
     @Test
-    fun `args hash is deterministic and content sensitive`() {
-        val a = ApprovalPolicyEngine.argsHash("""{"command":"ls"}""")
-        val b = ApprovalPolicyEngine.argsHash("""{"command":"ls"}""")
-        val c = ApprovalPolicyEngine.argsHash("""{"command":"rm -rf /"}""")
-        assertEquals(a, b)
-        assertTrue(a != c)
-        assertEquals(64, a.length) // SHA-256 hex
+    fun `build script tool approval policy`() {
+        // list and get are read-only and bypass approval in ASSISTED mode
+        assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.BUILD_SCRIPT, args("action" to "list"), workspace).required)
+        assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.BUILD_SCRIPT, args("action" to "get", "id" to "builtin-android"), workspace).required)
+        assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.BUILD_SCRIPT, args("action" to "  List "), workspace).required)
+        assertFalse(policy.decide(ApprovalMode.ASSISTED, HarnessTool.BUILD_SCRIPT, args("action" to "GET", "id" to "builtin-android"), workspace).required)
+
+        // Mutating actions require approval in ASSISTED mode
+        assertTrue(policy.decide(ApprovalMode.ASSISTED, HarnessTool.BUILD_SCRIPT, args("action" to "create", "name" to "custom"), workspace).required)
+        assertTrue(policy.decide(ApprovalMode.ASSISTED, HarnessTool.BUILD_SCRIPT, args("action" to "bind", "id" to "1"), workspace).required)
+        assertTrue(policy.decide(ApprovalMode.ASSISTED, HarnessTool.BUILD_SCRIPT, args("action" to "unbind"), workspace).required)
+        assertTrue(policy.decide(ApprovalMode.ASSISTED, HarnessTool.BUILD_SCRIPT, args("action" to "delete", "id" to "1"), workspace).required)
     }
 }

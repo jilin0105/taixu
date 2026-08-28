@@ -11,9 +11,7 @@ const EVENT_NAMES: RealtimeEventName[] = [
   "conversation_updated",
   "conversation_deleted",
   "messages_replaced",
-  "acp_event",
   "chat_task_event",
-  "browser_snapshot_updated",
   "workspace_changed",
 ];
 

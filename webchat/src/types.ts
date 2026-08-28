@@ -1,32 +1,19 @@
 export type ConnectionStatus = "connecting" | "online" | "offline";
-export type MobileSection = "chat" | "workspace" | "browser";
-export type ContextPanelName = "workspace" | "browser";
-export type ConversationMode = "normal" | "codex" | "chat_only";
+export type MobileSection = "chat" | "workspace";
+export type ConversationMode = "normal";
 
 export interface ConversationCreateTarget {
   mode: ConversationMode;
-  agentId?: string;
-}
-
-export interface AgentProfile {
-  id: string;
-  name: string;
-  description?: string;
-  enabled?: boolean;
-  builtIn?: boolean;
 }
 
 export interface Conversation {
-  id: number;
+  id: string | number;
   mode?: string;
-  agentId?: string;
   title?: string;
   summary?: string;
   lastMessage?: string;
   messageCount?: number;
   updatedAt?: number;
-  isArchived?: boolean;
-  isPinned?: boolean;
 }
 
 export interface Attachment {
@@ -68,31 +55,34 @@ export interface WorkspaceListing {
   items?: WorkspaceItem[];
 }
 
-export interface BrowserSnapshot {
-  available?: boolean;
-  title?: string;
-  currentUrl?: string;
-  [key: string]: unknown;
-}
-
 export interface BootstrapPayload {
-  agentProfiles?: AgentProfile[];
   workspace?: {
     workspace?: WorkspaceInfo | null;
     root?: { path?: string } | null;
   } | null;
-  browser?: BrowserSnapshot | null;
+}
+
+export interface ApprovalRequest {
+  id: string;
+  toolName: string;
+  argumentsJson: string;
+  workspace: string;
+  riskLevel: string;
+  reason: string;
+  summary: string;
+  createdAt: number;
+  expiresAt: number;
 }
 
 export interface RealtimeEventData {
-  conversationId?: number;
+  conversationId?: string | number;
   conversationMode?: string;
   mode?: string;
   messages?: ChatMessage[];
-  snapshot?: BrowserSnapshot | null;
   kind?: string;
   taskId?: string;
   toolType?: string;
+  approvals?: ApprovalRequest[];
   [key: string]: unknown;
 }
 
@@ -101,9 +91,7 @@ export type RealtimeEventName =
   | "conversation_updated"
   | "conversation_deleted"
   | "messages_replaced"
-  | "acp_event"
   | "chat_task_event"
-  | "browser_snapshot_updated"
   | "workspace_changed";
 
 export interface RunResult {
@@ -113,8 +101,9 @@ export interface RunResult {
   conversation?: Conversation;
 }
 
-export interface BrowserActionResult {
-  snapshot?: BrowserSnapshot | null;
+export interface ApprovalResult {
+  accepted: boolean;
+  taskId?: string;
 }
 
 export interface WorkspaceFilePayload {

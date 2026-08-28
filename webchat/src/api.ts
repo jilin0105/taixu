@@ -1,5 +1,9 @@
 const API_ROOT = "/webchat/api";
-const AVATAR_PAGE_VERSION = Date.now().toString(36);
+let authToken = "";
+
+export function setAuthToken(token: string): void {
+  authToken = token.trim();
+}
 
 interface RequestOptions {
   method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
@@ -23,6 +27,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     credentials: "same-origin",
     headers: {
       Accept: "application/json",
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -44,20 +49,12 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   return payload as T;
 }
 
-export function browserFrameUrl(seed: number): string {
-  return `${API_ROOT}/browser/frame?t=${Date.now()}-${seed}`;
-}
-
-export function agentAvatarUrl(): string {
-  return `${API_ROOT}/avatar?v=${AVATAR_PAGE_VERSION}`;
-}
-
 export function workspaceDownloadUrl(path: string): string {
-  return `${API_ROOT}/workspaces/download?path=${encodeURIComponent(path)}`;
+  return `${API_ROOT}/workspaces/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(authToken)}`;
 }
 
 export function eventsUrl(): string {
-  return `${API_ROOT}/events`;
+  return `${API_ROOT}/events?token=${encodeURIComponent(authToken)}`;
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

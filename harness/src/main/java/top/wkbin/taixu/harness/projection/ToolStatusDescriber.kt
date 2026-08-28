@@ -41,6 +41,7 @@ object ToolStatusDescriber {
         HarnessTool.SCRATCHPAD -> "正在记录工作草稿便签：${arg(args, "key") ?: arg(args, "action") ?: "scratchpad"}"
         HarnessTool.HISTORY_SEARCH -> "正在检索历史消息：${arg(args, "query")?.take(MAX_STATUS_ARG_LENGTH).orEmpty()}"
         HarnessTool.HISTORY_READ -> "正在读取历史消息：${arg(args, "message_id") ?: arg(args, "index") ?: "history"}"
+        HarnessTool.BUILD_SCRIPT -> "正在管理构建脚本：${arg(args, "action") ?: "build_script"}${arg(args, "name")?.let { " · $it" }.orEmpty()}"
         HarnessTool.SUBAGENT -> "正在派发并执行子智能体协同任务…"
         HarnessTool.MCP -> "正在调用 MCP 插件工具：${rawToolName ?: "mcp"}…"
     }

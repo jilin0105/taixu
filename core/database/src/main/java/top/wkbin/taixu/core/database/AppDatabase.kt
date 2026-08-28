@@ -33,8 +33,10 @@ import androidx.room.RoomDatabase
         HarnessUsageEntity::class,
         HarnessLaneResultEntity::class,
         AndroidAppEntity::class,
+        BuildScriptEntity::class,
+        ProjectBuildScriptBindingEntity::class,
     ],
-    version = 34,
+    version = 35,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -56,4 +58,5 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun quickPhraseDao(): QuickPhraseDao
     abstract fun harnessRuntimeDao(): HarnessRuntimeDao
     abstract fun androidAppDao(): AndroidAppDao
+    abstract fun buildScriptDao(): BuildScriptDao
 }

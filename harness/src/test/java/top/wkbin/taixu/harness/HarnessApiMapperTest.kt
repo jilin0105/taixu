@@ -57,6 +57,7 @@ class HarnessApiMapperTest {
         assertEquals(HarnessTool.BASE, HarnessApiMapper.toolByName("execute"))
         assertEquals(HarnessTool.SUBAGENT, HarnessApiMapper.toolByName("invoke_subagent"))
         assertEquals(HarnessTool.SUBAGENT, HarnessApiMapper.toolByName("subagent"))
+        assertEquals(HarnessTool.BUILD_SCRIPT, HarnessApiMapper.toolByName("build_script"))
         assertEquals(HarnessTool.MCP, HarnessApiMapper.toolByName("mcp__sqlite__read_query"))
         assertEquals(HarnessTool.BASE, HarnessApiMapper.toolByName("unknown_tool"))
     }

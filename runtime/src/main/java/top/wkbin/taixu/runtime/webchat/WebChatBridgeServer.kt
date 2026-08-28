@@ -2,34 +2,46 @@ package top.wkbin.taixu.runtime.webchat
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonArray
-import top.wkbin.taixu.core.common.logging.AppLogger
-import top.wkbin.taixu.core.database.HarnessSessionRepository
-import top.wkbin.taixu.core.database.AiModelRepository
-import top.wkbin.taixu.core.database.WorkspaceRepository
-import top.wkbin.taixu.core.datastore.SettingsDataStore
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
 import java.net.Inet4Address
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
-import java.util.UUID
+import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import top.wkbin.taixu.core.common.logging.AppLogger
+import top.wkbin.taixu.core.common.result.AppResult
+import top.wkbin.taixu.core.database.AiModelRepository
+import top.wkbin.taixu.core.database.HarnessSessionEntity
+import top.wkbin.taixu.core.database.HarnessSessionRepository
+import top.wkbin.taixu.core.database.WorkspaceRepository
+import top.wkbin.taixu.runtime.WorkspaceFileService
+import top.wkbin.taixu.runtime.WorkspaceManager
 
 const val DEFAULT_WEBCHAT_PORT = 8899
 
@@ -43,150 +55,85 @@ data class WebChatServerStatus(
     val accessUrl: String get() = "http://$localIp:$port"
 }
 
+/** LAN bridge for TaiXu's own Harness sessions and registered Linux workspaces. */
 @Singleton
 class WebChatBridgeServer @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val sessionDao: HarnessSessionRepository,
-    private val aiModelDao: AiModelRepository,
-    private val workspaceDao: WorkspaceRepository,
-    private val settingsDataStore: SettingsDataStore,
+    private val sessions: HarnessSessionRepository,
+    private val models: AiModelRepository,
+    private val workspaces: WorkspaceRepository,
+    private val workspaceManager: WorkspaceManager,
+    private val workspaceFiles: WorkspaceFileService,
+    private val agentGateway: WebChatAgentGateway,
     private val logger: AppLogger,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var httpServer: AndroidHttpServer? = null
     private val executor = Executors.newFixedThreadPool(8)
-    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
     private val _status = MutableStateFlow(WebChatServerStatus())
     val status: StateFlow<WebChatServerStatus> = _status.asStateFlow()
 
     private val sseEmitters = ConcurrentHashMap.newKeySet<AndroidHttpExchange>()
+    private val taskSessions = ConcurrentHashMap<String, String>()
+    private val sessionObservers = ConcurrentHashMap<String, Job>()
+    private var heartbeatJob: Job? = null
     private var wakeLock: android.os.PowerManager.WakeLock? = null
     private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
 
-    /**
-     * 启动局域网 WebChat HTTP/SSE 服务（默认手动开启，并进行进程与 Wi-Fi 保活）
-     */
     fun start(port: Int = DEFAULT_WEBCHAT_PORT, pin: String? = null): Boolean {
         if (_status.value.isRunning) return true
         return try {
             val generatedPin = pin ?: generatePin()
-            val server = AndroidHttpServer.create(InetSocketAddress(port), 0)
-            server.executor = executor
-
-            // 1. 静态资源路由（托管 assets/webchat 前端）
-            server.createContext("/", StaticAssetHandler())
-
-            // 2. API 路由
+            val server = AndroidHttpServer.create(InetSocketAddress(port), 0).also { it.executor = executor }
+            server.createContext("/webchat/api/session/bootstrap", SessionBootstrapHandler())
             server.createContext("/webchat/api/bootstrap", BootstrapHandler())
-            server.createContext("/api/bootstrap", BootstrapHandler())
             server.createContext("/webchat/api/conversations", ConversationsHandler())
-            server.createContext("/api/conversations", ConversationsHandler())
+            server.createContext("/webchat/api/tasks", TasksHandler())
             server.createContext("/webchat/api/events", SseEventsHandler())
-            server.createContext("/api/events", SseEventsHandler())
             server.createContext("/webchat/api/workspaces", WorkspacesHandler())
-            server.createContext("/api/workspaces", WorkspacesHandler())
-
+            server.createContext("/", StaticAssetHandler())
             server.start()
             httpServer = server
 
             val localIp = resolveLocalIp()
-            _status.value = WebChatServerStatus(
-                isRunning = true,
-                port = port,
-                localIp = localIp,
-                pinCode = generatedPin,
-            )
-
-            // 开启电源与 Wi-Fi 保活锁，并发送常驻通知
+            _status.value = WebChatServerStatus(true, port, localIp, generatedPin)
             acquireLocks()
             showNotification("http://$localIp:$port", generatedPin)
-
-            logger.i("WebChat 局域网协作服务启动成功：http://$localIp:$port (PIN: $generatedPin)")
+            heartbeatJob?.cancel()
+            heartbeatJob = scope.launch {
+                while (isActive) {
+                    delay(25_000)
+                    if (sseEmitters.isNotEmpty()) {
+                        broadcastEvent("ping", "{}")
+                    }
+                }
+            }
+            logger.i("太墟智枢 Web 协作服务启动成功：http://$localIp:$port")
             true
-        } catch (e: Exception) {
-            logger.e("WebChat 服务启动失败", e)
+        } catch (exception: Exception) {
+            logger.e("太墟智枢 Web 协作服务启动失败", exception)
             false
         }
     }
 
-    /**
-     * 停止局域网 WebChat 服务并释放所有保活资源
-     */
     fun stop() {
-        try {
+        runCatching {
+            heartbeatJob?.cancel()
+            heartbeatJob = null
             releaseLocks()
             hideNotification()
+            sessionObservers.values.forEach(Job::cancel)
+            sessionObservers.clear()
+            taskSessions.clear()
             sseEmitters.forEach { runCatching { it.close() } }
             sseEmitters.clear()
             httpServer?.stop(0)
             httpServer = null
-            _status.value = _status.value.copy(isRunning = false)
-            logger.i("WebChat 局域网协作服务已停止，已释放所有保活锁")
-        } catch (e: Exception) {
-            logger.e("WebChat 停止异常", e)
-        }
+            _status.value = _status.value.copy(isRunning = false, activeConnections = 0)
+        }.onFailure { logger.e("太墟智枢 Web 协作服务停止异常", it) }
     }
 
-    private fun acquireLocks() {
-        runCatching {
-            val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
-            wakeLock = pm?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "taixu:webchat_bridge_wake")?.apply {
-                setReferenceCounted(false)
-                acquire(24 * 60 * 60 * 1000L)
-            }
-            val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
-            wifiLock = wm?.createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "taixu:webchat_bridge_wifi")?.apply {
-                setReferenceCounted(false)
-                acquire()
-            }
-        }
-    }
-
-    private fun releaseLocks() {
-        runCatching {
-            wakeLock?.let { if (it.isHeld) it.release() }
-            wakeLock = null
-            wifiLock?.let { if (it.isHeld) it.release() }
-            wifiLock = null
-        }
-    }
-
-    private fun showNotification(url: String, pin: String) {
-        runCatching {
-            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager ?: return
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                val channel = android.app.NotificationChannel(
-                    NOTIFICATION_CHANNEL_ID,
-                    "太墟 WebChat 电脑大屏协作",
-                    android.app.NotificationManager.IMPORTANCE_LOW,
-                ).apply {
-                    description = "展示 WebChat 电脑大屏协作服务后台运行状态与连接地址"
-                    setShowBadge(false)
-                }
-                nm.createNotificationChannel(channel)
-            }
-            val notif = androidx.core.app.NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.stat_notify_sync)
-                .setContentTitle("太墟 WebChat 电脑大屏协作运行中")
-                .setContentText("$url (配对码: $pin)")
-                .setOngoing(true)
-                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
-                .build()
-            nm.notify(NOTIFICATION_ID, notif)
-        }
-    }
-
-    private fun hideNotification() {
-        runCatching {
-            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
-            nm?.cancel(NOTIFICATION_ID)
-        }
-    }
-
-    /**
-     * 向所有已连接的 Web 客户端广播实时事件
-     */
     fun broadcastEvent(eventName: String, dataJson: String) {
         val payload = "event: $eventName\ndata: $dataJson\n\n".toByteArray(Charsets.UTF_8)
         val iterator = sseEmitters.iterator()
@@ -203,199 +150,371 @@ class WebChatBridgeServer @Inject constructor(
         _status.value = _status.value.copy(activeConnections = sseEmitters.size)
     }
 
-    // ============================= HTTP Handlers =============================
-
-    /**
-     * 静态 Web 资源处理器：从 assets/webchat 加载 index.html 及 assets
-     */
     private inner class StaticAssetHandler : AndroidHttpHandler {
         override fun handle(exchange: AndroidHttpExchange) {
-            try {
-                val path = exchange.requestURI.path.removePrefix("/").trimStart('/')
-                val assetPath = if (path.isBlank() || !hasFileExtension(path)) {
-                    "webchat/index.html"
-                } else {
-                    "webchat/$path"
-                }
-
-                val stream: InputStream? = try {
-                    context.assets.open(assetPath)
-                } catch (_: Exception) {
-                    context.assets.open("webchat/index.html")
-                }
-
-                if (stream == null) {
-                    sendResponse(exchange, 404, "text/plain", "Asset Not Found".toByteArray())
+            val path = exchange.requestURI.path.removePrefix("/").trimStart('/')
+            val assetPath = if (path.isBlank() || !hasFileExtension(path)) "webchat/index.html" else "webchat/$path"
+            val stream: InputStream = runCatching { context.assets.open(assetPath) }.getOrElse {
+                if (hasFileExtension(path)) {
+                    sendText(exchange, 404, "资源不存在")
                     return
                 }
-
-                val mime = getMimeType(assetPath)
-                val bytes = stream.use { it.readBytes() }
-                sendResponse(exchange, 200, mime, bytes)
-            } catch (e: Exception) {
-                logger.e("StaticAssetHandler failed", e)
-                sendResponse(exchange, 500, "text/plain", (e.message ?: "Server Error").toByteArray())
+                context.assets.open("webchat/index.html")
             }
+            stream.use { sendResponse(exchange, 200, getMimeType(assetPath), it.readBytes()) }
         }
     }
 
-    /**
-     * Bootstrap 基础信息
-     */
+    private inner class SessionBootstrapHandler : AndroidHttpHandler {
+        override fun handle(exchange: AndroidHttpExchange) = scope.launch {
+            if (handlePreflight(exchange)) return@launch
+            val token = requestJson(exchange)["token"]?.jsonPrimitive?.content.orEmpty()
+            if (token != _status.value.pinCode) sendJson(exchange, 401, errorJson("配对码不正确"))
+            else sendJson(exchange, 200, buildJsonObject { put("authenticated", true) })
+        }.let { }
+    }
+
     private inner class BootstrapHandler : AndroidHttpHandler {
-        override fun handle(exchange: AndroidHttpExchange) {
-            scope.launch {
-                try {
-                    val tokenParam = getQueryParam(exchange, "token") ?: getHeader(exchange, "Authorization")?.removePrefix("Bearer ")
-                    val isAuthenticated = tokenParam.isNullOrBlank() || tokenParam == _status.value.pinCode
-
-                    val sessions = sessionDao.listAll()
-                    val models = aiModelDao.observeAll().first()
-
-                    val responseJson = buildJsonObject {
-                        put("authenticated", isAuthenticated)
-                        put("pinRequired", _status.value.pinCode.isNotBlank())
-                        put("token", _status.value.pinCode)
-                        put("appName", "太墟智枢 (TaiXu)")
-                        put("version", "1.0.0")
-                        putJsonArray("conversations") {
-                            sessions.forEach { s ->
-                                add(
-                                    buildJsonObject {
-                                        put("id", s.id)
-                                        put("title", s.title)
-                                        put("createdAt", s.createdAt)
-                                        put("updatedAt", s.updatedAt)
-                                        put("modelId", s.modelId ?: "")
-                                        put("workspace", s.workspace)
-                                    }
-                                )
-                            }
-                        }
-                        putJsonArray("models") {
-                            models.forEach { m ->
-                                add(
-                                    buildJsonObject {
-                                        put("id", m.id)
-                                        put("name", m.name)
-                                        put("provider", m.provider)
-                                        put("model", m.model)
-                                    }
-                                )
-                            }
-                        }
-                    }.toString()
-
-                    sendResponse(exchange, 200, "application/json; charset=utf-8", responseJson.toByteArray(Charsets.UTF_8))
-                } catch (e: Exception) {
-                    sendResponse(exchange, 500, "application/json", "{\"error\":\"${e.message}\"}".toByteArray())
-                }
-            }
-        }
-    }
-
-    /**
-     * 会话列表与创建
-     */
-    private inner class ConversationsHandler : AndroidHttpHandler {
-        override fun handle(exchange: AndroidHttpExchange) {
-            scope.launch {
-                try {
-                    when (exchange.requestMethod.uppercase()) {
-                        "GET" -> {
-                            val sessions = sessionDao.listAll()
-                            val arrayJson = buildJsonObject {
-                                putJsonArray("conversations") {
-                                    sessions.forEach { s ->
-                                        add(
-                                            buildJsonObject {
-                                                put("id", s.id)
-                                                put("title", s.title)
-                                                put("createdAt", s.createdAt)
-                                                put("updatedAt", s.updatedAt)
-                                                put("modelId", s.modelId ?: "")
-                                                put("workspace", s.workspace)
-                                            }
-                                        )
-                                    }
-                                }
-                            }.toString()
-                            sendResponse(exchange, 200, "application/json; charset=utf-8", arrayJson.toByteArray(Charsets.UTF_8))
-                        }
-                        "POST" -> {
-                            val body = exchange.requestBody.bufferedReader().readText()
-                            val newId = UUID.randomUUID().toString()
-                            val now = System.currentTimeMillis()
-                            val entity = top.wkbin.taixu.core.database.HarnessSessionEntity(
-                                id = newId,
-                                title = "新对话",
-                                createdAt = now,
-                                updatedAt = now,
-                                modelId = null,
-                            )
-                            sessionDao.upsert(entity)
-                            val resp = "{\"id\":\"$newId\",\"title\":\"新对话\",\"createdAt\":$now,\"updatedAt\":$now}"
-                            sendResponse(exchange, 200, "application/json; charset=utf-8", resp.toByteArray(Charsets.UTF_8))
-                        }
-                        else -> sendResponse(exchange, 405, "text/plain", "Method Not Allowed".toByteArray())
+        override fun handle(exchange: AndroidHttpExchange) = scope.launch {
+            if (handlePreflight(exchange)) return@launch
+            if (!requireAuthenticated(exchange)) return@launch
+            val configuredModels = models.observeAll().firstValue()
+            sendJson(exchange, 200, buildJsonObject {
+                put("authenticated", true)
+                put("appName", "太墟智枢")
+                put("version", "1.0")
+                putJsonArray("models") {
+                    configuredModels.forEach { model ->
+                        add(buildJsonObject {
+                            put("id", model.id)
+                            put("name", model.name)
+                            put("model", model.model)
+                            put("active", model.isActive)
+                        })
                     }
-                } catch (e: Exception) {
-                    sendResponse(exchange, 500, "application/json", "{\"error\":\"${e.message}\"}".toByteArray())
+                }
+                put("workspace", buildJsonObject {
+                    put("workspace", buildJsonObject { put("rootPath", "/workspace") })
+                    put("root", buildJsonObject { put("path", "/workspace") })
+                })
+            })
+        }.let { }
+    }
+
+    private inner class ConversationsHandler : AndroidHttpHandler {
+        override fun handle(exchange: AndroidHttpExchange) = scope.launch {
+            if (handlePreflight(exchange)) return@launch
+            if (!requireAuthenticated(exchange)) return@launch
+            try {
+                val suffix = exchange.requestURI.path.substringAfter("/conversations", "").trim('/')
+                val parts = suffix.split('/').filter(String::isNotBlank)
+                when {
+                    parts.isEmpty() && exchange.requestMethod == "GET" -> {
+                        sendJson(exchange, 200, buildJsonArray {
+                            sessions.listAll().sortedByDescending(HarnessSessionEntity::updatedAt).forEach { add(conversationJson(it)) }
+                        })
+                    }
+                    parts.isEmpty() && exchange.requestMethod == "POST" -> {
+                        val body = requestJson(exchange)
+                        val workspace = body["workspace"]?.jsonPrimitive?.content.orEmpty()
+                        val id = agentGateway.createSession(
+                            body["title"]?.jsonPrimitive?.content.orEmpty(),
+                            workspace.takeIf { isRegisteredWorkspacePath(it) }.orEmpty(),
+                        )
+                        val session = requireNotNull(sessions.findById(id))
+                        sendJson(exchange, 200, conversationJson(session))
+                        broadcastEvent("conversation_created", buildJsonObject { put("conversationId", id) }.toString())
+                    }
+                    parts.size == 1 && exchange.requestMethod == "DELETE" -> {
+                        val id = parts[0]
+                        requireNotNull(sessions.findById(id)) { "会话不存在" }
+                        agentGateway.deleteSession(id)
+                        sendJson(exchange, 200, buildJsonObject { put("deleted", true) })
+                        broadcastEvent("conversation_deleted", buildJsonObject { put("conversationId", id) }.toString())
+                    }
+                    parts.size == 2 && parts[1] == "messages" && exchange.requestMethod == "GET" -> {
+                        val id = parts[0]
+                        requireNotNull(sessions.findById(id)) { "会话不存在" }
+                        sendJson(exchange, 200, messageArray(agentGateway.messages(id)))
+                    }
+                    parts.size == 2 && parts[1] == "approvals" && exchange.requestMethod == "GET" -> {
+                        val id = parts[0]
+                        requireNotNull(sessions.findById(id)) { "会话不存在" }
+                        sendJson(exchange, 200, approvalArray(agentGateway.pendingApprovals(id)))
+                    }
+                    parts.size == 3 && parts[1] == "approvals" && exchange.requestMethod == "POST" -> {
+                        val sessionId = parts[0]
+                        requireNotNull(sessions.findById(sessionId)) { "会话不存在" }
+                        val body = requestJson(exchange)
+                        val approved = body["approved"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+                            ?: throw IllegalArgumentException("缺少审批决定")
+                        val accepted = agentGateway.resolveApproval(sessionId, parts[2], approved)
+                        require(accepted) { "审批请求不存在、已处理或不属于当前会话" }
+                        val taskId = taskSessions.entries.firstOrNull { it.value == sessionId }?.key
+                        sendJson(exchange, 200, buildJsonObject {
+                            put("accepted", true)
+                            taskId?.let { put("taskId", it) }
+                        })
+                    }
+                    parts.size == 2 && parts[1] == "runs" && exchange.requestMethod == "POST" -> {
+                        startRun(exchange, parts[0])
+                    }
+                    else -> sendText(exchange, 404, "接口不存在")
+                }
+            } catch (throwable: Throwable) {
+                sendJson(exchange, 400, errorJson(throwable.message ?: "会话操作失败"))
+            }
+        }.let { }
+    }
+
+    private suspend fun startRun(exchange: AndroidHttpExchange, sessionId: String) {
+        requireNotNull(sessions.findById(sessionId)) { "会话不存在" }
+        val body = requestJson(exchange)
+        val text = body["userMessage"]?.jsonPrimitive?.content.orEmpty()
+        val imageUrls = body["attachments"]?.jsonArray.orEmpty().mapNotNull { item ->
+            item.jsonObject["dataUrl"]?.jsonPrimitive?.content?.takeIf { it.startsWith("data:image/") }
+        }
+        require(text.isNotBlank() || imageUrls.isNotEmpty()) { "消息不能为空" }
+        val taskId = body["taskId"]?.jsonPrimitive?.content?.takeIf(String::isNotBlank)
+            ?: "web-${System.currentTimeMillis()}"
+        taskSessions[taskId] = sessionId
+        agentGateway.send(sessionId, text, imageUrls)
+        observeRun(sessionId, taskId)
+        sendJson(exchange, 200, buildJsonObject {
+            put("taskId", taskId)
+            put("conversationMode", "normal")
+            put("conversation", conversationJson(requireNotNull(sessions.findById(sessionId))))
+        })
+    }
+
+    private fun observeRun(sessionId: String, taskId: String) {
+        sessionObservers.remove(sessionId)?.cancel()
+        sessionObservers[sessionId] = scope.launch {
+            var observedRunning = false
+            var waitingEventSent = false
+            agentGateway.observeSession(sessionId).collect { snapshot ->
+                if (snapshot.running) {
+                    observedRunning = true
+                    waitingEventSent = false
+                }
+                broadcastEvent("messages_replaced", buildJsonObject {
+                    put("conversationId", sessionId)
+                    put("conversationMode", "normal")
+                    put("messages", messageArray(snapshot.messages))
+                }.toString())
+                if (snapshot.waitingApproval) {
+                    if (!waitingEventSent) {
+                        broadcastEvent("chat_task_event", taskEvent(taskId, "waiting_approval", sessionId, snapshot.approvals))
+                        waitingEventSent = true
+                    }
+                } else if (observedRunning && !snapshot.running) {
+                    broadcastEvent("chat_task_event", taskEvent(taskId, if (snapshot.error == null) "completed" else "error", sessionId))
+                    taskSessions.remove(taskId)
+                    cancel()
                 }
             }
         }
     }
 
-    /**
-     * SSE 实时事件流
-     */
+    private inner class TasksHandler : AndroidHttpHandler {
+        override fun handle(exchange: AndroidHttpExchange) = scope.launch {
+            if (handlePreflight(exchange)) return@launch
+            if (!requireAuthenticated(exchange)) return@launch
+            val suffix = exchange.requestURI.path.substringAfter("/tasks", "").trim('/')
+            val parts = suffix.split('/').filter(String::isNotBlank)
+            if (parts.size == 2 && parts[1] == "cancel" && exchange.requestMethod == "POST") {
+                val taskId = parts[0]
+                val sessionId = taskSessions.remove(taskId)
+                if (sessionId != null) agentGateway.cancel(sessionId)
+                sendJson(exchange, 200, buildJsonObject { put("cancelled", sessionId != null) })
+            } else {
+                sendText(exchange, 404, "任务接口不存在")
+            }
+        }.let { }
+    }
+
     private inner class SseEventsHandler : AndroidHttpHandler {
         override fun handle(exchange: AndroidHttpExchange) {
+            if (handlePreflight(exchange)) return
+            if (!isAuthenticated(exchange)) {
+                sendJson(exchange, 401, errorJson("请先配对"))
+                return
+            }
             exchange.responseHeaders.add("Content-Type", "text/event-stream")
             exchange.responseHeaders.add("Cache-Control", "no-cache")
             exchange.responseHeaders.add("Connection", "keep-alive")
-            exchange.responseHeaders.add("Access-Control-Allow-Origin", "*")
             exchange.sendResponseHeaders(200, 0)
             sseEmitters.add(exchange)
             _status.value = _status.value.copy(activeConnections = sseEmitters.size)
-            // 发送初始 ping 保活
-            val initData = "event: ping\ndata: {}\n\n".toByteArray(Charsets.UTF_8)
-            exchange.responseBody.write(initData)
+            exchange.responseBody.write("event: ping\ndata: {}\n\n".toByteArray())
             exchange.responseBody.flush()
         }
     }
 
-    /**
-     * 工作区文件管理
-     */
     private inner class WorkspacesHandler : AndroidHttpHandler {
-        override fun handle(exchange: AndroidHttpExchange) {
-            scope.launch {
-                try {
-                    val root = File("/data/data/${context.packageName}/files/workspaces")
-                    val items = root.walkTopDown().maxDepth(2).map { f ->
-                        buildJsonObject {
-                            put("name", f.name)
-                            put("path", f.relativeTo(root).path)
-                            put("isDirectory", f.isDirectory)
-                            put("size", f.length())
-                        }
-                    }.toList()
-
-                    val resp = buildJsonObject {
-                        putJsonArray("items") {
-                            items.forEach { add(it) }
-                        }
-                    }.toString()
-                    sendResponse(exchange, 200, "application/json; charset=utf-8", resp.toByteArray(Charsets.UTF_8))
-                } catch (e: Exception) {
-                    sendResponse(exchange, 500, "application/json", "{\"error\":\"${e.message}\"}".toByteArray())
+        override fun handle(exchange: AndroidHttpExchange) = scope.launch {
+            if (handlePreflight(exchange)) return@launch
+            if (!requireAuthenticated(exchange)) return@launch
+            try {
+                val suffix = exchange.requestURI.path.substringAfter("/workspaces", "").trim('/')
+                when {
+                    suffix.isEmpty() && exchange.requestMethod == "GET" -> listWorkspace(exchange)
+                    suffix == "file" && exchange.requestMethod == "GET" -> readWorkspaceFile(exchange)
+                    suffix == "file" && exchange.requestMethod == "PUT" -> writeWorkspaceFile(exchange)
+                    suffix == "download" && exchange.requestMethod == "GET" -> downloadWorkspaceFile(exchange)
+                    else -> sendText(exchange, 404, "工作区接口不存在")
                 }
+            } catch (throwable: Throwable) {
+                sendJson(exchange, 400, errorJson(throwable.message ?: "工作区操作失败"))
             }
-        }
+        }.let { }
     }
 
-    // ============================= 辅助方法 =============================
+    private suspend fun listWorkspace(exchange: AndroidHttpExchange) {
+        val path = getQueryParam(exchange, "path").orEmpty().ifBlank { "/workspace" }
+        if (path.trimEnd('/') == "/workspace") {
+            val projects = workspaceManager.listProjects()
+            sendJson(exchange, 200, buildJsonObject {
+                put("path", "/workspace")
+                putJsonArray("items") {
+                    projects.forEach { project ->
+                        add(buildJsonObject {
+                            put("name", project.name)
+                            put("path", project.linuxPath)
+                            put("isDirectory", true)
+                            put("size", project.sizeBytes)
+                        })
+                    }
+                }
+            })
+            return
+        }
+        val (project, relative) = parseWorkspacePath(path)
+        val items = workspaceFiles.listFiles(project, relative).orThrow()
+        sendJson(exchange, 200, buildJsonObject {
+            put("path", workspacePath(project, relative))
+            putJsonArray("items") {
+                items.forEach { item ->
+                    add(buildJsonObject {
+                        put("name", item.name)
+                        put("path", workspacePath(project, item.relativePath))
+                        put("isDirectory", item.isDirectory)
+                        put("size", item.sizeBytes)
+                    })
+                }
+            }
+        })
+    }
+
+    private suspend fun readWorkspaceFile(exchange: AndroidHttpExchange) {
+        val (project, relative) = parseWorkspacePath(requireNotNull(getQueryParam(exchange, "path")))
+        sendJson(exchange, 200, buildJsonObject {
+            put("content", workspaceFiles.readFile(project, relative).orThrow())
+        })
+    }
+
+    private suspend fun writeWorkspaceFile(exchange: AndroidHttpExchange) {
+        val body = requestJson(exchange)
+        val (project, relative) = parseWorkspacePath(body["path"]?.jsonPrimitive?.content.orEmpty())
+        workspaceFiles.writeFile(project, relative, body["content"]?.jsonPrimitive?.content.orEmpty()).orThrow()
+        sendJson(exchange, 200, buildJsonObject { put("saved", true) })
+        broadcastEvent("workspace_changed", buildJsonObject { put("path", workspacePath(project, relative)) }.toString())
+    }
+
+    private suspend fun downloadWorkspaceFile(exchange: AndroidHttpExchange) {
+        val (project, relative) = parseWorkspacePath(requireNotNull(getQueryParam(exchange, "path")))
+        val entity = requireNotNull(workspaces.findByName(project)) { "工作区不存在" }
+        val root = File(entity.path).canonicalFile
+        val file = File(root, relative).canonicalFile
+        require(file.isFile && (file == root || file.path.startsWith(root.path + File.separator))) { "文件路径无效" }
+        exchange.responseHeaders.add("Content-Disposition", "attachment; filename=\"${file.name.replace("\"", "")}\"")
+        sendResponse(exchange, 200, "application/octet-stream", file.readBytes())
+    }
+
+    private fun conversationJson(session: HarnessSessionEntity) = buildJsonObject {
+        put("id", session.id)
+        put("title", session.title)
+        put("mode", "normal")
+        put("createdAt", session.createdAt)
+        put("updatedAt", session.updatedAt)
+        put("workspace", session.workspace)
+    }
+
+    private fun messageArray(messages: List<WebChatMessage>) = buildJsonArray {
+        messages.forEach { add(json.encodeToJsonElement(WebChatMessage.serializer(), it)) }
+    }
+
+    private fun approvalArray(approvals: List<WebChatApproval>) = buildJsonArray {
+        approvals.forEach { add(json.encodeToJsonElement(WebChatApproval.serializer(), it)) }
+    }
+
+    private fun taskEvent(
+        taskId: String,
+        kind: String,
+        sessionId: String,
+        approvals: List<WebChatApproval> = emptyList(),
+    ) = buildJsonObject {
+        put("taskId", taskId)
+        put("kind", kind)
+        put("conversationId", sessionId)
+        if (approvals.isNotEmpty()) put("approvals", approvalArray(approvals))
+    }.toString()
+
+    private fun requestJson(exchange: AndroidHttpExchange): JsonObject {
+        val raw = exchange.requestBody.bufferedReader().readText()
+        return if (raw.isBlank()) JsonObject(emptyMap()) else json.parseToJsonElement(raw).jsonObject
+    }
+
+    private fun handlePreflight(exchange: AndroidHttpExchange): Boolean {
+        if (exchange.requestMethod.equals("OPTIONS", ignoreCase = true)) {
+            sendResponse(exchange, 204, "text/plain", ByteArray(0))
+            return true
+        }
+        return false
+    }
+
+    private fun isAuthenticated(exchange: AndroidHttpExchange): Boolean {
+        val token = getQueryParam(exchange, "token")
+            ?: exchange.requestHeaders.getFirst("Authorization")?.removePrefix("Bearer ")
+        return token != null && token == _status.value.pinCode
+    }
+
+    private fun requireAuthenticated(exchange: AndroidHttpExchange): Boolean {
+        if (isAuthenticated(exchange)) return true
+        sendJson(exchange, 401, errorJson("请先使用配对码连接"))
+        return false
+    }
+
+    private fun parseWorkspacePath(path: String): Pair<String, String> {
+        val normalized = path.replace('\\', '/').trim().removeSuffix("/")
+        require(normalized.startsWith("/workspace/")) { "仅允许访问已注册的 /workspace 工程" }
+        val tail = normalized.removePrefix("/workspace/")
+        val project = tail.substringBefore('/')
+        val relative = tail.substringAfter('/', "")
+        require(project.isNotBlank() && relative.split('/').none { it == ".." }) { "工作区路径无效" }
+        return project to relative
+    }
+
+    private suspend fun isRegisteredWorkspacePath(path: String): Boolean = runCatching {
+        val (project, _) = parseWorkspacePath(path)
+        workspaces.findByName(project) != null
+    }.getOrDefault(false)
+
+    private fun workspacePath(project: String, relative: String): String =
+        "/workspace/$project" + relative.trim('/').takeIf(String::isNotEmpty)?.let { "/$it" }.orEmpty()
+
+    private fun <T> AppResult<T>.orThrow(): T = when (this) {
+        is AppResult.Success -> data
+        is AppResult.Failure -> throw IllegalArgumentException(error.message)
+    }
+
+    private fun errorJson(message: String) = buildJsonObject { put("error", message) }
+
+    private fun sendJson(exchange: AndroidHttpExchange, code: Int, payload: kotlinx.serialization.json.JsonElement) =
+        sendResponse(exchange, code, "application/json; charset=utf-8", payload.toString().toByteArray())
+
+    private fun sendText(exchange: AndroidHttpExchange, code: Int, text: String) =
+        sendResponse(exchange, code, "text/plain; charset=utf-8", text.toByteArray())
 
     private fun sendResponse(exchange: AndroidHttpExchange, code: Int, contentType: String, bytes: ByteArray) {
         exchange.responseHeaders.add("Content-Type", contentType)
@@ -403,8 +522,63 @@ class WebChatBridgeServer @Inject constructor(
         exchange.responseHeaders.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
         exchange.responseHeaders.add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         exchange.sendResponseHeaders(code, bytes.size.toLong())
-        exchange.responseBody.write(bytes)
-        exchange.responseBody.close()
+        if (bytes.isNotEmpty()) exchange.responseBody.write(bytes)
+        exchange.close()
+    }
+
+    private fun getQueryParam(exchange: AndroidHttpExchange, key: String): String? {
+        val raw = exchange.requestURI.query.orEmpty().split('&').firstOrNull { it.substringBefore('=') == key }
+            ?.substringAfter('=', "") ?: return null
+        return URLDecoder.decode(raw, Charsets.UTF_8.name())
+    }
+
+    private suspend fun <T> kotlinx.coroutines.flow.Flow<T>.firstValue(): T = first()
+
+    private fun acquireLocks() {
+        val power = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+        wakeLock = power?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "taixu:webchat_bridge_wake")?.apply {
+            setReferenceCounted(false)
+            acquire(24 * 60 * 60 * 1000L)
+        }
+        val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+        wifiLock = wifi?.createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "taixu:webchat_bridge_wifi")?.apply {
+            setReferenceCounted(false)
+            acquire()
+        }
+    }
+
+    private fun releaseLocks() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
+        wifiLock?.let { if (it.isHeld) it.release() }
+        wifiLock = null
+    }
+
+    private fun showNotification(url: String, pin: String) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager ?: return
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(
+                android.app.NotificationChannel(
+                    NOTIFICATION_CHANNEL_ID,
+                    "太墟智枢 Web 协作台",
+                    android.app.NotificationManager.IMPORTANCE_LOW,
+                ).apply { description = "太墟智枢局域网协作服务"; setShowBadge(false) },
+            )
+        }
+        manager.notify(
+            NOTIFICATION_ID,
+            androidx.core.app.NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_notify_sync)
+                .setContentTitle("太墟智枢 Web 协作台运行中")
+                .setContentText("$url（配对码：$pin）")
+                .setOngoing(true)
+                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
+                .build(),
+        )
+    }
+
+    private fun hideNotification() {
+        (context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager)?.cancel(NOTIFICATION_ID)
     }
 
     private fun getMimeType(path: String): String = when {
@@ -414,51 +588,33 @@ class WebChatBridgeServer @Inject constructor(
         path.endsWith(".json") -> "application/json; charset=utf-8"
         path.endsWith(".svg") -> "image/svg+xml"
         path.endsWith(".png") -> "image/png"
-        path.endsWith(".ico") -> "image/x-icon"
         else -> "application/octet-stream"
     }
 
     private fun hasFileExtension(path: String): Boolean = path.substringAfterLast('/', "").contains('.')
-
-    private fun getQueryParam(exchange: AndroidHttpExchange, key: String): String? {
-        val query = exchange.requestURI.query ?: return null
-        return query.split('&')
-            .map { it.split('=') }
-            .firstOrNull { it.size == 2 && it[0] == key }
-            ?.get(1)
-    }
-
-    private fun getHeader(exchange: AndroidHttpExchange, key: String): String? = exchange.requestHeaders.getFirst(key)
-
     private fun generatePin(): String = (100000..999999).random().toString()
 
-    private fun resolveLocalIp(): String {
-        return try {
-            val interfaces = NetworkInterface.getNetworkInterfaces()
-            var fallback = "127.0.0.1"
-            while (interfaces.hasMoreElements()) {
-                val iface = interfaces.nextElement()
-                if (iface.isLoopback || !iface.isUp) continue
-                val addresses = iface.inetAddresses
-                while (addresses.hasMoreElements()) {
-                    val addr = addresses.nextElement()
-                    if (addr is Inet4Address && !addr.isLoopbackAddress) {
-                        val host = addr.hostAddress.orEmpty()
-                        if (host.startsWith("192.168.") || host.startsWith("10.") || host.startsWith("172.")) {
-                            return host
-                        }
-                        fallback = host
-                    }
+    private fun resolveLocalIp(): String = runCatching {
+        var fallback = "127.0.0.1"
+        val interfaces = NetworkInterface.getNetworkInterfaces()
+        while (interfaces.hasMoreElements()) {
+            val network = interfaces.nextElement()
+            if (network.isLoopback || !network.isUp) continue
+            val addresses = network.inetAddresses
+            while (addresses.hasMoreElements()) {
+                val address = addresses.nextElement()
+                if (address is Inet4Address && !address.isLoopbackAddress) {
+                    val host = address.hostAddress.orEmpty()
+                    if (host.startsWith("192.168.") || host.startsWith("10.") || host.startsWith("172.")) return@runCatching host
+                    fallback = host
                 }
             }
-            fallback
-        } catch (_: Exception) {
-            "127.0.0.1"
         }
-    }
+        fallback
+    }.getOrDefault("127.0.0.1")
 
     companion object {
-        const val DEFAULT_PORT = 8899
+        const val DEFAULT_PORT = DEFAULT_WEBCHAT_PORT
         const val NOTIFICATION_CHANNEL_ID = "taixu_webchat_bridge"
         const val NOTIFICATION_ID = 8899
     }

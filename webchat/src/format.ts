@@ -142,23 +142,6 @@ export function markdownToHtml(value: unknown): string {
   }).join("");
 }
 
-export function modeLabel(mode?: string, agentId?: string): string {
-  if (mode === "codex") {
-    return ({
-      "codex-acp": "Codex",
-      "claude-code-acp": "Claude Code",
-      "opencode-acp": "OpenCode",
-      "deepseek-harness-acp": "DeepSeek Harness",
-    } as Record<string, string>)[agentId ?? ""] ?? "Agent";
-  }
-  return ({
-    normal: "小万",
-    chat_only: "纯聊天",
-    openclaw: "OpenClaw",
-    subagent: "SubAgent",
-  } as Record<string, string>)[mode ?? "normal"] ?? "普通";
-}
-
 export function relativeDate(raw?: number): string {
   const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0) return "";
@@ -171,7 +154,7 @@ export function relativeDate(raw?: number): string {
 }
 
 export function conversationKey(conversation: Conversation | null | undefined): string {
-  return `${conversation?.mode ?? "normal"}:${Number(conversation?.id ?? 0)}`;
+  return `${conversation?.mode ?? "normal"}:${String(conversation?.id ?? "")}`;
 }
 
 export function messageTime(message: ChatMessage): number {

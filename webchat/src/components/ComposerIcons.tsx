@@ -4,7 +4,7 @@ interface ComposerIconProps {
   className?: string;
 }
 
-/** 与 Flutter assets/home/input_attachment_cross_icon.svg 保持一致。 */
+/** 太墟附件按钮图标。 */
 export function ComposerAttachmentIcon({ className }: ComposerIconProps) {
   return (
     <svg
@@ -39,7 +39,7 @@ function DarkSendArrow(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 保留 Flutter send_icon.svg 路径，并放大到与附件十字图标接近的视觉尺寸。 */
+/** 太墟发送按钮图标。 */
 export function ComposerSendIcon({ className }: ComposerIconProps) {
   return (
     <span aria-hidden="true" className={`composer-action-visual${className ? ` ${className}` : ""}`}>
@@ -79,7 +79,7 @@ export function ComposerSendIcon({ className }: ComposerIconProps) {
   );
 }
 
-/** 保留 Flutter input_pause_icon.svg 路径，并放大到与附件十字图标接近的视觉尺寸。 */
+/** 太墟停止按钮图标。 */
 export function ComposerStopIcon({ className }: ComposerIconProps) {
   return (
     <span aria-hidden="true" className={`composer-action-visual stop${className ? ` ${className}` : ""}`}>

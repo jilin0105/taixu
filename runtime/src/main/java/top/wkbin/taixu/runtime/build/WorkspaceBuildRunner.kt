@@ -13,6 +13,7 @@ import top.wkbin.taixu.runtime.WorkspaceProject
 import top.wkbin.taixu.runtime.bridge.adb.EmbeddedAdbManager
 import top.wkbin.taixu.runtime.shell.ShellCommand
 import top.wkbin.taixu.core.datastore.RuntimePreferences
+import top.wkbin.taixu.core.database.BuildScriptRepository
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -132,6 +133,7 @@ class WorkspaceBuildRunner @Inject constructor(
     private val assetSynchronizer: top.wkbin.taixu.runtime.scripts.RuntimeAssetSynchronizer,
     private val runtimePreferences: RuntimePreferences,
     private val workshopPreferences: top.wkbin.taixu.core.datastore.WorkshopPreferences,
+    private val buildScriptRepository: BuildScriptRepository,
     private val signingManager: WorkshopSigningManager,
     private val logger: AppLogger,
 ) {
@@ -176,13 +178,20 @@ class WorkspaceBuildRunner @Inject constructor(
         runCatching {
             assetSynchronizer.syncAssetsToDistro(linuxRuntime.activeDistroId.value)
         }
-        val workshopAndroidScript = workshopPreferences.androidScript.first()
-        val workshopFlutterScript = workshopPreferences.flutterScript.first()
+        val boundScript = buildScriptRepository.resolvedScript(project.name)
+            ?.takeIf { it.projectType == project.projectType.name }
+        val workshopAndroidScript = boundScript?.content
+            ?: workshopPreferences.androidScript.first()
+        val workshopFlutterScript = boundScript?.content
+            ?: workshopPreferences.flutterScript.first()
+        val boundFileName = boundScript?.id
+            ?.replace(Regex("[^A-Za-z0-9._-]"), "-")
+            ?.let { "workshop-managed-$it.sh" }
         val androidScriptPath = workshopAndroidScript.takeIf { it.isNotBlank() }?.let {
-            runCatching { assetSynchronizer.syncWorkshopScript(linuxRuntime.activeDistroId.value, "workshop-build-android.sh", it) }.getOrNull()
+            runCatching { assetSynchronizer.syncWorkshopScript(linuxRuntime.activeDistroId.value, boundFileName ?: "workshop-build-android.sh", it) }.getOrNull()
         } ?: "/opt/taixu/scripts/taixu-build.sh"
         val flutterScriptPath = workshopFlutterScript.takeIf { it.isNotBlank() }?.let {
-            runCatching { assetSynchronizer.syncWorkshopScript(linuxRuntime.activeDistroId.value, "workshop-build-flutter.sh", it) }.getOrNull()
+            runCatching { assetSynchronizer.syncWorkshopScript(linuxRuntime.activeDistroId.value, boundFileName ?: "workshop-build-flutter.sh", it) }.getOrNull()
         } ?: "/opt/taixu/scripts/taixu-build.sh"
         val isRelease = buildType == WorkshopBuildType.RELEASE
         val androidTask = if (isRelease) "assembleRelease" else "assembleDebug"

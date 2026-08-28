@@ -59,3 +59,12 @@ val MIGRATION_33_34 = object : Migration(33, 34) {
         db.execSQL("""CREATE TABLE IF NOT EXISTS android_apps (packageName TEXT NOT NULL PRIMARY KEY, label TEXT NOT NULL, uid INTEGER NOT NULL, apkPath TEXT NOT NULL, isSystemApp INTEGER NOT NULL, isEnabled INTEGER NOT NULL, isSuspended INTEGER NOT NULL, isNetworkRestricted INTEGER NOT NULL, lastSyncedAt INTEGER NOT NULL)""")
     }
 }
+
+/** Reusable workshop scripts and explicit per-project script selection. */
+val MIGRATION_34_35 = object : Migration(34, 35) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("""CREATE TABLE IF NOT EXISTS build_scripts (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', projectType TEXT NOT NULL, content TEXT NOT NULL, isBuiltin INTEGER NOT NULL DEFAULT 0, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL)""")
+        db.execSQL("""CREATE TABLE IF NOT EXISTS project_build_script_bindings (projectName TEXT NOT NULL PRIMARY KEY, scriptId TEXT NOT NULL, updatedAt INTEGER NOT NULL)""")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_project_build_script_bindings_scriptId ON project_build_script_bindings(scriptId)")
+    }
+}

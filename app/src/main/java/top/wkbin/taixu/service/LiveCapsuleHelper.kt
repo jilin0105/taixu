@@ -59,7 +59,7 @@ object LiveCapsuleHelper {
             .setSummaryText(formattedStatus)
 
         val builder = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(R.drawable.taixu_logo)
+            .setSmallIcon(R.drawable.taixu_notification)
             .setContentTitle(shortTitle)
             .setContentText(contentText)
             .setSubText(formattedStatus)
@@ -75,7 +75,7 @@ object LiveCapsuleHelper {
             .setProgress(0, 0, true) // 不确定进度条（触发胶囊呼吸/旋转环动效）
             .addAction(
                 NotificationCompat.Action(
-                    R.drawable.taixu_logo,
+                    R.drawable.taixu_notification,
                     context.getString(R.string.taixu_notification_stop),
                     stopPendingIntent,
                 ),
@@ -122,7 +122,7 @@ object LiveCapsuleHelper {
             .setSummaryText("✅ 任务完成")
 
         val builder = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(R.drawable.taixu_logo)
+            .setSmallIcon(R.drawable.taixu_notification)
             .setContentTitle(completedTitle)
             .setContentText(completedText)
             .setStyle(bigTextStyle)
@@ -288,7 +288,7 @@ object LiveCapsuleHelper {
                 put("status", statusText)
                 put("title", title)
                 put("capsule", org.json.JSONObject().apply {
-                    put("icon", "taixu_logo")
+                    put("icon", "taixu_notification")
                     put("text", statusText)
                 })
             }
@@ -307,7 +307,7 @@ object LiveCapsuleHelper {
                 put("capsule", org.json.JSONObject().apply {
                     put("title", title)
                     put("status", statusText)
-                    put("icon", "taixu_logo")
+                    put("icon", "taixu_notification")
                 })
                 put("card", org.json.JSONObject().apply {
                     put("title", title)

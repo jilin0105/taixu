@@ -19,6 +19,7 @@ enum class HarnessTool {
     @SerialName("scratchpad") SCRATCHPAD,
     @SerialName("history_search") HISTORY_SEARCH,
     @SerialName("history_read") HISTORY_READ,
+    @SerialName("build_script") BUILD_SCRIPT,
     @SerialName("invoke_subagent") SUBAGENT,
     @SerialName("mcp") MCP,
 }

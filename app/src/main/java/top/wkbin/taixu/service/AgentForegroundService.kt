@@ -266,7 +266,7 @@ class AgentForegroundService : Service() {
         )
         val remoteInput = RemoteInput.Builder(KEY_REPLY).setLabel(getString(R.string.taixu_notification_reply_to, title)).build()
         val replyAction = NotificationCompat.Action.Builder(
-            R.drawable.taixu_logo,
+            R.drawable.taixu_notification,
             getString(R.string.taixu_notification_reply),
             replyPending,
         ).addRemoteInput(remoteInput).build()

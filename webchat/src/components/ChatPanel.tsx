@@ -6,10 +6,9 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
-import { agentAvatarUrl, isRecord } from "../api";
+import { isRecord } from "../api";
 import { formatBytes, markdownToHtml, messageContent, messageTime } from "../format";
-import { buildRunTimeline } from "../runTimeline";
-import type { Attachment, ChatMessage, Conversation } from "../types";
+import type { ApprovalRequest, Attachment, ChatMessage, Conversation } from "../types";
 import {
   ComposerAttachmentIcon,
   ComposerSendIcon,
@@ -20,15 +19,15 @@ import { Icon } from "./Icon";
 interface ChatPanelProps {
   conversation: Conversation | null;
   messages: ChatMessage[];
+  approvals: ApprovalRequest[];
   globalError: string;
   sending: boolean;
   activeTaskId: string | null;
-  clarifyTaskId: string | null;
   onOpenConversations: () => void;
-  onArchive: () => void;
   onDelete: () => void;
   onSend: (text: string, attachments: Attachment[]) => Promise<boolean>;
   onCancel: () => void;
+  onResolveApproval: (requestId: string, approved: boolean) => void;
   onClearError: () => void;
   onAttachmentError: (error: unknown) => void;
 }
@@ -37,40 +36,7 @@ const GREETING_WORDS = ["聊天", "执行", "构建", "探索", "规划", "总�
 const WORD_ROTATE_INTERVAL = 1800;
 const WORD_SPIN_DURATION = 460;
 
-function formatThinkTime(seconds: number): string {
-  if (seconds < 60) return `${seconds}秒`;
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}分${s}秒`;
-}
-
-function formatRunTime(seconds: number): string {
-  if (seconds < 1) return "";
-  if (seconds < 60) return `${seconds}s`;
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  if (m < 60) return s > 0 ? `${m}m ${s}s` : `${m}m`;
-  const h = Math.floor(m / 60);
-  const rm = m % 60;
-  return rm > 0 ? `${h}h ${rm}m` : `${h}h`;
-}
-
-function useElapsedTime(start: number, end: number, active: boolean): number {
-  const [elapsed, setElapsed] = useState(() => {
-    if (!start) return 0;
-    return Math.max(0, Math.round(((end > 0 ? end : Date.now()) - start) / 1000));
-  });
-  useEffect(() => {
-    if (!active || !start) return undefined;
-    const update = () => setElapsed(Math.max(0, Math.round((Date.now() - start) / 1000)));
-    update();
-    const timer = window.setInterval(update, 1000);
-    return () => window.clearInterval(timer);
-  }, [active, start]);
-  return elapsed;
-}
-
-/** 复刻 Flutter _SlotWordRotator: 随机初始词, 每 1800ms 随机换词, 460ms 上滑+淡入淡出 */
+/** 轮播展示智枢与太墟运行时紧密相关的核心能力。 */
 function SlotWordRotator({ words }: { words: string[] }) {
   const [current, setCurrent] = useState(() => Math.floor(Math.random() * words.length));
   const [previous, setPrevious] = useState<number | null>(null);
@@ -112,28 +78,10 @@ function EmptyGreeting() {
   return (
     <div className="empty-state">
       <div className="empty-greeting">
-        <p>你好👋，我是小万</p>
-        <p>我可以帮助你 <SlotWordRotator words={GREETING_WORDS} /></p>
+        <p>你好👋，这里是太墟智枢</p>
+        <p>可以与你一起 <SlotWordRotator words={GREETING_WORDS} /></p>
       </div>
     </div>
-  );
-}
-
-function AgentAvatar({ className }: { className: string }) {
-  const [failed, setFailed] = useState(false);
-  return (
-    <span className={className}>
-      {failed ? (
-        <Icon name="agent" size={16} />
-      ) : (
-        <img
-          alt=""
-          draggable={false}
-          src={agentAvatarUrl()}
-          onError={() => setFailed(true)}
-        />
-      )}
-    </span>
   );
 }
 
@@ -188,86 +136,6 @@ function MessageAttachments({ attachments }: { attachments: Record<string, unkno
   );
 }
 
-/** 深度思考卡 —— 带计时文案 (正在思考/思考完成 + 用时Xs) + shimmer + 可选头像 */
-function DeepThinkingMessage({
-  card,
-  classes,
-  active = false,
-  showAvatar = true,
-}: {
-  card: Record<string, unknown>;
-  classes: string;
-  active?: boolean;
-  showAvatar?: boolean;
-}) {
-  const startTime = Number(card.startTime ?? 0);
-  const endTime = Number(card.endTime ?? 0);
-  const stage = Number(card.stage ?? 0);
-  const stageCompleted = stage === 4 || stage === 5;
-  const completed = stageCompleted && !active;
-  const loading = active || (
-    !stageCompleted
-    && (card.isLoading === true || stage === 0 || (stage > 0 && stage < 4))
-  );
-  const thinkingText = String(card.thinkingContent ?? "").trim();
-  const thinkingBodyRef = useRef<HTMLDivElement>(null);
-  const [expanded, setExpanded] = useState(loading);
-  const elapsed = useElapsedTime(startTime, loading ? 0 : endTime, loading);
-  const timeLabel = elapsed > 0 ? formatThinkTime(elapsed) : "";
-  const title = loading ? "正在思考" : "思考完成";
-  const label = timeLabel ? `${title} (用时${timeLabel})` : title;
-
-  useEffect(() => {
-    if (loading) {
-      setExpanded(true);
-    } else if (completed) {
-      setExpanded(false);
-    }
-  }, [completed, loading]);
-
-  useEffect(() => {
-    const body = thinkingBodyRef.current;
-    if (loading && body) body.scrollTop = body.scrollHeight;
-  }, [loading, thinkingText]);
-
-  return (
-    <article className={classes}>
-      <div className="message-content">
-        <details
-          className={`message-reasoning${loading ? " streaming" : ""}`}
-          open={expanded}
-          onToggle={(event) => {
-            const nextExpanded = event.currentTarget.open;
-            if (loading && !nextExpanded) {
-              event.currentTarget.open = true;
-              return;
-            }
-            setExpanded(nextExpanded);
-          }}
-        >
-          <summary>
-            {showAvatar && <AgentAvatar className="reasoning-avatar" />}
-            <span className="reasoning-toggle-label">
-              <span className="reasoning-label">{label}</span>
-              <Icon className="reasoning-chevron" name="chevron-down" size={16} />
-            </span>
-          </summary>
-          {loading && !thinkingText && (
-            <span className="thinking-dots" role="status" aria-label="正在思考">
-              <span /><span /><span />
-            </span>
-          )}
-          {thinkingText && (
-            <div className="reasoning-body" aria-live="polite" ref={thinkingBodyRef}>
-              <div className="message-text" dangerouslySetInnerHTML={{ __html: markdownToHtml(thinkingText) }} />
-            </div>
-          )}
-        </details>
-      </div>
-    </article>
-  );
-}
-
 function statusLabel(status: unknown): string {
   return ({
     running: "运行中",
@@ -293,19 +161,18 @@ function statusClass(status: unknown): string {
 function toolTypeLabel(card: Record<string, unknown>): string {
   const raw = `${String(card.toolType ?? "")} ${String(card.type ?? "")}`.toLowerCase();
   if (/terminal|shell|command|process/.test(raw)) return "终端";
-  if (/browser|web|navigate/.test(raw)) return "浏览器";
+  if (/browser|web|navigate/.test(raw)) return "网络工具";
   if (/search/.test(raw)) return "搜索";
   if (/file|read|write|edit/.test(raw)) return "文件";
-  if (/subagent/.test(raw)) return "SubAgent";
+  if (/subagent/.test(raw)) return "协同智能体";
   if (/mcp/.test(raw)) return "MCP";
-  if (/codex/.test(raw)) return "Codex";
   return "工具";
 }
 
-function toolIcon(card: Record<string, unknown>): "terminal" | "browser" | "search" | "file" | "agent" | "workspace" {
+function toolIcon(card: Record<string, unknown>): "terminal" | "search" | "file" | "agent" | "workspace" {
   const raw = `${String(card.toolType ?? "")} ${String(card.type ?? "")}`.toLowerCase();
   if (/terminal|shell|command|process/.test(raw)) return "terminal";
-  if (/browser|web|navigate/.test(raw)) return "browser";
+  if (/browser|web|navigate/.test(raw)) return "search";
   if (/search/.test(raw)) return "search";
   if (/file|read|write|edit/.test(raw)) return "file";
   if (/subagent|agent|mcp/.test(raw)) return "agent";
@@ -315,13 +182,9 @@ function toolIcon(card: Record<string, unknown>): "terminal" | "browser" | "sear
 function Message({
   message,
   active = false,
-  suppressReasoning = false,
-  suppressThinkingAvatar = false,
 }: {
   message: ChatMessage;
   active?: boolean;
-  suppressReasoning?: boolean;
-  suppressThinkingAvatar?: boolean;
 }) {
   const content = messageContent(message);
   const isUser = Number(message.user) === 1;
@@ -333,21 +196,8 @@ function Message({
   const reasoning = String(message.reasoning_content ?? message.reasoningContent ?? "").trim();
   const classes = `message-row ${isUser ? "user" : "assistant"}${message.isError ? " error" : ""}`;
   const isCard = Number(message.type) === 2 || rawCard;
-  const cardType = String(card.type ?? "");
 
-  // 深度思考卡 → 可折叠思考块 (不要作为工具卡显示)
-  if (isCard && cardType === "deep_thinking") {
-    return (
-      <DeepThinkingMessage
-        card={card}
-        classes={classes}
-        active={active}
-        showAvatar={!suppressThinkingAvatar}
-      />
-    );
-  }
-
-  // 工具调用卡 (agent_tool_summary 及其他卡片类型)
+  // 太墟 Harness 的工具调用、工具结果与能力事件。
   if (isCard) {
     const title = card.toolTitle ?? card.toolName ?? card.displayName ?? card.title ?? card.toolType ?? "工具运行";
     const status = card.status ?? (message.isLoading ? "running" : "completed");
@@ -380,7 +230,7 @@ function Message({
   return (
     <article className={classes}>
       <div className="message-content">
-        {reasoning && !suppressReasoning && (
+        {reasoning && (
           <details className={`message-reasoning${reasoningStreaming ? " streaming" : ""}`} open={reasoningStreaming}>
             <summary>
               <span className="reasoning-toggle-label">
@@ -411,297 +261,18 @@ function Message({
   );
 }
 
-/* ---------------------------------------------------------------------------
- * Agent 运行分组折叠 (复刻 agent_run_timeline.dart / agent_run_group_message.dart)
- * 同一 parentTaskId 的思考、工具和中间文本共享一个折叠头，最终回复常驻显示。
- * ------------------------------------------------------------------------- */
-
-interface RunGroup {
-  taskId: string;
-  processMessages: ChatMessage[];
-  visibleMessages: ChatMessage[];
-  startTime: number;
-  endTime: number;
-  active: boolean;
-  hasThinking: boolean;
-}
-
-type RenderItem =
-  | { kind: "single"; message: ChatMessage }
-  | { kind: "run"; group: RunGroup };
-
-function messageCardData(message: ChatMessage): Record<string, unknown> | null {
-  const content = messageContent(message);
-  if (isRecord(content.cardData)) return content.cardData;
-  return Number(message.type) === 2 ? content : null;
-}
-
-function cardType(message: ChatMessage): string {
-  return String(messageCardData(message)?.type ?? "").trim();
-}
-
-function isDeepThinkingMessage(message: ChatMessage): boolean {
-  return cardType(message) === "deep_thinking";
-}
-
-function agentTaskIdFromEntryId(raw: unknown): string | null {
-  const id = String(raw ?? "").trim();
-  if (!id) return null;
-  for (const suffix of ["-assistant", "-clarify", "-permission", "-error", "-thinking", "-text"]) {
-    if (id.endsWith(suffix)) return id.slice(0, -suffix.length);
-  }
-  for (const marker of ["-thinking-", "-text-", "-tool-", "-permission-"]) {
-    const index = id.indexOf(marker);
-    if (index > 0) return id.slice(0, index);
-  }
-  return null;
-}
-
-function agentRunParentTaskId(message: ChatMessage): string | null {
-  const content = messageContent(message);
-  const card = messageCardData(message);
-  const raw = message.streamMeta?.parentTaskId ?? card?.taskID ?? card?.taskId;
-  const normalized = String(raw ?? "").trim();
-  if (normalized) return normalized;
-  if (Number(message.user) === 1) return null;
-  return agentTaskIdFromEntryId(message.id)
-    ?? agentTaskIdFromEntryId(message.contentId)
-    ?? agentTaskIdFromEntryId(content.id);
-}
-
-function agentRunKind(message: ChatMessage): string {
-  return String(message.streamMeta?.kind ?? "").trim().toLowerCase();
-}
-
-function wholeInt(value: unknown): number | null {
-  if (typeof value === "number" && Number.isInteger(value)) return value;
-  if (typeof value === "string" && /^-?\d+$/.test(value.trim())) return Number(value.trim());
-  return null;
-}
-
-function positiveSuffixAfterMarker(value: string, marker: string): number | null {
-  const index = value.lastIndexOf(marker);
-  if (index < 0) return null;
-  const parsed = Number(value.slice(index + marker.length).trim());
-  return Number.isInteger(parsed) && parsed >= 1 ? parsed : null;
-}
-
-function phaseSequence(roundIndex: number, phaseOffset: number): number {
-  return ((roundIndex - 1) * 3) + phaseOffset;
-}
-
-function entrySequenceFromAgentEntryId(raw: unknown): number | null {
-  const id = String(raw ?? "").trim();
-  if (!id) return null;
-  const thinkingRound = positiveSuffixAfterMarker(id, "-thinking-");
-  if (thinkingRound !== null) return phaseSequence(thinkingRound, 1);
-  if (id.endsWith("-thinking")) return 1;
-  const textRound = positiveSuffixAfterMarker(id, "-text-");
-  if (textRound !== null) return phaseSequence(textRound, 2);
-  if (id.endsWith("-text") || id.endsWith("-assistant")) return 2;
-  const toolIndex = positiveSuffixAfterMarker(id, "-tool-");
-  if (toolIndex !== null) return phaseSequence(toolIndex, 3);
-  return null;
-}
-
-function agentRunSequence(message: ChatMessage): number {
-  const content = messageContent(message);
-  return wholeInt(message.streamMeta?.entrySeq)
-    ?? wholeInt(message.streamMeta?.seq)
-    ?? entrySequenceFromAgentEntryId(message.id)
-    ?? entrySequenceFromAgentEntryId(message.contentId)
-    ?? entrySequenceFromAgentEntryId(content.id)
-    ?? -1;
-}
-
-function compareOldestFirst(left: ChatMessage, right: ChatMessage): number {
-  const sequenceCompare = agentRunSequence(left) - agentRunSequence(right);
-  return sequenceCompare || (messageTime(left) - messageTime(right));
-}
-
-function newestBySequence(messages: ChatMessage[]): ChatMessage {
-  return messages.reduce((newest, candidate) => (
-    compareOldestFirst(candidate, newest) >= 0 ? candidate : newest
-  ));
-}
-
-function isAgentRunCandidateMessage(message: ChatMessage): boolean {
-  if (Number(message.user) === 1) return false;
-  if (Number(message.type) === 1) return Number(message.user) === 2;
-  if (Number(message.type) !== 2) return false;
-  return ["deep_thinking", "agent_tool_summary", "permission_section", "codex_request"].includes(cardType(message));
-}
-
-function isTerminalVisibleTextMessage(message: ChatMessage): boolean {
-  if (message.streamMeta?.isFinal === true) return true;
-  const kind = agentRunKind(message);
-  return kind === "clarify_required"
-    || kind === "permission_required"
-    || kind === "error"
-    || message.isError === true;
-}
-
-function isLegacyTextSnapshotFallbackCandidate(message: ChatMessage): boolean {
-  if (agentRunKind(message) !== "text_snapshot") return false;
-  return !("isFinal" in (message.streamMeta ?? {})) || message.streamMeta?.isFinal === true;
-}
-
-function isCancelledTextMessage(message: ChatMessage): boolean {
-  const text = String(messageContent(message).text ?? "").trim().toLowerCase();
-  return text === "任务已取消" || text === "task canceled" || text === "task cancelled";
-}
-
-function isCodexRequestMessage(message: ChatMessage): boolean {
-  return cardType(message) === "codex_request";
-}
-
-function resolvePrimaryVisibleMessage(
-  taskMessages: ChatMessage[],
-  active: boolean,
-  requestMessages: ChatMessage[],
-): ChatMessage | null {
-  if (active) return requestMessages.length ? newestBySequence(requestMessages) : null;
-  const aiTextMessages = taskMessages.filter((message) => Number(message.type) === 1 && Number(message.user) === 2);
-  if (!aiTextMessages.length) return requestMessages.length ? newestBySequence(requestMessages) : null;
-  const directFinalMatches = aiTextMessages.filter(isTerminalVisibleTextMessage);
-  if (directFinalMatches.length) return newestBySequence(directFinalMatches);
-  const fallbackTextSnapshots = aiTextMessages.filter(isLegacyTextSnapshotFallbackCandidate);
-  if (fallbackTextSnapshots.length) return newestBySequence(fallbackTextSnapshots);
-  const cancelledTextMessages = aiTextMessages.filter(isCancelledTextMessage);
-  if (cancelledTextMessages.length) return newestBySequence(cancelledTextMessages);
-  return requestMessages.length ? newestBySequence(requestMessages) : null;
-}
-
-function resolveVisibleMessages(taskMessages: ChatMessage[], primary: ChatMessage): ChatMessage[] {
-  const visibleMessages = [primary];
-  const primaryKind = agentRunKind(primary);
-  if (primaryKind === "permission_required") {
-    visibleMessages.push(...taskMessages.filter((message) => message !== primary && cardType(message) === "permission_section"));
-  }
-  if (primaryKind === "clarify_required" || primaryKind === "permission_required" || isCodexRequestMessage(primary)) {
-    visibleMessages.push(...taskMessages.filter((message) => message !== primary && isCodexRequestMessage(message)));
-  }
-  return visibleMessages.sort(compareOldestFirst);
-}
-
-function buildRunGroup(messages: ChatMessage[], taskId: string, active: boolean): RunGroup | null {
-  const taskMessages = messages.filter(
-    (message) => agentRunParentTaskId(message) === taskId && isAgentRunCandidateMessage(message),
-  );
-  const requestMessages = taskMessages.filter(isCodexRequestMessage);
-  if (taskMessages.length < 2 && !requestMessages.length) return null;
-  const primary = resolvePrimaryVisibleMessage(taskMessages, active, requestMessages);
-  const visibleMessages = primary
-    ? resolveVisibleMessages(taskMessages, primary)
-    : [];
-  const timeline = buildRunTimeline(
-    taskMessages,
-    visibleMessages,
-    active,
-    compareOldestFirst,
-  );
-  if (!timeline) return null;
-  const { processMessages } = timeline;
-  if (
-    !processMessages.length
-    && visibleMessages.length < 2
-    && (!primary || !isCodexRequestMessage(primary))
-  ) return null;
-  const times = taskMessages.map(messageTime).filter((time) => time > 0);
-  return {
-    taskId,
-    processMessages,
-    visibleMessages: timeline.visibleMessages,
-    startTime: times.length ? Math.min(...times) : 0,
-    endTime: times.length ? Math.max(...times) : 0,
-    active,
-    hasThinking: processMessages.some(isDeepThinkingMessage),
-  };
-}
-
-function buildGroups(messages: ChatMessage[], activeTaskId: string | null): RenderItem[] {
-  const items: RenderItem[] = [];
-  const emittedTaskIds = new Set<string>();
-  const normalizedActiveTaskId = activeTaskId?.trim() || null;
-  for (const message of messages) {
-    const taskId = agentRunParentTaskId(message);
-    if (!taskId) {
-      items.push({ kind: "single", message });
-      continue;
-    }
-    if (emittedTaskIds.has(taskId)) {
-      if (!isAgentRunCandidateMessage(message)) items.push({ kind: "single", message });
-      continue;
-    }
-    const group = buildRunGroup(messages, taskId, taskId === normalizedActiveTaskId);
-    if (!group) {
-      items.push({ kind: "single", message });
-      continue;
-    }
-    items.push({ kind: "run", group });
-    emittedTaskIds.add(taskId);
-  }
-  return items;
-}
-
-function AgentRunGroup({ group }: { group: RunGroup }) {
-  const [expanded, setExpanded] = useState(group.active);
-  const elapsed = Math.max(0, Math.round((group.endTime - group.startTime) / 1000));
-  const timeLabel = formatRunTime(elapsed);
-  const label = timeLabel ? `已处理  ${timeLabel}` : "已处理";
-  const groupMessages = [...group.processMessages, ...group.visibleMessages];
-  const activeTailMessage = group.active && groupMessages.length
-    ? newestBySequence(groupMessages)
-    : null;
-
-  useEffect(() => {
-    setExpanded(group.active);
-  }, [group.active]);
-
-  return (
-    <div className={`agent-run-group${expanded ? " expanded" : ""}`}>
-      <button className="agent-run-header" type="button" aria-expanded={expanded} onClick={() => setExpanded((e) => !e)}>
-        <AgentAvatar className="agent-run-avatar" />
-        <span className="agent-run-title">
-          <span className="agent-run-label">{label}</span>
-          <Icon name="chevron-down" size={18} className="agent-run-chevron" />
-        </span>
-      </button>
-      <div className="agent-run-process">
-        {group.processMessages.map((msg, index) => (
-          <Message
-            message={msg}
-            active={msg === activeTailMessage}
-            suppressReasoning={group.hasThinking}
-            suppressThinkingAvatar={isDeepThinkingMessage(msg)}
-            key={String(msg.id ?? `${messageTime(msg)}-${index}`)}
-          />
-        ))}
-      </div>
-      {group.visibleMessages.map((msg, index) => (
-        <Message
-          message={msg}
-          active={msg === activeTailMessage}
-          suppressReasoning={group.hasThinking}
-          key={String(msg.id ?? `${messageTime(msg)}-v${index}`)}
-        />
-      ))}
-    </div>
-  );
-}
-
 export function ChatPanel({
   conversation,
   messages,
+  approvals,
   globalError,
   sending,
   activeTaskId,
-  clarifyTaskId,
   onOpenConversations,
-  onArchive,
   onDelete,
   onSend,
   onCancel,
+  onResolveApproval,
   onClearError,
   onAttachmentError,
 }: ChatPanelProps) {
@@ -711,37 +282,12 @@ export function ChatPanel({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const sortedMessages = [...messages].sort((left, right) => messageTime(left) - messageTime(right));
-  const normalizedActiveTaskId = activeTaskId?.trim() || null;
-  const thinkingTaskIds = new Set(
-    sortedMessages
-      .filter(isDeepThinkingMessage)
-      .map(agentRunParentTaskId)
-      .filter((taskId): taskId is string => Boolean(taskId)),
-  );
-  const firstThinkingMessageByTask = new Map<string, ChatMessage>();
-  sortedMessages
-    .filter(isDeepThinkingMessage)
-    .sort(compareOldestFirst)
-    .forEach((message) => {
-      const taskId = agentRunParentTaskId(message);
-      if (taskId && !firstThinkingMessageByTask.has(taskId)) {
-        firstThinkingMessageByTask.set(taskId, message);
-      }
-    });
-  const activeTaskMessages = normalizedActiveTaskId
-    ? sortedMessages.filter(
-      (message) => (
-        agentRunParentTaskId(message) === normalizedActiveTaskId
-        && isAgentRunCandidateMessage(message)
-      ),
-    )
-    : [];
-  const activeTailMessage = activeTaskMessages.length
-    ? newestBySequence(activeTaskMessages)
+  const activeTailMessage = activeTaskId
+    ? [...sortedMessages].reverse().find((message) => Number(message.user) !== 1) ?? null
     : null;
-  const canManageConversation = Number(conversation?.id ?? 0) > 0;
-  const isProcessing = sending || Boolean(activeTaskId && !clarifyTaskId);
-  const canSend = !isProcessing && (clarifyTaskId ? Boolean(draft.trim()) : Boolean(draft.trim() || attachments.length));
+  const canManageConversation = String(conversation?.id ?? "").trim().length > 0;
+  const isProcessing = sending || Boolean(activeTaskId);
+  const canSend = !isProcessing && Boolean(draft.trim() || attachments.length);
 
   useEffect(() => {
     const list = messageListRef.current;
@@ -798,16 +344,6 @@ export function ChatPanel({
         </button>
         <div className="chat-header-actions">
           <button
-            className="appbar-icon"
-            type="button"
-            aria-label={conversation?.isArchived ? "取消归档" : "归档对话"}
-            title={conversation?.isArchived ? "取消归档" : "归档对话"}
-            disabled={!canManageConversation}
-            onClick={onArchive}
-          >
-            <Icon name="archive" size={18} />
-          </button>
-          <button
             className="appbar-icon danger"
             type="button"
             aria-label="删除对话"
@@ -824,32 +360,36 @@ export function ChatPanel({
 
       <div className="message-list" aria-live="polite" ref={messageListRef}>
         {!sortedMessages.length && <EmptyGreeting />}
-        {buildGroups(sortedMessages, activeTaskId).map((item, index) => {
-          if (item.kind === "run") {
-            return <AgentRunGroup group={item.group} key={`run-${item.group.taskId}`} />;
-          }
-          const taskId = agentRunParentTaskId(item.message);
-          const isThinking = isDeepThinkingMessage(item.message);
-          return (
-            <Message
-              message={item.message}
-              active={item.message === activeTailMessage}
-              suppressReasoning={thinkingTaskIds.has(taskId ?? "")}
-              suppressThinkingAvatar={Boolean(
-                isThinking
-                && taskId
-                && firstThinkingMessageByTask.get(taskId) !== item.message
-              )}
-              key={String(item.message.id ?? `${messageTime(item.message)}-${index}`)}
-            />
-          );
-        })}
+        {sortedMessages.map((message, index) => (
+          <Message
+            message={message}
+            active={message === activeTailMessage}
+            key={String(message.id ?? `${messageTime(message)}-${index}`)}
+          />
+        ))}
+        {approvals.map((approval) => (
+          <article className={`approval-card risk-${approval.riskLevel}`} key={approval.id}>
+            <header>
+              <Icon name="shield" size={18} />
+              <strong>需要审批</strong>
+              <span>{approval.riskLevel.toUpperCase()}</span>
+            </header>
+            <p className="approval-summary">{approval.summary || approval.toolName}</p>
+            <p>{approval.reason}</p>
+            {approval.workspace && <small>工作区：{approval.workspace}</small>}
+            <details>
+              <summary>查看工具参数</summary>
+              <pre>{approval.argumentsJson}</pre>
+            </details>
+            <div className="approval-actions">
+              <button type="button" onClick={() => onResolveApproval(approval.id, false)}>拒绝</button>
+              <button className="approve" type="button" onClick={() => onResolveApproval(approval.id, true)}>批准并继续</button>
+            </div>
+          </article>
+        ))}
       </div>
 
       <div className="composer-region">
-        {clarifyTaskId && (
-          <div className="clarify-banner">Agent 正在等待你的补充说明，发送下一条消息后继续。</div>
-        )}
         <form className="composer" onSubmit={(event) => void submit(event)}>
           {!!attachments.length && (
             <div className="attachment-list">
@@ -897,7 +437,7 @@ export function ChatPanel({
             </button>
             <input ref={attachmentInputRef} type="file" multiple hidden onChange={(event) => void addAttachments(event)} />
             <span className="composer-hint">Enter 发送 · Shift + Enter 换行</span>
-            {activeTaskId && !clarifyTaskId ? (
+            {activeTaskId ? (
               <button className="send-button stop" type="button" aria-label="停止" title="停止" onClick={onCancel}>
                 <ComposerStopIcon />
               </button>
