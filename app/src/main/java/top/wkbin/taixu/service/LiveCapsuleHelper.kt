@@ -83,6 +83,7 @@ object LiveCapsuleHelper {
 
         injectManufacturerCapsuleExtras(
             builder = builder,
+            sessionId = sessionId,
             title = shortTitle,
             statusText = formattedStatus,
             detailedContent = contentText,
@@ -138,6 +139,7 @@ object LiveCapsuleHelper {
 
         injectManufacturerCapsuleExtras(
             builder = builder,
+            sessionId = sessionId,
             title = completedTitle,
             statusText = "✅ 完成",
             detailedContent = completedText,
@@ -177,10 +179,11 @@ object LiveCapsuleHelper {
     }
 
     /**
-     * 为 NotificationCompat.Builder 注入各大厂商专属的灵动岛/流体云/原子岛/实况窗元数据
+     * 为 NotificationCompat.Builder 注入各大厂商官方灵动岛/流体云/原子岛/实况窗规范的元数据与 JSON 数据包
      */
     private fun injectManufacturerCapsuleExtras(
         builder: NotificationCompat.Builder,
+        sessionId: String,
         title: String,
         statusText: String,
         detailedContent: String,
@@ -188,7 +191,35 @@ object LiveCapsuleHelper {
     ) {
         val extras = Bundle()
 
-        // 1. 小米澎湃 OS (Xiaomi HyperOS 1/2 & MIUI) 焦点通知 / 实时胶囊
+        // 1. 小米澎湃 OS (Xiaomi HyperOS 1/2 & MIUI) 焦点通知 / 超级岛官方规范 (miui.focus.param)
+        runCatching {
+            val hyperOsIsland = org.json.JSONObject().apply {
+                put("islandProperty", 1)
+                put("smallIslandArea", org.json.JSONObject().apply {
+                    put("type", 1)
+                    put("text", statusText)
+                })
+                put("bigIslandArea", org.json.JSONObject().apply {
+                    put("imageTextInfoLeft", org.json.JSONObject().apply {
+                        put("type", 1)
+                        put("text", title)
+                    })
+                    put("imageTextInfoRight", org.json.JSONObject().apply {
+                        put("type", 1)
+                        put("text", statusText)
+                    })
+                })
+            }
+            val hyperOsParam = org.json.JSONObject().apply {
+                put("param_v2", org.json.JSONObject().apply {
+                    put("business", "ai_agent_task")
+                    put("updatable", isOngoing)
+                    put("orderId", sessionId)
+                    put("param_island", hyperOsIsland)
+                })
+            }
+            extras.putString("miui.focus.param", hyperOsParam.toString())
+        }
         extras.putBoolean("miui.focus.notification", true)
         extras.putString("miui.focus.title", title)
         extras.putString("miui.focus.content", statusText)
@@ -197,14 +228,23 @@ object LiveCapsuleHelper {
         extras.putBoolean("miui.focus.show_when", true)
         extras.putLong("miui.focus.time", System.currentTimeMillis())
 
-        // 2. OPPO / 一加 / Realme (ColorOS / OxygenOS 14+) 流体云 (Fluid Cloud)
-        extras.putBoolean("android.substName", true)
-        extras.putString("oppo.notification.title", title)
-        extras.putString("oppo.notification.content", statusText)
-        extras.putBoolean("oppo.notification.capsule", isOngoing)
-        extras.putBoolean("coloros.notification.capsule", isOngoing)
-
-        // 3. vivo / iQOO (OriginOS 3/4/5) 原子通知 / 原子岛 (Atomic Island / 实时胶囊)
+        // 2. vivo / iQOO (OriginOS 3/4/5) 原子通知 / 原子岛官方规范 (vivo.atomic.param)
+        runCatching {
+            val vivoParam = org.json.JSONObject().apply {
+                put("operation", if (isOngoing) 0 else 1)
+                put("scene", "ai_agent_status")
+                put("templateType", 1)
+                put("showNotify", true)
+                put("title", title)
+                put("content", statusText)
+                put("capsuleData", org.json.JSONObject().apply {
+                    put("bgColor", "#2C7FEB")
+                    put("statusText", statusText)
+                    put("isOngoing", isOngoing)
+                })
+            }
+            extras.putString("vivo.atomic.param", vivoParam.toString())
+        }
         extras.putBoolean("vivo.atomic.notification", true)
         extras.putBoolean("vivo.notification.capsule", isOngoing)
         extras.putBoolean("vivo.as.capsule", isOngoing)
@@ -218,7 +258,41 @@ object LiveCapsuleHelper {
         extras.putBoolean("vivo.statusbar.capsule", isOngoing)
         extras.putBoolean("vivo.island.enable", isOngoing)
 
-        // 4. 荣耀 MagicOS (灵动胶囊) & 华为 HarmonyOS (实况窗)
+        // 3. OPPO / 一加 / Realme (ColorOS / OxygenOS 14+) 流体云 / 潘塔纳尔规范 (androidOppoIntelligentIntent)
+        runCatching {
+            val oppoIntent = org.json.JSONObject().apply {
+                put("intent", "ai_agent_live")
+                put("status", statusText)
+                put("title", title)
+                put("capsule", org.json.JSONObject().apply {
+                    put("icon", "taixu_logo")
+                    put("text", statusText)
+                })
+            }
+            extras.putString("androidOppoIntelligentIntent", oppoIntent.toString())
+            extras.putString("oppo.intelligent.intent", oppoIntent.toString())
+        }
+        extras.putBoolean("android.substName", true)
+        extras.putString("oppo.notification.title", title)
+        extras.putString("oppo.notification.content", statusText)
+        extras.putBoolean("oppo.notification.capsule", isOngoing)
+        extras.putBoolean("coloros.notification.capsule", isOngoing)
+
+        // 4. 华为 (HarmonyOS / EMUI) 实况窗规范 (hw_live_view_data) & 荣耀 MagicOS (灵动胶囊)
+        runCatching {
+            val huaweiLiveView = org.json.JSONObject().apply {
+                put("capsule", org.json.JSONObject().apply {
+                    put("title", title)
+                    put("status", statusText)
+                    put("icon", "taixu_logo")
+                })
+                put("card", org.json.JSONObject().apply {
+                    put("title", title)
+                    put("content", detailedContent)
+                })
+            }
+            extras.putString("hw_live_view_data", huaweiLiveView.toString())
+        }
         extras.putBoolean("honor.smart.capsule", isOngoing)
         extras.putBoolean("huawei.live.view", isOngoing)
         extras.putString("hw_live_view_title", title)
