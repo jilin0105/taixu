@@ -47,3 +47,6 @@ assets/plugins/android-suite-offline/payload/archives/
 # Keep manifests, scripts, checksums and download instructions versioned.
 assets/plugins/qemu-x86-64-compat/payload/archives/
 .workbuddy/
+webchat/node_modules/
+webchat/dist/
+

@@ -38,9 +38,18 @@ class RuntimeForegroundService : Service() {
         super.onCreate()
         sshServiceManager.startObserving()
         val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, getString(R.string.taixu_runtime_notification_channel), NotificationManager.IMPORTANCE_LOW),
-        )
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            getString(R.string.taixu_runtime_notification_channel),
+            NotificationManager.IMPORTANCE_HIGH,
+        ).apply {
+            description = "用于展示 Linux 沙箱后台运行状态的灵动岛/原子胶囊"
+            enableVibration(false)
+            setSound(null, null)
+            setShowBadge(true)
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        }
+        manager.createNotificationChannel(channel)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -100,29 +109,27 @@ class RuntimeForegroundService : Service() {
         wifiLock = null
     }
 
-    private fun notification(): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-        .setSmallIcon(R.drawable.taixu_logo)
-        .setContentTitle(getString(R.string.taixu_runtime_running))
-        .setContentText(getString(R.string.taixu_runtime_background_available))
-        .setOngoing(true)
-        .setCategory(NotificationCompat.CATEGORY_SERVICE)
-        .addAction(
-            NotificationCompat.Action(
-                R.drawable.taixu_logo,
-                getString(R.string.taixu_notification_stop),
-                PendingIntent.getService(
-                    this,
-                    1002,
-                    Intent(this, RuntimeForegroundService::class.java).setAction(ACTION_STOP),
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-                ),
-            ),
+    private fun notification(): Notification {
+        val stopPending = PendingIntent.getService(
+            this,
+            1002,
+            Intent(this, RuntimeForegroundService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        .build()
+        return top.wkbin.taixu.service.LiveCapsuleHelper.buildRunningCapsuleNotification(
+            context = this,
+            channelId = CHANNEL_ID,
+            sessionId = "linux_runtime",
+            sessionTitle = "Linux 沙箱",
+            rawStatus = getString(R.string.taixu_runtime_running),
+            elapsedSeconds = 0L,
+            stopPendingIntent = stopPending,
+        )
+    }
 
     companion object {
         const val ACTION_STOP = "top.wkbin.taixu.action.STOP_RUNTIME_SERVICE"
-        private const val CHANNEL_ID = "linux-runtime"
+        private const val CHANNEL_ID = "taixu-runtime-capsule-v4"
         private const val NOTIFICATION_ID = 1001
         private const val TAG = "RuntimeForegroundService"
         private const val WAKE_LOCK_TAG = "taixu:runtime-service"

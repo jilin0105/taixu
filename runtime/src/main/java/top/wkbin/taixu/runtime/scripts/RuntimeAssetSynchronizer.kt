@@ -26,7 +26,7 @@ class RuntimeAssetSynchronizer @Inject constructor(
         target.parentFile?.mkdirs()
         target.writeText(content.removePrefix("\uFEFF").replace("\r\n", "\n"), Charsets.UTF_8)
         target.setExecutable(true, false)
-        target.absolutePath
+        "/opt/taixu/scripts/$fileName"
     }
     /**
      * 同步指定发行版沙箱内的脚本与资产工具

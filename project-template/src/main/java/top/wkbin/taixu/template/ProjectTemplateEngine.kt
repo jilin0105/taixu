@@ -14,11 +14,13 @@ class ProjectTemplateEngine @Inject constructor(
     private val templatesDir = File(context.filesDir, "linux-runtime/templates")
     private val json = Json { ignoreUnknownKeys = false }
     private val bundledDirectories: Map<String, String> by lazy {
-        discoverBundledDirectories().associateBy { relativePath ->
-            val bytes = context.assets.open("templates/$relativePath/${ProjectTemplateManifest.MANIFEST_PATH}")
-                .use { it.readBytes() }
-            json.decodeFromString<ProjectTemplateManifest>(bytes.toString(Charsets.UTF_8)).id
-        }
+        runCatching {
+            discoverBundledDirectories().associateBy { relativePath ->
+                val bytes = context.assets.open("templates/$relativePath/${ProjectTemplateManifest.MANIFEST_PATH}")
+                    .use { it.readBytes() }
+                json.decodeFromString<ProjectTemplateManifest>(bytes.toString(Charsets.UTF_8)).id
+            }
+        }.getOrDefault(emptyMap())
     }
 
     fun inspect(id: String): ProjectTemplateManifest {

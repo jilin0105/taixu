@@ -24,17 +24,20 @@ class HostProcessRunnerTest {
 
     @Test
     fun `operation can be cancelled by id`() {
-        val started = CountDownLatch(1)
         val process = FakeProcess(completed = false)
-        val runner = HostProcessRunner {
-            started.countDown()
-            process
-        }
+        val runner = HostProcessRunner { process }
         val executor = Executors.newSingleThreadExecutor()
         try {
             val future = executor.submit<ShellExecResult> { runner.execute("cancel-me", "test") }
-            assertTrue(started.await(2, TimeUnit.SECONDS))
-            assertTrue(runner.cancel("cancel-me"))
+            var cancelled = false
+            for (i in 0 until 100) {
+                if (runner.cancel("cancel-me")) {
+                    cancelled = true
+                    break
+                }
+                Thread.sleep(10)
+            }
+            assertTrue("Expected runner.cancel to succeed", cancelled)
             val result = future.get(2, TimeUnit.SECONDS)
             assertFalse(result.success)
             assertFalse(process.isAlive)

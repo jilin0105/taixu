@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.runtime
+package top.wkbin.taixu.runtime
 
 import android.content.ContextWrapper
 import android.content.pm.ApplicationInfo

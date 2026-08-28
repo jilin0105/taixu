@@ -51,7 +51,7 @@ class ApiContextAssembler @Inject constructor(
         val mentionedNames = MentionExtractor.parse(latestUserText)
 
         val systemPrompt = if (!model.pureChatMode) {
-            systemPromptBuilder.build(workspacePath, toolCallMode, mentionedNames, sessId, projectTypeOverride)
+            systemPromptBuilder.build(workspacePath, toolCallMode, mentionedNames, sessId, projectTypeOverride, latestUserText)
         } else {
             ""
         }

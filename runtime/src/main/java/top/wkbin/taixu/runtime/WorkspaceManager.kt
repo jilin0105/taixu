@@ -125,6 +125,7 @@ class WorkspaceManager @Inject constructor(
     private val fileService: WorkspaceFileService,
     private val linuxRuntime: dagger.Lazy<LinuxRuntime>,
     private val projectTemplateEngine: ProjectTemplateEngine,
+    private val buildScriptRepository: dagger.Lazy<top.wkbin.taixu.core.database.BuildScriptRepository>? = null,
 ) {
     constructor(
         pathManager: RuntimePathManager,
@@ -137,6 +138,7 @@ class WorkspaceManager @Inject constructor(
         WorkspaceFileService(pathManager, workspaceDao),
         dagger.Lazy<LinuxRuntime> { error("Linux runtime is unavailable in this test constructor") },
         projectTemplateEngine,
+        null,
     )
     fun observeProjects(): Flow<List<WorkspaceProject>> = workspaceDao.observeAll().map { entities ->
         val projectPaths = entities.mapNotNull { runCatching { File(it.path).canonicalPath }.getOrNull() }.toSet()
@@ -414,6 +416,7 @@ class WorkspaceManager @Inject constructor(
                 File(directory, UNLINKED_MARKER).writeText("unlinkedAt=${System.currentTimeMillis()}\n")
             }
             workspaceDao.delete(name)
+            runCatching { buildScriptRepository?.get()?.unbind(name) }
             AppResult.Success(Unit)
         } catch (throwable: Throwable) {
             AppResult.Failure(AppError(ErrorCode.IO, throwable.message ?: "删除项目失败", throwable))

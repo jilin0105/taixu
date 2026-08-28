@@ -25,6 +25,7 @@ import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.core.database.AgentSkillRepository
 import top.wkbin.taixu.core.database.AgentSubagentRepository
 import top.wkbin.taixu.core.database.AppDatabase
+import top.wkbin.taixu.core.database.McpServerRepository
 import top.wkbin.taixu.core.database.RoomAgentContextRepository
 import top.wkbin.taixu.core.database.RoomHarnessRuntimeRepository
 import top.wkbin.taixu.core.security.SecretManager
@@ -42,6 +43,7 @@ import top.wkbin.taixu.core.tools.ToolRepository
 import top.wkbin.taixu.harness.compaction.CompactionManager
 import top.wkbin.taixu.harness.prompt.PrivilegeSectionRenderer
 import top.wkbin.taixu.harness.prompt.PromptAssetLoader
+import top.wkbin.taixu.harness.prompt.PromptRouter
 import top.wkbin.taixu.harness.prompt.SystemPromptBuilder
 
 /**
@@ -73,6 +75,7 @@ class ApiContextAssemblerTest {
         compactionManager = CompactionManager(runtimeRepo, json)
         store = top.wkbin.taixu.harness.session.SessionTreeStore(runtimeRepo, json, logger)
 
+        val promptAssets = PromptAssetLoader(context)
         val builder = SystemPromptBuilder(
             context = context,
             settingsDataStore = agentPrefs,
@@ -80,9 +83,11 @@ class ApiContextAssemblerTest {
             toolRepository = ToolRepository(database.toolDao(), ToolRegistry(context, OkHttpClient(), logger)),
             agentContextDao = RoomAgentContextRepository(database.agentContextDao()),
             subagentRepository = AgentSubagentRepository(database.agentSubagentDao()),
-            promptAssets = PromptAssetLoader(context),
+            mcpServerRepository = McpServerRepository(database.mcpServerDao(), SecretManager()),
+            promptAssets = promptAssets,
             fileAccess = WorkspaceFileAccess(tempDir),
             privilegeRenderer = PrivilegeSectionRenderer { "" },
+            promptRouter = PromptRouter(promptAssets),
         )
         assembler = ApiContextAssembler(compactionManager, agentPrefs, builder)
     }

@@ -16,6 +16,10 @@ import top.wkbin.taixu.core.database.AgentApprovalRequestEntity
 import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.harness.HarnessLoop
 import top.wkbin.taixu.harness.HarnessMessage
+import top.wkbin.taixu.harness.UserMessage
+import top.wkbin.taixu.harness.AssistantText
+import top.wkbin.taixu.harness.ToolCall
+import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.harness.PendingMessage
 import top.wkbin.taixu.harness.QueuedPrompt
 import top.wkbin.taixu.harness.ContextWindowPolicy
@@ -34,6 +38,8 @@ import top.wkbin.taixu.core.tools.ProviderRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import android.content.Context
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import top.wkbin.taixu.feature.chat.R
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -149,8 +155,17 @@ class ChatViewModel @Inject constructor(
     private val _sendMode = MutableStateFlow(ComposerSendMode.NEXT_RUN)
     val sendMode: StateFlow<ComposerSendMode> = _sendMode.asStateFlow()
 
-    val runtimeEvents: StateFlow<List<HarnessEvent>> = combine(harnessLoop.currentSessionId, _eventHistory) { sessionId, history ->
-        history[sessionId].orEmpty()
+    val runtimeEvents: StateFlow<List<HarnessEvent>> = combine(
+        harnessLoop.currentSessionId,
+        _eventHistory,
+        messages,
+    ) { sessionId, history, msgList ->
+        val live = history[sessionId].orEmpty()
+        if (live.isNotEmpty()) {
+            live
+        } else {
+            synthesizeHistoricalEvents(sessionId, msgList)
+        }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _branchRefresh = MutableStateFlow(0)
@@ -383,7 +398,7 @@ class ChatViewModel @Inject constructor(
                 icon = top.wkbin.taixu.ui.components.RuntimeIconName.Brain,
             )
         }
-        val mcpMentions = mcps.filter { it.isEnabled }.map { mcp ->
+        val mcpMentions = mcps.filter { it.isEnabled && !it.isBuiltin }.map { mcp ->
             MentionItem(
                 id = mcp.id,
                 name = mcp.name,
@@ -397,6 +412,63 @@ class ChatViewModel @Inject constructor(
         if (query.isEmpty()) all
         else all.filter { it.name.lowercase().contains(query) || it.description.lowercase().contains(query) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** 当前会话中明确被用户手动钉选常驻的技能与 MCP ID 集合（默认为空，不默认常驻）。 */
+    private val _pinnedMentionIds = MutableStateFlow<Set<String>>(emptySet())
+    val pinnedMentionIds: StateFlow<Set<String>> = _pinnedMentionIds.asStateFlow()
+
+    /** 当前会话中已钉选常驻的技能与 MCP 列表（默认为空，仅在用户显式钉选后常驻展示并生效）。 */
+    val pinnedCapabilities: StateFlow<List<MentionItem>> = kotlinx.coroutines.flow.combine(
+        _pinnedMentionIds,
+        agentSkillRepository.allSkills,
+        mcpServerRepository.servers,
+    ) { pinnedIds, skills, mcps ->
+        if (pinnedIds.isEmpty()) return@combine emptyList()
+        val skillItems = skills.filter { it.isEnabled && (it.id in pinnedIds || it.name.lowercase() in pinnedIds) }.map { skill ->
+            MentionItem(
+                id = skill.id,
+                name = skill.name,
+                description = skill.description,
+                category = context.getString(R.string.chat_skill_category),
+                type = MentionType.SKILL,
+                icon = top.wkbin.taixu.ui.components.RuntimeIconName.Brain,
+            )
+        }
+        val mcpItems = mcps.filter { it.isEnabled && !it.isBuiltin && (it.id in pinnedIds || it.name.lowercase() in pinnedIds) }.map { mcp ->
+            MentionItem(
+                id = mcp.id,
+                name = mcp.name,
+                description = mcp.description,
+                category = context.getString(R.string.chat_mcp_category),
+                type = MentionType.MCP_SERVER,
+                icon = top.wkbin.taixu.ui.components.RuntimeIconName.Cpu,
+            )
+        }
+        skillItems + mcpItems
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun togglePinMention(id: String) {
+        val target = id.trim().lowercase()
+        _pinnedMentionIds.update { current ->
+            if (target in current || current.any { it.equals(id, ignoreCase = true) }) {
+                current.filterNot { it.equals(id, ignoreCase = true) || it == target }.toSet()
+            } else {
+                current + target
+            }
+        }
+    }
+
+    fun unpinMention(id: String) {
+        val target = id.trim().lowercase()
+        _pinnedMentionIds.update { current ->
+            current.filterNot { it.equals(id, ignoreCase = true) || it == target }.toSet()
+        }
+    }
+
+    fun pinMention(id: String) {
+        val target = id.trim().lowercase()
+        _pinnedMentionIds.update { it + target }
+    }
 
     /** 当前输入框中已挂载的技能与 MCP 标签列表（用于输入框顶部展示高亮双排 Chips）。 */
     val attachedMentions: StateFlow<List<MentionItem>> = kotlinx.coroutines.flow.combine(
@@ -425,7 +497,7 @@ class ChatViewModel @Inject constructor(
         }
 
         val matchedMcps = mcps.filter { mcp ->
-            mcp.isEnabled && (
+            mcp.isEnabled && !mcp.isBuiltin && (
                 mcp.name.lowercase() in matchedNames || mcp.id.lowercase() in matchedNames
             )
         }.map { mcp ->
@@ -511,16 +583,31 @@ class ChatViewModel @Inject constructor(
     }
 
     fun send(customText: String? = null, imageUrls: List<String> = emptyList()) {
-        val text = (customText ?: _input.value).trim()
-        if (text.isBlank() && imageUrls.isEmpty()) return
+        val rawText = (customText ?: _input.value).trim()
+        if (rawText.isBlank() && imageUrls.isEmpty()) return
         _input.value = ""
-        // @ 仅引用已经显式启用的能力，不在发送阶段修改全局开关。
+
+        val pinnedIds = _pinnedMentionIds.value
+        val effectiveText = if (pinnedIds.isNotEmpty()) {
+            val existingMentions = top.wkbin.taixu.harness.MentionExtractor.parse(rawText)
+            val missingPins = pinnedIds.filter { pin ->
+                pin.lowercase() !in existingMentions
+            }
+            if (missingPins.isNotEmpty()) {
+                rawText + missingPins.joinToString(prefix = " ", separator = " ") { "@$it" }
+            } else {
+                rawText
+            }
+        } else {
+            rawText
+        }
+
         if (!running.value) {
-            harnessLoop.send(text, imageUrls = imageUrls)
+            harnessLoop.send(effectiveText, imageUrls = imageUrls)
         } else {
             when (_sendMode.value) {
-                ComposerSendMode.STEER -> harnessLoop.steer(text, imageUrls = imageUrls)
-                ComposerSendMode.NEXT_RUN -> harnessLoop.send(text, imageUrls = imageUrls)
+                ComposerSendMode.STEER -> harnessLoop.steer(effectiveText, imageUrls = imageUrls)
+                ComposerSendMode.NEXT_RUN -> harnessLoop.send(effectiveText, imageUrls = imageUrls)
             }
         }
     }
@@ -755,6 +842,82 @@ class ChatViewModel @Inject constructor(
             aiModelDao.delete(id)
         }
     }
+}
+
+private fun synthesizeHistoricalEvents(sessionId: String, messages: List<HarnessMessage>): List<HarnessEvent> {
+    if (sessionId.isBlank() || messages.isEmpty()) return emptyList()
+    val events = mutableListOf<HarnessEvent>()
+    var currentRound = 0
+    var opId = "hist-$sessionId"
+    val toolCallMap = messages.filterIsInstance<ToolCall>().associateBy { it.id }
+
+    messages.forEach { msg ->
+        when (msg) {
+            is UserMessage -> {
+                currentRound++
+                opId = "hist-${msg.id}"
+                events.add(
+                    HarnessEvent.OperationStarted(
+                        sessionId = sessionId,
+                        timestamp = msg.createdAt,
+                        operationId = opId,
+                        laneName = "main",
+                    )
+                )
+            }
+            is AssistantText -> {
+                events.add(
+                    HarnessEvent.ProviderRoundStarted(
+                        sessionId = sessionId,
+                        timestamp = msg.createdAt,
+                        operationId = opId,
+                        round = currentRound,
+                        attempt = 1,
+                        modelId = null,
+                    )
+                )
+                events.add(
+                    HarnessEvent.ProviderRoundSettled(
+                        sessionId = sessionId,
+                        timestamp = msg.createdAt,
+                        operationId = opId,
+                        round = currentRound,
+                        entryId = msg.id,
+                        inputTokens = 0L,
+                        outputTokens = msg.text.length.toLong(),
+                    )
+                )
+            }
+            is ToolCall -> {
+                events.add(
+                    HarnessEvent.ToolCallStarted(
+                        sessionId = sessionId,
+                        timestamp = msg.createdAt,
+                        operationId = opId,
+                        toolCallId = msg.id,
+                        toolName = msg.tool.name.lowercase(),
+                    )
+                )
+            }
+            is ToolResult -> {
+                val call = toolCallMap[msg.toolCallId]
+                val toolName = call?.tool?.name?.lowercase() ?: "tool"
+                events.add(
+                    HarnessEvent.ToolCallSettled(
+                        sessionId = sessionId,
+                        timestamp = msg.createdAt,
+                        operationId = opId,
+                        toolCallId = msg.toolCallId,
+                        toolName = toolName,
+                        success = msg.success,
+                        durationMs = msg.durationMs,
+                    )
+                )
+            }
+            else -> Unit
+        }
+    }
+    return events
 }
 
 enum class ComposerSendMode(val queue: PromptQueue) {

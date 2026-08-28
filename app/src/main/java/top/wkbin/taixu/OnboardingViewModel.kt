@@ -90,12 +90,16 @@ class OnboardingViewModel @Inject constructor(
     val page = _page.asStateFlow()
     private val _modelProvider = MutableStateFlow("自定义 OpenAI 兼容接口")
     val modelProvider = _modelProvider.asStateFlow()
+    private val _modelName = MutableStateFlow("")
+    val modelName = _modelName.asStateFlow()
     private val _modelId = MutableStateFlow("")
     val modelId = _modelId.asStateFlow()
     private val _baseUrl = MutableStateFlow("")
     val baseUrl = _baseUrl.asStateFlow()
     private val _apiKey = MutableStateFlow("")
     val apiKey = _apiKey.asStateFlow()
+    private val _importedProfile = MutableStateFlow<top.wkbin.taixu.core.model.AiModelProfileExport?>(null)
+    val importedProfile = _importedProfile.asStateFlow()
     private val _discoveredModels = MutableStateFlow<List<String>>(emptyList())
     val discoveredModels = _discoveredModels.asStateFlow()
     private val _discoveringModels = MutableStateFlow(false)
@@ -289,24 +293,92 @@ class OnboardingViewModel @Inject constructor(
         }
     }
 
+    fun setModelName(name: String) {
+        _modelName.value = name
+    }
+
+    fun importProfileFromJson(rawJson: String): Result<top.wkbin.taixu.core.model.AiModelProfileExport> {
+        return runCatching {
+            val trimmed = rawJson.trim()
+            require(trimmed.isNotBlank()) { "导入内容不能为空" }
+            val jsonParser = kotlinx.serialization.json.Json {
+                ignoreUnknownKeys = true
+                isLenient = true
+                coerceInputValues = true
+            }
+
+            val profile: top.wkbin.taixu.core.model.AiModelProfileExport = try {
+                jsonParser.decodeFromString<top.wkbin.taixu.core.model.AiModelProfileBundle>(trimmed).profiles.firstOrNull()
+                    ?: error("导入包中没有模型档案")
+            } catch (_: Exception) {
+                try {
+                    jsonParser.decodeFromString<List<top.wkbin.taixu.core.model.AiModelProfileExport>>(trimmed).firstOrNull()
+                        ?: error("模型列表为空")
+                } catch (_: Exception) {
+                    jsonParser.decodeFromString<top.wkbin.taixu.core.model.AiModelProfileExport>(trimmed)
+                }
+            }
+
+            require(profile.model.isNotBlank() || profile.name.isNotBlank()) { "模型配置缺少模型名称或 ID" }
+
+            _modelProvider.value = profile.provider.ifBlank { "OpenAI" }
+            _baseUrl.value = profile.baseUrl
+            val effectiveKey = profile.apiKeys.firstOrNull() ?: profile.apiKey.orEmpty()
+            _apiKey.value = effectiveKey
+            val primaryModel = profile.model.split(",").firstOrNull { it.isNotBlank() }?.trim() ?: profile.model
+            _modelId.value = primaryModel.ifBlank { profile.name }
+            _modelName.value = profile.name
+            _importedProfile.value = profile
+            profile
+        }
+    }
+
     fun skipModel() = finish()
 
     fun saveModelAndFinish() {
         val model = _modelId.value.trim()
         if (model.isBlank()) return
+        val imported = _importedProfile.value
         viewModelScope.launch {
             val existing = modelDao.observeAll().first()
             val id = UUID.randomUUID().toString()
-            val secretRef = "model_${id.replace("-", "")}" 
-            if (_apiKey.value.isNotBlank()) settings.setModelApiKey(secretRef, _apiKey.value)
+            val secretRef = "model_${id.replace("-", "")}"
+            val keyToSave = if (_apiKey.value.isNotBlank()) {
+                _apiKey.value.trim()
+            } else if (imported != null && imported.apiKeys.isNotEmpty()) {
+                imported.apiKeys.joinToString("\n")
+            } else {
+                imported?.apiKey.orEmpty()
+            }
+            if (keyToSave.isNotBlank()) settings.setModelApiKey(secretRef, keyToSave)
+
+            val modelList = if (imported != null && imported.model.isNotBlank()) {
+                imported.model
+            } else {
+                model
+            }
+
             modelDao.upsert(
                 AiModelEntity(
                     id = id,
-                    name = model,
+                    name = _modelName.value.ifBlank { model },
                     provider = _modelProvider.value.trim(),
-                    model = model,
+                    model = modelList,
                     baseUrl = _baseUrl.value.trim(),
                     secretRef = secretRef,
+                    apiKeyCount = if (keyToSave.isNotBlank()) keyToSave.lineSequence().count { it.isNotBlank() } else 0,
+                    requestsPerMinutePerKey = imported?.requestsPerMinutePerKey ?: 0,
+                    temperature = imported?.temperature,
+                    maxTokens = imported?.maxTokens,
+                    topP = imported?.topP,
+                    reasoningMode = imported?.reasoningMode,
+                    reasoningEffort = imported?.reasoningEffort,
+                    toolCallMode = imported?.toolCallMode,
+                    contextTokens = imported?.contextTokens,
+                    customHeaders = imported?.customHeaders.orEmpty(),
+                    pureChatMode = imported?.pureChatMode ?: false,
+                    visionEnabled = imported?.visionEnabled ?: true,
+                    responseApiEnabled = imported?.responseApiEnabled ?: false,
                     isActive = existing.none { it.isActive },
                     createdAt = System.currentTimeMillis(),
                 ),

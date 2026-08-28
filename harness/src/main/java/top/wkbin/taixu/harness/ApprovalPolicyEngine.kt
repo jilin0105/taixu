@@ -43,11 +43,13 @@ class ApprovalPolicyEngine {
         }
         if (mode == ApprovalMode.FULL_ACCESS) return ApprovalDecision(false)
         if (tool == HarnessTool.READ || tool == HarnessTool.MEMORY || tool == HarnessTool.PLAN ||
-            tool == HarnessTool.SCRATCHPAD || tool == HarnessTool.HISTORY_SEARCH || tool == HarnessTool.HISTORY_READ
+            tool == HarnessTool.SCRATCHPAD || tool == HarnessTool.HISTORY_SEARCH || tool == HarnessTool.HISTORY_READ ||
+            tool == HarnessTool.LOAD_RULE
         ) {
             return ApprovalDecision(false)
         }
         if (tool == HarnessTool.SUBAGENT) return ApprovalDecision(false)
+        if (tool == HarnessTool.BUILD_SCRIPT && args["action"]?.jsonPrimitive?.content.orEmpty().trim().lowercase() in setOf("list", "get")) return ApprovalDecision(false)
         if (tool == HarnessTool.PROCESS && processAction(args) in setOf("status", "logs", "list")) {
             return ApprovalDecision(false)
         }
@@ -81,10 +83,11 @@ class ApprovalPolicyEngine {
                 else -> ApprovalDecision(false)
             }
             HarnessTool.DOWNLOAD -> ApprovalDecision(true, "high", "下载会访问外部网络并写入工作区文件。", summary)
+            HarnessTool.BUILD_SCRIPT -> ApprovalDecision(true, "normal", "操作将修改构建脚本或项目挂载关系。", summary)
             HarnessTool.HOST -> error("HOST 已在审批策略入口处理")
             HarnessTool.MCP -> ApprovalDecision(true, "high", "MCP 工具可能访问外部服务或产生工作区之外的副作用。", summary)
             HarnessTool.READ, HarnessTool.MEMORY, HarnessTool.PLAN, HarnessTool.SCRATCHPAD,
-            HarnessTool.HISTORY_SEARCH, HarnessTool.HISTORY_READ, HarnessTool.SUBAGENT -> ApprovalDecision(false)
+            HarnessTool.HISTORY_SEARCH, HarnessTool.HISTORY_READ, HarnessTool.SUBAGENT, HarnessTool.LOAD_RULE -> ApprovalDecision(false)
         }
     }
 
@@ -136,6 +139,7 @@ class ApprovalPolicyEngine {
         HarnessTool.DOWNLOAD -> "download ${args["destination"]?.jsonPrimitive?.content.orEmpty()}"
         HarnessTool.HOST -> "host ${args["action"]?.jsonPrimitive?.content.orEmpty()} ${args["command"]?.jsonPrimitive?.content.orEmpty().lineSequence().firstOrNull().orEmpty()}".trim()
         HarnessTool.MCP -> "MCP ${args["name"]?.jsonPrimitive?.content ?: "工具调用"}"
+        HarnessTool.BUILD_SCRIPT -> "build_script ${args["action"]?.jsonPrimitive?.content.orEmpty()} ${args["name"]?.jsonPrimitive?.content.orEmpty()}".trim()
         else -> tool.name.lowercase()
     }
 

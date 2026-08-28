@@ -173,13 +173,43 @@ fun McpSettingsScreen(
                 }
             }
 
-            items(servers, key = { it.id }) { server ->
-                McpServerItemCard(
-                    server = server,
-                    connectionState = connectionStates[server.id] ?: McpConnectionState.UNKNOWN,
-                    onToggle = { enabled -> viewModel.toggleMcpServer(server.id, enabled) },
-                    onClickDetail = { viewingDetailServer = server },
-                )
+            val builtinServers = servers.filter { it.isBuiltin }
+            val customServers = servers.filterNot { it.isBuiltin }
+
+            if (builtinServers.isNotEmpty()) {
+                item(key = "mcp_section_builtin") {
+                    McpSectionHeader(
+                        title = "系统核心 MCP",
+                        subtitle = "太墟内置系统级能力，默认关闭；开启后常驻本会话，harness 随时可调用（不参与 @ 唤醒）",
+                        count = builtinServers.size,
+                    )
+                }
+                items(builtinServers, key = { it.id }) { server ->
+                    McpServerItemCard(
+                        server = server,
+                        connectionState = connectionStates[server.id] ?: McpConnectionState.UNKNOWN,
+                        onToggle = { enabled -> viewModel.toggleMcpServer(server.id, enabled) },
+                        onClickDetail = { viewingDetailServer = server },
+                    )
+                }
+            }
+
+            if (customServers.isNotEmpty()) {
+                item(key = "mcp_section_custom") {
+                    McpSectionHeader(
+                        title = "自定义与三方 MCP",
+                        subtitle = "通过「添加服务」导入的外部 MCP 服务，可 @ 唤醒",
+                        count = customServers.size,
+                    )
+                }
+                items(customServers, key = { it.id }) { server ->
+                    McpServerItemCard(
+                        server = server,
+                        connectionState = connectionStates[server.id] ?: McpConnectionState.UNKNOWN,
+                        onToggle = { enabled -> viewModel.toggleMcpServer(server.id, enabled) },
+                        onClickDetail = { viewingDetailServer = server },
+                    )
+                }
             }
 
             item {
@@ -215,6 +245,30 @@ fun McpSettingsScreen(
                 viewModel.refreshMcpConnections()
                 res
             },
+        )
+    }
+}
+
+/**
+ * MCP 分栏标题：分组展示「系统核心 MCP（内置）」与「自定义与三方 MCP」。
+ */
+@Composable
+private fun McpSectionHeader(title: String, subtitle: String, count: Int) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp, bottom = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            "$title ($count)",
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            subtitle,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

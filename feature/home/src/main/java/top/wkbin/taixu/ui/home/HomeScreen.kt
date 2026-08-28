@@ -54,9 +54,29 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import top.wkbin.taixu.ui.components.RuntimeSwitch
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.stringResource
 import top.wkbin.taixu.feature.home.R
@@ -89,6 +109,9 @@ fun HomeScreen(
     onOpenTerminal: () -> Unit,
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
     val state by viewModel.runtimeState.collectAsStateWithLifecycle()
     val metrics by viewModel.metrics.collectAsStateWithLifecycle()
     val doctorReport by viewModel.doctorReport.collectAsStateWithLifecycle()
@@ -99,6 +122,60 @@ fun HomeScreen(
     val activeDistroId by viewModel.activeDistroId.collectAsStateWithLifecycle()
     val switchingDistro by viewModel.switchingDistro.collectAsStateWithLifecycle()
     val modeStatus by viewModel.executionModeStatus.collectAsStateWithLifecycle()
+    val webChatStatus by viewModel.webChatStatus.collectAsStateWithLifecycle()
+
+    val allFilesPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        viewModel.runDoctorCheck()
+    }
+    val legacyStoragePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {
+        viewModel.runDoctorCheck()
+    }
+
+    val requestAllFilesAccess: () -> Unit = remember(context) {
+        {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                runCatching {
+                    allFilesPermissionLauncher.launch(
+                        Intent(
+                            Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                            Uri.parse("package:${context.packageName}"),
+                        )
+                    )
+                }.onFailure {
+                    runCatching {
+                        allFilesPermissionLauncher.launch(
+                            Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                        )
+                    }.onFailure {
+                        allFilesPermissionLauncher.launch(
+                            Intent(
+                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.parse("package:${context.packageName}"),
+                            )
+                        )
+                    }
+                }
+            } else {
+                legacyStoragePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
+        }
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.runDoctorCheck()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     val isLiquidGlassTheme = isLiquidGlassThemeActive()
     Scaffold(
@@ -153,7 +230,13 @@ fun HomeScreen(
                 onOpenModeSettings = { onNavigate(MainDestination.Settings) },
             )
 
-            // 2. 运行与开发环境体检自愈中心 (TaiXu Doctor & Auto-Fix)
+            // 2. WebChat 电脑大屏协作卡片 (Dashboard Bridge Card)
+            WebChatDashboardCard(
+                status = webChatStatus,
+                onToggle = viewModel::toggleWebChat,
+            )
+
+            // 3. 运行与开发环境体检自愈中心 (TaiXu Doctor & Auto-Fix)
             EnvironmentDoctorCard(
                 report = doctorReport,
                 isChecking = isCheckingDoctor,
@@ -161,8 +244,14 @@ fun HomeScreen(
                 repairProgress = repairProgress,
                 runtimeReady = state is RuntimeState.Ready,
                 onRunCheck = viewModel::runDoctorCheck,
-                onStartAutoRepair = viewModel::startAutoRepair,
+                onStartAutoRepair = {
+                    if (doctorReport?.items?.any { it.id == "host_all_files_access" && it.status != DoctorStatus.HEALTHY } == true) {
+                        requestAllFilesAccess()
+                    }
+                    viewModel.startAutoRepair()
+                },
                 onCancelRepair = viewModel::cancelAutoRepair,
+                onRequestAllFilesAccess = requestAllFilesAccess,
             )
 
             // 3. 核心指标看板 (Live Resource Metrics Grid)
@@ -230,6 +319,7 @@ private fun EnvironmentDoctorCard(
     onRunCheck: () -> Unit,
     onStartAutoRepair: () -> Unit,
     onCancelRepair: () -> Unit,
+    onRequestAllFilesAccess: () -> Unit = {},
 ) {
     var isCardExpanded by remember { mutableStateOf(false) }
     var expandedDetails by remember { mutableStateOf(false) }
@@ -445,7 +535,10 @@ private fun EnvironmentDoctorCard(
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             val displayedItems = if (expandedDetails || report.needsFix) report.items else report.items.take(3)
                             displayedItems.forEach { item ->
-                                DoctorItemRow(item = item)
+                                DoctorItemRow(
+                                    item = item,
+                                    onRequestAllFilesAccess = onRequestAllFilesAccess,
+                                )
                             }
 
                             if (report.items.size > 3) {
@@ -517,7 +610,11 @@ private fun EnvironmentDoctorCard(
  * 体检条目单行展示
  */
 @Composable
-private fun DoctorItemRow(item: DoctorItem) {
+private fun DoctorItemRow(
+    item: DoctorItem,
+    onRequestAllFilesAccess: () -> Unit = {},
+) {
+    val isAllFilesIssue = item.id == "host_all_files_access" && item.status != DoctorStatus.HEALTHY
     val statusColor = when (item.status) {
         DoctorStatus.HEALTHY -> Color(0xFF2E7D32)
         DoctorStatus.WARNING -> Color(0xFFE65100)
@@ -537,6 +634,10 @@ private fun DoctorItemRow(item: DoctorItem) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .then(
+                if (isAllFilesIssue) Modifier.clickable { onRequestAllFilesAccess() }
+                else Modifier
+            )
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -560,7 +661,7 @@ private fun DoctorItemRow(item: DoctorItem) {
                 )
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.weight(1f)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -591,6 +692,17 @@ private fun DoctorItemRow(item: DoctorItem) {
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+            }
+        }
+
+        if (isAllFilesIssue) {
+            Spacer(Modifier.width(8.dp))
+            FilledTonalButton(
+                onClick = onRequestAllFilesAccess,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                modifier = Modifier.height(30.dp),
+            ) {
+                Text("去授权", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
             }
         }
     }
@@ -1151,5 +1263,161 @@ private fun PulsingStatusDot(color: Color, isPulsing: Boolean) {
                 .clip(CircleShape)
                 .background(color),
         )
+    }
+}
+
+/**
+ * WebChat 电脑大屏协作卡片 (Dashboard Bridge Card)
+ */
+@Composable
+private fun WebChatDashboardCard(
+    status: top.wkbin.taixu.runtime.webchat.WebChatServerStatus,
+    onToggle: (Boolean) -> Unit,
+) {
+    val context = LocalContext.current
+    val directUrl = "${status.accessUrl}?token=${status.pinCode}"
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (status.isRunning) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.40f) else MaterialTheme.colorScheme.surfaceContainer,
+        ),
+        border = if (status.isRunning) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)) else null,
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(if (status.isRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        RuntimeIcon(
+                            name = RuntimeIconName.Globe,
+                            modifier = Modifier.size(20.dp),
+                            tint = if (status.isRunning) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = "WebChat 电脑大屏协作",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = if (status.isRunning) "局域网服务运行中 · 已保活" else "默认关闭 · 按需开启免耗电",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (status.isRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+
+                RuntimeSwitch(
+                    checked = status.isRunning,
+                    onCheckedChange = onToggle,
+                )
+            }
+
+            if (status.isRunning) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+
+                // 访问地址独立成行：协议段小字淡化，主机端口醒目（避免与配对码挤在一起换行）
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        text = "电脑浏览器访问地址",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    val schemeMuted = MaterialTheme.colorScheme.onSurfaceVariant
+                    val hostAccent = MaterialTheme.colorScheme.primary
+                    val schemeFont = MaterialTheme.typography.labelMedium.fontSize
+                    val hostFont = MaterialTheme.typography.bodyMedium.fontSize
+                    val scheme = status.accessUrl.takeIf { it.contains("://") }
+                        ?.let { it.substringBefore("://") + "://" } ?: ""
+                    val hostPort = if (scheme.isNotEmpty()) status.accessUrl.substringAfter("://") else status.accessUrl
+                    Text(
+                        text = buildAnnotatedString {
+                            if (scheme.isNotEmpty()) {
+                                withStyle(
+                                    SpanStyle(
+                                        color = schemeMuted,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = schemeFont,
+                                    ),
+                                ) { append(scheme) }
+                            }
+                            withStyle(
+                                SpanStyle(
+                                    color = hostAccent,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = hostFont,
+                                ),
+                            ) { append(hostPort) }
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+
+                // 配对码独立成行显示
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        text = "配对码 (PIN)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = status.pinCode,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 2.sp,
+                        ),
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
+                }
+
+                Button(
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("WebChat Direct URL", directUrl))
+                        Toast.makeText(context, "已复制免密链接，发到电脑打开即可自动进入工作台！", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(vertical = 10.dp),
+                ) {
+                    RuntimeIcon(RuntimeIconName.Copy, Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("一键复制", fontWeight = FontWeight.SemiBold)
+                }
+
+                Text(
+                    text = "💡 提示：电脑需与手机连接至同一 Wi-Fi；当前在线设备：${status.activeConnections} 台",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Text(
+                    text = "无需数据线，在同一 Wi-Fi 下使用电脑浏览器直接连入太墟 Agent、审阅代码并管理沙箱工作区。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }

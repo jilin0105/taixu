@@ -113,6 +113,16 @@ class HarnessLoop @Inject constructor(
     // ---- 当前前台聚焦会话的响应式镜像（全部委托给投影协作类） ----
     val messages: StateFlow<List<HarnessMessage>> get() = messageProjector.foregroundMessages
 
+    /** Session-scoped message stream used by trusted secondary surfaces such as TaiXu WebChat. */
+    fun messagesForSession(sessionId: String): StateFlow<List<HarnessMessage>> =
+        messageProjector.messagesFlow(sessionId)
+
+    /** Loads persisted history without changing the Android UI's foreground session. */
+    suspend fun prepareRemoteSession(sessionId: String): List<HarnessMessage> {
+        val flow = messageProjector.preparedForLoad(sessionId)
+        return flow.value
+    }
+
     val running: StateFlow<Boolean> get() = stateMirrors.running
 
     private val _workspace = MutableStateFlow("")

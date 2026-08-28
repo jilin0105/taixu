@@ -24,10 +24,9 @@ class PromptAssetLoaderTest {
 
     @Test
     fun allPromptAssetsCanBeOpened() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val paths = context.assets.list("prompts").orEmpty()
+        val paths = listMarkdowns("prompts")
         assertTrue(paths.isNotEmpty())
-        paths.forEach { path -> assertTrue(loader.read("prompts/$path").isNotBlank()) }
+        paths.forEach { path -> assertTrue("blank: $path", loader.read(path).isNotBlank()) }
     }
 
     @Test
@@ -53,8 +52,6 @@ class PromptAssetLoaderTest {
             mapOf(
                 "WORKSPACE_PATH" to "/workspace/demo",
                 "DISTRO_NAME" to "Debian",
-                "TOOL_NAMES" to "read, edit",
-                "INSTALLED_TOOL_NAMES" to "JDK",
                 "TYPE_GUIDANCE" to "general",
             ),
         )
@@ -72,8 +69,6 @@ class PromptAssetLoaderTest {
             "ROLE_LIST" to "- assistant",
             "MARKER_TEXT" to "README.md",
             "WORKSPACE_PATH" to "/workspace/demo",
-            "TOOL_NAMES" to "read",
-            "INSTALLED_TOOL_NAMES" to "JDK",
             "TYPE_GUIDANCE" to "general",
             "ROLE_NAME" to "Assistant",
             "ROLE_ID" to "assistant",
@@ -82,10 +77,19 @@ class PromptAssetLoaderTest {
             "ROLE_PROMPT" to "be precise",
             "TASK_PROMPT" to "run tests",
         )
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        context.assets.list("prompts").orEmpty().forEach { path ->
-            val rendered = loader.render("prompts/$path", variables)
+        listMarkdowns("prompts").forEach { path ->
+            val rendered = loader.render(path, variables)
             assertFalse("Unresolved variable in $path", rendered.contains(Regex("""\{\{[A-Z]""")))
+        }
+    }
+
+    /** 递归列出 assets 下指定目录中的全部 .md 文件（含子目录如 system/）。 */
+    private fun listMarkdowns(assetPath: String): List<String> {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val children = context.assets.list(assetPath).orEmpty().toList()
+        return children.flatMap { child ->
+            val full = if (assetPath.isEmpty()) child else "$assetPath/$child"
+            if (child.endsWith(".md")) listOf(full) else listMarkdowns(full)
         }
     }
 

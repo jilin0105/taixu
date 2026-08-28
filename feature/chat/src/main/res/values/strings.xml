@@ -43,6 +43,10 @@
     <string name="chat_input_running">正在执行… 输入可排队</string>
     <string name="chat_input_hint">输入指令… 支持 @ 挂载专精能力与多模态附件</string>
     <string name="chat_context_usage">上下文用量</string>
+    <string name="chat_context_system_tokens">系统提示词 Token</string>
+    <string name="chat_context_dialogue_tokens">对话上下文 Token</string>
+    <string name="chat_context_tool_tokens">工具调用/输出 Token</string>
+    <string name="chat_context_compacted_active">已激活历史压缩</string>
     <string name="chat_system_prompt">系统提示词</string>
     <string name="chat_tools">工具</string>
     <string name="chat_conversation_messages">对话消息</string>
@@ -121,8 +125,8 @@
     <string name="chat_select">选择</string>
     <string name="chat_create_session">创建并开启会话</string>
     <string name="chat_no_arguments">(无参数)</string>
-    <string name="chat_capabilities">会话能力与工具关联</string>
-    <string name="chat_capabilities_description">实时选择当前会话大模型挂载的专业技能与 MCP 工具</string>
+    <string name="chat_capabilities">技能与 MCP 能力挂载</string>
+    <string name="chat_capabilities_description">默认仅在输入框输入 @ 提及生效；点击 📌 可钉选为当前会话常驻生效</string>
     <string name="chat_capabilities_enabled">已启用 %1$d</string>
     <string name="chat_skills_count">专精技能 (%1$d/%2$d)</string>
     <string name="chat_mcp_count">MCP 插件 (%1$d/%2$d)</string>

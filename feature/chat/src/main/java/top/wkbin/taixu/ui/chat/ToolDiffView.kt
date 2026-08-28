@@ -17,24 +17,27 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.res.stringResource
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import top.wkbin.taixu.feature.chat.R
 import top.wkbin.taixu.harness.HarnessTool
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
 private val DiffAddedBg = Color(0xFF0E2E1E)
 private val DiffAddedText = Color(0xFF7EE787)
@@ -64,7 +67,7 @@ fun ToolDiffView(
             HarnessTool.READ -> ReadToolDiff(call, result, workspace, onOpenFile)
             HarnessTool.BASE -> BaseToolDiff(call, result)
             HarnessTool.PROCESS, HarnessTool.HOST, HarnessTool.DOWNLOAD, HarnessTool.MEMORY, HarnessTool.PLAN, HarnessTool.SCRATCHPAD,
-            HarnessTool.HISTORY_SEARCH, HarnessTool.HISTORY_READ, HarnessTool.SUBAGENT, HarnessTool.MCP -> BaseToolDiff(call, result)
+            HarnessTool.HISTORY_SEARCH, HarnessTool.HISTORY_READ, HarnessTool.BUILD_SCRIPT, HarnessTool.SUBAGENT, HarnessTool.MCP -> BaseToolDiff(call, result)
         }
     }
 }
@@ -80,8 +83,8 @@ private fun EditToolDiff(
     val oldText = call.args["oldText"]?.jsonPrimitive?.content.orEmpty()
     val newText = call.args["newText"]?.jsonPrimitive?.content.orEmpty()
 
-    // 顶部路径与在编辑器中打开按钮
-    FilePathHeader(path = path, workspace = workspace, onOpenFile = onOpenFile)
+    // 顶部路径与在编辑器中打开/产物预览按钮
+    FilePathHeader(path = path, workspace = workspace, onOpenFile = onOpenFile, previewContent = newText.ifEmpty { oldText })
 
     // Diff 区域
     Column(
@@ -154,7 +157,7 @@ private fun WriteToolDiff(
     val path = call.args["path"]?.jsonPrimitive?.content.orEmpty()
     val content = call.args["content"]?.jsonPrimitive?.content.orEmpty()
 
-    FilePathHeader(path = path, workspace = workspace, onOpenFile = onOpenFile)
+    FilePathHeader(path = path, workspace = workspace, onOpenFile = onOpenFile, previewContent = content)
 
     val lineCount = remember(content) { content.count { it == '\n' } + 1 }
     Text(
@@ -198,7 +201,7 @@ private fun ReadToolDiff(
     onOpenFile: ((String, String) -> Unit)?,
 ) {
     val path = call.args["path"]?.jsonPrimitive?.content.orEmpty()
-    FilePathHeader(path = path, workspace = workspace, onOpenFile = onOpenFile)
+    FilePathHeader(path = path, workspace = workspace, onOpenFile = onOpenFile, previewContent = result?.output)
 
     result?.let { res ->
         if (res.success) {
@@ -215,8 +218,8 @@ private fun ReadToolDiff(
                     text = preview,
                     color = Color(0xFF8FA1BA),
                     fontFamily = FontFamily.Monospace,
-                    fontSize = 12.sp,
-                    lineHeight = 17.sp,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
                 )
             }
         } else {
@@ -230,40 +233,40 @@ private fun BaseToolDiff(
     call: ToolCall,
     result: ToolResult?,
 ) {
-    val command = call.args["command"]?.jsonPrimitive?.content.orEmpty()
-    val cwd = call.args["cwd"]?.jsonPrimitive?.content.orEmpty()
+    val command = call.args["command"]?.jsonPrimitive?.content
+        ?: call.args["cmd"]?.jsonPrimitive?.content
+        ?: call.args["text"]?.jsonPrimitive?.content
+        ?: call.args.toString()
 
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        RuntimeIcon(RuntimeIconName.Terminal, Modifier.size(14.dp), tint = Color(0xFF8FA1BA))
-        Text(
-            text = if (cwd.isNotBlank()) cwd else "/root",
-            style = MaterialTheme.typography.labelSmall,
-            color = Color(0xFF8FA1BA),
-            fontFamily = FontFamily.Monospace,
-        )
-    }
-
-    // 命令执行行
-    Box(
+    // 命令行
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFF06090F), RoundedCornerShape(6.dp))
+            .background(Color(0xFF06090F), RoundedCornerShape(4.dp))
             .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(
-            text = "$ $command",
-            color = Color(0xFFFFA657),
+            text = "$",
+            color = Color(0xFF7EE787),
             fontFamily = FontFamily.Monospace,
             fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
+            fontWeight = FontWeight.Bold,
+        )
+        Text(
+            text = command,
+            color = Color(0xFFDCE6F5),
+            fontFamily = FontFamily.Monospace,
+            fontSize = 12.sp,
         )
     }
 
-    // 输出结果
+    // 执行输出
     result?.let { res ->
         val output = res.output.trim()
-        if (output.isNotBlank()) {
+        if (output.isNotEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -283,12 +286,26 @@ private fun BaseToolDiff(
     }
 }
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun FilePathHeader(
     path: String,
     workspace: String,
     onOpenFile: ((String, String) -> Unit)?,
+    previewContent: String? = null,
 ) {
+    var showPreviewSheet by remember { mutableStateOf(false) }
+
+    if (showPreviewSheet && !previewContent.isNullOrEmpty()) {
+        top.wkbin.taixu.ui.chat.artifact.ArtifactPreviewSheet(
+            title = path.substringAfterLast('/'),
+            content = previewContent,
+            relativePath = path,
+            workspace = workspace,
+            onDismiss = { showPreviewSheet = false },
+        )
+    }
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -326,23 +343,49 @@ private fun FilePathHeader(
             }
         }
 
-        if (projectName.isNotBlank() && onOpenFile != null) {
-            Surface(
-                color = Color(0xFF1E283D),
-                shape = RoundedCornerShape(4.dp),
-                modifier = Modifier.clickable { onOpenFile(projectName, relativePath) },
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (!previewContent.isNullOrEmpty()) {
+                Surface(
+                    color = Color(0xFF1B2C47),
+                    shape = RoundedCornerShape(4.dp),
+                    modifier = Modifier.clickable { showPreviewSheet = true },
                 ) {
-                    RuntimeIcon(RuntimeIconName.Code, Modifier.size(12.dp), tint = Color(0xFF7EE787))
-                    Text(
-                        text = stringResource(R.string.chat_open_editor),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF7EE787),
-                    )
+                    Row(
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        RuntimeIcon(RuntimeIconName.Document, Modifier.size(12.dp), tint = Color(0xFF79C0FF))
+                        Text(
+                            text = "产物预览",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF79C0FF),
+                        )
+                    }
+                }
+            }
+
+            if (projectName.isNotBlank() && onOpenFile != null) {
+                Surface(
+                    color = Color(0xFF1E283D),
+                    shape = RoundedCornerShape(4.dp),
+                    modifier = Modifier.clickable { onOpenFile(projectName, relativePath) },
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        RuntimeIcon(RuntimeIconName.Code, Modifier.size(12.dp), tint = Color(0xFF7EE787))
+                        Text(
+                            text = stringResource(R.string.chat_open_editor),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF7EE787),
+                        )
+                    }
                 }
             }
         }

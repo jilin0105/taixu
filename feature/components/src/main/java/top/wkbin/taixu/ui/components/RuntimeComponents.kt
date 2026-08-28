@@ -88,6 +88,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.ColorFilter
@@ -1571,6 +1574,43 @@ fun NoticeBanner(text: String, modifier: Modifier = Modifier, isError: Boolean =
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/**
+ * 🌟 滚动列表平滑渐隐遮罩 (Scroll Fading Edge Mask)
+ * 为列表顶部和底部提供平滑的 Alpha 渐隐过渡，消除与 TopBar / BottomBar 之间的生硬切边。
+ */
+fun Modifier.scrollFadingEdge(
+    top: Dp = 14.dp,
+    bottom: Dp = 14.dp,
+): Modifier = this.graphicsLayer {
+    compositingStrategy = CompositingStrategy.Offscreen
+}.drawWithContent {
+    drawContent()
+    val topPx = top.toPx()
+    val bottomPx = bottom.toPx()
+    val h = size.height
+
+    if (topPx > 0f && h > 0f) {
+        drawRect(
+            brush = Brush.verticalGradient(
+                colors = listOf(Color.Transparent, Color.Black),
+                startY = 0f,
+                endY = topPx.coerceAtMost(h),
+            ),
+            blendMode = BlendMode.DstIn,
+        )
+    }
+    if (bottomPx > 0f && h > 0f) {
+        drawRect(
+            brush = Brush.verticalGradient(
+                colors = listOf(Color.Black, Color.Transparent),
+                startY = (h - bottomPx).coerceAtLeast(0f),
+                endY = h,
+            ),
+            blendMode = BlendMode.DstIn,
         )
     }
 }

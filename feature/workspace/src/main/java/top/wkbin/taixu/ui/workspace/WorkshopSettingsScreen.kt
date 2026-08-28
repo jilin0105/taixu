@@ -12,8 +12,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -40,50 +45,311 @@ import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeOutlinedButton
 import top.wkbin.taixu.ui.components.RuntimeTopBar
 import top.wkbin.taixu.ui.components.SectionHeader
+import top.wkbin.taixu.core.database.BuildScriptEntity
+import top.wkbin.taixu.runtime.ProjectType
 
 @Composable
-fun WorkshopSettingsScreen(onBack: () -> Unit, onOpenEnvironment: () -> Unit, onOpenSigning: () -> Unit = {}, onEditScript: (WorkshopScriptType) -> Unit, viewModel: WorkshopSettingsViewModel = hiltViewModel()) {
+fun WorkshopSettingsScreen(onBack: () -> Unit, onOpenEnvironment: () -> Unit, onOpenSigning: () -> Unit = {}, onEditScript: (WorkshopScriptType) -> Unit = {}, viewModel: WorkshopSettingsViewModel = hiltViewModel()) {
     val draft by viewModel.draft.collectAsStateWithLifecycle()
-    val customScripts by viewModel.customScripts.collectAsStateWithLifecycle()
+    val scripts by viewModel.managedScripts.collectAsStateWithLifecycle()
+    val projects by viewModel.projects.collectAsStateWithLifecycle()
+    val bindings by viewModel.projectBindings.collectAsStateWithLifecycle()
+    var editing by remember { mutableStateOf<BuildScriptEntity?>(null) }
+    var creating by remember { mutableStateOf(false) }
     Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = { RuntimeTopBar("工坊设置", onBack, "构建环境、签名与脚本") }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             item { SectionHeader("开发环境", "查看并调整 Android 与 Flutter 工具链") }
             item { SettingEntry(RuntimeIconName.Android, "Android / Flutter 环境", "SDK ${draft.androidSdkPath}\nNDK ${draft.ndkPath}\nGradle ${draft.gradlePath}\nCMake ${draft.cmakePath}", onOpenEnvironment) }
             item { SectionHeader("应用签名", "创建或导入签名文件，Release 构建时选用") }
             item { SettingEntry(RuntimeIconName.Key, "签名管理 (Keystore)", "创建 / 导入 Android 签名文件\n用于 Release 正式包构建", onOpenSigning) }
-            item { SectionHeader("构建脚本", "点击脚本进入独立编辑页面") }
-            item { RuntimeCard(contentPadding = PaddingValues(0.dp)) {
-                ScriptRow(WorkshopScriptType.ANDROID, WorkshopScriptType.ANDROID in customScripts) { onEditScript(WorkshopScriptType.ANDROID) }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                ScriptRow(WorkshopScriptType.FLUTTER, WorkshopScriptType.FLUTTER in customScripts) { onEditScript(WorkshopScriptType.FLUTTER) }
+            item { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) { SectionHeader("构建脚本", "Room 持久化；每个项目可选择不同脚本") }
+                RuntimeButton(onClick = { creating = true }) { Text("新建脚本") }
             } }
+            scripts.forEach { script -> item(key = script.id) {
+                ManagedScriptCard(
+                    script = script,
+                    onEdit = { editing = script },
+                    onClone = { viewModel.cloneScript(script) },
+                    onDelete = { viewModel.deleteManagedScript(script.id) },
+                )
+            } }
+            item { SectionHeader("项目挂载", "未挂载时继续使用标准构建流程") }
+            projects.filter { it.projectType == ProjectType.ANDROID || it.projectType == ProjectType.FLUTTER }.forEach { project ->
+                item(key = "binding-${project.name}") {
+                    ProjectScriptBindingRow(
+                        projectName = project.name,
+                        projectType = project.projectType,
+                        scripts = scripts.filter { it.projectType == project.projectType.name },
+                        selectedId = bindings.firstOrNull { it.projectName == project.name }?.scriptId,
+                        onSelect = { viewModel.bindProject(project.name, it) },
+                    )
+                }
+            }
+        }
+    }
+    if (creating) ManagedScriptEditorDialog(null, onDismiss = { creating = false }) { name, description, type, content ->
+        viewModel.saveManagedScript(null, name, description, type, content)
+        creating = false
+    }
+    editing?.let { script -> ManagedScriptEditorDialog(script, onDismiss = { editing = null }) { name, description, type, content ->
+        viewModel.saveManagedScript(script.id, name, description, type, content)
+        editing = null
+    } }
+}
+
+@Composable
+private fun ManagedScriptCard(script: BuildScriptEntity, onEdit: () -> Unit, onClone: () -> Unit, onDelete: () -> Unit) {
+    RuntimeCard(onClick = onEdit) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                RuntimeIcon(if (script.projectType == ProjectType.FLUTTER.name) RuntimeIconName.Flutter else RuntimeIconName.Android, Modifier.size(24.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(script.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text("${script.projectType} · ${if (script.isBuiltin) "内置模板" else "用户脚本"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+            if (script.description.isNotBlank()) Text(script.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                Text("编辑", Modifier.clickable(onClick = onEdit), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+                Text("复制", Modifier.clickable(onClick = onClone), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+                if (!script.isBuiltin) Text("删除", Modifier.clickable(onClick = onDelete), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge)
+            }
         }
     }
 }
 
 @Composable
+private fun ProjectScriptBindingRow(projectName: String, projectType: ProjectType, scripts: List<BuildScriptEntity>, selectedId: String?, onSelect: (String?) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val selected = scripts.firstOrNull { it.id == selectedId }
+    RuntimeCard(onClick = { expanded = true }) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(projectName, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text("${projectType.displayName} · ${selected?.name ?: "标准构建流程"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            RuntimeIcon(RuntimeIconName.ChevronRight, Modifier.size(20.dp))
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                DropdownMenuItem(text = { Text("标准构建流程") }, onClick = { expanded = false; onSelect(null) })
+                scripts.forEach { script -> DropdownMenuItem(text = { Text(script.name) }, onClick = { expanded = false; onSelect(script.id) }) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManagedScriptEditorDialog(script: BuildScriptEntity?, onDismiss: () -> Unit, onSave: (String, String, ProjectType, String) -> Unit) {
+    val defaultAndroidTemplate = "#!/bin/sh\nset -eu\nPROJECT_DIR=\"\${1:-.}\"\nTASK=\"\${2:-assembleDebug}\"\ncd \"\$PROJECT_DIR\"\n./gradlew \"\$TASK\" --no-daemon --max-workers=2\n"
+    val defaultFlutterTemplate = "#!/bin/sh\nset -eu\nPROJECT_DIR=\"\${1:-.}\"\nTARGET=\"\${2:-apk --debug}\"\ncd \"\$PROJECT_DIR\"\nflutter pub get\nflutter build \$TARGET\n"
+    var name by remember(script) { mutableStateOf(script?.name.orEmpty()) }
+    var description by remember(script) { mutableStateOf(script?.description.orEmpty()) }
+    var type by remember(script) { mutableStateOf(runCatching { ProjectType.valueOf(script?.projectType ?: ProjectType.ANDROID.name) }.getOrDefault(ProjectType.ANDROID)) }
+    var content by remember(script) { mutableStateOf(script?.content ?: if (type == ProjectType.FLUTTER) defaultFlutterTemplate else defaultAndroidTemplate) }
+    var typeExpanded by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (script == null) "新建构建脚本" else "编辑构建脚本") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(name, { name = it }, label = { Text("名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(description, { description = it }, label = { Text("用途与适用版本") }, modifier = Modifier.fillMaxWidth())
+            RuntimeOutlinedButton(onClick = { typeExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text("类型：${type.displayName}") }
+            DropdownMenu(expanded = typeExpanded, onDismissRequest = { typeExpanded = false }) {
+                listOf(ProjectType.ANDROID, ProjectType.FLUTTER).forEach { candidate ->
+                    DropdownMenuItem(
+                        text = { Text(candidate.displayName) },
+                        onClick = {
+                            if (script == null && (content == defaultAndroidTemplate || content == defaultFlutterTemplate || content.isBlank())) {
+                                content = if (candidate == ProjectType.FLUTTER) defaultFlutterTemplate else defaultAndroidTemplate
+                            }
+                            type = candidate
+                            typeExpanded = false
+                        },
+                    )
+                }
+            }
+            CodeEditorPanel(content, { content = it }, "build.sh", Modifier.fillMaxWidth().height(260.dp))
+            Text("接口约定：${'$'}1 为项目目录；Android 的 ${'$'}2 为 Gradle task，Flutter 的 ${'$'}2 为完整 build 参数。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } },
+        confirmButton = { RuntimeButton(onClick = { onSave(name, description, type, content) }, enabled = name.isNotBlank() && content.isNotBlank()) { Text("保存") } },
+        dismissButton = { RuntimeOutlinedButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
 fun WorkshopEnvironmentSettingsScreen(onBack: () -> Unit, viewModel: WorkshopSettingsViewModel = hiltViewModel()) {
     val draft by viewModel.draft.collectAsStateWithLifecycle()
-    Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = { RuntimeTopBar("开发环境", onBack, "沙箱内执行路径") }) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            item { SectionHeader("工具链路径", "路径均位于当前 Linux 沙箱内，保存后用于环境预检和构建") }
-            item { RuntimeCard { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                PathField("Android SDK", draft.androidSdkPath) { viewModel.update(draft.copy(androidSdkPath = it)) }
-                PathField("Android NDK", draft.ndkPath) { viewModel.update(draft.copy(ndkPath = it)) }
-                PathField("Flutter SDK", draft.flutterSdkPath) { viewModel.update(draft.copy(flutterSdkPath = it)) }
-                PathField("Java / JDK", draft.javaPath) { viewModel.update(draft.copy(javaPath = it)) }
-                PathField("Gradle", draft.gradlePath) { viewModel.update(draft.copy(gradlePath = it)) }
-                PathField("CMake", draft.cmakePath) { viewModel.update(draft.copy(cmakePath = it)) }
-                PathField("Ninja", draft.ninjaPath) { viewModel.update(draft.copy(ninjaPath = it)) }
-                PathField("AAPT2", draft.aapt2Path) { viewModel.update(draft.copy(aapt2Path = it)) }
-                PathField("Gradle 缓存", draft.gradleUserHome) { viewModel.update(draft.copy(gradleUserHome = it)) }
-                PathField("Flutter Pub 缓存", draft.pubCache) { viewModel.update(draft.copy(pubCache = it)) }
-                PathField("Android 工具目录 / ADB", draft.toolDir) { viewModel.update(draft.copy(toolDir = it)) }
-            } } }
-            item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                RuntimeOutlinedButton(onClick = viewModel::resetEnvironment, modifier = Modifier.weight(1f)) { Text("重置") }
-                RuntimeButton(onClick = viewModel::saveEnvironment, modifier = Modifier.weight(1f)) { Text("保存") }
-            } }
+    val detected by viewModel.detectedToolchains.collectAsStateWithLifecycle()
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            RuntimeTopBar(
+                "开发环境",
+                onBack,
+                if (detected.isScanning) "正在探测沙箱工具链…" else "沙箱内执行路径",
+            )
+        },
+    ) { padding ->
+        LazyColumn(
+            Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        SectionHeader("工具链路径", "路径均位于当前 Linux 沙箱内，保存后用于环境预检和构建")
+                    }
+                    RuntimeOutlinedButton(
+                        onClick = viewModel::rescanToolchains,
+                        enabled = !detected.isScanning,
+                    ) {
+                        Text(if (detected.isScanning) "扫描中…" else "探测沙箱")
+                    }
+                }
+            }
+            item {
+                RuntimeCard {
+                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        ToolchainPathDropdownField("Gradle", draft.gradlePath, detected.gradleOptions) { viewModel.update(draft.copy(gradlePath = it)) }
+                        ToolchainPathDropdownField("Java / JDK", draft.javaPath, detected.javaOptions) { viewModel.update(draft.copy(javaPath = it)) }
+                        ToolchainPathDropdownField("Android NDK", draft.ndkPath, detected.ndkOptions) { viewModel.update(draft.copy(ndkPath = it)) }
+                        ToolchainPathDropdownField("AAPT2", draft.aapt2Path, detected.aapt2Options) { viewModel.update(draft.copy(aapt2Path = it)) }
+                        PathField("Android SDK", draft.androidSdkPath) { viewModel.update(draft.copy(androidSdkPath = it)) }
+                        PathField("Flutter SDK", draft.flutterSdkPath) { viewModel.update(draft.copy(flutterSdkPath = it)) }
+                        PathField("CMake", draft.cmakePath) { viewModel.update(draft.copy(cmakePath = it)) }
+                        PathField("Ninja", draft.ninjaPath) { viewModel.update(draft.copy(ninjaPath = it)) }
+                        PathField("Gradle 缓存", draft.gradleUserHome) { viewModel.update(draft.copy(gradleUserHome = it)) }
+                        PathField("Flutter Pub 缓存", draft.pubCache) { viewModel.update(draft.copy(pubCache = it)) }
+                        PathField("Android 工具目录 / ADB", draft.toolDir) { viewModel.update(draft.copy(toolDir = it)) }
+                    }
+                }
+            }
+            item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    RuntimeOutlinedButton(onClick = viewModel::resetEnvironment, modifier = Modifier.weight(1f)) { Text("重置") }
+                    RuntimeButton(onClick = viewModel::saveEnvironment, modifier = Modifier.weight(1f)) { Text("保存") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToolchainPathDropdownField(
+    label: String,
+    value: String,
+    options: List<ToolchainOption>,
+    onValueChange: (String) -> Unit,
+) {
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+    var expanded by remember { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (options.isNotEmpty()) {
+                Surface(
+                    onClick = { expanded = true },
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            "切换版本",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                        RuntimeIcon(RuntimeIconName.ChevronDown, Modifier.size(14.dp), MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                }
+            }
+        }
+
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceContainerLow, shape)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f), shape)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall.copy(
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            )
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            options.forEach { option ->
+                val isSelected = option.path == value
+                DropdownMenuItem(
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text(
+                                    option.label,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                )
+                                if (option.isDetected) {
+                                    Surface(
+                                        shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp),
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                    ) {
+                                        Text(
+                                            "已检测",
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                }
+                            }
+                            Text(
+                                option.path,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                ),
+                            )
+                        }
+                    },
+                    onClick = {
+                        onValueChange(option.path)
+                        expanded = false
+                    },
+                )
+            }
         }
     }
 }

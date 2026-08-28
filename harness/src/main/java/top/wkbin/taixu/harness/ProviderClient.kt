@@ -703,6 +703,15 @@ class ProviderClient @Inject constructor(
         val TOOLS: List<ApiToolDefinition> = listOf(
             ApiToolDefinition(
                 function = ApiFunctionDefinition(
+                    name = "build_script",
+                    description = "管理工坊构建脚本并挂载到项目。新旧依赖不兼容时，先检查项目 Gradle/Flutter 配置，再 create 脚本并 bind 当前项目。脚本接口：第 1 个参数是项目目录；Android 第 2 个参数是 Gradle task；Flutter 第 2 个参数是完整 build 参数。支持 list/get/create/update/delete/bind/unbind。",
+                    parameters = Json.parseToJsonElement(
+                        """{"type":"object","properties":{"action":{"type":"string","enum":["list","get","create","update","delete","bind","unbind"]},"id":{"type":"string","description":"脚本 ID；get/update/delete/bind 必需"},"name":{"type":"string","description":"脚本名称"},"description":{"type":"string","description":"适用依赖版本与用途"},"project_type":{"type":"string","enum":["android","flutter"]},"content":{"type":"string","description":"完整 POSIX shell 脚本，最大 200 KB"},"project":{"type":"string","description":"项目名称；省略时使用当前工作区"}},"required":["action"]}""",
+                    ).jsonObject,
+                ),
+            ),
+            ApiToolDefinition(
+                function = ApiFunctionDefinition(
                     name = "history_search",
                     description = "在当前会话的完整历史中按关键词检索旧消息。压缩摘要缺少关键细节时先用它定位消息，再用 history_read 读取原文。只读，不修改历史。",
                     parameters = Json.parseToJsonElement(
@@ -767,9 +776,9 @@ class ProviderClient @Inject constructor(
             ApiToolDefinition(
                 function = ApiFunctionDefinition(
                     name = "host",
-                    description = "在 Android 宿主侧执行操作（需已授权 Shizuku 或 Root，用法见系统提示词的宿主权限章节）。它不同于 base：base 始终在 PRoot Linux 沙箱内。修改宿主的动作需要用户审批。",
+                    description = "在 Android 宿主侧执行系统设置、应用管理或屏幕 GUI 自动化感知与手势操控（需已授权 Shizuku 或 Root）。支持 screen_observe 查看当前前台应用与屏幕节点树，screen_click 点击坐标，screen_swipe 滑动屏幕，screen_input_text 输入文本，screen_key 按键导航，app_launch 启动应用。",
                     parameters = Json.parseToJsonElement(
-                        """{"type":"object","properties":{"action":{"type":"string","enum":["status","exec","settings_get","settings_put","package_list","package_disable","package_enable","package_uninstall_user","app_list","app_freeze","app_unfreeze","app_grant_permission","logcat","device_status"]},"command":{"type":"string","description":"仅 exec 使用的原始宿主命令"},"namespace":{"type":"string","enum":["system","secure","global"],"description":"settings_get/settings_put 的设置命名空间"},"key":{"type":"string","description":"系统设置键名"},"value":{"type":"string","description":"settings_put 的值"},"package":{"type":"string","description":"应用操作的 Android 包名；必须先由 app_list 返回"},"permission":{"type":"string","description":"app_grant_permission 的 Android 权限名"},"query":{"type":"string","description":"app_list 的包名或应用名搜索词"},"include_system":{"type":"boolean","description":"app_list 是否显示系统应用，默认 false"},"limit":{"type":"integer","minimum":1,"maximum":200,"description":"app_list 返回数量，默认 50"},"user":{"type":"integer","minimum":0,"maximum":999,"description":"Android 用户 ID，默认 0"},"filter":{"type":"string","description":"package_list 的可选字面量过滤词"},"tail_lines":{"type":"integer","minimum":1,"maximum":2000,"description":"logcat 返回行数，默认 200"},"tag":{"type":"string","description":"logcat 的可选 tag"}},"required":["action"]}""",
+                        """{"type":"object","properties":{"action":{"type":"string","enum":["status","exec","settings_get","settings_put","package_list","package_disable","package_enable","package_uninstall_user","app_list","app_freeze","app_unfreeze","app_grant_permission","logcat","device_status","screen_observe","screen_click","screen_swipe","screen_input_text","screen_key","app_launch","screen_capture"]},"command":{"type":"string","description":"仅 exec 使用的原始宿主命令"},"namespace":{"type":"string","enum":["system","secure","global"],"description":"settings_get/settings_put 的设置命名空间"},"key":{"type":"string","description":"系统设置键名，或 screen_key 的按键名(back/home/recents/enter/delete/power)"},"value":{"type":"string","description":"settings_put 的值"},"text":{"type":"string","description":"screen_input_text 要输入的文本"},"x":{"type":"integer","description":"screen_click 的点击 X 坐标"},"y":{"type":"integer","description":"screen_click 的点击 Y 坐标"},"x1":{"type":"integer","description":"screen_swipe 起点 X 坐标"},"y1":{"type":"integer","description":"screen_swipe 起点 Y 坐标"},"x2":{"type":"integer","description":"screen_swipe 终点 X 坐标"},"y2":{"type":"integer","description":"screen_swipe 终点 Y 坐标"},"duration_ms":{"type":"integer","description":"screen_swipe 滑动持续时间毫秒数，默认 300"},"package":{"type":"string","description":"应用操作的 Android 包名（如 com.tencent.mm）"},"path":{"type":"string","description":"screen_capture 保存截图的目标绝对路径"},"permission":{"type":"string","description":"app_grant_permission 的 Android 权限名"},"query":{"type":"string","description":"app_list 的包名或应用名搜索词"},"include_system":{"type":"boolean","description":"app_list 是否显示系统应用，默认 false"},"limit":{"type":"integer","minimum":1,"maximum":200,"description":"app_list 返回数量，默认 50"},"user":{"type":"integer","minimum":0,"maximum":999,"description":"Android 用户 ID，默认 0"},"filter":{"type":"string","description":"package_list 的可选字面量过滤词"},"tail_lines":{"type":"integer","minimum":1,"maximum":2000,"description":"logcat 返回行数，默认 200"},"tag":{"type":"string","description":"logcat 的可选 tag"}},"required":["action"]}""",
                     ).jsonObject,
                 ),
             ),
@@ -794,7 +803,7 @@ class ProviderClient @Inject constructor(
             ApiToolDefinition(
                 function = ApiFunctionDefinition(
                     name = "plan",
-                    description = "结构化多步骤任务规划管理：拆解长任务子步骤并持续跟踪推进进度。支持 action: replace_active, get_active, advance, clear_active。",
+                    description = "结构化多步骤任务规划管理：拆解长任务子步骤并持续跟踪推进进度。当任务预计需要 3 次以上工具调用、存在多个相互依赖的执行阶段、失败后需要分支排查，或会修改多个文件/系统状态时，第一轮工具调用先 replace_active 建立规划，每步完成后 advance；简单单步或双步任务不要建 plan。详细规则见 workflow 规则块（未注入时可用 load_rule 获取）。支持 action: replace_active, get_active, advance, clear_active。",
                     parameters = Json.parseToJsonElement(
                         """{"type":"object","properties":{"action":{"type":"string","enum":["replace_active","get_active","advance","clear_active"],"description":"规划操作动作"},"goal":{"type":"string","description":"任务总体目标"},"steps":{"type":"array","description":"规划步骤列表（每个步骤包含 id, title, status: pending|in_progress|completed|failed）","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"},"status":{"type":"string"}},"required":["id","title","status"]}},"status":{"type":"string","description":"任务整体状态"}},"required":["action"]}""",
                     ).jsonObject,
@@ -815,6 +824,15 @@ class ProviderClient @Inject constructor(
                     description = "并发派发一个或多个专业角色子智能体（Subagents）执行调研、编写、编译或测试等特定子任务，并在完成后汇总结构化结论。每个子智能体在专属子会话中独立运行。",
                     parameters = Json.parseToJsonElement(
                         """{"type":"object","properties":{"subagents":{"type":"array","description":"子任务列表","items":{"type":"object","properties":{"taskName":{"type":"string","description":"子任务名称（如: 数据库结构调研 / 编写测试用例）"},"role":{"type":"string","description":"子智能体角色（如: researcher / coder / tester）"},"prompt":{"type":"string","description":"详细的任务指令与要求"}},"required":["taskName","role","prompt"]}}},"required":["subagents"]}""",
+                    ).jsonObject,
+                ),
+            ),
+            ApiToolDefinition(
+                function = ApiFunctionDefinition(
+                    name = "load_rule",
+                    description = "按需加载系统提示词的详细规则块（workflow / code-navigation / security / memory / environment-proot / tools）。当当前任务需要某块规则但系统提示词中未注入时调用；只读，无副作用。",
+                    parameters = Json.parseToJsonElement(
+                        """{"type":"object","properties":{"rule":{"type":"string","enum":["workflow","code-navigation","security","memory","environment-proot","tools"],"description":"要加载的规则块名称"}},"required":["rule"]}""",
                     ).jsonObject,
                 ),
             ),

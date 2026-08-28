@@ -1,6 +1,8 @@
 package top.wkbin.taixu.harness
 
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -8,6 +10,14 @@ import org.junit.Test
 import top.wkbin.taixu.core.model.McpToolInfo
 
 class BuiltinToolContractTest {
+    @Test
+    fun `build script tool exposes lifecycle and binding actions`() {
+        val tool = ProviderClient.TOOLS.single { it.function.name == "build_script" }
+        val action = tool.function.parameters["properties"]!!.jsonObject["action"]!!.jsonObject
+        val values = action["enum"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertEquals(listOf("list", "get", "create", "update", "delete", "bind", "unbind"), values)
+    }
+
     @Test
     fun baseExposesBoundedTimeoutOverride() {
         val base = ProviderClient.TOOLS.single { it.function.name == "base" }
@@ -46,7 +56,7 @@ class BuiltinToolContractTest {
         val host = ProviderClient.TOOLS.single { it.function.name == "host" }
         val encoded = host.function.parameters.toString()
         assertTrue(encoded.contains("\"status\""))
-        listOf("exec", "settings_get", "settings_put", "package_list", "package_disable", "package_enable", "package_uninstall_user", "app_list", "app_freeze", "app_unfreeze", "app_grant_permission", "logcat")
+        listOf("exec", "settings_get", "settings_put", "package_list", "package_disable", "package_enable", "package_uninstall_user", "app_list", "app_freeze", "app_unfreeze", "app_grant_permission", "logcat", "screen_observe", "screen_click", "screen_swipe", "screen_input_text", "screen_key", "app_launch", "screen_capture")
             .forEach { action -> assertTrue(encoded.contains("\"$action\"")) }
         assertTrue(host.function.description.contains("Android"))
     }

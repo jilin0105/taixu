@@ -58,6 +58,9 @@ class ToolExecutor @Inject constructor(
     private val androidAppManager: AndroidAppManager? = null,
     private val androidAppRepository: AndroidAppRepository? = null,
     private val shizukuApis: ShizukuSystemApis? = null,
+    private val hostGuiController: top.wkbin.taixu.runtime.gui.HostGuiController? = null,
+    private val buildScriptToolExecutor: BuildScriptToolExecutor? = null,
+    private val promptRouter: top.wkbin.taixu.harness.prompt.PromptRouter? = null,
 ) {
     @Inject
     lateinit var settingsDataStore: AgentPreferences
@@ -182,8 +185,18 @@ class ToolExecutor @Inject constructor(
             HarnessTool.SCRATCHPAD -> contextExecutor?.executeScratchpad(args, sessionId) ?: (false to "未初始化草稿执行器")
             HarnessTool.HISTORY_SEARCH -> executeHistorySearch(args, sessionId)
             HarnessTool.HISTORY_READ -> executeHistoryRead(args, sessionId)
+            HarnessTool.BUILD_SCRIPT -> buildScriptToolExecutor?.execute(args, workspace) ?: (false to "未初始化构建脚本管理器")
             HarnessTool.SUBAGENT -> subagentOrchestrator?.executeSubagents(args, sessionId) ?: (false to "未初始化子智能体编排器")
             HarnessTool.MCP -> mcpManager?.executeTool(rawToolName ?: "mcp", args) ?: (false to "未初始化 MCP 管理器")
+            HarnessTool.LOAD_RULE -> {
+                val rule = requireString(args, "rule")
+                val content = promptRouter?.loadRule(rule)
+                if (content != null) {
+                    true to "【规则块：$rule】\n$content"
+                } else {
+                    false to "未知规则块：$rule。可用：workflow / code-navigation / security / memory / environment-proot / tools"
+                }
+            }
         }
     }
 
@@ -229,6 +242,74 @@ class ToolExecutor @Inject constructor(
                 }
             }
             "app_list" -> executeCachedApps(args)
+            "screen_observe" -> {
+                val gui = hostGuiController ?: return false to "未初始化 GUI 控制器"
+                val onlyInteractive = args["only_interactive"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true
+                val res = gui.observeScreen(onlyInteractive)
+                res.fold(
+                    onSuccess = { obs -> true to obs.toAgentSummary() },
+                    onFailure = { err -> false to "感知屏幕失败：${err.message}" }
+                )
+            }
+            "screen_click" -> {
+                val gui = hostGuiController ?: return false to "未初始化 GUI 控制器"
+                val x = requireInt(args, "x")
+                val y = requireInt(args, "y")
+                val res = gui.click(x, y)
+                res.fold(
+                    onSuccess = { msg -> true to msg },
+                    onFailure = { err -> false to err.message.orEmpty() }
+                )
+            }
+            "screen_swipe" -> {
+                val gui = hostGuiController ?: return false to "未初始化 GUI 控制器"
+                val x1 = requireInt(args, "x1")
+                val y1 = requireInt(args, "y1")
+                val x2 = requireInt(args, "x2")
+                val y2 = requireInt(args, "y2")
+                val durationMs = optionalLong(args, "duration_ms", 300L, 50L, 3000L)
+                val res = gui.swipe(x1, y1, x2, y2, durationMs)
+                res.fold(
+                    onSuccess = { msg -> true to msg },
+                    onFailure = { err -> false to err.message.orEmpty() }
+                )
+            }
+            "screen_input_text" -> {
+                val gui = hostGuiController ?: return false to "未初始化 GUI 控制器"
+                val text = requireString(args, "text")
+                val res = gui.inputText(text)
+                res.fold(
+                    onSuccess = { msg -> true to msg },
+                    onFailure = { err -> false to err.message.orEmpty() }
+                )
+            }
+            "screen_key" -> {
+                val gui = hostGuiController ?: return false to "未初始化 GUI 控制器"
+                val key = requireString(args, "key")
+                val res = gui.sendKey(key)
+                res.fold(
+                    onSuccess = { msg -> true to msg },
+                    onFailure = { err -> false to err.message.orEmpty() }
+                )
+            }
+            "app_launch" -> {
+                val gui = hostGuiController ?: return false to "未初始化 GUI 控制器"
+                val packageName = requireHostIdentifier(args, "package", PACKAGE_NAME)
+                val res = gui.launchApp(packageName)
+                res.fold(
+                    onSuccess = { msg -> true to msg },
+                    onFailure = { err -> false to err.message.orEmpty() }
+                )
+            }
+            "screen_capture" -> {
+                val gui = hostGuiController ?: return false to "未初始化 GUI 控制器"
+                val targetPath = requireString(args, "path")
+                val res = gui.captureScreenshot(targetPath)
+                res.fold(
+                    onSuccess = { msg -> true to msg },
+                    onFailure = { err -> false to err.message.orEmpty() }
+                )
+            }
             else -> {
                 val packageName = if (action in APP_DATABASE_GUARDED_ACTIONS || action == "app_grant_permission") {
                     requireHostIdentifier(args, "package", PACKAGE_NAME)
@@ -638,6 +719,12 @@ class ToolExecutor @Inject constructor(
         require(!value.isNullOrBlank()) { "缺少参数：$key" }
         require(value.length <= MAX_ARG_LENGTH) { "参数 $key 过长（${value.length} 字符，上限 $MAX_ARG_LENGTH）" }
         return value
+    }
+
+    private fun requireInt(args: JsonObject, key: String): Int {
+        val raw = args[key]?.jsonPrimitive?.content?.trim()
+        require(!raw.isNullOrBlank()) { "缺少参数：$key" }
+        return raw.toIntOrNull() ?: throw IllegalArgumentException("参数 $key 必须是整数")
     }
 
     private fun optionalLong(args: JsonObject, key: String, default: Long, min: Long, max: Long): Long {

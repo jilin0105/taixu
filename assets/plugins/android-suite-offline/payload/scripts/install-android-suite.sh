@@ -280,13 +280,81 @@ if [ -s "$ARCHIVES/flutter-linux-arm64-android-only-slim.tar.gz" ]; then
     ln -sfn /opt/flutter/bin/flutter "$TOOL_DIR/bin/flutter"
     ln -sfn /opt/flutter/bin/dart "$TOOL_DIR/bin/dart"
 fi
-progress 92 "[COMMAND] Flutter Android ARM64 SDK 安装完成"
+progress 85 "[COMMAND] Flutter Android ARM64 SDK 安装完成"
 
-progress 94 "[COMMAND] 正在创建 java、gradle、cmake、ninja、flutter 命令链接"
+# Ripgrep (rg) ARM64: 毫秒级极速搜索
+if [ -f "$ARCHIVES/ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz" ]; then
+    progress 87 "[EXTRACT] 正在解压 Ripgrep 极速代码搜索工具：ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz"
+    rm -rf /tmp/taixu-ripgrep
+    mkdir -p /tmp/taixu-ripgrep
+    tar -xzf "$ARCHIVES/ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz" -C /tmp/taixu-ripgrep
+    RG_BIN=$(find /tmp/taixu-ripgrep -type f -name rg -print -quit)
+    need "$RG_BIN" "ripgrep binary"
+    is_aarch64_elf "$RG_BIN" || { echo "Ripgrep is not ARM64" >&2; exit 5; }
+    cp "$RG_BIN" "$TOOL_DIR/bin/rg"
+    chmod 755 "$TOOL_DIR/bin/rg"
+    ln -sfn "$TOOL_DIR/bin/rg" "/opt/taixu/bin/rg"
+    rm -rf /tmp/taixu-ripgrep
+    progress 89 "[COMMAND] Ripgrep (rg) ARM64 安装完成"
+fi
+
+# JADX 1.5.0 CLI: Java 反编译工具
+if [ -f "$ARCHIVES/jadx-1.5.0.zip" ]; then
+    progress 90 "[EXTRACT] 正在解压 JADX 1.5.0 反编译套件：jadx-1.5.0.zip"
+    rm -rf "$TOOL_DIR/jadx" /tmp/taixu-jadx
+    mkdir -p /tmp/taixu-jadx
+    extract_zip "$ARCHIVES/jadx-1.5.0.zip" /tmp/taixu-jadx
+    JADX_BIN=$(find /tmp/taixu-jadx -type f -name jadx -print -quit)
+    need "$JADX_BIN" "jadx launcher"
+    mkdir -p "$TOOL_DIR/jadx"
+    cp -a "$(dirname "$(dirname "$JADX_BIN")")/." "$TOOL_DIR/jadx/"
+    chmod +x "$TOOL_DIR/jadx/bin/jadx" "$TOOL_DIR/jadx/bin/jadx-gui" 2>/dev/null || true
+    ln -sfn "$TOOL_DIR/jadx/bin/jadx" "$TOOL_DIR/bin/jadx"
+    ln -sfn "$TOOL_DIR/jadx/bin/jadx" "/opt/taixu/bin/jadx"
+    rm -rf /tmp/taixu-jadx
+    progress 92 "[COMMAND] JADX 1.5.0 安装完成"
+fi
+
+# Apktool 2.10.0: 资源与 Smali 处理
+if [ -f "$ARCHIVES/apktool_2.10.0.jar" ]; then
+    progress 93 "[INSTALL] 正在配置 Apktool 2.10.0..."
+    mkdir -p "$TOOL_DIR/lib"
+    cp "$ARCHIVES/apktool_2.10.0.jar" "$TOOL_DIR/lib/apktool.jar"
+    printf '#!/usr/bin/env sh\nexec "%s/bin/java" -jar "%s/lib/apktool.jar" "$@"\n' "$JDK_HOME" "$TOOL_DIR" > "$TOOL_DIR/bin/apktool"
+    chmod 755 "$TOOL_DIR/bin/apktool"
+    ln -sfn "$TOOL_DIR/bin/apktool" "/opt/taixu/bin/apktool"
+    progress 94 "[COMMAND] Apktool 2.10.0 安装完成"
+fi
+
+# dex-tools 2.4 (dex2jar): DEX 转换与字节码工具
+if [ -f "$ARCHIVES/dex-tools-v2.4.zip" ]; then
+    progress 95 "[EXTRACT] 正在解压 dex-tools 2.4 (dex2jar)：dex-tools-v2.4.zip"
+    rm -rf "$TOOL_DIR/dex-tools" /tmp/taixu-d2j
+    mkdir -p /tmp/taixu-d2j
+    extract_zip "$ARCHIVES/dex-tools-v2.4.zip" /tmp/taixu-d2j
+    D2J_SCRIPT=$(find /tmp/taixu-d2j -type f -name "d2j-dex2jar.sh" -print -quit)
+    need "$D2J_SCRIPT" "d2j-dex2jar script"
+    mkdir -p "$TOOL_DIR/dex-tools"
+    cp -a "$(dirname "$D2J_SCRIPT")/." "$TOOL_DIR/dex-tools/"
+    chmod +x "$TOOL_DIR/dex-tools/"*.sh 2>/dev/null || true
+    for script in "$TOOL_DIR/dex-tools/"*.sh; do
+        if [ -f "$script" ]; then
+            base_cmd=$(basename "$script" .sh)
+            ln -sfn "$script" "$TOOL_DIR/bin/$base_cmd"
+            ln -sfn "$script" "$TOOL_DIR/bin/$base_cmd.sh"
+            ln -sfn "$script" "/opt/taixu/bin/$base_cmd"
+            ln -sfn "$script" "/opt/taixu/bin/$base_cmd.sh"
+        fi
+    done
+    rm -rf /tmp/taixu-d2j
+    progress 96 "[COMMAND] dex-tools (d2j-dex2jar) 安装完成"
+fi
+
+progress 97 "[COMMAND] 正在创建 java、gradle、cmake、ninja、flutter、jadx、apktool、rg 命令链接"
 ln -sfn "$JDK_HOME/bin/java" "$TOOL_DIR/bin/java"
 ln -sfn "$JDK_HOME/bin/javac" "$TOOL_DIR/bin/javac"
 ln -sfn "/opt/gradle-$GRADLE_VERSION/bin/gradle" "$TOOL_DIR/bin/gradle"
-for command in java javac gradle cmake ninja adb flutter dart; do
+for command in java javac gradle cmake ninja adb flutter dart jadx apktool d2j-dex2jar d2j-baksmali d2j-smali rg; do
     if [ -e "$TOOL_DIR/bin/$command" ]; then ln -sfn "$TOOL_DIR/bin/$command" "/opt/taixu/bin/$command"; fi
 done
 

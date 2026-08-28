@@ -60,6 +60,86 @@ interface AndroidAppRepository {
     suspend fun reconcile(apps: List<AndroidAppEntity>)
 }
 
+interface BuildScriptRepository {
+    fun observeScripts(): Flow<List<BuildScriptEntity>>
+    fun observeBindings(): Flow<List<ProjectBuildScriptBindingEntity>>
+    suspend fun listScripts(): List<BuildScriptEntity>
+    suspend fun findScript(id: String): BuildScriptEntity?
+    suspend fun findBinding(projectName: String): ProjectBuildScriptBindingEntity?
+    suspend fun resolvedScript(projectName: String): BuildScriptEntity?
+    suspend fun upsertScript(script: BuildScriptEntity)
+    suspend fun deleteScript(id: String): Boolean
+    suspend fun bind(projectName: String, scriptId: String)
+    suspend fun unbind(projectName: String)
+    suspend fun ensureBuiltinScripts(androidScript: String = "", flutterScript: String = "")
+}
+
+@Singleton
+class RoomBuildScriptRepository @Inject constructor(
+    private val dao: BuildScriptDao,
+) : BuildScriptRepository {
+    override fun observeScripts() = dao.observeScripts()
+    override fun observeBindings() = dao.observeBindings()
+    override suspend fun listScripts(): List<BuildScriptEntity> {
+        val scripts = dao.listScripts()
+        if (scripts.isEmpty()) {
+            ensureBuiltinScripts()
+            return dao.listScripts()
+        }
+        return scripts
+    }
+    override suspend fun findScript(id: String): BuildScriptEntity? {
+        val script = dao.findScript(id)
+        if (script == null && (id == "builtin-android" || id == "builtin-flutter")) {
+            ensureBuiltinScripts()
+            return dao.findScript(id)
+        }
+        return script
+    }
+    override suspend fun findBinding(projectName: String) = dao.findBinding(projectName)
+    override suspend fun resolvedScript(projectName: String): BuildScriptEntity? =
+        dao.findBinding(projectName)?.let { findScript(it.scriptId) }
+    override suspend fun upsertScript(script: BuildScriptEntity) = dao.upsertScript(script)
+    override suspend fun deleteScript(id: String) = dao.deleteScriptAndBindings(id)
+    override suspend fun bind(projectName: String, scriptId: String) {
+        requireNotNull(findScript(scriptId)) { "构建脚本不存在：$scriptId" }
+        dao.upsertBinding(ProjectBuildScriptBindingEntity(projectName, scriptId, System.currentTimeMillis()))
+    }
+    override suspend fun unbind(projectName: String) = dao.deleteBinding(projectName)
+
+    override suspend fun ensureBuiltinScripts(androidScript: String, flutterScript: String) {
+        val now = System.currentTimeMillis()
+        val existing = dao.listScripts().associateBy { it.id }
+        val builtins = listOf(
+            BuildScriptEntity(
+                id = "builtin-android",
+                name = "标准 Android",
+                description = "太墟内置 Android 构建脚本，可复制后适配旧版或新版依赖。",
+                projectType = "ANDROID",
+                content = androidScript.ifBlank {
+                    "#!/bin/sh\nset -eu\nPROJECT_DIR=\"\${1:-.}\"\nTASK=\"\${2:-assembleDebug}\"\ncd \"\$PROJECT_DIR\"\n./gradlew \"\$TASK\" --no-daemon --max-workers=2\n"
+                },
+                isBuiltin = true,
+                createdAt = now,
+                updatedAt = now,
+            ),
+            BuildScriptEntity(
+                id = "builtin-flutter",
+                name = "标准 Flutter",
+                description = "太墟内置 Flutter APK 构建脚本，可复制后定制。",
+                projectType = "FLUTTER",
+                content = flutterScript.ifBlank {
+                    "#!/bin/sh\nset -eu\nPROJECT_DIR=\"\${1:-.}\"\nTARGET=\"\${2:-apk --debug}\"\ncd \"\$PROJECT_DIR\"\nflutter pub get\nflutter build \$TARGET\n"
+                },
+                isBuiltin = true,
+                createdAt = now,
+                updatedAt = now,
+            ),
+        )
+        builtins.filter { it.id !in existing }.forEach { dao.upsertScript(it) }
+    }
+}
+
 @Singleton
 class RoomAndroidAppRepository @Inject constructor(private val dao: AndroidAppDao) : AndroidAppRepository {
     override fun observeAll() = dao.observeAll()
@@ -369,4 +449,5 @@ abstract class PersistenceRepositoryModule {
     @Binds abstract fun bindAndroidAppRepository(impl: RoomAndroidAppRepository): AndroidAppRepository
     @Binds abstract fun bindQuickPhraseRepository(impl: RoomQuickPhraseRepository): QuickPhraseRepository
     @Binds abstract fun bindHarnessRuntimeRepository(impl: RoomHarnessRuntimeRepository): HarnessRuntimeRepository
+    @Binds abstract fun bindBuildScriptRepository(impl: RoomBuildScriptRepository): BuildScriptRepository
 }

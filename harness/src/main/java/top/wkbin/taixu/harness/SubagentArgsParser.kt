@@ -1,38 +1,37 @@
 package top.wkbin.taixu.harness
 
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import top.wkbin.taixu.core.model.SubagentTaskSpec
 
-/**
- * 子智能体参数解析工具类：
- * 统一处理 `invoke_subagent` 的 `subagents` 列表参数以及单个任务调用的兼容结构。
- */
+/** Tolerant parser shared by subagent execution and persisted-call rendering. */
 object SubagentArgsParser {
-    private const val MAX_SUBAGENTS = 6
+    const val DEFAULT_MAX_TASKS = 6
 
-    fun parse(args: JsonObject, defaultTaskName: String = "子任务"): List<SubagentTaskSpec> {
-        val list = mutableListOf<SubagentTaskSpec>()
-        val subagentsArray = args["subagents"]?.jsonArray
-        if (subagentsArray != null) {
-            for (elem in subagentsArray) {
-                val obj = elem.jsonObject
-                val taskName = obj["taskName"]?.jsonPrimitive?.content ?: defaultTaskName
-                val role = obj["role"]?.jsonPrimitive?.content ?: "assistant"
-                val prompt = obj["prompt"]?.jsonPrimitive?.content ?: continue
-                list.add(SubagentTaskSpec(taskName, role, prompt))
-            }
-        } else {
-            // 单个 subagent 调用兼容
-            val prompt = args["prompt"]?.jsonPrimitive?.content
-            val role = args["role"]?.jsonPrimitive?.content ?: "assistant"
-            val taskName = args["taskName"]?.jsonPrimitive?.content ?: defaultTaskName
-            if (!prompt.isNullOrBlank()) {
-                list.add(SubagentTaskSpec(taskName, role, prompt))
-            }
+    fun parse(
+        args: JsonObject,
+        defaultTaskName: String = "子任务",
+        maxTasks: Int = DEFAULT_MAX_TASKS,
+    ): List<SubagentTaskSpec> {
+        val nested = args["subagents"]
+        val candidates = when (nested) {
+            is JsonArray -> nested.mapNotNull { it as? JsonObject }
+            is JsonObject -> listOf(nested)
+            else -> listOf(args)
         }
-        return list.take(MAX_SUBAGENTS)
+
+        return candidates.mapNotNull { candidate ->
+            val prompt = candidate.string("prompt")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            SubagentTaskSpec(
+                taskName = candidate.string("taskName")?.takeIf { it.isNotBlank() } ?: defaultTaskName,
+                role = candidate.string("role")?.takeIf { it.isNotBlank() } ?: "assistant",
+                prompt = prompt,
+            )
+        }.take(maxTasks.coerceAtLeast(0))
     }
+
+    private fun JsonObject.string(key: String): String? =
+        (this[key] as? JsonPrimitive)?.contentOrNull
 }

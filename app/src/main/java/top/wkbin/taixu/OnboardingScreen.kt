@@ -1,10 +1,20 @@
 package top.wkbin.taixu
 
+import android.content.ClipboardManager
+import android.content.Context
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,31 +23,31 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import top.wkbin.taixu.ui.components.RuntimeButton as Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator as CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
-import top.wkbin.taixu.ui.components.RuntimeIconButton as IconButton
-import top.wkbin.taixu.ui.components.RuntimeLinearProgressIndicator as LinearProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
-import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -45,22 +55,34 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.res.stringResource
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.core.tools.AgentProviderDefinition
 import top.wkbin.taixu.runtime.DistributionCatalog
+import top.wkbin.taixu.ui.components.IconTile
 import top.wkbin.taixu.ui.components.ProviderBadge
+import top.wkbin.taixu.ui.components.RuntimeAlertDialog
+import top.wkbin.taixu.ui.components.RuntimeButton
+import top.wkbin.taixu.ui.components.RuntimeCard
+import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator
+import top.wkbin.taixu.ui.components.RuntimeFilledTonalButton
 import top.wkbin.taixu.ui.components.RuntimeIcon
+import top.wkbin.taixu.ui.components.RuntimeIconButton
 import top.wkbin.taixu.ui.components.RuntimeIconName
+import top.wkbin.taixu.ui.components.RuntimeLinearProgressIndicator
+import top.wkbin.taixu.ui.components.RuntimeOutlinedButton
+import top.wkbin.taixu.ui.components.RuntimeTextButton
 import top.wkbin.taixu.ui.components.TaiXuBrandBadge
 
 private data class SetupOption(val id: String, val label: String)
@@ -133,7 +155,7 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceContainerLow,
                     shape = RoundedCornerShape(12.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 ) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Row(
@@ -157,7 +179,7 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
                                 softWrap = false,
                             )
                         }
-                        LinearProgressIndicator(
+                        RuntimeLinearProgressIndicator(
                             progress = { progress.progress },
                             modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
                             color = MaterialTheme.colorScheme.primary,
@@ -185,15 +207,11 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
             }
         }
         item {
-            Button(
+            RuntimeButton(
                 onClick = viewModel::install,
                 enabled = !installing,
                 modifier = Modifier.fillMaxWidth().height(50.dp),
                 shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                ),
             ) {
                 Text(
                     stringResource(
@@ -215,7 +233,7 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
             }
         }
         item {
-            TextButton(
+            RuntimeTextButton(
                 onClick = { importLauncher.launch(arrayOf("application/gzip", "application/x-gzip", "application/x-tar", "application/x-xz", "application/octet-stream")) },
                 enabled = !installing,
                 modifier = Modifier.fillMaxWidth(),
@@ -232,7 +250,7 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
         }
         if (state is RuntimeState.Error) {
             item {
-                TextButton(
+                RuntimeTextButton(
                     onClick = viewModel::retryReady,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -243,8 +261,7 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
     }
 }
 
-
-
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun ModelSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) {
     val provider by viewModel.modelProvider.collectAsStateWithLifecycle()
@@ -257,105 +274,359 @@ private fun ModelSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) {
     val providers = viewModel.providerCatalog
     val selectedProvider = providers.firstOrNull { it.name == provider } ?: providers.first()
 
+    val context = LocalContext.current
+    var showImportDialog by remember { mutableStateOf(false) }
+    var keyRevealed by remember { mutableStateOf(false) }
+    var providerMenuExpanded by remember { mutableStateOf(false) }
+
+    val candidateModels = remember(discovered, selectedProvider) {
+        (discovered + selectedProvider.recommendedModels).distinct().filter { it.isNotBlank() }
+    }
+
+    val compactFieldShape = RoundedCornerShape(10.dp)
+    val compactFieldColors = OutlinedTextFieldDefaults.colors(
+        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.5f),
+        focusedBorderColor = MaterialTheme.colorScheme.primary,
+        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+    )
+
     LazyColumn(
         modifier = modifier,
-        contentPadding = PaddingValues(24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        // 顶部 Hero 与快速导入入口
         item {
             Column(
-                Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 6.dp),
+                Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                ProviderBadge(providerIdOrName = selectedProvider.id, size = 52.dp)
-                Text(stringResource(R.string.taixu_onboarding_connect_model), style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Spacer(Modifier.size(36.dp))
+                    ProviderBadge(providerIdOrName = selectedProvider.id, size = 48.dp)
+                    RuntimeIconButton(
+                        onClick = { showImportDialog = true },
+                        modifier = Modifier.size(36.dp),
+                        contentDescription = "从 JSON 导入配置",
+                    ) {
+                        RuntimeIcon(
+                            name = RuntimeIconName.Download,
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
                 Text(
-                    stringResource(R.string.taixu_onboarding_connect_model_description),
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = stringResource(R.string.taixu_onboarding_connect_model),
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                )
+                Text(
+                    text = stringResource(R.string.taixu_onboarding_connect_model_description),
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    textAlign = TextAlign.Center,
                 )
             }
         }
+
+        // 1. 服务商 Hero 预设卡片
         item {
-            SetupProviderDropdown(
-                selectedProvider = selectedProvider,
-                providers = providers,
-                enabled = true,
-                onSelected = viewModel::selectProvider,
-            )
-        }
-        item {
-            OutlinedTextField(
-                value = baseUrl,
-                onValueChange = viewModel::setBaseUrl,
+            RuntimeCard(
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text(stringResource(R.string.taixu_onboarding_base_url)) },
-                placeholder = { Text("https://api.openai.com/v1") },
-                shape = RoundedCornerShape(10.dp),
-                trailingIcon = {
-                    IconButton(
-                        onClick = viewModel::discoverModels,
-                        enabled = !discovering && baseUrl.isNotBlank(),
-                    ) {
-                        if (discovering) {
-                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        } else {
-                            RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    ProviderBadge(providerIdOrName = selectedProvider.id, size = 32.dp)
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "服务商预设",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = selectedProvider.name,
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+
+                    Box {
+                        RuntimeFilledTonalButton(
+                            onClick = { providerMenuExpanded = true },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("切换", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold))
+                                RuntimeIcon(RuntimeIconName.ChevronDown, Modifier.size(14.dp))
+                            }
+                        }
+
+                        DropdownMenu(
+                            expanded = providerMenuExpanded,
+                            onDismissRequest = { providerMenuExpanded = false },
+                        ) {
+                            providers.forEach { option ->
+                                DropdownMenuItem(
+                                    leadingIcon = {
+                                        ProviderBadge(providerIdOrName = option.id, size = 20.dp)
+                                    },
+                                    text = {
+                                        Text(
+                                            option.name,
+                                            fontWeight = if (option.id == selectedProvider.id) FontWeight.Bold else FontWeight.Normal,
+                                        )
+                                    },
+                                    onClick = {
+                                        viewModel.selectProvider(option.id)
+                                        providerMenuExpanded = false
+                                    },
+                                )
+                            }
                         }
                     }
-                },
-                singleLine = true,
-            )
-        }
-        item {
-            OutlinedTextField(
-                value = apiKey,
-                onValueChange = viewModel::setApiKey,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(stringResource(R.string.taixu_onboarding_api_key)) },
-                placeholder = { Text("sk-...") },
-                shape = RoundedCornerShape(10.dp),
-                visualTransformation = PasswordVisualTransformation(),
-                singleLine = true,
-            )
-        }
-        item {
-            SetupDropdown(
-                stringResource(R.string.taixu_onboarding_model_selection),
-                model,
-                (discovered + selectedProvider.recommendedModels).distinct().map { SetupOption(it, it) }.ifEmpty { listOf(SetupOption(model, model.ifBlank { stringResource(R.string.taixu_onboarding_model_empty) })) },
-                true,
-                viewModel::setModelId,
-            )
-        }
-        item {
-            OutlinedTextField(
-                value = model,
-                onValueChange = viewModel::setModelId,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(stringResource(R.string.taixu_onboarding_model_id)) },
-                placeholder = { Text("gpt-4o / deepseek-chat") },
-                shape = RoundedCornerShape(10.dp),
-                singleLine = true,
-            )
-        }
-        discoveryError?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextButton(onClick = viewModel::skipModel, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.taixu_onboarding_later)) }
-                Button(
-                    onClick = viewModel::saveModelAndFinish,
-                    enabled = model.isNotBlank(),
-                    modifier = Modifier.weight(1f).height(48.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary),
-                ) {
-                    Text(stringResource(R.string.taixu_onboarding_enter))
                 }
             }
         }
+
+        // 2. 接口 Base URL
+        item {
+            RuntimeCard(
+                modifier = Modifier.fillMaxWidth(),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "接口地址 (Base URL)",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    OutlinedTextField(
+                        value = baseUrl,
+                        onValueChange = viewModel::setBaseUrl,
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("https://api.openai.com/v1", style = MaterialTheme.typography.bodySmall) },
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        shape = compactFieldShape,
+                        colors = compactFieldColors,
+                        singleLine = true,
+                        trailingIcon = {
+                            RuntimeIconButton(
+                                onClick = viewModel::discoverModels,
+                                enabled = !discovering && baseUrl.isNotBlank(),
+                                modifier = Modifier.size(32.dp),
+                            ) {
+                                if (discovering) {
+                                    RuntimeCircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                } else {
+                                    RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        },
+                    )
+                }
+            }
+        }
+
+        // 3. API Key
+        item {
+            RuntimeCard(
+                modifier = Modifier.fillMaxWidth(),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "API Key 凭据",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        if (apiKey.isNotBlank()) {
+                            Text(
+                                text = "已填写",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+                    OutlinedTextField(
+                        value = apiKey,
+                        onValueChange = viewModel::setApiKey,
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("sk-...", style = MaterialTheme.typography.bodySmall) },
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        shape = compactFieldShape,
+                        colors = compactFieldColors,
+                        visualTransformation = if (keyRevealed) VisualTransformation.None else PasswordVisualTransformation(),
+                        singleLine = true,
+                        trailingIcon = {
+                            if (apiKey.isNotEmpty()) {
+                                RuntimeIconButton(
+                                    onClick = { keyRevealed = !keyRevealed },
+                                    modifier = Modifier.size(32.dp),
+                                ) {
+                                    RuntimeIcon(
+                                        name = if (keyRevealed) RuntimeIconName.Brain else RuntimeIconName.Key,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                                    )
+                                }
+                            }
+                        },
+                    )
+                }
+            }
+        }
+
+        // 4. 模型选择与候选 FlowRow Chip
+        item {
+            RuntimeCard(
+                modifier = Modifier.fillMaxWidth(),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "选择模型 (Model ID)",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+
+                    OutlinedTextField(
+                        value = model,
+                        onValueChange = viewModel::setModelId,
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("例如：gpt-4o / deepseek-chat", style = MaterialTheme.typography.bodySmall) },
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        shape = compactFieldShape,
+                        colors = compactFieldColors,
+                        singleLine = true,
+                    )
+
+                    if (candidateModels.isNotEmpty()) {
+                        Text(
+                            text = "候选模型标签（点击一键填入）：",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            candidateModels.forEach { candidate ->
+                                val isSelected = model == candidate
+                                Surface(
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+                                    ),
+                                    modifier = Modifier.clickable { viewModel.setModelId(candidate) },
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    ) {
+                                        if (isSelected) {
+                                            RuntimeIcon(
+                                                name = RuntimeIconName.Check,
+                                                modifier = Modifier.size(13.dp),
+                                                tint = MaterialTheme.colorScheme.primary,
+                                            )
+                                        }
+                                        Text(
+                                            text = candidate,
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontSize = 11.sp,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                            ),
+                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 错误提示
+        discoveryError?.let { err ->
+            item {
+                Text(
+                    text = err,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+
+        // 底部操作栏
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                RuntimeButton(
+                    onClick = viewModel::saveModelAndFinish,
+                    enabled = model.isNotBlank() && baseUrl.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Text(
+                        stringResource(R.string.taixu_onboarding_enter),
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+
+                RuntimeTextButton(
+                    onClick = viewModel::skipModel,
+                    modifier = Modifier.fillMaxWidth().height(40.dp),
+                ) {
+                    Text(
+                        stringResource(R.string.taixu_onboarding_later),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+
+    // JSON 导入对话框
+    if (showImportDialog) {
+        OnboardingModelImportDialog(
+            onDismiss = { showImportDialog = false },
+            onImportJson = { jsonStr ->
+                val result = viewModel.importProfileFromJson(jsonStr)
+                result.fold(
+                    onSuccess = { profile ->
+                        Toast.makeText(context, "成功载入模型配置「${profile.name.ifBlank { profile.model }}」", Toast.LENGTH_SHORT).show()
+                        showImportDialog = false
+                    },
+                    onFailure = { err ->
+                        Toast.makeText(context, "解析失败: ${err.message}", Toast.LENGTH_LONG).show()
+                    },
+                )
+            },
+        )
     }
 }
 
@@ -372,60 +643,8 @@ private fun Intro(title: String, description: String) {
             description,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            textAlign = TextAlign.Center,
         )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SetupProviderDropdown(
-    selectedProvider: AgentProviderDefinition,
-    providers: List<AgentProviderDefinition>,
-    enabled: Boolean,
-    onSelected: (String) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { if (enabled) expanded = !expanded },
-    ) {
-        OutlinedTextField(
-            value = selectedProvider.name,
-            onValueChange = {},
-            readOnly = true,
-            enabled = enabled,
-            label = { Text(stringResource(R.string.taixu_onboarding_provider_preset)) },
-            shape = RoundedCornerShape(10.dp),
-            leadingIcon = {
-                ProviderBadge(
-                    providerIdOrName = selectedProvider.id,
-                    size = 24.dp,
-                )
-            },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-            modifier = Modifier.fillMaxWidth().menuAnchor(
-                ExposedDropdownMenuAnchorType.PrimaryNotEditable,
-                enabled,
-            ),
-        )
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            providers.forEach { option ->
-                DropdownMenuItem(
-                    leadingIcon = {
-                        ProviderBadge(
-                            providerIdOrName = option.id,
-                            size = 22.dp,
-                        )
-                    },
-                    text = { Text(option.name) },
-                    onClick = {
-                        onSelected(option.id)
-                        expanded = false
-                    },
-                )
-            }
-        }
     }
 }
 
@@ -469,4 +688,133 @@ private fun SetupDropdown(
             }
         }
     }
+}
+
+/**
+ * 引导页专属 JSON 模型导入弹窗
+ */
+@Composable
+private fun OnboardingModelImportDialog(
+    onDismiss: () -> Unit,
+    onImportJson: (String) -> Unit,
+) {
+    var selectedTab by remember { mutableIntStateOf(0) }
+    var jsonText by remember { mutableStateOf("") }
+    val context = LocalContext.current
+
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    stream.bufferedReader().readText()
+                }
+            }.onSuccess { fileContent ->
+                if (!fileContent.isNullOrBlank()) {
+                    jsonText = fileContent
+                    selectedTab = 0
+                    Toast.makeText(context, "已载入文件内容", Toast.LENGTH_SHORT).show()
+                }
+            }.onFailure {
+                Toast.makeText(context, "读取文件失败: ${it.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RuntimeIcon(RuntimeIconName.Download, Modifier.size(20.dp), MaterialTheme.colorScheme.primary)
+                Text("导入模型配置", fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                SecondaryTabRow(
+                    selectedTabIndex = selectedTab,
+                    containerColor = Color.Transparent,
+                ) {
+                    Tab(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        text = { Text("剪贴板粘贴") },
+                    )
+                    Tab(
+                        selected = selectedTab == 1,
+                        onClick = {
+                            selectedTab = 1
+                            filePickerLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                        },
+                        text = { Text("选择本地文件") },
+                    )
+                }
+
+                if (selectedTab == 0) {
+                    OutlinedTextField(
+                        value = jsonText,
+                        onValueChange = { jsonText = it },
+                        modifier = Modifier.fillMaxWidth().height(160.dp),
+                        placeholder = { Text("粘贴导出的 JSON 模型配置（单个或 bundle 均支持）") },
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        shape = RoundedCornerShape(10.dp),
+                    )
+
+                    RuntimeOutlinedButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                            val clipText = clipboard?.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+                            if (clipText.isNotBlank()) {
+                                jsonText = clipText
+                            } else {
+                                Toast.makeText(context, "剪贴板为空", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(36.dp),
+                        shape = RoundedCornerShape(8.dp),
+                    ) {
+                        Text("一键粘贴剪贴板内容")
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        RuntimeOutlinedButton(
+                            onClick = {
+                                filePickerLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                            },
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                RuntimeIcon(RuntimeIconName.File, Modifier.size(16.dp))
+                                Text("选择本地 JSON 文件")
+                            }
+                        }
+                        if (jsonText.isNotBlank()) {
+                            Text(
+                                text = "已载入 ${jsonText.length} 字符",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            RuntimeButton(
+                onClick = { onImportJson(jsonText) },
+                enabled = jsonText.isNotBlank(),
+            ) {
+                Text("载入配置")
+            }
+        },
+        dismissButton = {
+            RuntimeTextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        },
+    )
 }
