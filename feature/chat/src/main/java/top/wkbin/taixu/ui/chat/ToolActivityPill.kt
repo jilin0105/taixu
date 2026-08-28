@@ -82,24 +82,28 @@ fun ToolActivityPill(
 ) {
     var showDetailSheet by remember { mutableStateOf(false) }
 
-    val activeToolCall = remember(messages, running) {
+    val activeToolCall = remember(messages, running, toolResults) {
         if (!running) null
         else messages.filterIsInstance<ToolCall>().lastOrNull { call ->
             !toolResults.containsKey(call.id)
-        } ?: messages.filterIsInstance<ToolCall>().lastOrNull()
+        }
     }
 
-    // 运行耗时秒数计算
     val roundStart = remember(messages.size, running) {
         if (!running) 0L
         else messages.lastOrNull { it is UserMessage }?.createdAt ?: System.currentTimeMillis()
     }
+
+    // 运行耗时秒数计算（若有活跃工具则计算该工具耗时，否则计算本轮耗时）
+    val timingStart = remember(activeToolCall?.id, roundStart, running) {
+        activeToolCall?.createdAt ?: roundStart
+    }
     var elapsedMillis by remember { mutableLongStateOf(0L) }
 
-    LaunchedEffect(running, roundStart) {
-        if (running) {
+    LaunchedEffect(running, timingStart) {
+        if (running && timingStart > 0L) {
             while (true) {
-                elapsedMillis = System.currentTimeMillis() - roundStart
+                elapsedMillis = (System.currentTimeMillis() - timingStart).coerceAtLeast(0L)
                 delay(200)
             }
         } else {

@@ -91,6 +91,7 @@ import top.wkbin.taixu.ui.components.MainDestination
 import top.wkbin.taixu.ui.components.NoticeBanner
 import top.wkbin.taixu.ui.components.RuntimeBottomBar
 import top.wkbin.taixu.ui.components.liquidGlassContent
+import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
@@ -213,7 +214,7 @@ fun HomeScreen(
                 .padding(top = innerPadding.calculateTopPadding())
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 12.dp)
-                .padding(bottom = 104.dp),
+                .padding(bottom = if (isLiquidGlassTheme) 104.dp else innerPadding.calculateBottomPadding() + 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             // 1. 运行时引擎主状态卡片 (Status Banner)
@@ -342,16 +343,13 @@ private fun EnvironmentDoctorCard(
         if (missingAndroidEnv) isCardExpanded = true
     }
 
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .clickable { isCardExpanded = !isCardExpanded },
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    RuntimeCard(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = { isCardExpanded = !isCardExpanded },
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             // Header
@@ -739,16 +737,13 @@ private fun AndroidEnvAcquisitionCard(
     onJoinQqGroup: () -> Unit,
     onOpenToolCenter: () -> Unit,
 ) {
-    Card(
+    RuntimeCard(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+        borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
+        contentPadding = PaddingValues(14.dp),
     ) {
         Column(
-            modifier = Modifier.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(
@@ -788,20 +783,30 @@ private fun AndroidEnvAcquisitionCard(
                 RuntimeButton(
                     onClick = onJoinQqGroup,
                     modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(vertical = 10.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                 ) {
                     RuntimeIcon(RuntimeIconName.Qq, Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("进QQ群取离线包", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold))
+                    Text(
+                        text = "进群取离线包",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
                 FilledTonalButton(
                     onClick = onOpenToolCenter,
                     modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(vertical = 10.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                 ) {
                     RuntimeIcon(RuntimeIconName.Extension, Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("插件中心安装", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold))
+                    Text(
+                        text = "插件中心安装",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }
@@ -854,13 +859,12 @@ private fun RuntimeEngineStatusCard(
         else -> MaterialTheme.colorScheme.outline
     }
 
-    Card(
+    RuntimeCard(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        contentPadding = PaddingValues(18.dp),
     ) {
         Column(
-            modifier = Modifier.padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(
@@ -1154,13 +1158,12 @@ private fun ResourceMetricCard(
         progress >= 0.8f -> MaterialTheme.colorScheme.tertiary
         else -> accentColor
     }
-    Card(
+    RuntimeCard(
         modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentPadding = PaddingValues(14.dp),
     ) {
         Column(
-            modifier = Modifier.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(
@@ -1225,15 +1228,13 @@ private fun ActiveTasksStatusCard(
     metrics: SystemResourceMetrics,
     onOpenTerminal: () -> Unit,
 ) {
-    Card(
+    RuntimeCard(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentPadding = PaddingValues(16.dp),
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -1288,13 +1289,12 @@ private fun ActiveTasksStatusCard(
  */
 @Composable
 private fun SystemSpecsCard(metrics: SystemResourceMetrics, modeStatus: ExecutionModeStatus) {
-    Card(
+    RuntimeCard(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentPadding = PaddingValues(16.dp),
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
@@ -1394,16 +1394,13 @@ private fun WebChatDashboardCard(
     val context = LocalContext.current
     val directUrl = "${status.accessUrl}?token=${status.pinCode}"
 
-    Card(
+    RuntimeCard(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (status.isRunning) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.40f) else MaterialTheme.colorScheme.surfaceContainer,
-        ),
-        border = if (status.isRunning) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)) else null,
+        containerColor = if (status.isRunning) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.40f) else MaterialTheme.colorScheme.surfaceContainer,
+        borderColor = if (status.isRunning) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else null,
+        contentPadding = PaddingValues(16.dp),
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(

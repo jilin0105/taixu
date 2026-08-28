@@ -2676,19 +2676,21 @@ private fun ToolCard(
                     modifier = Modifier.weight(1f, fill = false),
                 )
                 Spacer(Modifier.weight(1f))
-                val durationText = result?.durationMs?.let { formatDuration(it) }
-                    ?: if (running) {
-                        var elapsed by remember(call.id) { mutableStateOf(0L) }
-                        LaunchedEffect(call.id) {
-                            while (true) {
-                                elapsed = System.currentTimeMillis() - call.createdAt
-                                delay(100)
-                            }
+                val durationText = if (result != null) {
+                    val duration = result.durationMs ?: (result.createdAt - call.createdAt).coerceAtLeast(0L)
+                    formatDuration(duration)
+                } else if (running) {
+                    var elapsed by remember(call.id) { mutableStateOf(0L) }
+                    LaunchedEffect(call.id) {
+                        while (true) {
+                            elapsed = (System.currentTimeMillis() - call.createdAt).coerceAtLeast(0L)
+                            delay(100)
                         }
-                        formatDuration(elapsed)
-                    } else {
-                        null
                     }
+                    formatDuration(elapsed)
+                } else {
+                    null
+                }
                 durationText?.let {
                     Text(
                         it,
