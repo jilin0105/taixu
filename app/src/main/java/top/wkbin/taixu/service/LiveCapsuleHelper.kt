@@ -212,7 +212,7 @@ object LiveCapsuleHelper {
             }
             val hyperOsParam = org.json.JSONObject().apply {
                 put("param_v2", org.json.JSONObject().apply {
-                    put("business", "ai_agent_task")
+                    put("business", "countdown")
                     put("updatable", isOngoing)
                     put("orderId", sessionId)
                     put("param_island", hyperOsIsland)
@@ -232,7 +232,7 @@ object LiveCapsuleHelper {
         runCatching {
             val operationCode = if (isOngoing) 0 else 2
             extras.putInt("notification.superx.operation", operationCode)
-            extras.putString("notification.superx.scene", "ai_agent_status")
+            extras.putString("notification.superx.scene", "countdown")
             extras.putString("notification.superx.template", "capsule")
             extras.putString("notification.superx.title", title)
             extras.putString("notification.superx.content", statusText)
@@ -252,7 +252,7 @@ object LiveCapsuleHelper {
 
             val vivoParam = org.json.JSONObject().apply {
                 put("operation", if (isOngoing) 0 else 1)
-                put("scene", "ai_agent_status")
+                put("scene", "countdown")
                 put("templateType", 1)
                 put("showNotify", true)
                 put("title", title)
