@@ -57,9 +57,18 @@ class AgentForegroundService : Service() {
         super.onCreate()
         runCatching {
             val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, getString(R.string.taixu_agent_notification_channel), NotificationManager.IMPORTANCE_LOW),
-            )
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                getString(R.string.taixu_agent_notification_channel),
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = "用于展示 AI 深度思考与任务进度的灵动岛/原子胶囊"
+                enableVibration(false)
+                setSound(null, null)
+                setShowBadge(true)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
+            manager.createNotificationChannel(channel)
         }.onFailure { Log.w(TAG, "创建通知渠道失败", it) }
     }
 
@@ -199,7 +208,10 @@ class AgentForegroundService : Service() {
             .setContentText(getString(R.string.taixu_agent_background_running))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
 
     private fun sessionNotification(
@@ -278,7 +290,7 @@ class AgentForegroundService : Service() {
         const val ACTION_STOP = "top.wkbin.taixu.action.AGENT_STOP"
         const val EXTRA_SESSION_ID = "extra_session_id"
         const val KEY_REPLY = "agent_reply"
-        private const val CHANNEL_ID = "agent-execution"
+        private const val CHANNEL_ID = "taixu-agent-capsule-v3"
         private const val PRIMARY_NOTIFICATION_ID = 2001
         private const val TAG = "AgentForegroundService"
         private const val WAKE_LOCK_TAG = "taixu:agent-execution"

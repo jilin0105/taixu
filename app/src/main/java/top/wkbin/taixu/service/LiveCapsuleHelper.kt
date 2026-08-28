@@ -53,18 +53,24 @@ object LiveCapsuleHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
+        val bigTextStyle = NotificationCompat.BigTextStyle()
+            .setBigContentTitle(shortTitle)
+            .bigText(contentText)
+            .setSummaryText(formattedStatus)
+
         val builder = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.drawable.taixu_logo)
             .setContentTitle(shortTitle)
             .setContentText(contentText)
             .setSubText(formattedStatus)
+            .setStyle(bigTextStyle)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setAutoCancel(false)
             .setContentIntent(clickIntent)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setProgress(0, 0, true) // 不确定进度条（触发胶囊呼吸/旋转环动效）
             .addAction(
@@ -109,15 +115,22 @@ object LiveCapsuleHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
+        val bigTextStyle = NotificationCompat.BigTextStyle()
+            .setBigContentTitle(completedTitle)
+            .bigText(completedText)
+            .setSummaryText("✅ 任务完成")
+
         val builder = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.drawable.taixu_logo)
             .setContentTitle(completedTitle)
             .setContentText(completedText)
+            .setStyle(bigTextStyle)
             .setAutoCancel(true)
             .setOngoing(false)
             .setContentIntent(clickIntent)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
 
         if (replyAction != null) {
             builder.addAction(replyAction)
@@ -191,10 +204,19 @@ object LiveCapsuleHelper {
         extras.putBoolean("oppo.notification.capsule", isOngoing)
         extras.putBoolean("coloros.notification.capsule", isOngoing)
 
-        // 3. vivo / iQOO (OriginOS 4/5) 原子通知 / 原子岛 (Atomic Island)
+        // 3. vivo / iQOO (OriginOS 3/4/5) 原子通知 / 原子岛 (Atomic Island / 实时胶囊)
         extras.putBoolean("vivo.atomic.notification", true)
+        extras.putBoolean("vivo.notification.capsule", isOngoing)
+        extras.putBoolean("vivo.as.capsule", isOngoing)
         extras.putString("vivo.notification.type", "status_bar_island")
         extras.putString("vivo.summary.text", statusText)
+        extras.putString("vivo.atomic.title", title)
+        extras.putString("vivo.atomic.content", statusText)
+        extras.putString("vivo.atomic.status", statusText)
+        extras.putBoolean("vivo.atomic.ongoing", isOngoing)
+        extras.putBoolean("vivo.live.activity", isOngoing)
+        extras.putBoolean("vivo.statusbar.capsule", isOngoing)
+        extras.putBoolean("vivo.island.enable", isOngoing)
 
         // 4. 荣耀 MagicOS (灵动胶囊) & 华为 HarmonyOS (实况窗)
         extras.putBoolean("honor.smart.capsule", isOngoing)

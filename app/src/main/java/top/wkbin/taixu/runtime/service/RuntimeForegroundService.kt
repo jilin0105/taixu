@@ -38,9 +38,18 @@ class RuntimeForegroundService : Service() {
         super.onCreate()
         sshServiceManager.startObserving()
         val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, getString(R.string.taixu_runtime_notification_channel), NotificationManager.IMPORTANCE_LOW),
-        )
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            getString(R.string.taixu_runtime_notification_channel),
+            NotificationManager.IMPORTANCE_HIGH,
+        ).apply {
+            description = "用于展示 Linux 沙箱后台运行状态的灵动岛/原子胶囊"
+            enableVibration(false)
+            setSound(null, null)
+            setShowBadge(true)
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        }
+        manager.createNotificationChannel(channel)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -120,7 +129,7 @@ class RuntimeForegroundService : Service() {
 
     companion object {
         const val ACTION_STOP = "top.wkbin.taixu.action.STOP_RUNTIME_SERVICE"
-        private const val CHANNEL_ID = "linux-runtime"
+        private const val CHANNEL_ID = "taixu-runtime-capsule-v3"
         private const val NOTIFICATION_ID = 1001
         private const val TAG = "RuntimeForegroundService"
         private const val WAKE_LOCK_TAG = "taixu:runtime-service"
