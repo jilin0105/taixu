@@ -38,6 +38,8 @@ import top.wkbin.taixu.core.tools.ProviderRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import android.content.Context
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import top.wkbin.taixu.feature.chat.R
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -411,12 +413,18 @@ class ChatViewModel @Inject constructor(
         else all.filter { it.name.lowercase().contains(query) || it.description.lowercase().contains(query) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    /** 当前全局或会话中已常驻激活的技能与 MCP 列表。 */
-    val activeCapabilities: StateFlow<List<MentionItem>> = kotlinx.coroutines.flow.combine(
-        agentSkillRepository.activeSkills,
+    /** 当前会话中明确被用户手动钉选常驻的技能与 MCP ID 集合（默认为空，不默认常驻）。 */
+    private val _pinnedMentionIds = MutableStateFlow<Set<String>>(emptySet())
+    val pinnedMentionIds: StateFlow<Set<String>> = _pinnedMentionIds.asStateFlow()
+
+    /** 当前会话中已钉选常驻的技能与 MCP 列表（默认为空，仅在用户显式钉选后常驻展示并生效）。 */
+    val pinnedCapabilities: StateFlow<List<MentionItem>> = kotlinx.coroutines.flow.combine(
+        _pinnedMentionIds,
+        agentSkillRepository.allSkills,
         mcpServerRepository.servers,
-    ) { skills, mcps ->
-        val skillItems = skills.map { skill ->
+    ) { pinnedIds, skills, mcps ->
+        if (pinnedIds.isEmpty()) return@combine emptyList()
+        val skillItems = skills.filter { it.isEnabled && (it.id in pinnedIds || it.name.lowercase() in pinnedIds) }.map { skill ->
             MentionItem(
                 id = skill.id,
                 name = skill.name,
@@ -426,7 +434,7 @@ class ChatViewModel @Inject constructor(
                 icon = top.wkbin.taixu.ui.components.RuntimeIconName.Brain,
             )
         }
-        val mcpItems = mcps.filter { it.isEnabled }.map { mcp ->
+        val mcpItems = mcps.filter { it.isEnabled && (it.id in pinnedIds || it.name.lowercase() in pinnedIds) }.map { mcp ->
             MentionItem(
                 id = mcp.id,
                 name = mcp.name,
@@ -438,6 +446,29 @@ class ChatViewModel @Inject constructor(
         }
         skillItems + mcpItems
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun togglePinMention(id: String) {
+        val target = id.trim().lowercase()
+        _pinnedMentionIds.update { current ->
+            if (target in current || current.any { it.equals(id, ignoreCase = true) }) {
+                current.filterNot { it.equals(id, ignoreCase = true) || it == target }.toSet()
+            } else {
+                current + target
+            }
+        }
+    }
+
+    fun unpinMention(id: String) {
+        val target = id.trim().lowercase()
+        _pinnedMentionIds.update { current ->
+            current.filterNot { it.equals(id, ignoreCase = true) || it == target }.toSet()
+        }
+    }
+
+    fun pinMention(id: String) {
+        val target = id.trim().lowercase()
+        _pinnedMentionIds.update { it + target }
+    }
 
     /** 当前输入框中已挂载的技能与 MCP 标签列表（用于输入框顶部展示高亮双排 Chips）。 */
     val attachedMentions: StateFlow<List<MentionItem>> = kotlinx.coroutines.flow.combine(
@@ -552,16 +583,31 @@ class ChatViewModel @Inject constructor(
     }
 
     fun send(customText: String? = null, imageUrls: List<String> = emptyList()) {
-        val text = (customText ?: _input.value).trim()
-        if (text.isBlank() && imageUrls.isEmpty()) return
+        val rawText = (customText ?: _input.value).trim()
+        if (rawText.isBlank() && imageUrls.isEmpty()) return
         _input.value = ""
-        // @ 仅引用已经显式启用的能力，不在发送阶段修改全局开关。
+
+        val pinnedIds = _pinnedMentionIds.value
+        val effectiveText = if (pinnedIds.isNotEmpty()) {
+            val existingMentions = top.wkbin.taixu.harness.MentionExtractor.parse(rawText)
+            val missingPins = pinnedIds.filter { pin ->
+                pin.lowercase() !in existingMentions
+            }
+            if (missingPins.isNotEmpty()) {
+                rawText + missingPins.joinToString(prefix = " ", separator = " ") { "@$it" }
+            } else {
+                rawText
+            }
+        } else {
+            rawText
+        }
+
         if (!running.value) {
-            harnessLoop.send(text, imageUrls = imageUrls)
+            harnessLoop.send(effectiveText, imageUrls = imageUrls)
         } else {
             when (_sendMode.value) {
-                ComposerSendMode.STEER -> harnessLoop.steer(text, imageUrls = imageUrls)
-                ComposerSendMode.NEXT_RUN -> harnessLoop.send(text, imageUrls = imageUrls)
+                ComposerSendMode.STEER -> harnessLoop.steer(effectiveText, imageUrls = imageUrls)
+                ComposerSendMode.NEXT_RUN -> harnessLoop.send(effectiveText, imageUrls = imageUrls)
             }
         }
     }

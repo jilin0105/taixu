@@ -125,8 +125,8 @@
     <string name="chat_select">选择</string>
     <string name="chat_create_session">创建并开启会话</string>
     <string name="chat_no_arguments">(无参数)</string>
-    <string name="chat_capabilities">会话能力与工具常驻挂载</string>
-    <string name="chat_capabilities_description">开启后自动在会话中常驻生效，模型持续具备对应技能与工具，无需每轮手动 @ 艾特</string>
+    <string name="chat_capabilities">技能与 MCP 能力挂载</string>
+    <string name="chat_capabilities_description">默认仅在输入框输入 @ 提及生效；点击 📌 可钉选为当前会话常驻生效</string>
     <string name="chat_capabilities_enabled">已启用 %1$d</string>
     <string name="chat_skills_count">专精技能 (%1$d/%2$d)</string>
     <string name="chat_mcp_count">MCP 插件 (%1$d/%2$d)</string>

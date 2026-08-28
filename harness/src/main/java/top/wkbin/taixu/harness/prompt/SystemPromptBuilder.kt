@@ -161,24 +161,22 @@ class SystemPromptBuilder @Inject constructor(
     }
 
     /**
-     * 技能选择策略：所有已启用（常驻）的技能始终持续生效，
-     * 同时合并用户在输入框中临时 @ 提及的专精技能，无需每次重复 @。
+     * 技能选择策略：默认不常驻注入任何技能（保持 Prompt 精简零污染）；
+     * 仅在会话显式钉选或当前轮次 @ 提及该专精技能时才注入生效。
      */
     internal fun selectSkills(
         allSkills: List<AgentSkill>,
         mentionedNames: Set<String>,
     ): List<AgentSkill> {
-        val enabledSkills = allSkills.filter { it.isEnabled }
         if (mentionedNames.isEmpty()) {
-            return enabledSkills
+            return emptyList()
         }
-        val matched = allSkills.filter { skill ->
+        return allSkills.filter { skill ->
             val nameLower = skill.name.lowercase()
             val idLower = skill.id.lowercase()
             val cmdLower = skill.triggerCommand?.removePrefix("/")?.lowercase().orEmpty()
             nameLower in mentionedNames || idLower in mentionedNames || (cmdLower.isNotEmpty() && cmdLower in mentionedNames)
         }
-        return (enabledSkills + matched).distinctBy { it.id }
     }
 
     private suspend fun buildSubagentGuidance(toolCallMode: ToolCallMode): String {

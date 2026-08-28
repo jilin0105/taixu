@@ -218,7 +218,8 @@ fun ChatScreen(
     val activeDistroId by viewModel.activeDistroId.collectAsStateWithLifecycle()
     val installedDistros by viewModel.installedDistros.collectAsStateWithLifecycle()
     val allSkills by viewModel.allSkills.collectAsStateWithLifecycle()
-    val activeCapabilities by viewModel.activeCapabilities.collectAsStateWithLifecycle()
+    val pinnedCapabilities by viewModel.pinnedCapabilities.collectAsStateWithLifecycle()
+    val pinnedMentionIds by viewModel.pinnedMentionIds.collectAsStateWithLifecycle()
     val memories by viewModel.memories.collectAsStateWithLifecycle()
     val scratchpads by viewModel.scratchpads.collectAsStateWithLifecycle()
     val mcpServers by viewModel.mcpServers.collectAsStateWithLifecycle()
@@ -555,10 +556,12 @@ fun ChatScreen(
                         initializing = initializing,
                         activeSkillsCount = activeSkillsCount,
                         activeMcpCount = activeMcpCount,
-                        activeCapabilities = activeCapabilities,
+                        pinnedCapabilities = pinnedCapabilities,
                         onOpenSkillsMcp = { showSkillsMcpSheet = true },
                         onToggleSkill = viewModel::setSkillEnabled,
                         onToggleMcpServer = viewModel::setMcpServerEnabled,
+                        onUnpinMention = viewModel::unpinMention,
+                        onTogglePinMention = viewModel::togglePinMention,
                         activePlan = activePlan,
                         pendingApprovals = pendingApprovals,
                         onResolveApproval = viewModel::resolveApproval,
@@ -644,10 +647,12 @@ fun ChatScreen(
                     initializing = initializing,
                     activeSkillsCount = activeSkillsCount,
                     activeMcpCount = activeMcpCount,
-                    activeCapabilities = activeCapabilities,
+                    pinnedCapabilities = pinnedCapabilities,
                     onOpenSkillsMcp = { showSkillsMcpSheet = true },
                     onToggleSkill = viewModel::setSkillEnabled,
                     onToggleMcpServer = viewModel::setMcpServerEnabled,
+                    onUnpinMention = viewModel::unpinMention,
+                    onTogglePinMention = viewModel::togglePinMention,
                     activePlan = activePlan,
                     pendingApprovals = pendingApprovals,
                     onResolveApproval = viewModel::resolveApproval,
@@ -736,6 +741,7 @@ fun ChatScreen(
             allSkills = allSkills,
             mcpServers = mcpServers,
             mcpConnectionStates = mcpConnectionStates,
+            pinnedMentionIds = pinnedMentionIds,
             onDismiss = { showSkillsMcpSheet = false },
             onToggleSkill = { id, enabled ->
                 viewModel.setSkillEnabled(id, enabled)
@@ -743,6 +749,7 @@ fun ChatScreen(
             onToggleMcpServer = { id, enabled ->
                 viewModel.setMcpServerEnabled(id, enabled)
             },
+            onTogglePin = viewModel::togglePinMention,
             onNavigateToSettings = {
                 showSkillsMcpSheet = false
                 onNavigate(MainDestination.Settings)
@@ -922,10 +929,12 @@ private fun ChatPaneContent(
     initializing: Boolean = false,
     activeSkillsCount: Int = 0,
     activeMcpCount: Int = 0,
-    activeCapabilities: List<MentionItem> = emptyList(),
+    pinnedCapabilities: List<MentionItem> = emptyList(),
     onOpenSkillsMcp: () -> Unit = {},
     onToggleSkill: (String, Boolean) -> Unit = { _, _ -> },
     onToggleMcpServer: (String, Boolean) -> Unit = { _, _ -> },
+    onUnpinMention: (String) -> Unit = {},
+    onTogglePinMention: (String) -> Unit = {},
     activeModel: top.wkbin.taixu.core.database.AiModelEntity? = null,
     onUpdateReasoning: (mode: String?, effort: String?) -> Unit = { _, _ -> },
     pendingApprovals: List<top.wkbin.taixu.core.database.AgentApprovalRequestEntity> = emptyList(),
@@ -1292,9 +1301,9 @@ private fun ChatPaneContent(
                     ComposerModeSelector(mode = sendMode, onModeChange = onSendModeChange)
                 }
 
-                // 🌟 常驻/已激活能力与临时挂载胶囊栏 (Pinned & Active Capabilities Strip)
-                val allDisplayItems = remember(activeCapabilities, attachedMentions) {
-                    (activeCapabilities + attachedMentions).distinctBy { it.id }
+                // 🌟 常驻/已钉选能力与临时挂载胶囊栏 (Pinned & Attached Capabilities Strip)
+                val allDisplayItems = remember(pinnedCapabilities, attachedMentions) {
+                    (pinnedCapabilities + attachedMentions).distinctBy { it.id }
                 }
                 if (allDisplayItems.isNotEmpty()) {
                     LazyRow(
@@ -1308,10 +1317,13 @@ private fun ChatPaneContent(
                             val item = allDisplayItems[index]
                             val isSkill = item.type == MentionType.SKILL
                             val isAttached = attachedMentions.any { it.id == item.id }
-                            val isPinned = activeCapabilities.any { it.id == item.id }
-                            val tagBg = if (isSkill) Color(0xFF1E293B) else Color(0xFF0D332B)
-                            val tagBorder = if (isSkill) Color(0xFF6366F1).copy(alpha = 0.75f) else Color(0xFF10B981).copy(alpha = 0.75f)
-                            val tagColor = if (isSkill) Color(0xFFA5B4FC) else Color(0xFF6EE7B7)
+                            val isPinned = pinnedCapabilities.any { it.id == item.id }
+                            val tagBg = if (isSkill) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+                                        else MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.7f)
+                            val tagBorder = if (isSkill) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                                            else MaterialTheme.colorScheme.tertiary.copy(alpha = 0.4f)
+                            val tagColor = if (isSkill) MaterialTheme.colorScheme.primary
+                                           else MaterialTheme.colorScheme.tertiary
 
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
@@ -1321,8 +1333,7 @@ private fun ChatPaneContent(
                                     if (isAttached) {
                                         onRemoveMention(item)
                                     } else if (isPinned) {
-                                        if (isSkill) onToggleSkill(item.id, false)
-                                        else onToggleMcpServer(item.id, false)
+                                        onUnpinMention(item.id)
                                     }
                                 },
                             ) {
@@ -1343,7 +1354,7 @@ private fun ChatPaneContent(
                                     )
                                     if (isPinned) {
                                         Surface(
-                                            color = tagColor.copy(alpha = 0.2f),
+                                            color = tagColor.copy(alpha = 0.18f),
                                             shape = RoundedCornerShape(4.dp),
                                         ) {
                                             Text(
@@ -1357,7 +1368,7 @@ private fun ChatPaneContent(
                                     RuntimeIcon(
                                         RuntimeIconName.Close,
                                         Modifier.size(10.dp),
-                                        tint = tagColor.copy(alpha = 0.65f),
+                                        tint = tagColor.copy(alpha = 0.7f),
                                     )
                                 }
                             }
@@ -1962,9 +1973,12 @@ private fun MentionPopup(
                 items(mentions.size) { index ->
                     val item = mentions[index]
                     val isSkill = item.type == MentionType.SKILL
-                    val tagBg = if (isSkill) Color(0xFF1E293B) else Color(0xFF0D332B)
-                    val tagBorder = if (isSkill) Color(0xFF6366F1).copy(alpha = 0.8f) else Color(0xFF10B981).copy(alpha = 0.8f)
-                    val tagColor = if (isSkill) Color(0xFFA5B4FC) else Color(0xFF6EE7B7)
+                    val tagBg = if (isSkill) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                                else MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.65f)
+                    val tagBorder = if (isSkill) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                                    else MaterialTheme.colorScheme.tertiary.copy(alpha = 0.4f)
+                    val tagColor = if (isSkill) MaterialTheme.colorScheme.primary
+                                   else MaterialTheme.colorScheme.tertiary
 
                     Row(
                         modifier = Modifier
@@ -3766,9 +3780,11 @@ private fun SkillsAndMcpSheet(
     allSkills: List<top.wkbin.taixu.core.model.AgentSkill>,
     mcpServers: List<top.wkbin.taixu.core.model.McpServerConfig>,
     mcpConnectionStates: Map<String, top.wkbin.taixu.core.model.McpConnectionState>,
+    pinnedMentionIds: Set<String> = emptySet(),
     onDismiss: () -> Unit,
     onToggleSkill: (String, Boolean) -> Unit,
     onToggleMcpServer: (String, Boolean) -> Unit,
+    onTogglePin: (String) -> Unit = {},
     onNavigateToSettings: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -3880,6 +3896,7 @@ private fun SkillsAndMcpSheet(
                         ) {
                             items(allSkills.size) { index ->
                                 val skill = allSkills[index]
+                                val isPinned = skill.id in pinnedMentionIds || skill.name.lowercase() in pinnedMentionIds
                                 Surface(
                                     color = if (skill.isEnabled) MaterialTheme.colorScheme.surfaceContainerHigh
                                     else MaterialTheme.colorScheme.surfaceContainer,
@@ -3935,14 +3952,39 @@ private fun SkillsAndMcpSheet(
                                             }
                                         }
 
-                                        Switch(
-                                            checked = skill.isEnabled,
-                                            onCheckedChange = { onToggleSkill(skill.id, it) },
-                                            colors = SwitchDefaults.colors(
-                                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                            ),
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        ) {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = if (isPinned) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
+                                                border = androidx.compose.foundation.BorderStroke(
+                                                    0.8.dp,
+                                                    if (isPinned) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                                                ),
+                                                modifier = Modifier.clickable { onTogglePin(skill.id) },
+                                            ) {
+                                                Text(
+                                                    if (isPinned) "📌 已常驻" else "📌 设为常驻",
+                                                    style = MaterialTheme.typography.labelSmall.copy(
+                                                        fontSize = 10.sp,
+                                                        fontWeight = if (isPinned) FontWeight.Bold else FontWeight.Normal,
+                                                    ),
+                                                    color = if (isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                )
+                                            }
+
+                                            Switch(
+                                                checked = skill.isEnabled,
+                                                onCheckedChange = { onToggleSkill(skill.id, it) },
+                                                colors = SwitchDefaults.colors(
+                                                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                                ),
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -3971,6 +4013,7 @@ private fun SkillsAndMcpSheet(
                         ) {
                             items(mcpServers.size) { index ->
                                 val server = mcpServers[index]
+                                val isPinned = server.id in pinnedMentionIds || server.name.lowercase() in pinnedMentionIds
                                 val connState = mcpConnectionStates[server.id] ?: top.wkbin.taixu.core.model.McpConnectionState.UNKNOWN
                                 Surface(
                                     color = if (server.isEnabled) MaterialTheme.colorScheme.surfaceContainerHigh
@@ -4045,14 +4088,39 @@ private fun SkillsAndMcpSheet(
                                             }
                                         }
 
-                                        Switch(
-                                            checked = server.isEnabled,
-                                            onCheckedChange = { onToggleMcpServer(server.id, it) },
-                                            colors = SwitchDefaults.colors(
-                                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                            ),
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        ) {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = if (isPinned) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
+                                                border = androidx.compose.foundation.BorderStroke(
+                                                    0.8.dp,
+                                                    if (isPinned) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                                                ),
+                                                modifier = Modifier.clickable { onTogglePin(server.id) },
+                                            ) {
+                                                Text(
+                                                    if (isPinned) "📌 已常驻" else "📌 设为常驻",
+                                                    style = MaterialTheme.typography.labelSmall.copy(
+                                                        fontSize = 10.sp,
+                                                        fontWeight = if (isPinned) FontWeight.Bold else FontWeight.Normal,
+                                                    ),
+                                                    color = if (isPinned) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                )
+                                            }
+
+                                            Switch(
+                                                checked = server.isEnabled,
+                                                onCheckedChange = { onToggleMcpServer(server.id, it) },
+                                                colors = SwitchDefaults.colors(
+                                                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                                ),
+                                            )
+                                        }
                                     }
                                 }
                             }
