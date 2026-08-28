@@ -129,7 +129,7 @@ class RuntimeForegroundService : Service() {
 
     companion object {
         const val ACTION_STOP = "top.wkbin.taixu.action.STOP_RUNTIME_SERVICE"
-        private const val CHANNEL_ID = "taixu-runtime-capsule-v3"
+        private const val CHANNEL_ID = "taixu-runtime-capsule-v4"
         private const val NOTIFICATION_ID = 1001
         private const val TAG = "RuntimeForegroundService"
         private const val WAKE_LOCK_TAG = "taixu:runtime-service"

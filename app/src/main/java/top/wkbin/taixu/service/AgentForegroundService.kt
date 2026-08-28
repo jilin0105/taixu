@@ -301,7 +301,7 @@ class AgentForegroundService : Service() {
         const val ACTION_STOP = "top.wkbin.taixu.action.AGENT_STOP"
         const val EXTRA_SESSION_ID = "extra_session_id"
         const val KEY_REPLY = "agent_reply"
-        private const val CHANNEL_ID = "taixu-agent-capsule-v3"
+        private const val CHANNEL_ID = "taixu-agent-capsule-v4"
         private const val PRIMARY_NOTIFICATION_ID = 2001
         private const val TAG = "AgentForegroundService"
         private const val WAKE_LOCK_TAG = "taixu:agent-execution"

@@ -236,6 +236,9 @@ object LiveCapsuleHelper {
             extras.putString("notification.superx.template", "capsule")
             extras.putString("notification.superx.title", title)
             extras.putString("notification.superx.content", statusText)
+            extras.putBoolean("notification.superx.show", true)
+            extras.putInt("notification.superx.type", 1)
+            extras.putString("notification.superx.pkg", "top.wkbin.taixu")
 
             val liveMessage = org.json.JSONObject().apply {
                 put("operation", operationCode)
