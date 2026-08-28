@@ -20,7 +20,7 @@ class BuildScriptToolExecutor @Inject constructor(
             "list" -> {
                 val scripts = repository.listScripts()
                 true to if (scripts.isEmpty()) "暂无构建脚本" else scripts.joinToString("\n") {
-                    "${it.id}\t${it.projectType}\t${it.name}${if (it.isBuiltin) "\t[builtin]" else ""}"
+                    "${it.id}\t[${it.projectType}]\t${it.name}\t${it.description.ifBlank { "无描述" }}${if (it.isBuiltin) "\t[builtin]" else ""}"
                 }
             }
             "get" -> {

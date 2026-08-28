@@ -16,6 +16,10 @@
 | `ninja-linux-aarch64.zip` | https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-linux-aarch64.zip | Ninja Linux AArch64 |
 | `flutter-linux-arm64-android-only-slim.tar.gz` | https://github.com/MohamedAlkindi/flutter-native-arm64/releases/download/flutter-3.47.1-87-linux/flutter_v3.47.1_linux_arm64_android_web_sdk.tar.gz | 已从 ARM64 Flutter 包中移除 Android x86/x64、iOS、桌面、示例和源码目录，只保留 Android ARM/ARM64 与 Linux ARM64 编译所需缓存；最终约 848 MB |
 | `android-tools_aarch64.deb` | https://packages.termux.dev/apt/termux-main/pool/main/a/android-tools/android-tools_36.0.1%2Breally35.0.2_aarch64.deb | Termux AArch64 `adb`；SHA-256 `82e48bf8038250fb0997b1f2cf5f780730104f2544a5532298c453d94cfe1537` |
+| `jadx-1.5.0.zip` | https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip | Skylot JADX-CLI Java 反编译引擎与启动器 |
+| `apktool_2.10.0.jar` | https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar | Apktool APK 资源与 Smali 处理套件 |
+| `dex-tools-v2.4.zip` | https://github.com/pxb1988/dex2jar/releases/download/v2.4/dex-tools-v2.4.zip | pxb1988 dex2jar、smali/baksmali 转换工具集 |
+| `ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz` | https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz | BurntSushi Ripgrep (`rg`) Linux AArch64 静态单二进制毫秒级代码检索器 |
 
 ## 放置位置
 

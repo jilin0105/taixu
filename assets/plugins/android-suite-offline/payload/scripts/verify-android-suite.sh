@@ -58,4 +58,26 @@ require_executable /opt/taixu/bin/flutter
 # Android-only policy: web/desktop/iOS artifacts are intentionally not required.
 require_directory /opt/flutter/bin/cache/artifacts/engine/android-arm64-release
 require_directory /opt/flutter/bin/cache/artifacts/engine/android-arm64-profile
+
+if [ -f /opt/taixu/bin/rg ]; then
+    require_executable /opt/taixu/bin/rg
+    require_aarch64 /opt/taixu/bin/rg
+    require_command /opt/taixu/bin/rg --version
+fi
+
+if [ -f /opt/taixu/bin/jadx ]; then
+    require_executable /opt/taixu/bin/jadx
+    require_command /opt/taixu/bin/jadx --version
+fi
+
+if [ -f /opt/taixu/bin/apktool ]; then
+    require_executable /opt/taixu/bin/apktool
+    require_file /opt/taixu/tools/android-suite-offline/lib/apktool.jar
+    require_command /opt/taixu/bin/apktool --version
+fi
+
+if [ -f /opt/taixu/bin/d2j-dex2jar ]; then
+    require_executable /opt/taixu/bin/d2j-dex2jar
+fi
+
 echo "TaiXu Android ARM64 offline suite is ready"

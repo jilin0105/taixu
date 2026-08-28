@@ -803,7 +803,7 @@ class ProviderClient @Inject constructor(
             ApiToolDefinition(
                 function = ApiFunctionDefinition(
                     name = "plan",
-                    description = "结构化多步骤任务规划管理：拆解长任务子步骤并持续跟踪推进进度。支持 action: replace_active, get_active, advance, clear_active。",
+                    description = "结构化多步骤任务规划管理：拆解长任务子步骤并持续跟踪推进进度。凡涉及 2 个以上步骤、逆向分析或复杂排错的任务，第一轮工具调用必须先调用 replace_active 建立规划，每步完成后调用 advance。支持 action: replace_active, get_active, advance, clear_active。",
                     parameters = Json.parseToJsonElement(
                         """{"type":"object","properties":{"action":{"type":"string","enum":["replace_active","get_active","advance","clear_active"],"description":"规划操作动作"},"goal":{"type":"string","description":"任务总体目标"},"steps":{"type":"array","description":"规划步骤列表（每个步骤包含 id, title, status: pending|in_progress|completed|failed）","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"},"status":{"type":"string"}},"required":["id","title","status"]}},"status":{"type":"string","description":"任务整体状态"}},"required":["action"]}""",
                     ).jsonObject,

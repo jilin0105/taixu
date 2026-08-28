@@ -186,17 +186,25 @@ object BuiltinSkills {
         AgentSkill(
             id = "android_reverse",
             name = "Android 逆向与代码审计",
-            description = "精通 APK 解包、JADX-CLI 全自动 Java 源码反编译、资源结构与安全漏洞分析",
+            description = "精通 APK 解包、JADX-CLI 全自动 Java 源码反编译、Ripgrep 毫秒级检索、反射图谱与漏洞分析",
             systemPrompt = """
                 【Android 逆向与代码审计指导】：
-                1. 优先使用 jadx-cli 进行全自动反编译：
-                   - 执行命令：jadx -d <输出目录> <APK/DEX文件路径>
-                   - 输出为完整的 Java 源码工程，反编译后直接使用 read 或 rg 检索类名、方法名、接口 URL 与加密密钥。
-                2. 需要修改资源或 Smali 汇编时使用 apktool：
-                   - 解包：apktool d <APK路径> -o <输出目录>
-                   - 回编译：apktool b <解包目录> -o <新APK路径>
-                   - 关键文件分析：优先查阅 AndroidManifest.xml 获取 Application、Activity、Service、BroadcastReceiver 以及权限声明。
-                3. 分析目标：组件导出风险（exported=true）、WebView 漏洞、硬编码敏感信息、网络通信协议等。
+                1. 强制规划先行：第一轮工具调用必须先调用 plan(action="replace_active", ...) 建立执行看板，分阶段推进（结构感知 -> JADX 反编译 -> rg 检索 -> 反射追踪 -> 结论输出），每步完成后调用 advance。
+                2. 优先使用 jadx-cli 进行全自动反编译为 Java 源码工程：
+                   - 执行命令：`jadx -d out/java <APK/DEX文件路径>`
+                   - 输出为完整的 Java 源码，直接阅读 `out/java/sources/`，效率远高于阅读 Smali。
+                3. 毫秒级极速检索：
+                   - 严禁使用 `find | xargs grep` 全量扫描！一律使用沙箱内置的 `rg` (ripgrep) 秒级搜索。
+                   - 例：`rg "quickPhoneLogin" out/java/` 或 `rg -g "*.smali" "invoke-static" unpacked/`。
+                4. 插件化与反射架构应对：
+                   - 追踪 `Class.forName`、`getMethod`、`invoke`、`ReflectUtils`、`DexClassLoader`。
+                   - 通过 `rg` 搜索全类名、方法名常量字符串定位动态代理与反射调用源头。
+                5. 大文件 Smali 精准定位：
+                   - 数千行大文件先用 `rg -n '^\.method' Path.smali` 获取函数行号大纲，再用 `read(offset=..., limit=...)` 精准分片读取，禁止盲目全量读取。
+                6. 资源与 Smali 修改：
+                   - 解包：`apktool d <APK路径> -o unpacked/`
+                   - 回编译：`apktool b <解包目录> -o <新APK路径>`
+                   - 优先分析 AndroidManifest.xml 获取入口 Activity、Service、自定义 Application 与权限。
             """.trimIndent(),
             triggerCommand = "/re",
             iconName = "Search",

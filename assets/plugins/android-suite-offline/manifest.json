@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "android-suite-offline",
   "name": "Android 全栈开发套件（ARM64 离线版）",
-  "description": "仅面向 Android APK 编译的 ARM64 离线开发套件，内置 JDK、Android SDK、Build-Tools、AAPT2、NDK、Gradle、CMake、Ninja 和 Flutter；不包含 Web、iOS 或桌面平台构建资源",
+  "description": "面向 Android APK 开发与逆向工程的 ARM64 离线全栈套件，内置 JDK、Android SDK、Build-Tools、AAPT2、NDK、Gradle、CMake、Ninja、Flutter 以及 JADX、Apktool、Dex2jar 反编译套件与 Ripgrep 毫秒级搜索工具",
   "version": "1.0.7",
   "latestVersion": "1.0.7",
   "enabled": true,
@@ -23,7 +23,7 @@
   ],
   "launchCommand": "gradle --version",
   "verifyCommand": "/bin/sh \"$TAIXU_PLUGIN_PAYLOAD/scripts/verify-android-suite.sh\"",
-  "commandLinks": ["java", "javac", "gradle", "cmake", "ninja", "adb", "flutter", "dart"],
+  "commandLinks": ["java", "javac", "gradle", "cmake", "ninja", "adb", "flutter", "dart", "jadx", "apktool", "d2j-dex2jar", "d2j-baksmali", "d2j-smali", "rg"],
   "environment": {
     "ANDROID_HOME": "/opt/android-sdk",
     "ANDROID_SDK_ROOT": "/opt/android-sdk",
