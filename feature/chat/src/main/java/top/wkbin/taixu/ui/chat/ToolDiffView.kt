@@ -325,6 +325,8 @@ private fun FilePathHeader(
                 fontFamily = FontFamily.Monospace,
                 color = Color(0xFFDCE6F5),
                 fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
 

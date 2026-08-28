@@ -65,6 +65,7 @@ import top.wkbin.taixu.ui.components.IconTile
 import top.wkbin.taixu.ui.components.ProviderBadge
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 import top.wkbin.taixu.ui.components.RuntimeButton
+import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeCheckbox
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconButton
@@ -286,27 +287,22 @@ private fun ModelProfileCard(
     onDelete: () -> Unit,
     onExport: () -> Unit,
 ) {
-    val cardShape = RoundedCornerShape(10.dp)
     var menuExpanded by remember { mutableStateOf(false) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(cardShape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .border(
-                width = 1.dp,
-                color = if (model.isActive) {
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
-                } else {
-                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
-                },
-                shape = cardShape,
-            )
-            .clickable(onClick = onEdit)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+    RuntimeCard(
+        modifier = Modifier.fillMaxWidth(),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        borderColor = if (model.isActive) {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+        } else {
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+        },
+        onClick = onEdit,
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
     ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
         // 头部：Provider Badge + 标题 + 激活状态 + 更多菜单
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -480,6 +476,7 @@ private fun ModelProfileCard(
             )
         }
     }
+}
 }
 
 /**

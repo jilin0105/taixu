@@ -76,6 +76,7 @@ import top.wkbin.taixu.core.tools.ToolInstallProgress
 import top.wkbin.taixu.core.tools.ToolVerification
 import top.wkbin.taixu.ui.components.NoticeBanner
 import top.wkbin.taixu.ui.components.InfoRow
+import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
@@ -218,13 +219,12 @@ fun ToolCenterScreen(
                             isImporting -> MaterialTheme.colorScheme.onPrimaryContainer
                             else -> MaterialTheme.colorScheme.onTertiaryContainer
                         }
-                        Card(
+                        RuntimeCard(
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = containerColor),
+                            containerColor = containerColor,
+                            contentPadding = PaddingValues(14.dp),
                         ) {
                             Column(
-                                modifier = Modifier.padding(14.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 Row(
@@ -304,13 +304,13 @@ fun ToolCenterScreen(
                 // 🚀 后台装配进行中提示卡片 (Background Installing Banner)
                 if (isInstallingComponents || componentInstallLog.isNotEmpty()) {
                     item {
-                        Card(
+                        RuntimeCard(
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                            borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+                            contentPadding = PaddingValues(14.dp),
                         ) {
-                            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -366,21 +366,15 @@ fun ToolCenterScreen(
                         val installedCount = bundle.components.count { it.id in installedComponentIds }
                         val isCoreReady = bundle.components.filter { it.isRequired }.all { it.id in installedComponentIds }
 
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .clickable { viewModel.openBundleSetup(bundle) },
-                            shape = RoundedCornerShape(14.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                if (isCoreReady) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
-                                else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                            ),
+                        RuntimeCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { viewModel.openBundleSetup(bundle) },
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                            borderColor = if (isCoreReady) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                            contentPadding = PaddingValues(14.dp),
                         ) {
                             Column(
-                                modifier = Modifier.padding(14.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
                                 Row(
@@ -1051,14 +1045,13 @@ private fun ToolCard(
     val isUpdateAvailable = tool.state == ToolState.UPDATE_AVAILABLE.name
     val isFailed = tool.state == ToolState.FAILED.name
 
-    Card(
-        onClick = onOpenDetail,
+    RuntimeCard(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        onClick = onOpenDetail,
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        contentPadding = PaddingValues(16.dp),
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             // Header: Avatar + Title/Publisher + Status Badge

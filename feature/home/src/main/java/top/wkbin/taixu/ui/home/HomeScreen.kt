@@ -445,13 +445,12 @@ private fun EnvironmentDoctorCard(
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     // 修复中状态展示
                     if (isRepairing && repairProgress != null) {
-                        Card(
+                        RuntimeCard(
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(14.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            contentPadding = PaddingValues(14.dp),
                         ) {
                             Column(
-                                modifier = Modifier.padding(14.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 Row(
@@ -510,12 +509,12 @@ private fun EnvironmentDoctorCard(
                                 }
 
                                 AnimatedVisibility(visible = showLogs) {
-                                    Card(
+                                    Surface(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .heightIn(max = 140.dp),
                                         shape = RoundedCornerShape(8.dp),
-                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
+                                        color = MaterialTheme.colorScheme.surfaceContainerLowest,
                                     ) {
                                         Column(
                                             modifier = Modifier
@@ -1397,7 +1396,7 @@ private fun WebChatDashboardCard(
     RuntimeCard(
         modifier = Modifier.fillMaxWidth(),
         containerColor = if (status.isRunning) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.40f) else MaterialTheme.colorScheme.surfaceContainer,
-        borderColor = if (status.isRunning) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else null,
+        borderColor = if (status.isRunning) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else Color.Transparent,
         contentPadding = PaddingValues(16.dp),
     ) {
         Column(

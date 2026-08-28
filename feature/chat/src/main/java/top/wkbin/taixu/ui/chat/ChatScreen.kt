@@ -2673,9 +2673,8 @@ private fun ToolCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
+                    modifier = Modifier.weight(1f),
                 )
-                Spacer(Modifier.weight(1f))
                 val durationText = if (result != null) {
                     val duration = result.durationMs ?: (result.createdAt - call.createdAt).coerceAtLeast(0L)
                     formatDuration(duration)
