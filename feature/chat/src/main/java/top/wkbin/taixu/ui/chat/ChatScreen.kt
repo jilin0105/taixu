@@ -40,12 +40,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.add
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -143,12 +149,24 @@ import top.wkbin.taixu.ui.components.liquidGlassContent
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
+import top.wkbin.taixu.ui.components.scrollFadingEdge
 import top.wkbin.taixu.ui.theme.LocalLiquidGlassBackdrop
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.composed
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Dp
+import kotlinx.coroutines.launch
 
 private val DotRunning = Color(0xFFB25E00)
 private val DotSuccess = Color(0xFF2E7D32)
 private val DotFailed = Color(0xFFBA1A1A)
 private val AgentBottomBarHeight = 78.dp
+
+@Composable
+private fun chatBottomInsets(bottomBarHeight: Dp): WindowInsets {
+    val bottomBarInsets = WindowInsets.navigationBars.add(WindowInsets(bottom = bottomBarHeight))
+    return bottomBarInsets.union(WindowInsets.ime)
+}
 
 private val ApprovalMode.labelRes: Int
     get() = when (this) {
@@ -161,7 +179,10 @@ private val ApprovalMode.labelRes: Int
  * 太墟 · 智枢对话界面 (TaiXu Agent)
  * 智能结对编程、工具自动化调用与代码生成
  */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@OptIn(
+    androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+)
 @Composable
 fun ChatScreen(
     onNavigate: (MainDestination) -> Unit,
@@ -258,13 +279,7 @@ fun ChatScreen(
     }
     val currentBranch = remember(branches) { branches.firstOrNull { it.isCurrent } }
 
-    val density = LocalDensity.current
-    val imeBottom = WindowInsets.ime.getBottom(density)
-    val navigationBottom = WindowInsets.navigationBars.getBottom(density)
-    val imeVisible = imeBottom > navigationBottom
-    val composerBottomPadding = with(density) {
-        maxOf(imeBottom, navigationBottom + AgentBottomBarHeight.roundToPx()).toDp()
-    }
+    val isImeVisible = WindowInsets.isImeVisible
 
     // Navigation3 removes inactive tab content from composition. Persist this marker with the
     // entry so returning to 智枢 does not perform a second, redundant scrollToItem during the
@@ -272,40 +287,48 @@ fun ChatScreen(
     var initialPositionedSessionKey by rememberSaveable { mutableStateOf<String?>(null) }
     val currentSessionKey = remember(messages) { messages.firstOrNull()?.id ?: "" }
 
-    // 计划看板与压缩横幅是插入在消息前的固定头部项；按 lastIndexOf 定位时需补偿。
-    val headerOffset =
-        (if (activeCompaction != null) 1 else 0) + (if (activePlan != null) 1 else 0)
-
-    // Only the latest assistant message changes during streaming. Avoid summing the
-    // complete history on every live token, which scales with session length.
-    val streamedChars = remember(messages) {
-        messages.asReversed()
-            .firstOrNull { it is AssistantText }
-            ?.let { message ->
-                val assistant = message as AssistantText
-                (assistant.reasoning?.length ?: 0) + assistant.text.length
-            }
-            ?: 0
+    val lastMessageSignature = remember(messages) {
+        val last = messages.lastOrNull()
+        when (last) {
+            is AssistantText -> "${last.id}:${last.reasoning?.length ?: 0}:${last.text.length}"
+            is ToolCall -> "${last.id}:${last.args.hashCode()}"
+            is ToolResult -> "${last.id}:${last.output.length}"
+            is UserMessage -> "${last.id}:${last.text.length}"
+            else -> "${messages.size}"
+        }
     }
-    LaunchedEffect(messages.size, streamedChars, running) {
+
+    // 🌟 1. 消息发送与流式输出跟随滚动
+    LaunchedEffect(messages.size, lastMessageSignature, running) {
         if (messages.isNotEmpty()) {
-            if (initialPositionedSessionKey != currentSessionKey) {
-                initialPositionedSessionKey = currentSessionKey
-                listState.scrollToItem(messages.size - 1 + headerOffset)
-            } else if (listState.layoutInfo.totalItemsCount > 0) {
-                val layoutInfo = listState.layoutInfo
-                val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()
-                val nearBottom = lastVisible == null ||
-                    lastVisible.index >= layoutInfo.totalItemsCount - 2 &&
-                    lastVisible.offset + lastVisible.size <= layoutInfo.viewportEndOffset + 400
-                if (nearBottom) {
-                    if (running) {
-                        listState.scrollToItem(layoutInfo.totalItemsCount - 1)
-                    } else {
-                        listState.animateScrollToItem(layoutInfo.totalItemsCount - 1)
+            delay(30)
+            val totalCount = listState.layoutInfo.totalItemsCount
+            if (totalCount > 0) {
+                if (initialPositionedSessionKey != currentSessionKey) {
+                    initialPositionedSessionKey = currentSessionKey
+                    listState.scrollToItem(totalCount - 1)
+                } else {
+                    val layoutInfo = listState.layoutInfo
+                    val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()
+                    val isNearBottom = lastVisible == null || lastVisible.index >= totalCount - 3
+                    if (isNearBottom || running) {
+                        if (running) {
+                            listState.scrollToItem(totalCount - 1)
+                        } else {
+                            listState.animateScrollToItem(totalCount - 1)
+                        }
                     }
                 }
             }
+        }
+    }
+
+    // 🌟 2. 软键盘弹起时自动平滑滚动定位到最后一条消息
+    LaunchedEffect(isImeVisible) {
+        if (isImeVisible && listState.layoutInfo.totalItemsCount > 0) {
+            delay(80)
+            val totalCount = listState.layoutInfo.totalItemsCount
+            listState.animateScrollToItem(totalCount - 1)
         }
     }
 
@@ -342,10 +365,15 @@ fun ChatScreen(
                 title = stringResource(R.string.chat_title),
                 statusText = stringResource(R.string.chat_status, if (workspace.isNotBlank()) workspace else stringResource(R.string.chat_default_workspace), distroDisplayName),
             ) {
-                // 模型快速切换胶囊
+                // 🌟 1. 一体化模型切换胶囊
+                val activeSub = activeModel?.let { entity ->
+                    entity.model.split(",").firstOrNull()?.trim().takeUnless { it.isNullOrBlank() } ?: entity.name
+                } ?: stringResource(R.string.chat_no_model_selected)
+
                 Surface(
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
                     modifier = Modifier.clickable { showModels = true },
                 ) {
                     Row(
@@ -353,72 +381,103 @@ fun ChatScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        val activeSub = activeModel?.let { entity ->
-                            entity.model.split(",").firstOrNull()?.trim().takeUnless { it.isNullOrBlank() } ?: entity.name
-                        }
                         Text(
-                            text = activeSub ?: stringResource(R.string.chat_no_model_selected),
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            text = activeSub,
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
+                        )
+                        RuntimeIcon(RuntimeIconName.ChevronDown, Modifier.size(11.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                // 🌟 2. 智枢工作台与功能聚合菜单 (Workbench & Tools Menu)
+                var showWorkbenchMenu by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(onClick = { showWorkbenchMenu = true }) {
+                        RuntimeIcon(
+                            name = RuntimeIconName.Hub,
+                            modifier = Modifier.size(19.dp),
+                            tint = if (running) Color(0xFF7C4DFF) else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = showWorkbenchMenu,
+                        onDismissRequest = { showWorkbenchMenu = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text("分支调度", fontWeight = FontWeight.SemiBold)
+                                    Text(currentBranch?.name ?: "主线分支", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            },
+                            leadingIcon = { RuntimeIcon(RuntimeIconName.Hub, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary) },
+                            onClick = {
+                                showWorkbenchMenu = false
+                                showBranches = true
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text("运行事件与时间线", fontWeight = FontWeight.SemiBold)
+                                    Text("${runtimeEvents.size} 个事件", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            },
+                            leadingIcon = { RuntimeIcon(RuntimeIconName.Logs, Modifier.size(18.dp), tint = Color(0xFF7C4DFF)) },
+                            onClick = {
+                                showWorkbenchMenu = false
+                                showRuntimeTimeline = true
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text("工作区长期记忆", fontWeight = FontWeight.SemiBold)
+                                    Text("${memories.size} 条记忆事实", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            },
+                            leadingIcon = { RuntimeIcon(RuntimeIconName.Brain, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.tertiary) },
+                            onClick = {
+                                showWorkbenchMenu = false
+                                showMemorySheet = true
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text("专精技能与 MCP", fontWeight = FontWeight.SemiBold)
+                                    Text("${activeSkillsCount + activeMcpCount} 项已激活", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            },
+                            leadingIcon = { RuntimeIcon(RuntimeIconName.Extension, Modifier.size(18.dp), tint = Color(0xFF10B981)) },
+                            onClick = {
+                                showWorkbenchMenu = false
+                                showSkillsMcpSheet = true
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text("审批权限模式", fontWeight = FontWeight.SemiBold)
+                                    Text(stringResource(currentApprovalMode.labelRes), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            },
+                            leadingIcon = { RuntimeIcon(RuntimeIconName.Shield, Modifier.size(18.dp), tint = Color(0xFFFF9800)) },
+                            onClick = {
+                                showWorkbenchMenu = false
+                                showApprovalModes = true
+                            },
                         )
                     }
                 }
 
-                Box {
-                    Surface(
-                        color = MaterialTheme.colorScheme.tertiaryContainer,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.clickable { showApprovalModes = true },
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            RuntimeIcon(RuntimeIconName.Shield, Modifier.size(14.dp), MaterialTheme.colorScheme.onTertiaryContainer)
-                            Text(
-                                text = stringResource(currentApprovalMode.labelRes),
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
-                                color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                maxLines = 1,
-                            )
-                        }
-                    }
-                    DropdownMenu(
-                        expanded = showApprovalModes,
-                        onDismissRequest = { showApprovalModes = false },
-                    ) {
-                        listOf(
-                            ApprovalMode.REQUEST to stringResource(R.string.chat_approval_request_description),
-                            ApprovalMode.ASSISTED to stringResource(R.string.chat_approval_assisted_description),
-                            ApprovalMode.FULL_ACCESS to stringResource(R.string.chat_approval_full_access_description),
-                        ).forEach { (mode, description) ->
-                            DropdownMenuItem(
-                                text = {
-                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Text(stringResource(mode.labelRes), fontWeight = FontWeight.SemiBold)
-                                        Text(description, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                },
-                                leadingIcon = {
-                                    RuntimeIcon(
-                                        if (mode == currentApprovalMode) RuntimeIconName.Check else RuntimeIconName.Shield,
-                                        Modifier.size(18.dp),
-                                    )
-                                },
-                                onClick = {
-                                    showApprovalModes = false
-                                    viewModel.setCurrentSessionApprovalMode(mode)
-                                },
-                            )
-                        }
-                    }
-                }
-
+                // 🌟 3. 会话抽屉/列表
                 IconButton(onClick = { showSessions = true }) {
                     RuntimeIcon(RuntimeIconName.List, Modifier.size(20.dp), MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                // 🌟 4. 新建会话
                 IconButton(onClick = { showNewSession = true }) {
                     RuntimeIcon(RuntimeIconName.Plus, Modifier.size(20.dp), MaterialTheme.colorScheme.primary)
                 }
@@ -436,13 +495,15 @@ fun ChatScreen(
                     .distinct()
             }
 
+            val bottomInsets = chatBottomInsets(AgentBottomBarHeight)
+
             if (isDualPane && terminalPane != null) {
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
                         .liquidGlassContent()
                         .padding(horizontal = 12.dp)
-                        .padding(bottom = composerBottomPadding),
+                        .windowInsetsPadding(bottomInsets),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     // 左栏：Agent 对话与指令区
@@ -530,14 +591,13 @@ fun ChatScreen(
                     }
                 }
             } else {
-                // 单栏 Phone 视图
-                    ChatPaneContent(
-                        onboardingPrivilege = onboardingPrivilege,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .liquidGlassContent()
-                            .padding(horizontal = 12.dp)
-                        .padding(bottom = composerBottomPadding),
+                ChatPaneContent(
+                    onboardingPrivilege = onboardingPrivilege,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .liquidGlassContent()
+                        .padding(horizontal = 12.dp)
+                        .windowInsetsPadding(bottomInsets),
                     messages = messages,
                     listState = listState,
                     running = running,
@@ -596,7 +656,7 @@ fun ChatScreen(
                 )
             }
 
-            if (LocalLiquidGlassBackdrop.current == null && !imeVisible) {
+            if (LocalLiquidGlassBackdrop.current == null) {
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
                     RuntimeBottomBar(MainDestination.Agent, onNavigate)
                 }
@@ -703,6 +763,89 @@ fun ChatScreen(
             messages = messages,
             onDismiss = { showRuntimeTimeline = false },
         )
+    }
+
+    if (showApprovalModes) {
+        ModalBottomSheet(
+            onDismissRequest = { showApprovalModes = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = "审批权限模式",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    IconButton(onClick = { showApprovalModes = false }) {
+                        RuntimeIcon(RuntimeIconName.Close, Modifier.size(20.dp))
+                    }
+                }
+
+                Text(
+                    text = "控制 Agent 执行 Bash 命令、文件读写及系统操作时的拦截与确认策略：",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                listOf(
+                    Triple(ApprovalMode.REQUEST, "询问模式 (安全严谨)", stringResource(R.string.chat_approval_request_description)),
+                    Triple(ApprovalMode.ASSISTED, "辅助模式 (半自动)", stringResource(R.string.chat_approval_assisted_description)),
+                    Triple(ApprovalMode.FULL_ACCESS, "全自动模式 (极速通行)", stringResource(R.string.chat_approval_full_access_description)),
+                ).forEach { (mode, title, desc) ->
+                    val isSelected = mode == currentApprovalMode
+                    Surface(
+                        onClick = {
+                            viewModel.setCurrentSessionApprovalMode(mode)
+                            showApprovalModes = false
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                        else MaterialTheme.colorScheme.surfaceContainerHigh,
+                        border = BorderStroke(
+                            1.dp,
+                            if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            RuntimeIcon(
+                                name = if (isSelected) RuntimeIconName.Check else RuntimeIconName.Shield,
+                                modifier = Modifier.size(22.dp),
+                                tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    text = title,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    text = desc,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if (showMemorySheet) {
@@ -853,6 +996,8 @@ private fun ChatPaneContent(
         }
     }
 
+    val coroutineScope = rememberCoroutineScope()
+
     val doSend = {
         val trimmedInput = input.trim()
         if (trimmedInput.isNotBlank() || attachments.isNotEmpty()) {
@@ -878,22 +1023,17 @@ private fun ChatPaneContent(
             }
             onSend(fullMessage, imageBase64List)
             attachments = emptyList()
+            coroutineScope.launch {
+                delay(60)
+                val count = listState.layoutInfo.totalItemsCount
+                if (count > 0) {
+                    listState.animateScrollToItem(count - 1)
+                }
+            }
         }
     }
 
     Column(modifier = modifier) {
-        if (messages.isNotEmpty() || running) {
-            ChatWorkbenchStrip(
-                currentBranch = currentBranch,
-                runtimeEvents = runtimeEvents,
-                running = running,
-                memoryCount = memoryCount,
-                scratchpadCount = scratchpadCount,
-                onOpenBranches = onOpenBranches,
-                onOpenRuntime = onOpenRuntime,
-                onOpenMemory = onOpenMemory,
-            )
-        }
         val renderItems = remember(messages, toolResults, expandedOverrides) {
             projectChatMessages(
                 messages = messages,
@@ -903,7 +1043,10 @@ private fun ChatPaneContent(
         }
         LazyColumn(
             state = listState,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .scrollFadingEdge(top = 8.dp, bottom = 8.dp),
         ) {
             if (initializing) {
                 item {
@@ -944,8 +1087,9 @@ private fun ChatPaneContent(
                 }
                 itemsIndexed(renderItems, key = { _, item -> item.stableKey }) { index, item ->
                     val top = when {
-                        item is ChatRenderItem.MessageItem && item.message is ToolCall && prevRenderedIsToolCall(renderItems, index) -> 2.dp
-                        else -> 8.dp
+                        item is ChatRenderItem.MessageItem && item.message is ToolCall && prevRenderedIsToolCall(renderItems, index) -> 4.dp
+                        item is ChatRenderItem.MessageItem && item.message is UserMessage -> 14.dp
+                        else -> 10.dp
                     }
                     if (index > 0) Spacer(Modifier.height(top))
                     when (item) {
@@ -1013,30 +1157,7 @@ private fun ChatPaneContent(
                     )
                     Spacer(Modifier.height(8.dp))
                 }
-                if (running) {
-                    val roundStart = remember(messages.size) {
-                        messages.lastOrNull { it is UserMessage }?.createdAt ?: 0L
-                    }
-                    var roundElapsed by remember { mutableStateOf(0L) }
-                    LaunchedEffect(roundStart) {
-                        while (true) {
-                            roundElapsed = System.currentTimeMillis() - roundStart
-                            delay(100)
-                        }
-                    }
-                    val thinkingLabel = status ?: stringResource(R.string.chat_thinking)
-                    ThinkingIndicator(
-                        status = buildString {
-                            append(thinkingLabel)
-                            if (roundElapsed > 0) {
-                                append(" · ")
-                                append(formatDuration(roundElapsed))
-                            }
-                        },
-                    )
-                } else {
-                    Spacer(Modifier.height(4.dp))
-                }
+                Spacer(Modifier.height(4.dp))
             }
         }
 
@@ -1105,6 +1226,16 @@ private fun ChatPaneContent(
             )
         }
 
+        // 🌟 底部悬浮工具活动胶囊 (Floating Tool Activity Strip / Live Pill)
+        ToolActivityPill(
+            running = running,
+            status = status,
+            messages = messages,
+            toolResults = toolResults,
+            workspace = workspace,
+            onStop = onStop,
+        )
+
         // 现代化一体化输入胶囊 (Unified Chat Input Capsule with Aurora Glow)
         val auroraBrush = if (running) {
             androidx.compose.ui.graphics.Brush.linearGradient(
@@ -1123,36 +1254,36 @@ private fun ChatPaneContent(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 4.dp, bottom = 8.dp)
+                .padding(top = 2.dp, bottom = 4.dp)
                 .then(
                     if (running && auroraBrush != null) {
                         Modifier.border(
                             androidx.compose.foundation.BorderStroke(
-                                (1.5f + 0.5f * glowPulse).dp,
+                                (1.2f + 0.3f * glowPulse).dp,
                                 auroraBrush,
                             ),
-                            RoundedCornerShape(18.dp),
+                            RoundedCornerShape(20.dp),
                         )
                     } else Modifier
                 ),
-            shape = RoundedCornerShape(18.dp),
+            shape = RoundedCornerShape(20.dp),
             color = if (running) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.surfaceContainerHigh,
             border = if (!running) androidx.compose.foundation.BorderStroke(
                 1.dp,
-                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
             ) else null,
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 // 仅在运行中且用户开始输入时展示，避免发送后立刻占位/换行
                 if (running && input.isNotBlank()) {
                     ComposerModeSelector(mode = sendMode, onModeChange = onSendModeChange)
                 }
-                // 🌟 上排主体：满宽弹性文本输入框（无任何左侧图标干扰，空间宽敞开阔）
+                // 🌟 上排主体：弹性文本输入框
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1172,7 +1303,6 @@ private fun ChatPaneContent(
                         value = textFieldValue,
                         onValueChange = { newValue ->
                             val updatedValue = if (newValue.text.length < textFieldValue.text.length) {
-                                // 🌟 用户按退格键删除，检测光标是否命中了 @mention 实体块（支持带空格的完整能力全称）
                                 val oldText = textFieldValue.text
                                 val deletedPos = newValue.selection.start
                                 val baseRegex = buildMentionRegex(knownMentionNames)
@@ -1213,45 +1343,82 @@ private fun ChatPaneContent(
                         ),
                         cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
                         minLines = 1,
-                        maxLines = 6,
+                        maxLines = 5,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                         keyboardActions = KeyboardActions(onSend = { doSend() }),
                     )
                 }
 
-                // 🌟 下排操作栏：左侧功能工具组 + 右侧发送/控制按钮组
+                // 🌟 下排操作栏：精简工具集 + 状态与发送控制
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 2.dp),
+                        .padding(top = 1.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     // 左侧工具图标栏
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
-                        // 🧠 大脑能力快捷入口（点击插入 @ 呼出选单，长按或已选时打开全局面板）
+                        // 📎 附件弹出菜单（图片 / 文件）
+                        var showAttachmentMenu by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton(
+                                onClick = { showAttachmentMenu = true },
+                                modifier = Modifier.size(28.dp),
+                            ) {
+                                RuntimeIcon(
+                                    name = RuntimeIconName.Attach,
+                                    modifier = Modifier.size(17.dp),
+                                    tint = if (attachments.isNotEmpty()) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showAttachmentMenu,
+                                onDismissRequest = { showAttachmentMenu = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("发送图片", fontSize = 13.sp) },
+                                    leadingIcon = { RuntimeIcon(RuntimeIconName.Image, Modifier.size(16.dp)) },
+                                    onClick = {
+                                        showAttachmentMenu = false
+                                        imagePickerLauncher.launch("image/*")
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("发送文件 / 产物", fontSize = 13.sp) },
+                                    leadingIcon = { RuntimeIcon(RuntimeIconName.Document, Modifier.size(16.dp)) },
+                                    onClick = {
+                                        showAttachmentMenu = false
+                                        filePickerLauncher.launch("*/*")
+                                    },
+                                )
+                            }
+                        }
+
+                        // 🧠 大脑能力快捷入口（@ 快捷选单）
                         IconButton(
                             onClick = {
                                 onTriggerMention()
                                 runCatching { focusRequester.requestFocus() }
                             },
-                            modifier = Modifier.size(32.dp),
+                            modifier = Modifier.size(28.dp),
                         ) {
                             RuntimeIcon(
                                 name = RuntimeIconName.Brain,
-                                modifier = Modifier.size(18.dp),
+                                modifier = Modifier.size(17.dp),
                                 tint = if (attachedMentions.isNotEmpty()) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
 
-                        // ⏱️ 思考/推理强度滑块开关（ChatGPT 同款仪表盘图标）
+                        // ⏱️ 思考/推理强度滑块开关
                         IconButton(
                             onClick = { showReasoningSlider = !showReasoningSlider },
-                            modifier = Modifier.size(32.dp),
+                            modifier = Modifier.size(28.dp),
                         ) {
                             val isReasoningDisabled = activeModel?.reasoningMode == "disabled"
                             val isHigh = activeModel?.reasoningEffort == "high"
@@ -1265,81 +1432,53 @@ private fun ChatPaneContent(
                             }
                             RuntimeIcon(
                                 name = RuntimeIconName.Speed,
-                                modifier = Modifier.size(18.dp),
+                                modifier = Modifier.size(17.dp),
                                 tint = speedIconTint,
-                            )
-                        }
-
-                        // 🖼️ 选择相册图片
-                        IconButton(
-                            onClick = { imagePickerLauncher.launch("image/*") },
-                            modifier = Modifier.size(32.dp),
-                        ) {
-                            RuntimeIcon(
-                                name = RuntimeIconName.Image,
-                                modifier = Modifier.size(18.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-
-                        // 📎 选择文件附件
-                        IconButton(
-                            onClick = { filePickerLauncher.launch("*/*") },
-                            modifier = Modifier.size(32.dp),
-                        ) {
-                            RuntimeIcon(
-                                name = RuntimeIconName.Attach,
-                                modifier = Modifier.size(18.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
 
-                    // 右侧发送 / 排队 / 停止按钮（小巧精致，与输入框圆角统一，边距舒适）
+                    // 右侧发送 / 停止控制区（圆形灵动按钮）
                     val canSend = input.isNotBlank() || attachments.isNotEmpty()
-                    val buttonShape = RoundedCornerShape(10.dp)
                     if (running) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            ContextUsageButton(contextUsage)
+                            ContextUsageRing(contextUsage)
                             if (canSend) {
                                 val sendTint = when (sendMode) {
                                     ComposerSendMode.STEER -> Color(0xFF7C4DFF)
                                     ComposerSendMode.NEXT_RUN -> MaterialTheme.colorScheme.secondary
                                 }
-                                val sendIcon = when (sendMode) {
-                                    ComposerSendMode.STEER -> RuntimeIconName.Tune
-                                    ComposerSendMode.NEXT_RUN -> RuntimeIconName.List
-                                }
                                 Surface(
                                     onClick = doSend,
-                                    shape = buttonShape,
+                                    shape = CircleShape,
                                     color = sendTint,
                                     modifier = Modifier.size(30.dp),
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         RuntimeIcon(
-                                            sendIcon,
-                                            Modifier.size(16.dp),
-                                            Color.White,
+                                            name = RuntimeIconName.ArrowUp,
+                                            modifier = Modifier.size(16.dp),
+                                            tint = Color.White,
                                         )
                                     }
                                 }
-                            }
-                            Surface(
-                                onClick = onStop,
-                                shape = buttonShape,
-                                color = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(30.dp),
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    RuntimeIcon(
-                                        RuntimeIconName.Stop,
-                                        Modifier.size(16.dp),
-                                        MaterialTheme.colorScheme.onError,
-                                    )
+                            } else {
+                                Surface(
+                                    onClick = onStop,
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(30.dp),
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        RuntimeIcon(
+                                            name = RuntimeIconName.Stop,
+                                            modifier = Modifier.size(14.dp),
+                                            tint = MaterialTheme.colorScheme.onError,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1348,20 +1487,20 @@ private fun ChatPaneContent(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            ContextUsageButton(contextUsage)
+                            ContextUsageRing(contextUsage)
                             Surface(
                                 onClick = { if (canSend) doSend() },
                                 enabled = canSend,
-                                shape = buttonShape,
+                                shape = CircleShape,
                                 color = if (canSend) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.surfaceContainerHighest,
                                 modifier = Modifier.size(30.dp),
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     RuntimeIcon(
-                                        RuntimeIconName.ArrowUp,
-                                        Modifier.size(16.dp),
-                                        if (canSend) MaterialTheme.colorScheme.onPrimary
+                                        name = RuntimeIconName.ArrowUp,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = if (canSend) MaterialTheme.colorScheme.onPrimary
                                         else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
                                     )
                                 }
@@ -1837,14 +1976,12 @@ private fun UserBubble(
                     val annotatedText = remember(message.text, knownMentionNames, mentionColor, mentionBg) {
                         formatMentionText(message.text, knownMentionNames, mentionColor, mentionBg)
                     }
-                    SelectionContainer {
-                        Text(
-                            text = annotatedText,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        )
-                    }
+                    Text(
+                        text = annotatedText,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
                 }
             } else if (message.imageUrls.isNotEmpty()) {
                 // 纯图片消息：显示小菜单按钮
@@ -2227,33 +2364,6 @@ private fun TaskPlanCard(
     }
 }
 
-@Composable
-private fun ThinkingIndicator(status: String) {
-    Surface(
-        modifier = Modifier
-            .padding(top = 4.dp),
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(12.dp),
-                strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Text(
-                status,
-                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium),
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-    }
-}
 
 @Composable
 private fun ThinkingBlock(

@@ -845,6 +845,7 @@ fun SystemDevSettingsScreen(
     onBack: () -> Unit,
     onOpenDeveloper: () -> Unit,
     onOpenCustomIteration: () -> Unit = {},
+    onOpenPermissionGuide: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val developer by viewModel.developerMode.collectAsStateWithLifecycle()
@@ -903,6 +904,14 @@ fun SystemDevSettingsScreen(
                 )
                 SettingsGroup {
                     SettingsRow(
+                        icon = RuntimeIconName.Shield,
+                        title = "厂商后台防杀与权限向导",
+                        subtitle = "自启动、电池无限制、多任务加锁等 OEM 专属配置指引",
+                        value = "查看向导",
+                        onClick = onOpenPermissionGuide,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    SettingsRow(
                         icon = RuntimeIconName.Battery,
                         title = "电池优化与后台保活",
                         subtitle = "豁免系统电池限制，防止 Agent 息屏被冻结",
@@ -912,10 +921,10 @@ fun SystemDevSettingsScreen(
                     if (isRestrictiveRom) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                         SettingsRow(
-                            icon = RuntimeIconName.Shield,
-                            title = "$romLabel 自启动与后台运行",
-                            subtitle = "厂商系统需手动允许自启动与锁屏不清理，否则前台服务仍可能被杀",
-                            value = "需手动开启",
+                            icon = RuntimeIconName.Cpu,
+                            title = "$romLabel 快捷自启动跳转",
+                            subtitle = "一键直达厂商系统自启动管理设置项",
+                            value = "前往开启",
                             onClick = { runCatching { RomAutostartHelper.openAutostartSettings(context) } },
                         )
                     }

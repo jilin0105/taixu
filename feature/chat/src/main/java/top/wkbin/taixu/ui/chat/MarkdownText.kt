@@ -67,28 +67,26 @@ import top.wkbin.taixu.ui.components.SyntaxHighlighter
 @Composable
 fun MarkdownText(markdown: String, modifier: Modifier = Modifier) {
     val blocks = remember(markdown) { parseMarkdownBlocks(markdown) }
-    SelectionContainer(modifier = modifier) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            blocks.forEach { block ->
-                when (block) {
-                    is MdParagraph -> InlineText(block.text, MaterialTheme.typography.bodyMedium)
-                    is MdHeading -> InlineText(
-                        block.text,
-                        when (block.level) {
-                            1 -> MaterialTheme.typography.headlineSmall
-                            2 -> MaterialTheme.typography.titleLarge
-                            3 -> MaterialTheme.typography.titleMedium
-                            else -> MaterialTheme.typography.titleSmall
-                        },
-                        bold = true,
-                    )
-                    is MdCodeBlock -> CodeBlock(block)
-                    is MdList -> ListBlock(block)
-                    is MdQuote -> QuoteBlock(block)
-                    is MdTable -> TableBlock(block)
-                    is MdRemoteMedia -> RemoteMediaBlock(block)
-                    is MdHr -> HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                }
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        blocks.forEach { block ->
+            when (block) {
+                is MdParagraph -> InlineText(block.text, MaterialTheme.typography.bodyMedium)
+                is MdHeading -> InlineText(
+                    block.text,
+                    when (block.level) {
+                        1 -> MaterialTheme.typography.headlineSmall
+                        2 -> MaterialTheme.typography.titleLarge
+                        3 -> MaterialTheme.typography.titleMedium
+                        else -> MaterialTheme.typography.titleSmall
+                    },
+                    bold = true,
+                )
+                is MdCodeBlock -> CodeBlock(block)
+                is MdList -> ListBlock(block)
+                is MdQuote -> QuoteBlock(block)
+                is MdTable -> TableBlock(block)
+                is MdRemoteMedia -> RemoteMediaBlock(block)
+                is MdHr -> HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
         }
     }

@@ -1050,8 +1050,8 @@ fun WorkspaceScreen(
             text = {
                 Column(
                     modifier = Modifier
-                        .verticalScroll(rememberScrollState())
-                        .heightIn(min = 360.dp, max = 420.dp),
+                        .heightIn(min = 360.dp, max = 420.dp)
+                        .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     when (createProjectStep) {

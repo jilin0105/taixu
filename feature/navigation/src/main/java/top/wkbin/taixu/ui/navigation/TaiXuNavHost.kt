@@ -82,6 +82,7 @@ sealed interface AppDestination : NavKey
 @Serializable data class ModelEditorDestination(val modelId: String? = null) : AppDestination
 @Serializable data object QuickPhrasesDestination : AppDestination
 @Serializable data object StatsDestination : AppDestination
+@Serializable data object PermissionGuideDestination : AppDestination
 @Serializable data object DeveloperDestination : AppDestination
 @Serializable data object CustomIterationDestination : AppDestination
 @Serializable data class TerminalDestination(val toolId: String = "", val project: String = "") : AppDestination
@@ -248,7 +249,13 @@ fun TaiXuNavHost() {
                     onBack = ::popBack,
                     onOpenDeveloper = { settingsStack.push(DeveloperDestination) },
                     onOpenCustomIteration = { settingsStack.push(CustomIterationDestination) },
+                    onOpenPermissionGuide = { settingsStack.push(PermissionGuideDestination) },
                     viewModel = settingsViewModel,
+                )
+            }
+            entry<PermissionGuideDestination> {
+                top.wkbin.taixu.ui.settings.permission.PermissionGuideScreen(
+                    onBack = ::popBack,
                 )
             }
             entry<AboutCommunityDestination> {

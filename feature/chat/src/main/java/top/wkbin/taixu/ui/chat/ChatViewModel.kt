@@ -16,6 +16,10 @@ import top.wkbin.taixu.core.database.AgentApprovalRequestEntity
 import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.harness.HarnessLoop
 import top.wkbin.taixu.harness.HarnessMessage
+import top.wkbin.taixu.harness.UserMessage
+import top.wkbin.taixu.harness.AssistantText
+import top.wkbin.taixu.harness.ToolCall
+import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.harness.PendingMessage
 import top.wkbin.taixu.harness.QueuedPrompt
 import top.wkbin.taixu.harness.ContextWindowPolicy
@@ -149,8 +153,17 @@ class ChatViewModel @Inject constructor(
     private val _sendMode = MutableStateFlow(ComposerSendMode.NEXT_RUN)
     val sendMode: StateFlow<ComposerSendMode> = _sendMode.asStateFlow()
 
-    val runtimeEvents: StateFlow<List<HarnessEvent>> = combine(harnessLoop.currentSessionId, _eventHistory) { sessionId, history ->
-        history[sessionId].orEmpty()
+    val runtimeEvents: StateFlow<List<HarnessEvent>> = combine(
+        harnessLoop.currentSessionId,
+        _eventHistory,
+        messages,
+    ) { sessionId, history, msgList ->
+        val live = history[sessionId].orEmpty()
+        if (live.isNotEmpty()) {
+            live
+        } else {
+            synthesizeHistoricalEvents(sessionId, msgList)
+        }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _branchRefresh = MutableStateFlow(0)
@@ -755,6 +768,82 @@ class ChatViewModel @Inject constructor(
             aiModelDao.delete(id)
         }
     }
+}
+
+private fun synthesizeHistoricalEvents(sessionId: String, messages: List<HarnessMessage>): List<HarnessEvent> {
+    if (sessionId.isBlank() || messages.isEmpty()) return emptyList()
+    val events = mutableListOf<HarnessEvent>()
+    var currentRound = 0
+    var opId = "hist-$sessionId"
+    val toolCallMap = messages.filterIsInstance<ToolCall>().associateBy { it.id }
+
+    messages.forEach { msg ->
+        when (msg) {
+            is UserMessage -> {
+                currentRound++
+                opId = "hist-${msg.id}"
+                events.add(
+                    HarnessEvent.OperationStarted(
+                        sessionId = sessionId,
+                        timestamp = msg.createdAt,
+                        operationId = opId,
+                        laneName = "main",
+                    )
+                )
+            }
+            is AssistantText -> {
+                events.add(
+                    HarnessEvent.ProviderRoundStarted(
+                        sessionId = sessionId,
+                        timestamp = msg.createdAt,
+                        operationId = opId,
+                        round = currentRound,
+                        attempt = 1,
+                        modelId = null,
+                    )
+                )
+                events.add(
+                    HarnessEvent.ProviderRoundSettled(
+                        sessionId = sessionId,
+                        timestamp = msg.createdAt,
+                        operationId = opId,
+                        round = currentRound,
+                        entryId = msg.id,
+                        inputTokens = 0L,
+                        outputTokens = msg.text.length.toLong(),
+                    )
+                )
+            }
+            is ToolCall -> {
+                events.add(
+                    HarnessEvent.ToolCallStarted(
+                        sessionId = sessionId,
+                        timestamp = msg.createdAt,
+                        operationId = opId,
+                        toolCallId = msg.id,
+                        toolName = msg.tool.name.lowercase(),
+                    )
+                )
+            }
+            is ToolResult -> {
+                val call = toolCallMap[msg.toolCallId]
+                val toolName = call?.tool?.name?.lowercase() ?: "tool"
+                events.add(
+                    HarnessEvent.ToolCallSettled(
+                        sessionId = sessionId,
+                        timestamp = msg.createdAt,
+                        operationId = opId,
+                        toolCallId = msg.toolCallId,
+                        toolName = toolName,
+                        success = msg.success,
+                        durationMs = msg.durationMs,
+                    )
+                )
+            }
+            else -> Unit
+        }
+    }
+    return events
 }
 
 enum class ComposerSendMode(val queue: PromptQueue) {
