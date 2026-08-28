@@ -803,7 +803,7 @@ class ProviderClient @Inject constructor(
             ApiToolDefinition(
                 function = ApiFunctionDefinition(
                     name = "plan",
-                    description = "结构化多步骤任务规划管理：拆解长任务子步骤并持续跟踪推进进度。凡涉及 2 个以上步骤、逆向分析或复杂排错的任务，第一轮工具调用必须先调用 replace_active 建立规划，每步完成后调用 advance。支持 action: replace_active, get_active, advance, clear_active。",
+                    description = "结构化多步骤任务规划管理：拆解长任务子步骤并持续跟踪推进进度。当任务预计需要 3 次以上工具调用、存在多个相互依赖的执行阶段、失败后需要分支排查，或会修改多个文件/系统状态时，第一轮工具调用先 replace_active 建立规划，每步完成后 advance；简单单步或双步任务不要建 plan。详细规则见 workflow 规则块（未注入时可用 load_rule 获取）。支持 action: replace_active, get_active, advance, clear_active。",
                     parameters = Json.parseToJsonElement(
                         """{"type":"object","properties":{"action":{"type":"string","enum":["replace_active","get_active","advance","clear_active"],"description":"规划操作动作"},"goal":{"type":"string","description":"任务总体目标"},"steps":{"type":"array","description":"规划步骤列表（每个步骤包含 id, title, status: pending|in_progress|completed|failed）","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"},"status":{"type":"string"}},"required":["id","title","status"]}},"status":{"type":"string","description":"任务整体状态"}},"required":["action"]}""",
                     ).jsonObject,
@@ -824,6 +824,15 @@ class ProviderClient @Inject constructor(
                     description = "并发派发一个或多个专业角色子智能体（Subagents）执行调研、编写、编译或测试等特定子任务，并在完成后汇总结构化结论。每个子智能体在专属子会话中独立运行。",
                     parameters = Json.parseToJsonElement(
                         """{"type":"object","properties":{"subagents":{"type":"array","description":"子任务列表","items":{"type":"object","properties":{"taskName":{"type":"string","description":"子任务名称（如: 数据库结构调研 / 编写测试用例）"},"role":{"type":"string","description":"子智能体角色（如: researcher / coder / tester）"},"prompt":{"type":"string","description":"详细的任务指令与要求"}},"required":["taskName","role","prompt"]}}},"required":["subagents"]}""",
+                    ).jsonObject,
+                ),
+            ),
+            ApiToolDefinition(
+                function = ApiFunctionDefinition(
+                    name = "load_rule",
+                    description = "按需加载系统提示词的详细规则块（workflow / code-navigation / security / memory / environment-proot / tools）。当当前任务需要某块规则但系统提示词中未注入时调用；只读，无副作用。",
+                    parameters = Json.parseToJsonElement(
+                        """{"type":"object","properties":{"rule":{"type":"string","enum":["workflow","code-navigation","security","memory","environment-proot","tools"],"description":"要加载的规则块名称"}},"required":["rule"]}""",
                     ).jsonObject,
                 ),
             ),

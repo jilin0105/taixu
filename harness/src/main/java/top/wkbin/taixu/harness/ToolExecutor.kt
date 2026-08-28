@@ -60,6 +60,7 @@ class ToolExecutor @Inject constructor(
     private val shizukuApis: ShizukuSystemApis? = null,
     private val hostGuiController: top.wkbin.taixu.runtime.gui.HostGuiController? = null,
     private val buildScriptToolExecutor: BuildScriptToolExecutor? = null,
+    private val promptRouter: top.wkbin.taixu.harness.prompt.PromptRouter? = null,
 ) {
     @Inject
     lateinit var settingsDataStore: AgentPreferences
@@ -187,6 +188,15 @@ class ToolExecutor @Inject constructor(
             HarnessTool.BUILD_SCRIPT -> buildScriptToolExecutor?.execute(args, workspace) ?: (false to "未初始化构建脚本管理器")
             HarnessTool.SUBAGENT -> subagentOrchestrator?.executeSubagents(args, sessionId) ?: (false to "未初始化子智能体编排器")
             HarnessTool.MCP -> mcpManager?.executeTool(rawToolName ?: "mcp", args) ?: (false to "未初始化 MCP 管理器")
+            HarnessTool.LOAD_RULE -> {
+                val rule = requireString(args, "rule")
+                val content = promptRouter?.loadRule(rule)
+                if (content != null) {
+                    true to "【规则块：$rule】\n$content"
+                } else {
+                    false to "未知规则块：$rule。可用：workflow / code-navigation / security / memory / environment-proot / tools"
+                }
+            }
         }
     }
 

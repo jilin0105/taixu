@@ -3,7 +3,7 @@
 - 核心准则：原始 APK 和 `unpacked/` 是分析输入，先 read `apk-info.properties` 与 `REVERSE.md`，切勿覆盖原始 APK。必须遵循**「规划先行、结构为引、源码优先、毫秒检索、反射图谱」**标准化逆向流程。
 
 #### 1. 强制规划先行 (Planning First)
-- 面对逆向审计任务，第一轮工具调用**必须先调用 `plan` 建立执行看板**，严禁在无规划状态下盲目探索：
+- 逆向审计属于复杂多阶段任务，按 workflow 规则块在第一轮工具调用建立执行看板，严禁在无规划状态下盲目探索。建议阶段：
   1. 结构感知（读取 Manifest、识别主包名与核心入口组件）
   2. 源码获取（JADX 一键反编译 Java 源码或 DEX 提取）
   3. 核心特征与关键词检索（使用 `rg` 毫秒级精准搜索）
@@ -24,9 +24,8 @@
 - **DEX 转 JAR**：若需使用其他 Java 字节码分析工具，可执行 `d2j-dex2jar <APK/DEX路径> -o out.jar`。
 
 #### 4. 毫秒级极速检索与代码知识图谱 (Ripgrep & CodeGraph)
-- **代码知识图谱导航 (CodeGraph)**：若挂载了 CodeGraph MCP，反编译后可直接调用 `mcp__codegraph__codegraph_explore(query="...")` 一步获取函数定义、调用方 (Callers)、下游引用 (Callees) 与代码切片，亦可通过 `codegraph_callers` 追踪指定方法的全部调用方。
-- **Ripgrep 毫秒检索**：**严禁** 使用 `find | xargs grep` 遍历！沙箱已内置 `rg` (ripgrep)，搜索速度提升 100 倍。
-- 检索范例：
+- 代码检索与调用链追踪统一按 code-navigation 规则块执行：优先 CodeGraph MCP（explore/callers/callees/impact），文本检索用 `rg`，严禁 `find | xargs grep` 遍历。
+- 逆向场景常用检索范例：
   - 搜索类名/方法名/常量：`rg "quickPhoneLogin" out/java/`
   - 仅搜索 Java 文件：`rg -t java "isNewUser" out/java/`
   - 仅搜索 Smali 文件：`rg -g "*.smali" "invoke-static.*login" unpacked/`
@@ -39,9 +38,7 @@
   - **动态插件加载**：检查 `DexClassLoader`、`PathClassLoader`、Asset/Zip 释放路径或 `.so` 动态加载，追踪子 DEX 或插件 APK。
 
 #### 6. 大文件与 Smali 精准分片阅读 (Targeted Method Reading)
-- 若目标类在 Smali 中有数千行，**严禁盲目读取全文件**（会导致截断与上下文浪费）：
-  - 第一步：提取类中的方法签名大纲：`rg -n '^\.method' Path/To/Class.smali`
-  - 第二步：定位目标方法起始行（如第 1200 行），使用 `read(path=..., offset=1200, limit=100)` 精准分页查看。
+- 大文件按 code-navigation 规则分片阅读，严禁盲目读取全文件。Smali 专属技巧：先 `rg -n '^\.method' Path/To/Class.smali` 提取方法签名大纲，定位起始行后用 `read(offset, limit)` 精准分页。
 
 #### 7. 工作便签与线索持久化 (Scratchpad Tracking)
 - 逆向过程中发现的关键类名、函数调用链、中间假说及反编译目录，第一时间通过 `scratchpad(action="save", key="findings", value=...)` 沉淀，防止长会话上下文丢失。

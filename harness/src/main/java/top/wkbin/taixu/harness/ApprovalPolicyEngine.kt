@@ -43,7 +43,8 @@ class ApprovalPolicyEngine {
         }
         if (mode == ApprovalMode.FULL_ACCESS) return ApprovalDecision(false)
         if (tool == HarnessTool.READ || tool == HarnessTool.MEMORY || tool == HarnessTool.PLAN ||
-            tool == HarnessTool.SCRATCHPAD || tool == HarnessTool.HISTORY_SEARCH || tool == HarnessTool.HISTORY_READ
+            tool == HarnessTool.SCRATCHPAD || tool == HarnessTool.HISTORY_SEARCH || tool == HarnessTool.HISTORY_READ ||
+            tool == HarnessTool.LOAD_RULE
         ) {
             return ApprovalDecision(false)
         }
@@ -86,7 +87,7 @@ class ApprovalPolicyEngine {
             HarnessTool.HOST -> error("HOST 已在审批策略入口处理")
             HarnessTool.MCP -> ApprovalDecision(true, "high", "MCP 工具可能访问外部服务或产生工作区之外的副作用。", summary)
             HarnessTool.READ, HarnessTool.MEMORY, HarnessTool.PLAN, HarnessTool.SCRATCHPAD,
-            HarnessTool.HISTORY_SEARCH, HarnessTool.HISTORY_READ, HarnessTool.SUBAGENT -> ApprovalDecision(false)
+            HarnessTool.HISTORY_SEARCH, HarnessTool.HISTORY_READ, HarnessTool.SUBAGENT, HarnessTool.LOAD_RULE -> ApprovalDecision(false)
         }
     }
 

@@ -22,6 +22,7 @@ enum class HarnessTool {
     @SerialName("build_script") BUILD_SCRIPT,
     @SerialName("invoke_subagent") SUBAGENT,
     @SerialName("mcp") MCP,
+    @SerialName("load_rule") LOAD_RULE,
 }
 
 /**

@@ -36,35 +36,23 @@ class SystemPromptBuilder @Inject constructor(
     private val promptAssets: PromptAssetLoader,
     private val fileAccess: WorkspaceFileAccess,
     private val privilegeRenderer: PrivilegeSectionRenderer,
+    private val promptRouter: PromptRouter,
 ) {
-    /** 组装完整系统提示词；各分节缺失时自然留空并由 joinToString 过滤。 */
+    /** 组装完整系统提示词（分层结构）；各分节缺失时自然留空并由 joinToString 过滤。 */
     suspend fun build(
         workspacePath: String,
         toolCallMode: ToolCallMode = ToolCallMode.NATIVE,
         mentionedNames: Set<String> = emptySet(),
         sessionId: String = "",
         projectTypeOverride: String = "",
+        latestUserMessage: String = "",
     ): String {
         val distroId = runCatching { settingsDataStore.selectedDistribution.first() }.getOrDefault("debian")
         val distroName = DistroCatalog.displayName(distroId)
         val pkgManager = DistroCatalog.packageManagerCommand(distroId)
         val customPromptEnabled = runCatching { settingsDataStore.customSystemPromptEnabled.first() }.getOrDefault(false)
         val customPrompt = runCatching { settingsDataStore.customSystemPrompt.first() }.getOrDefault("")
-        val baseRawTemplate = if (customPromptEnabled && customPrompt.isNotBlank()) {
-            customPrompt
-        } else {
-            promptAssets.read("prompts/agent_system.md")
-        }
-
         val providerModelId = runCatching { settingsDataStore.providerModel.first() }.getOrDefault("")
-        val resolvedTemplate = PromptVariableResolver.resolve(
-            template = baseRawTemplate,
-            context = context,
-            modelId = providerModelId,
-            modelName = providerModelId,
-            charName = "太墟智枢",
-            userName = "用户",
-        )
 
         val allSkills = runCatching { skillRepository.allSkills.first() }.getOrDefault(emptyList())
         val selectedSkills = selectSkills(allSkills, mentionedNames)
@@ -80,7 +68,7 @@ class SystemPromptBuilder @Inject constructor(
                 toolRepository.getForDistro(distroId).filter { it.state == top.wkbin.taixu.core.model.ToolState.INSTALLED.name }
             }.getOrDefault(emptyList())
         val installedToolsSection = if (installedTools.isNotEmpty()) {
-            "\n\n## 当前 Linux 沙箱已就绪的开发套件与工具环境（已安装就绪，直接调用即可，切勿重复下载或重新安装）：\n" +
+            "\n\n## 当前 Linux 沙箱已就绪的开发套件（已安装，直接调用，切勿重复下载安装）：\n" +
                 installedTools.joinToString("\n") { tool ->
                     val ver = tool.installedVersion?.let { " (v$it)" } ?: ""
                     "- ${tool.name}$ver: ${tool.description}"
@@ -99,23 +87,18 @@ class SystemPromptBuilder @Inject constructor(
         } else ""
 
         val activePlan = runCatching { agentContextDao.getActivePlan(sessionId) }.getOrNull()
-        val planSection = if (activePlan != null && activePlan.status == "active") {
+        val activePlanExists = activePlan != null && activePlan.status == "active"
+        val planSection = if (activePlanExists) {
             "\n\n## 当前任务多步骤执行规划与进度看板 (Active Plan)\n目标：${activePlan.goal}\n步骤与状态：\n${activePlan.stepsJson}"
         } else ""
 
         val subagentSection = buildSubagentGuidance(toolCallMode)
 
-        val projectContext = loadProjectContext(workspacePath)
-        val workspaceSection = if (workspacePath.isNotBlank()) {
-            "\n\n当前工作区：$workspacePath（base 命令默认在此目录执行；read/write/edit 的相对路径以此为根）"
+        val hasWorkspace = workspacePath.isNotBlank()
+        val projectType = detectProjectType(workspacePath, projectTypeOverride)
+        val workspaceGuidance = if (hasWorkspace) {
+            buildWorkspaceGuidance(workspacePath, projectType, distroName)
         } else ""
-        val workspaceGuidance = buildWorkspaceGuidance(
-            workspacePath = workspacePath,
-            projectTypeOverride = projectTypeOverride,
-            distroName = distroName,
-            toolCallMode = toolCallMode,
-            installedTools = installedTools,
-        )
 
         val toolCallSection = when (toolCallMode) {
             ToolCallMode.JSON_TEXT -> promptAssets.render("prompts/tool_call_json.md")
@@ -136,34 +119,62 @@ class SystemPromptBuilder @Inject constructor(
             context.getString(R.string.harness_prompt_privilege_render_failed)
         }
 
-        val baseVariables = mapOf(
-            "DISTRO_NAME" to distroName,
-            "PKG_MANAGER" to pkgManager,
-            "ACTIVE_SKILLS" to skillSection,
-        )
+        // L0 核心：自定义 prompt 或分层 core.md。
         val basePrompt = if (customPromptEnabled && customPrompt.isNotBlank()) {
-            baseVariables.entries.fold(resolvedTemplate) { prompt, (name, value) ->
+            val resolvedTemplate = PromptVariableResolver.resolve(
+                template = customPrompt,
+                context = context,
+                modelId = providerModelId,
+                modelName = providerModelId,
+                charName = "太墟智枢",
+                userName = "用户",
+            )
+            mapOf(
+                "DISTRO_NAME" to distroName,
+                "PKG_MANAGER" to pkgManager,
+                "ACTIVE_SKILLS" to skillSection,
+            ).entries.fold(resolvedTemplate) { prompt, (name, value) ->
                 prompt.replace("{{$name}}", value)
             }.trim()
         } else {
-            promptAssets.renderTemplate(
-                path = "prompts/agent_system.md",
-                template = resolvedTemplate,
-                variables = baseVariables,
+            promptAssets.render(
+                "prompts/system/core.md",
+                mapOf(
+                    "DISTRO_NAME" to distroName,
+                    "PKG_MANAGER" to pkgManager,
+                    "ACTIVE_SKILLS" to skillSection,
+                ),
             )
         }
+
+        // L0 常驻工具说明 + L1 PRoot 约束（工具禁用时跳过工具说明）。
+        val toolsSection = if (toolCallMode != ToolCallMode.DISABLED) {
+            promptAssets.render("prompts/system/tools.md", mapOf("PKG_MANAGER" to pkgManager))
+        } else ""
+        val prootSection = promptAssets.read("prompts/system/environment-proot.md")
+
+        // L2 任务规则：由 PromptRouter 按当前任务上下文选择注入；未覆盖时模型可用 load_rule 自取。
+        val routedBlocks = promptRouter.route(
+            latestUserMessage = latestUserMessage,
+            projectType = projectType,
+            hasWorkspace = hasWorkspace,
+            activePlanExists = activePlanExists,
+        ).joinToString("\n\n") { block -> promptAssets.read(block.assetPath) }
+
         return listOf(
             basePrompt,
+            toolsSection,
+            prootSection,
+            privilegeSection,
+            routedBlocks,
             installedToolsSection,
             mcpCapabilitySection,
             memorySection,
             planSection,
             subagentSection,
             toolCallSection,
-            workspaceSection,
             workspaceGuidance,
-            projectContext,
-            privilegeSection,
+            loadProjectContext(workspacePath),
             thinkingLanguageSection,
         ).filter { it.isNotBlank() }.joinToString("\n\n") { it.trim() }
     }
@@ -266,34 +277,12 @@ class SystemPromptBuilder @Inject constructor(
      */
     private suspend fun buildWorkspaceGuidance(
         workspacePath: String,
-        projectTypeOverride: String,
+        projectType: String,
         distroName: String,
-        toolCallMode: ToolCallMode,
-        installedTools: List<top.wkbin.taixu.core.database.ToolEntity>,
     ): String {
         if (workspacePath.isBlank()) return ""
         val entries = fileAccess.list(workspacePath).getOrNull().orEmpty().map { it.name }.toSet()
-        val appEntries = if ("app" in entries) {
-            fileAccess.list("$workspacePath/app").getOrNull().orEmpty().map { it.name }.toSet()
-        } else {
-            emptySet()
-        }
-        val detectedProjectType = detectProjectType(entries, appEntries)
-        val projectType = when (projectTypeOverride.trim().uppercase()) {
-            "ANDROID" -> "Android"
-            "FLUTTER" -> "Flutter"
-            "REVERSE" -> "Android APK 逆向"
-            "GENERAL" -> "通用工程"
-            else -> detectedProjectType
-        }
         val markerText = entries.sorted().joinToString(", ").ifBlank { "（目录为空或暂时不可读）" }
-        val toolNames = if (toolCallMode == ToolCallMode.DISABLED) {
-            "工具调用已禁用"
-        } else {
-            "read, write, edit, base, memory, plan, scratchpad, history_search, history_read, invoke_subagent" +
-                if (toolCallMode == ToolCallMode.JSON_TEXT) "（JSON 文本调用模式）" else ""
-        }
-        val installedToolNames = installedTools.joinToString(", ") { it.name }.ifBlank { "暂无已安装套件记录" }
         val typeAsset = when (projectType) {
             "Android" -> "prompts/workspace_android.md"
             "Flutter" -> "prompts/workspace_flutter.md"
@@ -309,11 +298,27 @@ class SystemPromptBuilder @Inject constructor(
             mapOf(
                 "WORKSPACE_PATH" to workspacePath,
                 "DISTRO_NAME" to distroName,
-                "TOOL_NAMES" to toolNames,
-                "INSTALLED_TOOL_NAMES" to installedToolNames,
                 "TYPE_GUIDANCE" to typeGuidance,
             ),
         )
+    }
+
+    /** 检测工作区项目类型，显式覆盖优先于自动识别。 */
+    private suspend fun detectProjectType(workspacePath: String, projectTypeOverride: String): String {
+        val entries = fileAccess.list(workspacePath).getOrNull().orEmpty().map { it.name }.toSet()
+        val appEntries = if ("app" in entries) {
+            fileAccess.list("$workspacePath/app").getOrNull().orEmpty().map { it.name }.toSet()
+        } else {
+            emptySet()
+        }
+        val detected = detectProjectType(entries, appEntries)
+        return when (projectTypeOverride.trim().uppercase()) {
+            "ANDROID" -> "Android"
+            "FLUTTER" -> "Flutter"
+            "REVERSE" -> "Android APK 逆向"
+            "GENERAL" -> "通用工程"
+            else -> detected
+        }
     }
 
     companion object {
@@ -324,7 +329,7 @@ class SystemPromptBuilder @Inject constructor(
          * 而不是等用户点名。key = 内置 MCP 的 serverId。
          */
         internal val mcpUsageGuidance: Map<String, String> = mapOf(
-            "mcp_codegraph" to "代码检索（查找类/函数/符号定义、搜索代码实现）、项目重构、架构分析、代码理解、定位符号定义、梳理调用链与影响面时【优先使用】，替代盲目全量 grep",
+            "mcp_codegraph" to "代码检索、项目重构、架构分析、符号定位、调用链与影响面分析（具体检索策略见 code-navigation 规则块）",
             "mcp_websearch" to "需要联网搜索、获取最新信息、查找外部资料，或搜索到结果后抓取对应网页正文时使用",
             "mcp_git" to "分析 Git 历史提交、分支拓扑、Diff 差异与仓库状态时使用",
             "mcp_sqlite" to "查询、分析沙箱或工作区内的 SQLite 数据库时使用",
