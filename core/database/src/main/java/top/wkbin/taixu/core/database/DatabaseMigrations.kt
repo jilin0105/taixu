@@ -68,3 +68,14 @@ val MIGRATION_34_35 = object : Migration(34, 35) {
         db.execSQL("CREATE INDEX IF NOT EXISTS index_project_build_script_bindings_scriptId ON project_build_script_bindings(scriptId)")
     }
 }
+
+/**
+ * 修正 mcp_codegraph 内置预设的错误默认启用状态。
+ * 上一次提交以 isEnabled=1 写入，但设备上尚无 /opt/taixu/scripts/codegraph_mcp_server.py，
+ * 导致 discoverTools() 120s 超时，阻塞 Agent 首次启动。
+ */
+val MIGRATION_35_36 = object : Migration(35, 36) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("UPDATE mcp_servers SET isEnabled = 0 WHERE id = 'mcp_codegraph' AND isBuiltin = 1")
+    }
+}

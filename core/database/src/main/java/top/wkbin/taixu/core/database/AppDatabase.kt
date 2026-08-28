@@ -36,7 +36,7 @@ import androidx.room.RoomDatabase
         BuildScriptEntity::class,
         ProjectBuildScriptBindingEntity::class,
     ],
-    version = 35,
+    version = 36,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {

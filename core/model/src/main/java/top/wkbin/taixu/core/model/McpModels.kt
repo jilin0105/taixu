@@ -115,5 +115,15 @@ object BuiltinMcpPresets {
             isEnabled = false,
             isBuiltin = true,
         ),
+        McpServerConfig(
+            id = "mcp_codegraph",
+            name = "CodeGraph 代码知识图谱",
+            description = "毫秒级索引工作区符号定义、调用链与影响面（支持 Python/Java/Kotlin/C/C++/JS/TS/Smali），大幅减少代码探索的 Token 与工具调用轮次",
+            transportType = McpTransportType.STDIO,
+            command = "python3",
+            args = listOf("-u", "/opt/taixu/scripts/codegraph_mcp_server.py", "--repository", "/workspace"),
+            isEnabled = false,
+            isBuiltin = true,
+        ),
     )
 }
