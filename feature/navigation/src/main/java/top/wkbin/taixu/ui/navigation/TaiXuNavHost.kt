@@ -145,7 +145,8 @@ fun TaiXuNavHost() {
                 ChatScreen(
                     viewModel = chatViewModel,
                     onNavigate = ::navigateMain,
-                    terminalPane = { project -> TerminalScreen(onBack = {}, project = project) },
+                    // 内嵌终端面板非独立导航节点，无返回目标：隐藏顶栏返回箭头，避免点击无反馈
+                    terminalPane = { project -> TerminalScreen(onBack = {}, project = project, showBackButton = false) },
                     onOpenFile = { projectName, relativePath ->
                         selectedMain = MainDestination.Workspace
                         workspaceStack.push(CodeEditorDestination(projectName, relativePath))

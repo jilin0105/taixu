@@ -229,6 +229,10 @@ class ToolDetailViewModel @Inject constructor(
                 toolSettingsRepository.setAutoStart(linuxRuntime.activeDistroId.value, currentId, enabled)
             } catch (e: Exception) {
                 logger.w("Failed to set auto-start for $currentId: ${e.message}", e)
+                // 保存失败必须上抛 UI，避免 Switch 显示“假成功”
+                withContext(Dispatchers.Main.immediate) {
+                    _error.value = "自启动设置保存失败，请稍后重试"
+                }
             }
         }
     }

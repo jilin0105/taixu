@@ -66,7 +66,7 @@ class TerminalViewModel @Inject constructor(
             val distroId = handle?.distributionId ?: linuxRuntime.activeDistroId.value
             flowOf(DistributionCatalog.require(distroId).displayName)
         }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, "Ubuntu 24.04 LTS")
+        .stateIn(viewModelScope, SharingStarted.Eagerly, context.getString(R.string.terminal_loading))
 
     val terminalFontSize: StateFlow<Int> = settingsDataStore.terminalFontSize
         .stateIn(viewModelScope, SharingStarted.Eagerly, 13)
@@ -118,8 +118,18 @@ class TerminalViewModel @Inject constructor(
     }
 
     fun initialize(project: String) {
-        if (initialized) return
+        initializeInternal(project, force = false)
+    }
+
+    /** 用户主动重试：清除错误并允许在失败后重新初始化。 */
+    fun retryInitialize(project: String) {
+        initializeInternal(project, force = true)
+    }
+
+    private fun initializeInternal(project: String, force: Boolean) {
+        if (initialized && !force) return
         initialized = true
+        _error.value = null
         viewModelScope.launch {
             if (project.isNotBlank()) {
                 val workingDirectory = runCatching { workspaceManager.linuxWorkingDirectory(project) }.getOrNull() ?: "/root"
@@ -222,10 +232,16 @@ class TerminalViewModel @Inject constructor(
 
     fun switchSession(id: String) = terminalManager.switchTo(id)
 
-    fun closeSession(id: String) {
+    /**
+     * 关闭会话。[onResult] 在异步关闭完成后回调（成功为 true），
+     * 供 UI 在确认真正成功后再提示，而非点击瞬间弹 Toast。
+     */
+    fun closeSession(id: String, onResult: ((Boolean) -> Unit)? = null) {
         viewModelScope.launch {
-            runCatching { terminalManager.closeSession(id) }
+            val success = runCatching { terminalManager.closeSession(id) }
                 .onFailure { _error.value = it.message ?: context.getString(R.string.terminal_error_close_session) }
+                .isSuccess
+            onResult?.invoke(success)
         }
     }
 

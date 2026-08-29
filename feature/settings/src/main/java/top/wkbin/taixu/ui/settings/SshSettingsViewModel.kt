@@ -82,6 +82,10 @@ class SshSettingsViewModel @Inject constructor(
     private val _message = MutableStateFlow<String?>(null)
     val message = _message.asStateFlow()
 
+    /** 当前 message 是否为失败结果（类型化标记，避免 UI 用字符串匹配判断样式）。 */
+    private val _messageIsError = MutableStateFlow(false)
+    val messageIsError = _messageIsError.asStateFlow()
+
     init {
         manager.startObserving()
         refresh()
@@ -123,6 +127,7 @@ class SshSettingsViewModel @Inject constructor(
 
     fun consumeMessage() {
         _message.value = null
+        _messageIsError.value = false
     }
 
     private fun observeVpn() {
@@ -170,11 +175,15 @@ class SshSettingsViewModel @Inject constructor(
             if (showProgress) _operating.value = true
             try {
                 block()
-                if (successMessage != null) _message.value = successMessage
+                if (successMessage != null) {
+                    _message.value = successMessage
+                    _messageIsError.value = false
+                }
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (throwable: Throwable) {
                 _message.value = throwable.message ?: "SSH 操作失败"
+                _messageIsError.value = true
             } finally {
                 if (showProgress) _operating.value = false
             }

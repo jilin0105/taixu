@@ -49,6 +49,7 @@ import top.wkbin.taixu.core.model.AiModelProfileExport
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val application: Application,
+    private val logger: top.wkbin.taixu.core.common.logging.AppLogger,
     private val settingsDataStore: SettingsDataStore,
     private val providerRepository: ProviderRepository,
     private val aiModelDao: AiModelRepository,
@@ -282,17 +283,48 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun installDistro(
-        request: top.wkbin.taixu.runtime.RuntimeInstallRequest,
-        onProgress: suspend (top.wkbin.taixu.runtime.DownloadProgress) -> Unit,
-        onResult: (Boolean, String) -> Unit,
-    ) {
+    /** 发行版安装进度（保存在 VM 内，旋转后进度界面可恢复；安装在后台继续进行）。 */
+    data class DistroInstallUiState(
+        val isInstalling: Boolean = false,
+        val progressText: String? = null,
+        val progressFraction: Float = 0f,
+        val errorMessage: String? = null,
+    )
+
+    private val _distroInstallState = MutableStateFlow(DistroInstallUiState())
+    val distroInstallState: StateFlow<DistroInstallUiState> = _distroInstallState.asStateFlow()
+
+    fun clearDistroInstallError() {
+        _distroInstallState.value = _distroInstallState.value.copy(errorMessage = null)
+    }
+
+    fun installDistro(request: top.wkbin.taixu.runtime.RuntimeInstallRequest) {
+        if (_distroInstallState.value.isInstalling) return
         viewModelScope.launch {
-            val res = linuxRuntime.installDistro(request, onProgress)
+            _distroInstallState.value = DistroInstallUiState(
+                isInstalling = true,
+                progressText = "准备拉取镜像...",
+                progressFraction = 0.05f,
+            )
+            val res = linuxRuntime.installDistro(request) { p ->
+                _distroInstallState.value = _distroInstallState.value.copy(
+                    progressText = if (p.totalMegabytes != null) {
+                        "下载中：${p.downloadedMegabytes} / ${p.totalMegabytes} MB"
+                    } else {
+                        "已下载：${p.downloadedMegabytes} MB"
+                    },
+                    progressFraction = (p.fraction ?: 0f) * 0.8f + 0.1f,
+                )
+            }
             if (res is top.wkbin.taixu.core.common.result.AppResult.Success) {
-                onResult(true, "安装成功")
+                // 安装成功：重置进度状态，UI 据此关闭安装弹窗
+                _distroInstallState.value = DistroInstallUiState()
             } else {
-                onResult(false, res.errorOrNull()?.message ?: "安装失败")
+                res.errorOrNull()?.let { logger.e("Distro install failed: ${it.message}", it.cause) }
+                _distroInstallState.value = _distroInstallState.value.copy(
+                    isInstalling = false,
+                    errorMessage = "安装失败，请检查网络与存储空间后重试",
+                )
             }
         }
     }
@@ -312,7 +344,8 @@ class SettingsViewModel @Inject constructor(
             if (res is top.wkbin.taixu.core.common.result.AppResult.Success) {
                 onResult?.invoke(true, "已恢复初始状态")
             } else {
-                onResult?.invoke(false, res.errorOrNull()?.message ?: "重置失败")
+                res.errorOrNull()?.let { logger.e("Distro reset failed: ${it.message}", it.cause) }
+                onResult?.invoke(false, "重置沙箱失败，请稍后重试")
             }
         }
     }
@@ -329,7 +362,8 @@ class SettingsViewModel @Inject constructor(
             if (res is top.wkbin.taixu.core.common.result.AppResult.Success) {
                 onResult?.invoke(true, "系统已成功删除")
             } else {
-                onResult?.invoke(false, res.errorOrNull()?.message ?: "删除失败")
+                res.errorOrNull()?.let { logger.e("Distro uninstall failed: ${it.message}", it.cause) }
+                onResult?.invoke(false, "删除系统失败，请稍后重试")
             }
         }
     }
@@ -539,6 +573,10 @@ class SettingsViewModel @Inject constructor(
     private val _skillArchiveMessage = MutableStateFlow<String?>(null)
     val skillArchiveMessage: StateFlow<String?> = _skillArchiveMessage.asStateFlow()
 
+    /** Skill 归档导入结果是否失败（类型化标记，避免 UI 用字符串匹配判断样式）。 */
+    private val _skillArchiveMessageIsError = MutableStateFlow(false)
+    val skillArchiveMessageIsError: StateFlow<Boolean> = _skillArchiveMessageIsError.asStateFlow()
+
     val autoSubagentDelegationEnabled: StateFlow<Boolean> = subagentRepository.autoDelegationEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
@@ -685,9 +723,11 @@ class SettingsViewModel @Inject constructor(
                 val guestPath = "/attachments/skills/$id"
                 val prompt = markdown + "\n\n【Skill 资源目录】$guestPath\n如需执行该 Skill 附带的脚本，请先检查脚本内容与参数，再从此目录调用。"
                 agentSkillRepository.addCustom(top.wkbin.taixu.core.model.AgentSkill(id, skillName, description, prompt, isBuiltin = false, category = "自定义", resourcePath = target.absolutePath))
+                _skillArchiveMessageIsError.value = false
                 _skillArchiveMessage.value = "Skill“$skillName”导入成功，脚本资源位于 $guestPath"
             }.onFailure { error ->
                 target?.let(::deleteOwnedSkillDirectory)
+                _skillArchiveMessageIsError.value = true
                 _skillArchiveMessage.value = error.message ?: "Skill 压缩包导入失败"
             }
         }
@@ -695,6 +735,7 @@ class SettingsViewModel @Inject constructor(
 
     fun clearSkillArchiveMessage() {
         _skillArchiveMessage.value = null
+        _skillArchiveMessageIsError.value = false
     }
 
     private fun deleteOwnedSkillDirectory(directory: File) {
@@ -837,7 +878,10 @@ class SettingsViewModel @Inject constructor(
                     _discoveredModels.value = models
                     if (models.isEmpty()) _modelDiscoveryError.value = "端点未返回可用的 Agent 模型"
                 }
-                .onFailure { _modelDiscoveryError.value = it.message ?: "模型发现失败" }
+                .onFailure {
+                    logger.w("Model discovery failed: ${it.message}", it)
+                    _modelDiscoveryError.value = "获取模型列表失败，请检查 Base URL、API Key 与网络后重试"
+                }
             _discoveringModels.value = false
         }
     }
@@ -853,7 +897,10 @@ class SettingsViewModel @Inject constructor(
             _connectionResult.value = null
             runCatching { connectionTester.test(baseUrl, model, profileWriter.parseApiKeys(apiKey).firstOrNull()) }
                 .onSuccess { _connectionResult.value = "连接成功" }
-                .onFailure { _connectionResult.value = it.message ?: "连接失败" }
+                .onFailure {
+                    logger.w("Connection test failed: ${it.message}", it)
+                    _connectionResult.value = "连接失败，请检查接口地址、密钥与网络后重试"
+                }
             _testingConnection.value = false
         }
     }

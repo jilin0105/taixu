@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -63,6 +64,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.mapSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -250,6 +253,7 @@ fun WorkspaceScreen(
     val busy by viewModel.busy.collectAsStateWithLifecycle()
     val runtimeReady by viewModel.runtimeReady.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
+    val messageIsError by viewModel.messageIsError.collectAsStateWithLifecycle()
     val buildProgress by viewModel.buildProgress.collectAsStateWithLifecycle()
     val activeBuildingProjectName by viewModel.activeBuildingProjectName.collectAsStateWithLifecycle()
     val isBuildDialogVisible by viewModel.isBuildDialogVisible.collectAsStateWithLifecycle()
@@ -259,39 +263,51 @@ fun WorkspaceScreen(
     val projectTemplates by viewModel.projectTemplates.collectAsStateWithLifecycle()
     val templateScriptPreview by viewModel.templateScriptPreview.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    var showCreate by remember { mutableStateOf(false) }
-    var showImport by remember { mutableStateOf(false) }
-    var showTemplateManager by remember { mutableStateOf(false) }
-    var showTemplateSpec by remember { mutableStateOf(false) }
-    var actionsExpanded by remember { mutableStateOf(false) }
+    // 弹窗开关与向导状态用 rememberSaveable，旋转后不丢失向导进度（S3）
+    var showCreate by rememberSaveable { mutableStateOf(false) }
+    var showImport by rememberSaveable { mutableStateOf(false) }
+    var showTemplateManager by rememberSaveable { mutableStateOf(false) }
+    var showTemplateSpec by rememberSaveable { mutableStateOf(false) }
+    var actionsExpanded by rememberSaveable { mutableStateOf(false) }
 
     // 首次进入引导：高亮右上角「更多」菜单（内含插件中心与工坊设置入口）
     val firstUseGuidesShown by viewModel.firstUseGuidesShown.collectAsStateWithLifecycle()
     val moreAnchor = rememberSpotlightAnchor()
-    var selectedTemplate by remember { mutableStateOf(top.wkbin.taixu.runtime.ProjectTemplate.EMPTY) }
-    var createProjectStep by remember { mutableStateOf(CreateProjectStep.PROJECT_TYPE) }
-    var selectedProjectType by remember { mutableStateOf<TemplateProjectType?>(null) }
-    var selectedTemplateId by remember { mutableStateOf<String?>(null) }
-    var projectName by remember { mutableStateOf("") }
-    var packageName by remember { mutableStateOf("") }
-    var templateVariableValues by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
-    var trustTemplateScripts by remember { mutableStateOf(false) }
-    var projectStorage by remember { mutableStateOf(WorkspaceStorage.INTERNAL) }
-    var directoryPath by remember { mutableStateOf("") }
-    var internalDirectoryMenuExpanded by remember { mutableStateOf(false) }
-    var permissionRefresh by remember { mutableStateOf(0) }
+    var selectedTemplate by rememberSaveable { mutableStateOf(top.wkbin.taixu.runtime.ProjectTemplate.EMPTY) }
+    var createProjectStep by rememberSaveable { mutableStateOf(CreateProjectStep.PROJECT_TYPE) }
+    val nullableProjectTypeSaver = androidx.compose.runtime.saveable.Saver<TemplateProjectType?, String>(
+        save = { it?.name },
+        restore = { name -> runCatching { TemplateProjectType.valueOf(name) }.getOrNull() },
+    )
+    var selectedProjectType by rememberSaveable(stateSaver = nullableProjectTypeSaver) { mutableStateOf<TemplateProjectType?>(null) }
+    var selectedTemplateId by rememberSaveable { mutableStateOf<String?>(null) }
+    var projectName by rememberSaveable { mutableStateOf("") }
+    var packageName by rememberSaveable { mutableStateOf("") }
+    // Map 不能直接进 Bundle，用 mapSaver 保存（键值均为 String）
+    val templateVariableValuesSaver = mapSaver(
+        save = { map -> map },
+        restore = { saved -> saved.mapValues { it.value.toString() } },
+    )
+    var templateVariableValues by rememberSaveable(stateSaver = templateVariableValuesSaver) { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var trustTemplateScripts by rememberSaveable { mutableStateOf(false) }
+    var projectStorage by rememberSaveable { mutableStateOf(WorkspaceStorage.INTERNAL) }
+    var directoryPath by rememberSaveable { mutableStateOf("") }
+    var internalDirectoryMenuExpanded by rememberSaveable { mutableStateOf(false) }
+    var permissionRefresh by rememberSaveable { mutableStateOf(0) }
+    // 复杂对象（工程/模板/来源选择）旋转后需重新选择，保留 remember
     var deleteTarget by remember { mutableStateOf<WorkspaceProject?>(null) }
     var apkSource by remember { mutableStateOf<ApkImportSource?>(null) }
-    var showAppPicker by remember { mutableStateOf(false) }
-    var exportApkToDownload by remember { mutableStateOf(false) }
-    var importMode by remember { mutableStateOf(ProjectImportMode.LOCAL) }
-    var importProjectName by remember { mutableStateOf("") }
-    var importDirectoryPath by remember { mutableStateOf("") }
-    var importDirectoryMenuExpanded by remember { mutableStateOf(false) }
-    var importProjectType by remember { mutableStateOf(ProjectType.ANDROID) }
+    var showAppPicker by rememberSaveable { mutableStateOf(false) }
+    var exportApkToDownload by rememberSaveable { mutableStateOf(false) }
+    var createInProgress by rememberSaveable { mutableStateOf(false) }
+    var importMode by rememberSaveable { mutableStateOf(ProjectImportMode.LOCAL) }
+    var importProjectName by rememberSaveable { mutableStateOf("") }
+    var importDirectoryPath by rememberSaveable { mutableStateOf("") }
+    var importDirectoryMenuExpanded by rememberSaveable { mutableStateOf(false) }
+    var importProjectType by rememberSaveable { mutableStateOf(ProjectType.ANDROID) }
     var archiveSource by remember { mutableStateOf<ProjectArchiveSource?>(null) }
-    var importGitUrl by remember { mutableStateOf("") }
-    var gitTransport by remember { mutableStateOf(GitTransport.HTTP) }
+    var importGitUrl by rememberSaveable { mutableStateOf("") }
+    var gitTransport by rememberSaveable { mutableStateOf(GitTransport.HTTP) }
     var pendingExportProject by remember { mutableStateOf<WorkspaceProject?>(null) }
     var buildConfigTarget by remember { mutableStateOf<WorkspaceProject?>(null) }
     var pendingExportTemplateId by remember { mutableStateOf<String?>(null) }
@@ -393,15 +409,16 @@ fun WorkspaceScreen(
                         onClick = { actionsExpanded = true },
                         enabled = !busy,
                         modifier = Modifier.spotlightAnchor(moreAnchor),
+                        contentDescription = stringResource(R.string.workspace_cd_more),
                     ) {
                         RuntimeIcon(RuntimeIconName.More, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                     }
                     DropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }) {
-                        DropdownMenuItem(text = { Text("创建") }, leadingIcon = { RuntimeIcon(RuntimeIconName.Plus, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; showCreate = true })
-                        DropdownMenuItem(text = { Text("导入") }, leadingIcon = { RuntimeIcon(RuntimeIconName.FolderDownload, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; showImport = true })
-                        DropdownMenuItem(text = { Text("模板管理") }, leadingIcon = { RuntimeIcon(RuntimeIconName.Package, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; showTemplateManager = true })
-                        DropdownMenuItem(text = { Text("插件") }, leadingIcon = { RuntimeIcon(RuntimeIconName.Package, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; onOpenToolCenter() })
-                        DropdownMenuItem(text = { Text("工坊设置") }, leadingIcon = { RuntimeIcon(RuntimeIconName.Settings, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; onOpenWorkshopSettings() })
+                        DropdownMenuItem(text = { Text(stringResource(R.string.workspace_menu_create)) }, leadingIcon = { RuntimeIcon(RuntimeIconName.Plus, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; showCreate = true })
+                        DropdownMenuItem(text = { Text(stringResource(R.string.workspace_menu_import)) }, leadingIcon = { RuntimeIcon(RuntimeIconName.FolderDownload, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; showImport = true })
+                        DropdownMenuItem(text = { Text(stringResource(R.string.workspace_menu_templates)) }, leadingIcon = { RuntimeIcon(RuntimeIconName.Package, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; showTemplateManager = true })
+                        DropdownMenuItem(text = { Text(stringResource(R.string.workspace_menu_plugins)) }, leadingIcon = { RuntimeIcon(RuntimeIconName.Package, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; onOpenToolCenter() })
+                        DropdownMenuItem(text = { Text(stringResource(R.string.workspace_menu_settings)) }, leadingIcon = { RuntimeIcon(RuntimeIconName.Settings, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; onOpenWorkshopSettings() })
                     }
                 }
             }
@@ -424,7 +441,7 @@ fun WorkspaceScreen(
                 message?.let { notice ->
                     NoticeBanner(
                         text = notice,
-                        isError = notice.contains("失败") || notice.contains("无效") || notice.contains("存在"),
+                        isError = messageIsError,
                     )
                 }
 
@@ -506,7 +523,13 @@ fun WorkspaceScreen(
                             TextButton(onClick = { viewModel.showBuildDialog() }) {
                                 Text(stringResource(R.string.workspace_details))
                             }
-                            IconButton(onClick = { viewModel.dismissBuildProgress() }, modifier = Modifier.size(28.dp)) {
+                            IconButton(
+                                onClick = { viewModel.dismissBuildProgress() },
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .minimumInteractiveComponentSize(),
+                                contentDescription = stringResource(R.string.workspace_cd_dismiss),
+                            ) {
                                 RuntimeIcon(RuntimeIconName.Close, Modifier.size(14.dp))
                             }
                         }
@@ -617,8 +640,8 @@ fun WorkspaceScreen(
     if ("workspace_more_menu" !in firstUseGuidesShown) {
         SpotlightGuideOverlay(
             anchor = moreAnchor,
-            title = "更多工作坊能力",
-            message = "这里藏着「插件中心」和「工坊设置」：安装在线/离线开发环境插件、配置构建 SDK 路径与 APK 签名。点击右上角按钮即可展开。",
+            title = stringResource(R.string.workspace_guide_more_title),
+            message = stringResource(R.string.workspace_guide_more_message),
             onDismiss = { viewModel.markFirstUseGuideShown("workspace_more_menu") },
         )
     }
@@ -1025,7 +1048,7 @@ fun WorkspaceScreen(
     templateScriptPreview?.let { preview ->
         RuntimeAlertDialog(
             onDismissRequest = viewModel::dismissTemplateScripts,
-            title = { Text("模板构造脚本", fontWeight = FontWeight.Bold) },
+            title = { Text(stringResource(R.string.workspace_template_scripts_title), fontWeight = FontWeight.Bold) },
             text = {
                 Text(
                     preview,
@@ -1034,31 +1057,34 @@ fun WorkspaceScreen(
                     style = MaterialTheme.typography.bodySmall,
                 )
             },
-            confirmButton = { TextButton(onClick = viewModel::dismissTemplateScripts) { Text("关闭") } },
+            confirmButton = { TextButton(onClick = viewModel::dismissTemplateScripts) { Text(stringResource(R.string.workspace_action_close)) } },
         )
     }
 
     deleteTemplateTarget?.let { template ->
         RuntimeAlertDialog(
             onDismissRequest = { deleteTemplateTarget = null },
-            title = { Text("删除模板") },
-            text = { Text("确定删除“${template.manifest.name}”吗？模板文件会从本机移除。") },
+            title = { Text(stringResource(R.string.workspace_delete_template_title)) },
+            text = { Text(stringResource(R.string.workspace_delete_template_message, template.manifest.name)) },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.deleteProjectTemplate(template.manifest.id)
                     deleteTemplateTarget = null
-                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                }) { Text(stringResource(R.string.workspace_confirm_delete), color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = { TextButton(onClick = { deleteTemplateTarget = null }) { Text("取消") } },
+            dismissButton = { TextButton(onClick = { deleteTemplateTarget = null }) { Text(stringResource(R.string.workspace_cancel)) } },
         )
     }
 
     if (showCreate) {
-        RuntimeAlertDialog(
-            onDismissRequest = {
+        // 创建进行中：保持弹窗展示进度，完成后统一关闭并复位（模板实例化可能耗时 60 秒）
+        LaunchedEffect(createInProgress, busy) {
+            if (createInProgress && !busy) {
+                createInProgress = false
                 showCreate = false
                 projectName = ""
                 packageName = ""
+                templateVariableValues = emptyMap()
                 directoryPath = ""
                 projectStorage = WorkspaceStorage.INTERNAL
                 apkSource = null
@@ -1067,6 +1093,23 @@ fun WorkspaceScreen(
                 selectedProjectType = null
                 selectedTemplateId = null
                 trustTemplateScripts = false
+            }
+        }
+        RuntimeAlertDialog(
+            onDismissRequest = {
+                if (!createInProgress) {
+                    showCreate = false
+                    projectName = ""
+                    packageName = ""
+                    directoryPath = ""
+                    projectStorage = WorkspaceStorage.INTERNAL
+                    apkSource = null
+                    exportApkToDownload = false
+                    createProjectStep = CreateProjectStep.PROJECT_TYPE
+                    selectedProjectType = null
+                    selectedTemplateId = null
+                    trustTemplateScripts = false
+                }
             },
             title = { Text(stringResource(R.string.workspace_new_project), fontWeight = FontWeight.Bold) },
             text = {
@@ -1368,7 +1411,13 @@ fun WorkspaceScreen(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
-                                    IconButton(onClick = { apkSource = null }, modifier = Modifier.size(30.dp)) {
+                                    IconButton(
+                                        onClick = { apkSource = null },
+                                        modifier = Modifier
+                                            .size(30.dp)
+                                            .minimumInteractiveComponentSize(),
+                                        contentDescription = stringResource(R.string.workspace_cd_close),
+                                    ) {
                                         RuntimeIcon(RuntimeIconName.Close, Modifier.size(15.dp), MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
@@ -1530,19 +1579,19 @@ fun WorkspaceScreen(
                                 ) {
                                     Checkbox(checked = trustTemplateScripts, onCheckedChange = { trustTemplateScripts = it })
                                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Text("允许执行模板构造脚本", fontWeight = FontWeight.SemiBold)
+                                        Text(stringResource(R.string.workspace_trust_scripts_title), fontWeight = FontWeight.SemiBold)
                                         Text(
                                             if (runtimeReady) {
-                                                "脚本会在 Linux 沙箱中运行，工作目录仅为新工程；最长运行 60 秒。仅信任来源可靠的模板。"
+                                                stringResource(R.string.workspace_trust_scripts_hint_runtime)
                                             } else {
-                                                "Linux 沙箱尚未初始化，初始化后才能执行该模板的构造脚本。"
+                                                stringResource(R.string.workspace_trust_scripts_hint_not_ready)
                                             },
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onTertiaryContainer,
                                         )
                                         TextButton(onClick = {
                                             selectedTemplateId?.let(viewModel::showTemplateScripts)
-                                        }) { Text("查看脚本内容") }
+                                        }) { Text(stringResource(R.string.workspace_view_scripts)) }
                                     }
                                 }
                             }
@@ -1559,6 +1608,7 @@ fun WorkspaceScreen(
                             CreateProjectStep.PROJECT_TYPE -> createProjectStep = CreateProjectStep.TEMPLATE
                             CreateProjectStep.TEMPLATE -> createProjectStep = CreateProjectStep.DETAILS
                             CreateProjectStep.DETAILS -> {
+                                createInProgress = true
                                 viewModel.create(
                                     name = projectName,
                                     storage = projectStorage,
@@ -1571,22 +1621,10 @@ fun WorkspaceScreen(
                                     templateId = selectedTemplateId.orEmpty(),
                                     trustTemplateScripts = trustTemplateScripts,
                                 )
-                                projectName = ""
-                                packageName = ""
-                                templateVariableValues = emptyMap()
-                                directoryPath = ""
-                                projectStorage = WorkspaceStorage.INTERNAL
-                                apkSource = null
-                                exportApkToDownload = false
-                                createProjectStep = CreateProjectStep.PROJECT_TYPE
-                                selectedProjectType = null
-                                selectedTemplateId = null
-                                trustTemplateScripts = false
-                                showCreate = false
                             }
                         }
                     },
-                    enabled = when (createProjectStep) {
+                    enabled = !createInProgress && when (createProjectStep) {
                         CreateProjectStep.PROJECT_TYPE -> selectedProjectType != null
                         CreateProjectStep.TEMPLATE -> selectedTemplateId != null
                         CreateProjectStep.DETAILS -> projectName.isNotBlank() && !busy &&
@@ -1608,31 +1646,40 @@ fun WorkspaceScreen(
                             }
                     },
                 ) {
-                    Text(
-                        if (createProjectStep == CreateProjectStep.DETAILS) stringResource(R.string.workspace_create) else "下一步",
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                    if (createInProgress) {
+                        RuntimeCircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(6.dp))
+                        Text(stringResource(R.string.workspace_creating), color = MaterialTheme.colorScheme.primary)
+                    } else {
+                        Text(
+                            if (createProjectStep == CreateProjectStep.DETAILS) stringResource(R.string.workspace_create) else stringResource(R.string.workspace_action_next),
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
             },
             dismissButton = {
-                TextButton(onClick = {
-                    when (createProjectStep) {
-                        CreateProjectStep.PROJECT_TYPE -> {
-                            showCreate = false
-                            projectName = ""
-                            packageName = ""
-                            templateVariableValues = emptyMap()
-                            directoryPath = ""
-                            projectStorage = WorkspaceStorage.INTERNAL
-                            selectedProjectType = null
-                            selectedTemplateId = null
-                            trustTemplateScripts = false
+                TextButton(
+                    onClick = {
+                        when (createProjectStep) {
+                            CreateProjectStep.PROJECT_TYPE -> {
+                                showCreate = false
+                                projectName = ""
+                                packageName = ""
+                                templateVariableValues = emptyMap()
+                                directoryPath = ""
+                                projectStorage = WorkspaceStorage.INTERNAL
+                                selectedProjectType = null
+                                selectedTemplateId = null
+                                trustTemplateScripts = false
+                            }
+                            CreateProjectStep.TEMPLATE -> createProjectStep = CreateProjectStep.PROJECT_TYPE
+                            CreateProjectStep.DETAILS -> createProjectStep = CreateProjectStep.TEMPLATE
                         }
-                        CreateProjectStep.TEMPLATE -> createProjectStep = CreateProjectStep.PROJECT_TYPE
-                        CreateProjectStep.DETAILS -> createProjectStep = CreateProjectStep.TEMPLATE
-                    }
-                }) {
-                    Text(if (createProjectStep == CreateProjectStep.PROJECT_TYPE) stringResource(R.string.workspace_cancel) else "上一步")
+                    },
+                    enabled = !createInProgress,
+                ) {
+                    Text(if (createProjectStep == CreateProjectStep.PROJECT_TYPE) stringResource(R.string.workspace_cancel) else stringResource(R.string.workspace_action_previous))
                 }
             },
         )
@@ -1649,6 +1696,14 @@ fun WorkspaceScreen(
             importGitUrl = ""
             gitTransport = GitTransport.HTTP
         }
+        // GitHub HTTP(S) 导入地址前置校验：必须是 http:// 或 https:// 开头
+        val gitUrlError = if (
+            importMode == ProjectImportMode.GITHUB &&
+            gitTransport == GitTransport.HTTP &&
+            importGitUrl.isNotBlank() &&
+            !importGitUrl.trim().startsWith("http://") &&
+            !importGitUrl.trim().startsWith("https://")
+        ) stringResource(R.string.workspace_git_url_invalid) else null
         RuntimeAlertDialog(
             onDismissRequest = { resetImportDialog() },
             title = { Text(stringResource(R.string.workspace_import_project), fontWeight = FontWeight.Bold) },
@@ -1711,7 +1766,13 @@ fun WorkspaceScreen(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )
-                                    IconButton(onClick = { archiveSource = null }, modifier = Modifier.size(30.dp)) {
+                                    IconButton(
+                                        onClick = { archiveSource = null },
+                                        modifier = Modifier
+                                            .size(30.dp)
+                                            .minimumInteractiveComponentSize(),
+                                        contentDescription = stringResource(R.string.workspace_cd_close),
+                                    ) {
                                         RuntimeIcon(RuntimeIconName.Close, Modifier.size(15.dp))
                                     }
                                 }
@@ -1747,7 +1808,10 @@ fun WorkspaceScreen(
                                     else "git@github.com:user/project.git",
                                 )
                             },
-                            supportingText = { Text(stringResource(R.string.workspace_git_import_description)) },
+                            supportingText = {
+                                Text(gitUrlError ?: stringResource(R.string.workspace_git_import_description))
+                            },
+                            isError = gitUrlError != null,
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -1857,7 +1921,7 @@ fun WorkspaceScreen(
                         }
                         resetImportDialog()
                     },
-                    enabled = importProjectName.isNotBlank() && !busy &&
+                    enabled = importProjectName.isNotBlank() && !busy && gitUrlError == null &&
                         ((importMode == ProjectImportMode.LOCAL && archiveSource != null) ||
                             (importMode == ProjectImportMode.GITHUB && importGitUrl.isNotBlank())),
                 ) { Text(stringResource(R.string.workspace_import), color = MaterialTheme.colorScheme.primary) }
@@ -1892,9 +1956,16 @@ fun WorkspaceScreen(
             confirmButton = {
                 TextButton(
                     onClick = { deleteTarget = null; viewModel.delete(project.name) },
-                ) { Text(stringResource(R.string.workspace_confirm_delete), color = MaterialTheme.colorScheme.error) }
+                    enabled = !busy,
+                ) {
+                    if (busy) {
+                        RuntimeCircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text(stringResource(R.string.workspace_confirm_delete), color = MaterialTheme.colorScheme.error)
+                    }
+                }
             },
-            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text(stringResource(R.string.workspace_cancel)) } },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }, enabled = !busy) { Text(stringResource(R.string.workspace_cancel)) } },
         )
     }
 
@@ -1928,7 +1999,7 @@ private fun TemplateManagerDialog(
 ) {
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("模板管理", fontWeight = FontWeight.Bold) },
+        title = { Text(stringResource(R.string.workspace_menu_templates), fontWeight = FontWeight.Bold) },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
@@ -1936,10 +2007,10 @@ private fun TemplateManagerDialog(
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = onImport, enabled = !busy, modifier = Modifier.weight(1f)) {
-                        Text("导入 ZIP")
+                        Text(stringResource(R.string.workspace_template_import_zip))
                     }
                     OutlinedButton(onClick = onShowSpec, modifier = Modifier.weight(1f)) {
-                        Text("制作规范")
+                        Text(stringResource(R.string.workspace_template_spec))
                     }
                 }
                 templates.groupBy { it.manifest.projectType }.forEach { (type, typeTemplates) ->
@@ -1965,7 +2036,7 @@ private fun TemplateManagerDialog(
                                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                     Text(template.manifest.name, fontWeight = FontWeight.SemiBold, maxLines = 1)
                                     Text(
-                                        "${template.manifest.category.name} · ${if (template.isBundled) "内置" else "用户导入"}",
+                                        "${template.manifest.category.name} · ${if (template.isBundled) stringResource(R.string.workspace_template_bundled) else stringResource(R.string.workspace_template_user)}",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -1977,9 +2048,13 @@ private fun TemplateManagerDialog(
                                         overflow = TextOverflow.Ellipsis,
                                     )
                                 }
-                                TextButton(onClick = { onExport(template) }, enabled = !busy) { Text("导出") }
+                                TextButton(onClick = { onExport(template) }, enabled = !busy) { Text(stringResource(R.string.workspace_action_export)) }
                                 if (!template.isBundled) {
-                                    IconButton(onClick = { onDelete(template) }, enabled = !busy) {
+                                    IconButton(
+                                        onClick = { onDelete(template) },
+                                        enabled = !busy,
+                                        contentDescription = stringResource(R.string.workspace_cd_delete_template),
+                                    ) {
                                         RuntimeIcon(RuntimeIconName.Trash, Modifier.size(18.dp), MaterialTheme.colorScheme.error)
                                     }
                                 }
@@ -1989,7 +2064,7 @@ private fun TemplateManagerDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("完成") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.workspace_action_done)) } },
     )
 }
 
@@ -1997,52 +2072,33 @@ private fun TemplateManagerDialog(
 private fun ProjectTemplateSpecDialog(onDismiss: () -> Unit) {
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("模板制作规范 v1", fontWeight = FontWeight.Bold) },
+        title = { Text(stringResource(R.string.workspace_spec_title), fontWeight = FontWeight.Bold) },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text("把完整模板目录压缩成 ZIP。ZIP 根目录可以直接放 template.json，也可以只包含一个模板文件夹。")
-                Text("最小结构", fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.workspace_spec_intro))
+                Text(stringResource(R.string.workspace_spec_min_structure), fontWeight = FontWeight.SemiBold)
                 Text(
-                    "template.json\npreview.png（可选，270×270）\n项目文件或 *.template\ntemplate-hooks/（可选）",
+                    stringResource(R.string.workspace_spec_min_structure_body),
                     fontFamily = FontFamily.Monospace,
                     style = MaterialTheme.typography.bodySmall,
                 )
-                Text("清单要求", fontWeight = FontWeight.SemiBold)
-                Text(
-                    "id 只能使用小写字母、数字、点、下划线和短横线；builtin. 为系统保留前缀。" +
-                        " projectType 支持 ANDROID、FLUTTER、GENERAL。category 用于模板分组。",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text("变量与文件", fontWeight = FontWeight.SemiBold)
-                Text(
-                    "项目名称和创建路径由工坊统一填写。模板通过 variables 声明动态字段，支持 TEXT、MULTILINE、NUMBER、BOOLEAN、SELECT、SECRET。" +
-                        "文件内容和路径可使用 {{variableName}}；任意文本文件都可添加 .template 后缀，生成时会移除该后缀。" +
-                        "包目录使用 TAIXU_PACKAGE_PATH。隐藏必填变量必须有默认值，系统派生变量除外。",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text("预览图", fontWeight = FontWeight.SemiBold)
-                Text(
-                    "支持 PNG、JPEG、WebP、GIF，单图不超过 4 MiB。预览图统一为 1:1，尺寸必须是 270×270 px。",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text("构造脚本", fontWeight = FontWeight.SemiBold)
-                Text(
-                    "beforeCreate 和 afterCreate 必须指向 template-hooks/ 下的脚本。脚本只有在用户创建工程时明确授权才会执行，" +
-                        "运行于 Linux 沙箱的新工程目录，最长 60 秒。变量通过 TAIXU_VAR_<大写变量名> 环境变量传入，工程路径为 TAIXU_PROJECT_DIR。",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text("结果校验", fontWeight = FontWeight.SemiBold)
-                Text(
-                    "validation 可声明 requiredFiles、forbiddenFiles 和 contentRules；路径及内容支持模板变量。校验在 afterCreate 完成后执行。",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text("可先导出任意内置模板作为完整样例；导入前需要修改 id，并移除保留的 builtin. 前缀。", color = MaterialTheme.colorScheme.primary)
+                Text(stringResource(R.string.workspace_spec_manifest), fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.workspace_spec_manifest_body), style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.workspace_spec_variables), fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.workspace_spec_variables_body), style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.workspace_spec_preview), fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.workspace_spec_preview_body), style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.workspace_spec_hooks), fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.workspace_spec_hooks_body), style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.workspace_spec_validation), fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.workspace_spec_validation_body), style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.workspace_spec_footer), color = MaterialTheme.colorScheme.primary)
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("知道了") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.workspace_spec_got_it)) } },
     )
 }
 
@@ -2222,7 +2278,10 @@ private fun ProjectCard(
                     IconButton(
                         onClick = { moreExpanded = true },
                         enabled = !busy,
-                        modifier = Modifier.size(32.dp),
+                        modifier = Modifier
+                            .size(32.dp)
+                            .minimumInteractiveComponentSize(),
+                        contentDescription = stringResource(R.string.workspace_cd_more),
                     ) {
                         RuntimeIcon(RuntimeIconName.More, Modifier.size(18.dp), MaterialTheme.colorScheme.onSurfaceVariant)
                     }

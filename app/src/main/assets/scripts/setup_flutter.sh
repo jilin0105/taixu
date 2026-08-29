@@ -227,6 +227,19 @@ if [ -f /opt/flutter/bin/flutter ]; then
     /opt/flutter/bin/flutter config --no-analytics >/dev/null 2>&1 || true
     PUB_HOSTED_URL="$PUB_HOSTED_URL" FLUTTER_STORAGE_BASE_URL="$FLUTTER_STORAGE_BASE_URL" \
         /opt/flutter/bin/flutter precache --android >/dev/null 2>&1 || true
+
+    # 补齐 Flutter Engine Android ARM64 原生 gen_snapshot 路径
+    ENGINE_DIR="/opt/flutter/bin/cache/artifacts/engine"
+    if [ -x "$ENGINE_DIR/linux-arm64/gen_snapshot" ]; then
+        for mode in release profile; do
+            target_dir="$ENGINE_DIR/android-arm64-$mode/linux-arm64"
+            mkdir -p "$target_dir" 2>/dev/null || true
+            if [ ! -e "$target_dir/gen_snapshot" ]; then
+                ln -sf "$ENGINE_DIR/linux-arm64/gen_snapshot" "$target_dir/gen_snapshot" 2>/dev/null || true
+                echo "==> [TaiXu] 已链接原生 ARM64 gen_snapshot -> $target_dir/gen_snapshot"
+            fi
+        done
+    fi
 fi
 
 if [ ! -f /opt/flutter/bin/flutter ]; then

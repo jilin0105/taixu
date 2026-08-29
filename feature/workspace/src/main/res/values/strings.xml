@@ -187,4 +187,140 @@
     <string name="workspace_build_go_create_keystore">去创建签名</string>
     <string name="workspace_build_pick_keystore">选择签名文件</string>
     <string name="workspace_build_start">开始构建</string>
+
+    <!-- 顶栏更多菜单 / 通用操作 -->
+    <string name="workspace_menu_create">创建</string>
+    <string name="workspace_menu_import">导入</string>
+    <string name="workspace_menu_templates">模板管理</string>
+    <string name="workspace_menu_plugins">插件</string>
+    <string name="workspace_menu_settings">工坊设置</string>
+    <string name="workspace_action_next">下一步</string>
+    <string name="workspace_action_previous">上一步</string>
+    <string name="workspace_action_close">关闭</string>
+    <string name="workspace_action_done">完成</string>
+    <string name="workspace_action_export">导出</string>
+    <string name="workspace_creating">创建中…</string>
+
+    <!-- contentDescription -->
+    <string name="workspace_cd_more">更多操作</string>
+    <string name="workspace_cd_close">关闭</string>
+    <string name="workspace_cd_new">新建文件或文件夹</string>
+    <string name="workspace_cd_terminal">打开终端</string>
+    <string name="workspace_cd_refresh">刷新</string>
+    <string name="workspace_cd_copy">复制代码</string>
+    <string name="workspace_cd_discard">放弃修改</string>
+    <string name="workspace_cd_save">保存</string>
+    <string name="workspace_cd_delete_template">删除模板</string>
+    <string name="workspace_cd_dismiss">关闭提示</string>
+
+    <!-- 首次引导 -->
+    <string name="workspace_guide_more_title">更多工作坊能力</string>
+    <string name="workspace_guide_more_message">这里藏着「插件中心」和「工坊设置」：安装在线/离线开发环境插件、配置构建 SDK 路径与 APK 签名。点击右上角按钮即可展开。</string>
+
+    <!-- 模板构造脚本 / 模板管理 -->
+    <string name="workspace_template_scripts_title">模板构造脚本</string>
+    <string name="workspace_trust_scripts_title">允许执行模板构造脚本</string>
+    <string name="workspace_trust_scripts_hint_runtime">脚本会在 Linux 沙箱中运行，工作目录仅为新工程；最长运行 60 秒。仅信任来源可靠的模板。</string>
+    <string name="workspace_trust_scripts_hint_not_ready">Linux 沙箱尚未初始化，初始化后才能执行该模板的构造脚本。</string>
+    <string name="workspace_view_scripts">查看脚本内容</string>
+    <string name="workspace_template_import_zip">导入 ZIP</string>
+    <string name="workspace_template_spec">制作规范</string>
+    <string name="workspace_template_bundled">内置</string>
+    <string name="workspace_template_user">用户导入</string>
+    <string name="workspace_delete_template_title">删除模板</string>
+    <string name="workspace_delete_template_message">确定删除“%1$s”吗？模板文件会从本机移除。</string>
+    <string name="workspace_template_imported">模板已导入：%1$s</string>
+    <string name="workspace_template_import_failed">模板导入失败</string>
+    <string name="workspace_template_exported">模板已导出</string>
+    <string name="workspace_template_export_failed">模板导出失败</string>
+    <string name="workspace_template_deleted">模板已删除</string>
+    <string name="workspace_template_delete_failed">模板删除失败</string>
+    <string name="workspace_spec_title">模板制作规范 v1</string>
+    <string name="workspace_spec_intro">把完整模板目录压缩成 ZIP。ZIP 根目录可以直接放 template.json，也可以只包含一个模板文件夹。</string>
+    <string name="workspace_spec_min_structure">最小结构</string>
+    <string name="workspace_spec_min_structure_body">template.json\npreview.png（可选，270×270）\n项目文件或 *.template\ntemplate-hooks/（可选）</string>
+    <string name="workspace_spec_manifest">清单要求</string>
+    <string name="workspace_spec_manifest_body">id 只能使用小写字母、数字、点、下划线和短横线；builtin. 为系统保留前缀。 projectType 支持 ANDROID、FLUTTER、GENERAL。category 用于模板分组。</string>
+    <string name="workspace_spec_variables">变量与文件</string>
+    <string name="workspace_spec_variables_body">项目名称和创建路径由工坊统一填写。模板通过 variables 声明动态字段，支持 TEXT、MULTILINE、NUMBER、BOOLEAN、SELECT、SECRET。文件内容和路径可使用 {{variableName}}；任意文本文件都可添加 .template 后缀，生成时会移除该后缀。包目录使用 TAIXU_PACKAGE_PATH。隐藏必填变量必须有默认值，系统派生变量除外。</string>
+    <string name="workspace_spec_preview">预览图</string>
+    <string name="workspace_spec_preview_body">支持 PNG、JPEG、WebP、GIF，单图不超过 4 MiB。预览图统一为 1:1，尺寸必须是 270×270 px。</string>
+    <string name="workspace_spec_hooks">构造脚本</string>
+    <string name="workspace_spec_hooks_body">beforeCreate 和 afterCreate 必须指向 template-hooks/ 下的脚本。脚本只有在用户创建工程时明确授权才会执行，运行于 Linux 沙箱的新工程目录，最长 60 秒。变量通过 TAIXU_VAR_&lt;大写变量名&gt; 环境变量传入，工程路径为 TAIXU_PROJECT_DIR。</string>
+    <string name="workspace_spec_validation">结果校验</string>
+    <string name="workspace_spec_validation_body">validation 可声明 requiredFiles、forbiddenFiles 和 contentRules；路径及内容支持模板变量。校验在 afterCreate 完成后执行。</string>
+    <string name="workspace_spec_footer">可先导出任意内置模板作为完整样例；导入前需要修改 id，并移除保留的 builtin. 前缀。</string>
+    <string name="workspace_spec_got_it">知道了</string>
+
+    <!-- 编辑器：放弃修改确认 -->
+    <string name="workspace_discard_edits_title">放弃修改？</string>
+    <string name="workspace_discard_edits_message">将撤销本次打开后的全部编辑，恢复为上次保存的内容。此操作无法撤销。</string>
+    <string name="workspace_discard_edits_confirm">放弃修改</string>
+    <string name="workspace_keep_editing">继续编辑</string>
+
+    <!-- GitHub 导入 URL 校验 -->
+    <string name="workspace_git_url_invalid">仓库地址需以 http:// 或 https:// 开头</string>
+
+    <!-- 文件/文件夹名称校验 -->
+    <string name="workspace_invalid_name">名称不能包含 / 或 \\，不能以空格或点开头或结尾</string>
+
+    <!-- 签名校验提示 -->
+    <string name="workshop_signing_password_hint">至少 6 位</string>
+    <string name="workshop_signing_validity_hint">留空时使用默认 %1$d 年</string>
+
+    <!-- 构建脚本编辑器未保存提示 -->
+    <string name="workshop_script_dirty_title">未保存修改</string>
+    <string name="workshop_script_dirty_message">当前脚本有未保存的修改，返回前要保存吗？</string>
+    <string name="workshop_script_save_and_exit">保存并返回</string>
+    <string name="workshop_script_discard">放弃修改</string>
+
+    <!-- 工坊设置 -->
+    <string name="workshop_settings_title">工坊设置</string>
+    <string name="workshop_settings_subtitle">构建环境、签名与脚本</string>
+    <string name="workshop_settings_env_section">开发环境</string>
+    <string name="workshop_settings_env_section_desc">查看并调整 Android 与 Flutter 工具链</string>
+    <string name="workshop_settings_env_entry">Android / Flutter 环境</string>
+    <string name="workshop_settings_env_entry_desc">SDK %1$s\nNDK %2$s\nGradle %3$s\nCMake %4$s</string>
+    <string name="workshop_settings_signing_section">应用签名</string>
+    <string name="workshop_settings_signing_section_desc">创建或导入签名文件，Release 构建时选用</string>
+    <string name="workshop_settings_signing_entry">签名管理 (Keystore)</string>
+    <string name="workshop_settings_signing_entry_desc">创建 / 导入 Android 签名文件\n用于 Release 正式包构建</string>
+    <string name="workshop_settings_scripts_section">构建脚本</string>
+    <string name="workshop_settings_scripts_section_desc">Room 持久化；每个项目可选择不同脚本</string>
+    <string name="workshop_settings_new_script">新建脚本</string>
+    <string name="workshop_script_builtin">内置模板</string>
+    <string name="workshop_script_user">用户脚本</string>
+    <string name="workshop_script_edit">编辑</string>
+    <string name="workshop_script_clone">复制</string>
+    <string name="workshop_script_delete_title">删除脚本「%1$s」？</string>
+    <string name="workshop_script_delete_message">删除后使用该脚本的项目将回退到系统默认构建流程，此操作不可恢复。</string>
+    <string name="workshop_binding_section">项目挂载</string>
+    <string name="workshop_binding_section_desc">未挂载时继续使用标准构建流程</string>
+    <string name="workshop_binding_standard">标准构建流程</string>
+    <string name="workshop_script_editor_new">新建构建脚本</string>
+    <string name="workshop_script_editor_edit">编辑构建脚本</string>
+    <string name="workshop_script_field_name">名称</string>
+    <string name="workshop_script_field_desc">用途与适用版本</string>
+    <string name="workshop_script_type">类型：%1$s</string>
+    <string name="workshop_script_api_note">接口约定：%1$s 为项目目录；Android 的 %2$s 为 Gradle task，Flutter 的 %2$s 为完整 build 参数。</string>
+    <string name="workshop_action_save">保存</string>
+    <string name="workshop_env_title">开发环境</string>
+    <string name="workshop_env_scanning_subtitle">正在探测沙箱工具链…</string>
+    <string name="workshop_env_idle_subtitle">沙箱内执行路径</string>
+    <string name="workshop_env_paths_title">工具链路径</string>
+    <string name="workshop_env_paths_desc">路径均位于当前 Linux 沙箱内，保存后用于环境预检和构建</string>
+    <string name="workshop_env_rescan">探测沙箱</string>
+    <string name="workshop_env_rescanning">扫描中…</string>
+    <string name="workshop_env_switch_version">切换版本</string>
+    <string name="workshop_env_detected">已检测</string>
+    <string name="workshop_action_reset">重置</string>
+    <string name="workshop_script_screen_custom">自定义脚本</string>
+    <string name="workshop_script_screen_default">系统默认脚本</string>
+    <string name="workshop_script_path_title">当前执行路径</string>
+    <string name="workshop_script_reset_default">恢复默认</string>
+    <string name="workshop_script_save">保存脚本</string>
+
+    <!-- 模板变量校验 -->
+    <string name="template_variable_required">%1$s 必填</string>
+    <string name="template_variable_invalid_format">%1$s 格式不正确</string>
 </resources>

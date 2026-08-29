@@ -65,6 +65,8 @@ fun DeveloperScreen(
     val health by viewModel.health.collectAsStateWithLifecycle()
     val commandResult by viewModel.commandResult.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
+    val messageIsError by viewModel.messageIsError.collectAsStateWithLifecycle()
+    val registryStatusIsError by viewModel.registryStatusIsError.collectAsStateWithLifecycle()
     val unusedRuntimes by viewModel.unusedRuntimes.collectAsStateWithLifecycle()
     val processes by viewModel.processes.collectAsStateWithLifecycle()
     val rootfsVersion by viewModel.rootfsVersion.collectAsStateWithLifecycle()
@@ -112,7 +114,7 @@ fun DeveloperScreen(
                 onReset = { showResetConfirmation = true },
             )
 
-            message?.let { NoticeBanner(it, isError = it.contains("失败") || it.contains("错误")) }
+            message?.let { NoticeBanner(it, isError = messageIsError) }
 
             health?.let { result ->
                 RuntimeCard(
@@ -142,11 +144,19 @@ fun DeveloperScreen(
             SectionHeader("工具源", "远程清单更新：HTTPS + Ed25519 验签（自定义公钥仅防传输损坏，非防篡改信任锚）")
             RuntimeCard(Modifier.fillMaxWidth()) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    // 保存前校验：两个地址必须是 HTTPS，公钥不能为空
+                    val manifestUrlValid = manifestUrl.trim().startsWith("https://")
+                    val signatureUrlValid = signatureUrl.trim().startsWith("https://")
+                    val publicKeyValid = publicKey.isNotBlank()
                     OutlinedTextField(
                         value = manifestUrl,
                         onValueChange = { manifestUrl = it },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("清单 HTTPS 地址") },
+                        isError = manifestUrl.isNotBlank() && !manifestUrlValid,
+                        supportingText = {
+                            if (manifestUrl.isNotBlank() && !manifestUrlValid) Text("地址需以 https:// 开头")
+                        },
                         singleLine = true,
                     )
                     OutlinedTextField(
@@ -154,6 +164,10 @@ fun DeveloperScreen(
                         onValueChange = { signatureUrl = it },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("签名 HTTPS 地址") },
+                        isError = signatureUrl.isNotBlank() && !signatureUrlValid,
+                        supportingText = {
+                            if (signatureUrl.isNotBlank() && !signatureUrlValid) Text("地址需以 https:// 开头")
+                        },
                         singleLine = true,
                     )
                     OutlinedTextField(
@@ -161,6 +175,10 @@ fun DeveloperScreen(
                         onValueChange = { publicKey = it },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("Ed25519 公钥（Base64）") },
+                        isError = !publicKeyValid,
+                        supportingText = {
+                            if (!publicKeyValid) Text("公钥不能为空")
+                        },
                         minLines = 2,
                     )
                     Text(
@@ -169,13 +187,16 @@ fun DeveloperScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                        Button(onClick = { viewModel.saveRegistryConfig(manifestUrl, signatureUrl, publicKey) }) { Text("保存配置") }
+                        Button(
+                            onClick = { viewModel.saveRegistryConfig(manifestUrl.trim(), signatureUrl.trim(), publicKey.trim()) },
+                            enabled = manifestUrlValid && signatureUrlValid && publicKeyValid,
+                        ) { Text("保存配置") }
                         OutlinedButton(
                             onClick = viewModel::updateRegistry,
-                            enabled = manifestUrl.isNotBlank() && signatureUrl.isNotBlank() && publicKey.isNotBlank(),
+                            enabled = manifestUrlValid && signatureUrlValid && publicKeyValid,
                         ) { Text("检查更新") }
                     }
-                    registryStatus?.let { NoticeBanner(it, isError = it.contains("失败")) }
+                    registryStatus?.let { NoticeBanner(it, isError = registryStatusIsError) }
                 }
             }
 
@@ -473,7 +494,11 @@ private fun RuntimeControlCard(
         }
         (state as? RuntimeState.Error)?.let {
             Spacer(Modifier.height(12.dp))
-            NoticeBanner(it.throwable.message ?: "Runtime 初始化失败", isError = true)
+            // 面向用户的提示与原始异常解耦：原始异常进日志，避免技术文本直接展示
+            androidx.compose.runtime.LaunchedEffect(it.throwable) {
+                android.util.Log.w("DeveloperScreen", "Runtime error: ${it.throwable.message}")
+            }
+            NoticeBanner("Runtime 初始化失败，请检查网络与存储空间后点击「重试初始化」", isError = true)
         }
     }
 }

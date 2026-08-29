@@ -1,6 +1,7 @@
 package top.wkbin.taixu.ui.iteration
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -10,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import top.wkbin.taixu.feature.custom_iteration.R
 import top.wkbin.taixu.iteration.engine.CustomIterationBootstrap
 
 @HiltViewModel
@@ -32,8 +34,8 @@ class CustomIterationViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(isBusy = true, errorMessage = null)
 
         viewModelScope.launch {
+            val app = getApplication<Application>()
             try {
-                val app = getApplication<Application>()
                 val rootfsHome = File(app.filesDir, "runtime/rootfs/root")
                 val result = CustomIterationBootstrap.bootstrap(app, rootfsHome)
 
@@ -45,17 +47,29 @@ class CustomIterationViewModel @Inject constructor(
                     )
                     onSessionReady(result.prompt)
                 } else {
+                    // 引导失败的原始技术细节只进日志，UI 展示用户可理解的友好文案
+                    Log.w(TAG, "bootstrap failed: ${result.errorMessage}")
                     _uiState.value = _uiState.value.copy(
                         isBusy = false,
-                        errorMessage = result.errorMessage
+                        errorMessage = app.getString(R.string.iteration_error_bootstrap)
                     )
                 }
             } catch (e: Exception) {
+                Log.e(TAG, "bootstrap custom iteration crashed", e)
                 _uiState.value = _uiState.value.copy(
                     isBusy = false,
-                    errorMessage = e.message ?: "Failed to bootstrap iteration"
+                    errorMessage = app.getString(R.string.iteration_error_bootstrap)
                 )
             }
         }
+    }
+
+    /** 用户关闭错误提示。 */
+    fun dismissError() {
+        _uiState.value = _uiState.value.copy(errorMessage = null)
+    }
+
+    private companion object {
+        const val TAG = "CustomIteration"
     }
 }

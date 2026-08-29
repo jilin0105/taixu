@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -46,6 +47,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -53,6 +55,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import top.wkbin.taixu.ui.chat.MarkdownText
+import top.wkbin.taixu.feature.chat.R
 import top.wkbin.taixu.ui.components.RuntimeButton
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconButton
@@ -185,26 +188,26 @@ fun ArtifactPreviewSheet(
                     ) {
                         if (isMarkdown) {
                             ModeChip(
-                                label = "预览",
+                                label = stringResource(R.string.chat_artifact_mode_preview),
                                 selected = viewMode == ArtifactViewMode.PREVIEW,
                                 onClick = { viewMode = ArtifactViewMode.PREVIEW },
                             )
                         }
                         ModeChip(
-                            label = "源码",
+                            label = stringResource(R.string.chat_artifact_mode_code),
                             selected = viewMode == ArtifactViewMode.CODE,
                             onClick = { viewMode = ArtifactViewMode.CODE },
                         )
                         if (onSaveContent != null) {
                             ModeChip(
-                                label = "编辑",
+                                label = stringResource(R.string.chat_artifact_mode_edit),
                                 selected = viewMode == ArtifactViewMode.EDIT,
                                 onClick = { viewMode = ArtifactViewMode.EDIT },
                             )
                         }
                         RuntimeIconButton(
                             onClick = onDismiss,
-                            contentDescription = "关闭",
+                            contentDescription = stringResource(R.string.chat_close),
                         ) {
                             RuntimeIcon(RuntimeIconName.Close, modifier = Modifier.size(20.dp))
                         }
@@ -317,12 +320,12 @@ fun ArtifactPreviewSheet(
                         onClick = {
                             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                             cm?.setPrimaryClip(ClipData.newPlainText(title, editableContent))
-                            Toast.makeText(context, "已复制产物全文到剪贴板", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.chat_artifact_copied), Toast.LENGTH_SHORT).show()
                         },
                     ) {
                         RuntimeIcon(RuntimeIconName.Copy, modifier = Modifier.size(15.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("复制", fontSize = 12.sp)
+                        Text(stringResource(R.string.chat_artifact_copy), fontSize = 12.sp)
                     }
 
                     // 系统分享
@@ -334,12 +337,14 @@ fun ArtifactPreviewSheet(
                                 putExtra(Intent.EXTRA_TITLE, title)
                                 type = "text/plain"
                             }
-                            context.startActivity(Intent.createChooser(sendIntent, "分享产物: $title"))
+                            context.startActivity(
+                                Intent.createChooser(sendIntent, context.getString(R.string.chat_artifact_share_chooser, title)),
+                            )
                         },
                     ) {
                         RuntimeIcon(RuntimeIconName.OpenInNew, modifier = Modifier.size(15.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("分享", fontSize = 12.sp)
+                        Text(stringResource(R.string.chat_artifact_share), fontSize = 12.sp)
                     }
                 }
 
@@ -347,16 +352,16 @@ fun ArtifactPreviewSheet(
                 if (viewMode == ArtifactViewMode.EDIT && onSaveContent != null) {
                     RuntimeButton(
                         onClick = {
-                            onSaveContent(editableContent)
-                            Toast.makeText(context, "已保存修改", Toast.LENGTH_SHORT).show()
-                            viewMode = if (isMarkdown) ArtifactViewMode.PREVIEW else ArtifactViewMode.CODE
-                        },
-                        enabled = isDirty,
-                    ) {
-                        RuntimeIcon(RuntimeIconName.Check, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("保存修改", fontSize = 12.sp)
-                    }
+                        onSaveContent(editableContent)
+                        Toast.makeText(context, context.getString(R.string.chat_artifact_saved), Toast.LENGTH_SHORT).show()
+                        viewMode = if (isMarkdown) ArtifactViewMode.PREVIEW else ArtifactViewMode.CODE
+                    },
+                    enabled = isDirty,
+                ) {
+                    RuntimeIcon(RuntimeIconName.Check, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(stringResource(R.string.chat_artifact_save), fontSize = 12.sp)
+                }
                 }
             }
         }
@@ -374,6 +379,7 @@ private fun ModeChip(
         color = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
         border = if (selected) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
         modifier = Modifier
+            .minimumInteractiveComponentSize()
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick),
     ) {

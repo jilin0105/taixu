@@ -63,21 +63,22 @@ fun SshSettingsScreen(
     val serviceState by viewModel.serviceState.collectAsStateWithLifecycle()
     val operating by viewModel.operating.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
+    val messageIsError by viewModel.messageIsError.collectAsStateWithLifecycle()
     val logs by viewModel.logs.collectAsStateWithLifecycle()
     val vpnActive by viewModel.vpnActive.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
-    var portText by remember { mutableStateOf(settings.port.toString()) }
-    var authorizedKeysText by remember { mutableStateOf(settings.authorizedKeys) }
-    var showLanWarning by remember { mutableStateOf(false) }
-    var showPasswordDialog by remember { mutableStateOf(false) }
+    var portText by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(settings.port.toString()) }
+    var authorizedKeysText by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(settings.authorizedKeys) }
+    var showLanWarning by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var showPasswordDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(settings.distroId, settings.port) { portText = settings.port.toString() }
     LaunchedEffect(settings.distroId, settings.authorizedKeys) { authorizedKeysText = settings.authorizedKeys }
 
     message?.let { current ->
         RuntimeAlertDialog(
             onDismissRequest = viewModel::consumeMessage,
-            title = { Text(if (current.contains("失败") || current.contains("无效") || current.contains("请先")) "SSH 操作未完成" else "SSH 远程访问") },
+            title = { Text(if (messageIsError) "SSH 操作未完成" else "SSH 远程访问") },
             text = { Text(current) },
             confirmButton = { RuntimeTextButton(onClick = viewModel::consumeMessage) { Text("知道了") } },
         )
@@ -286,16 +287,24 @@ fun SshSettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         RuntimeIcon(RuntimeIconName.Network, Modifier.size(20.dp), MaterialTheme.colorScheme.primary)
+                        val portValue = portText.toIntOrNull()
+                        val portValid = portValue != null && portValue in 1024..65535
                         OutlinedTextField(
                             value = portText,
                             onValueChange = { portText = it.filter(Char::isDigit).take(5) },
                             label = { Text("SSH 端口") },
-                            supportingText = { Text("允许范围：1024–65535") },
+                            isError = portText.isNotBlank() && !portValid,
+                            supportingText = {
+                                Text(
+                                    if (portText.isNotBlank() && !portValid) "端口需在 1024–65535 范围内"
+                                    else "允许范围：1024–65535",
+                                )
+                            },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.weight(1f),
                         )
-                        RuntimeOutlinedButton(onClick = { viewModel.savePort(portText) }, enabled = !busy) { Text("保存") }
+                        RuntimeOutlinedButton(onClick = { viewModel.savePort(portText) }, enabled = !busy && portValid) { Text("保存") }
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     SettingsRow(
@@ -395,8 +404,8 @@ private fun PasswordSettingsDialog(
     onSave: (String) -> Unit,
     onClear: () -> Unit,
 ) {
-    var password by remember { mutableStateOf("") }
-    var confirmation by remember { mutableStateOf("") }
+    var password by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    var confirmation by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     val matches = password == confirmation
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,

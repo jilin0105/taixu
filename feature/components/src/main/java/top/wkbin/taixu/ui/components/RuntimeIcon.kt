@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.DownloadForOffline
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Folder
@@ -52,6 +53,7 @@ import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Save
@@ -81,7 +83,7 @@ import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
 enum class RuntimeIconName {
-    Home, Workspace, Terminal, Settings, Back, ChevronRight, ChevronDown, Package,
+    Home, Workspace, Terminal, Settings, Back, ChevronRight, ChevronDown, ChevronUp, Package,
     NavDashboard, NavMessage, NavRepository, NavSettings,
     Refresh, Shield, Storage, Globe, Trash, Close, Check, Alert, Logs,
     Download, Play, Stop, More, Plus, Chat, List, Copy,
@@ -94,7 +96,7 @@ enum class RuntimeIconName {
     Bot, Palette, FontSize, Battery, Bug, Update, Extension, Hub, Mount, OpenInNew, Key, Tune,
     Brain, Sparkles, Vibrate, FolderDownload, Document, SdCard, Server, Compress,
     Prompt, Wrench, Model, Network, Community, FolderOpen, Speed, Cable, Admin, Link,
-    Reverse,
+    Reverse, PowerSettingsNew, Visibility, VisibilityOff,
 }
 
 /** Official Material & Customized Brand vector icons, shared by every screen for consistent optical weight. */
@@ -185,6 +187,7 @@ private fun RuntimeIconName.materialVector(): ImageVector = when (this) {
     RuntimeIconName.Back -> Icons.AutoMirrored.Outlined.ArrowBack
     RuntimeIconName.ChevronRight -> Icons.Outlined.ChevronRight
     RuntimeIconName.ChevronDown -> Icons.Outlined.ExpandMore
+    RuntimeIconName.ChevronUp -> Icons.Outlined.ExpandLess
     RuntimeIconName.Package -> Icons.Outlined.Inventory2
     RuntimeIconName.Refresh -> Icons.Outlined.Refresh
     RuntimeIconName.Shield -> Icons.Outlined.Security
@@ -206,6 +209,8 @@ private fun RuntimeIconName.materialVector(): ImageVector = when (this) {
     RuntimeIconName.Folder -> Icons.Outlined.Folder
     RuntimeIconName.File -> Icons.AutoMirrored.Outlined.InsertDriveFile
     RuntimeIconName.Code -> Icons.Outlined.Code
+    RuntimeIconName.Visibility -> VisibilityVector
+    RuntimeIconName.VisibilityOff -> VisibilityOffVector
     RuntimeIconName.Edit -> Icons.Outlined.Edit
     RuntimeIconName.Save -> Icons.Outlined.Save
     RuntimeIconName.ArrowUp -> Icons.Outlined.ArrowUpward
@@ -246,6 +251,7 @@ private fun RuntimeIconName.materialVector(): ImageVector = when (this) {
     RuntimeIconName.Admin -> Icons.Outlined.AdminPanelSettings
     RuntimeIconName.Link -> Icons.Outlined.Link
     RuntimeIconName.Reverse -> Icons.Outlined.LockOpen
+    RuntimeIconName.PowerSettingsNew -> Icons.Outlined.PowerSettingsNew
     // 专有品牌矢量
     RuntimeIconName.Linux -> LinuxVector
     RuntimeIconName.Debian,
@@ -385,6 +391,34 @@ private val QqVector: ImageVector by lazy {
     ).apply {
         path(fill = SolidColor(Color(0xFF12B7F5))) {
             addPath(PathParser().parsePathString("M12 2c-4.4 0-8 3.4-8 7.6 0 2.2 1 4.1 2.5 5.5-.3 1.2-1.2 2.8-2.3 3.6 1.5.2 3.2-.3 4.4-1.2 1.1.4 2.2.6 3.4.6 4.4 0 8-3.4 8-7.6S16.4 2 12 2zm-3.2 8.5c-.7 0-1.2-.7-1.2-1.5s.5-1.5 1.2-1.5 1.2.7 1.2 1.5-.5 1.5-1.2 1.5zm6.4 0c-.7 0-1.2-.7-1.2-1.5s.5-1.5 1.2-1.5 1.2.7 1.2 1.5-.5 1.5-1.2 1.5z").toNodes())
+        }
+    }.build()
+}
+
+private val VisibilityVector: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "Visibility",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).apply {
+        path(fill = SolidColor(Color.White)) {
+            addPath(PathParser().parsePathString("M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z").toNodes())
+        }
+    }.build()
+}
+
+private val VisibilityOffVector: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "VisibilityOff",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).apply {
+        path(fill = SolidColor(Color.White)) {
+            addPath(PathParser().parsePathString("M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.44-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z").toNodes())
         }
     }.build()
 }

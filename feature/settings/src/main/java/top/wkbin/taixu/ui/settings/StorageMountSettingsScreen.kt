@@ -1,6 +1,7 @@
 package top.wkbin.taixu.ui.settings
 
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
+import androidx.compose.material3.minimumInteractiveComponentSize
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -68,7 +69,10 @@ fun StorageMountSettingsScreen(
     val sharedStorageEnabled by viewModel.mountSharedStorageEnabled.collectAsStateWithLifecycle()
     val customBindings by viewModel.customMountBindings.collectAsStateWithLifecycle()
 
-    var showAddDialog by remember { mutableStateOf(false) }
+    var showAddDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    // 待确认删除的挂载点 id（破坏性操作二次确认）
+    var pendingDeleteBindingId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    val pendingDeleteBinding = pendingDeleteBindingId?.let { id -> customBindings.firstOrNull { it.id == id } }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -234,8 +238,11 @@ fun StorageMountSettingsScreen(
                             )
 
                             IconButton(
-                                onClick = { viewModel.removeCustomMountBinding(binding.id) },
-                                modifier = Modifier.size(32.dp),
+                                onClick = { pendingDeleteBindingId = binding.id },
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .size(32.dp),
+                                contentDescription = "删除挂载点 ${binding.name}",
                             ) {
                                 RuntimeIcon(
                                     name = RuntimeIconName.Trash,
@@ -250,8 +257,35 @@ fun StorageMountSettingsScreen(
         }
     }
 
+    pendingDeleteBinding?.let { binding ->
+        RuntimeAlertDialog(
+            onDismissRequest = { pendingDeleteBindingId = null },
+            title = { Text("删除挂载点", fontWeight = FontWeight.Bold) },
+            text = {
+                Text("确定要删除挂载点「${binding.name}」（${binding.hostPath} ➔ ${binding.guestPath}）吗？删除后新建的终端 / 构建任务将不再映射该目录。")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.removeCustomMountBinding(binding.id)
+                        pendingDeleteBindingId = null
+                    },
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) {
+                    Text("确认删除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteBindingId = null }) { Text("取消") }
+            },
+        )
+    }
+
     if (showAddDialog) {
         AddMountDialog(
+            existingGuestPaths = customBindings.map { it.guestPath }.toSet(),
             onDismiss = { showAddDialog = false },
             onConfirm = { name, host, guest ->
                 viewModel.addCustomMountBinding(name, host, guest)
@@ -313,12 +347,18 @@ private fun MountToggleRow(
 
 @Composable
 private fun AddMountDialog(
+    existingGuestPaths: Set<String>,
     onDismiss: () -> Unit,
     onConfirm: (name: String, hostPath: String, guestPath: String) -> Unit,
 ) {
-    var name by remember { mutableStateOf("") }
-    var hostPath by remember { mutableStateOf("/storage/emulated/0/") }
-    var guestPath by remember { mutableStateOf("/mnt/") }
+    var name by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    var hostPath by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("/storage/emulated/0/") }
+    var guestPath by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("/mnt/") }
+
+    val nameValid = name.isNotBlank()
+    val hostPathValid = hostPath.startsWith("/")
+    val guestDuplicate = guestPath.trim() in existingGuestPaths
+    val guestPathValid = guestPath.startsWith("/") && !guestDuplicate
 
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
@@ -330,6 +370,8 @@ private fun AddMountDialog(
                     onValueChange = { name = it },
                     label = { Text("挂载点名称") },
                     placeholder = { Text("例如：相册照片、项目源码") },
+                    isError = !nameValid,
+                    supportingText = { if (!nameValid) Text("请输入挂载点名称") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -338,6 +380,10 @@ private fun AddMountDialog(
                     onValueChange = { hostPath = it },
                     label = { Text("宿主路径 (Android)") },
                     placeholder = { Text("/storage/emulated/0/...") },
+                    isError = hostPath.isNotBlank() && !hostPathValid,
+                    supportingText = {
+                        if (hostPath.isNotBlank() && !hostPathValid) Text("路径必须以 / 开头")
+                    },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -346,6 +392,14 @@ private fun AddMountDialog(
                     onValueChange = { guestPath = it },
                     label = { Text("容器挂载路径 (Linux)") },
                     placeholder = { Text("/mnt/my_folder") },
+                    isError = guestPath.isNotBlank() && !guestPathValid,
+                    supportingText = {
+                        when {
+                            guestPath.isNotBlank() && !guestPath.startsWith("/") -> Text("路径必须以 / 开头")
+                            guestDuplicate -> Text("该容器路径已被其他挂载点使用")
+                            else -> {}
+                        }
+                    },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -354,7 +408,7 @@ private fun AddMountDialog(
         confirmButton = {
             Button(
                 onClick = { onConfirm(name, hostPath, guestPath) },
-                enabled = hostPath.isNotBlank() && guestPath.isNotBlank(),
+                enabled = nameValid && hostPathValid && guestPathValid,
             ) {
                 Text("添加挂载")
             }

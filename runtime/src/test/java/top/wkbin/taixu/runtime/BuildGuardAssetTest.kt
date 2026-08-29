@@ -171,6 +171,22 @@ class BuildGuardAssetTest {
     }
 
     @Test
+    fun flutterEngineLinksNativeArm64GenSnapshotForAndroidAot() {
+        val flutterBuild = File(assets, "scripts/build_flutter.sh").readText()
+        val flutterSetup = File(assets, "scripts/setup_flutter.sh").readText()
+        val installer = offlineAndroidInstaller.readText()
+        val verifier = offlineAndroidVerifier.readText()
+        val buildEntry = File(assets, "scripts/taixu-build.sh").readText()
+
+        listOf(flutterBuild, flutterSetup, installer, buildEntry).forEach { script ->
+            assertTrue(script.contains("linux-arm64/gen_snapshot"))
+            assertTrue(script.contains("android-arm64"))
+        }
+        assertTrue(verifier.contains("require_aarch64 /opt/flutter/bin/cache/artifacts/engine/linux-arm64/gen_snapshot"))
+        assertTrue(buildEntry.contains("check_elf_machine \"${'$'}native_gen_snapshot\" b700 \"Flutter gen_snapshot\""))
+    }
+
+    @Test
     fun offlineAndroidInstallerDoesNotRequireOptionalFileOrXzCommands() {
         val installer = offlineAndroidInstaller.readText()
         val verifier = offlineAndroidVerifier.readText()

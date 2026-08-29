@@ -53,6 +53,15 @@ class DeveloperViewModel @Inject constructor(
 
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
+
+    /** 当前 message 是否为失败结果（类型化标记，避免 UI 用字符串匹配判断样式）。 */
+    private val _messageIsError = MutableStateFlow(false)
+    val messageIsError: StateFlow<Boolean> = _messageIsError.asStateFlow()
+
+    private fun setMessage(text: String, isError: Boolean = false) {
+        _message.value = text
+        _messageIsError.value = isError
+    }
     private val _unusedRuntimes = MutableStateFlow<List<InstalledRuntime>>(emptyList())
     val unusedRuntimes: StateFlow<List<InstalledRuntime>> = _unusedRuntimes.asStateFlow()
     private val _processes = MutableStateFlow<List<ManagedProcess>>(emptyList())
@@ -71,6 +80,15 @@ class DeveloperViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
     private val _registryStatus = MutableStateFlow<String?>(null)
     val registryStatus: StateFlow<String?> = _registryStatus.asStateFlow()
+
+    /** 工具清单更新是否失败（类型化标记）。 */
+    private val _registryStatusIsError = MutableStateFlow(false)
+    val registryStatusIsError: StateFlow<Boolean> = _registryStatusIsError.asStateFlow()
+
+    private fun setRegistryStatus(text: String, isError: Boolean = false) {
+        _registryStatus.value = text
+        _registryStatusIsError.value = isError
+    }
 
     val agentLoggingEnabled: StateFlow<Boolean> = settingsDataStore.agentLoggingEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -93,19 +111,19 @@ class DeveloperViewModel @Inject constructor(
     fun clearAgentLogs() {
         logger.clearAgentLogs()
         refreshAgentLogSize()
-        _message.value = "智能体日志已清空。"
+        setMessage("智能体日志已清空。")
     }
 
     fun saveRegistryConfig(manifestUrl: String, signatureUrl: String, publicKey: String) {
         viewModelScope.launch {
             settingsDataStore.setRegistryConfig(manifestUrl, signatureUrl, publicKey)
-            _registryStatus.value = "工具清单配置已保存。"
+            setRegistryStatus("工具清单配置已保存。")
         }
     }
 
     fun updateRegistry() {
         viewModelScope.launch {
-            _registryStatus.value = "正在下载并验证工具清单…"
+            setRegistryStatus("正在下载并验证工具清单…")
             val request = SignedRegistryRequest(
                 manifestUrl = registryManifestUrl.value,
                 signatureUrl = registrySignatureUrl.value,
@@ -114,9 +132,10 @@ class DeveloperViewModel @Inject constructor(
             val result = toolRegistry.updateSigned(request)
             if (result.isSuccess) {
                 toolManager.syncRegistry()
-                _registryStatus.value = "工具清单已更新：${result.getOrNull()} 个工具。"
+                setRegistryStatus("工具清单已更新：${result.getOrNull()} 个工具。")
             } else {
-                _registryStatus.value = "更新失败：${result.errorOrNull()?.message}"
+                logger.e("Registry update failed: ${result.errorOrNull()?.message}")
+                setRegistryStatus("工具清单更新失败，请检查清单地址、签名与公钥配置", isError = true)
             }
         }
     }
@@ -139,8 +158,11 @@ class DeveloperViewModel @Inject constructor(
             _busy.value = true
             try {
                 when (val result = linuxRuntime.initialize()) {
-                    is AppResult.Success -> _message.value = "初始化完成。"
-                    is AppResult.Failure -> _message.value = "初始化失败：${result.error.message}"
+                    is AppResult.Success -> setMessage("初始化完成。")
+                    is AppResult.Failure -> {
+                        logger.e("Runtime initialize failed: ${result.error.message}")
+                        setMessage("初始化失败，请检查网络与存储空间后重试", isError = true)
+                    }
                 }
             } finally {
                 _busy.value = false
@@ -158,18 +180,20 @@ class DeveloperViewModel @Inject constructor(
         viewModelScope.launch {
             _busy.value = true
             _message.value = null
+            _messageIsError.value = false
             runCatching { linuxRuntime.updateRootfs() }
                 .onSuccess { result ->
-                    _message.value = if (result.isSuccess) {
-                        "RootFS 更新完成，用户数据已保留。"
+                    if (result.isSuccess) {
+                        setMessage("RootFS 更新完成，用户数据已保留。")
                     } else {
-                        "RootFS 更新失败：${result.errorOrNull()?.message}"
+                        logger.e("RootFS update failed: ${result.errorOrNull()?.message}")
+                        setMessage("RootFS 更新失败，已自动恢复旧版本；请稍后重试", isError = true)
                     }
                     refreshRootfsVersion()
                 }
                 .onFailure { throwable ->
                     logger.e("RootFS update failed", throwable)
-                    _message.value = "RootFS 更新失败：${throwable.message}"
+                    setMessage("RootFS 更新失败，请检查网络后重试", isError = true)
                 }
             _busy.value = false
         }
@@ -179,24 +203,25 @@ class DeveloperViewModel @Inject constructor(
         if (_busy.value || linuxRuntime.state.value !is RuntimeState.Ready) return
         viewModelScope.launch {
             _busy.value = true
-            _message.value = "正在检查 RootFS 的 OCI manifest…"
+            setMessage("正在检查 RootFS 的 OCI manifest…")
             runCatching { linuxRuntime.checkRootfsUpdate() }
                 .onSuccess { result ->
                     if (result.isSuccess) {
                         val info = result.getOrNull()!!
                         _rootfsUpdate.value = info
-                        _message.value = if (info.hasUpdate) {
-                            "检测到 RootFS 新版本，可以更新。"
+                        if (info.hasUpdate) {
+                            setMessage("检测到 RootFS 新版本，可以更新。")
                         } else {
-                            "RootFS 已是最新版本。"
+                            setMessage("RootFS 已是最新版本。")
                         }
                     } else {
-                        _message.value = "RootFS 更新检查失败：${result.errorOrNull()?.message}"
+                        logger.e("RootFS update check failed: ${result.errorOrNull()?.message}")
+                        setMessage("RootFS 更新检查失败，请检查网络后重试", isError = true)
                     }
                 }
                 .onFailure { throwable ->
                     logger.e("RootFS update check failed", throwable)
-                    _message.value = "RootFS 更新检查失败：${throwable.message}"
+                    setMessage("RootFS 更新检查失败，请检查网络后重试", isError = true)
                 }
             _busy.value = false
         }
@@ -211,7 +236,7 @@ class DeveloperViewModel @Inject constructor(
                 .onSuccess { _health.value = it }
                 .onFailure {
                     logger.e("Health check failed", it)
-                    _message.value = "健康检查失败：${it.message}"
+                    setMessage("健康检查失败，请确认运行时已就绪后重试", isError = true)
                 }
             _busy.value = false
         }
@@ -232,10 +257,10 @@ class DeveloperViewModel @Inject constructor(
             _message.value = null
             runCatching { runtimeManager.cleanup(runtimeId) }
                 .onSuccess { result ->
-                    _message.value = if (result.isSuccess) "共享 Runtime 已清理。" else "清理失败：${result.errorOrNull()?.message}"
+                    if (result.isSuccess) setMessage("共享 Runtime 已清理。") else setMessage("清理失败，请稍后重试", isError = true)
                     refreshUnusedRuntimes()
                 }
-                .onFailure { _message.value = "清理失败：${it.message}" }
+                .onFailure { logger.e("Runtime cleanup failed", it); setMessage("清理失败，请稍后重试", isError = true) }
             _busy.value = false
         }
     }
@@ -255,7 +280,7 @@ class DeveloperViewModel @Inject constructor(
         viewModelScope.launch {
             runCatching { linuxRuntime.stopBackground(processId) }
                 .onSuccess { refreshProcesses() }
-                .onFailure { _message.value = "停止进程失败：${it.message}" }
+                .onFailure { logger.e("Stop process failed", it); setMessage("停止进程失败，请稍后重试", isError = true) }
         }
     }
 
@@ -279,13 +304,14 @@ class DeveloperViewModel @Inject constructor(
                 result
             }
                 .onSuccess { result ->
-                    _message.value = if (result.isSuccess) {
-                        "Linux 环境已恢复初始状态，工作区工程未删除。"
+                    if (result.isSuccess) {
+                        setMessage("Linux 环境已恢复初始状态，工作区工程未删除。")
                     } else {
-                        "重置失败：${result.errorOrNull()?.message}"
+                        logger.e("Linux reset failed: ${result.errorOrNull()?.message}")
+                        setMessage("重置失败，请稍后重试", isError = true)
                     }
                 }
-                .onFailure { _message.value = "重置失败：${it.message}" }
+                .onFailure { logger.e("Linux reset failed", it); setMessage("重置失败，请稍后重试", isError = true) }
             _busy.value = false
         }
     }
@@ -294,7 +320,7 @@ class DeveloperViewModel @Inject constructor(
         if (_busy.value) return
         val command = _commandInput.value.trim()
         if (command.isEmpty()) {
-            _message.value = "命令不能为空。"
+            setMessage("命令不能为空。", isError = true)
             return
         }
         viewModelScope.launch {
@@ -307,7 +333,7 @@ class DeveloperViewModel @Inject constructor(
             }.onFailure {
                 logger.e("Command execution failed", it)
                 _commandResult.value = null
-                _message.value = "命令执行失败：${it.message}"
+                setMessage("命令执行失败，请检查命令语法与运行时状态", isError = true)
             }
             _busy.value = false
         }

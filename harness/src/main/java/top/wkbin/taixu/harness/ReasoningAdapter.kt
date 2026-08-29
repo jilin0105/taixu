@@ -11,7 +11,7 @@ import kotlinx.serialization.json.put
 enum class ReasoningMode { AUTO, DISABLED, ENABLED }
 
 /** 推理强度：null = 服务端默认。 */
-enum class ReasoningEffort { LOW, MEDIUM, HIGH }
+enum class ReasoningEffort { LOW, MEDIUM, HIGH, MAX }
 
 /** 某厂商对「推理开关 / 强度」的支持能力。 */
 data class ReasoningCapabilities(
@@ -167,13 +167,14 @@ object ReasoningAdapter {
     private fun ReasoningEffort.openAiName(): String = when (this) {
         ReasoningEffort.LOW -> "low"
         ReasoningEffort.MEDIUM -> "medium"
-        ReasoningEffort.HIGH -> "high"
+        ReasoningEffort.HIGH, ReasoningEffort.MAX -> "high"
     }
 
     private fun ReasoningEffort?.budgetTokens(): Int = when (this) {
         ReasoningEffort.LOW -> 1024
         ReasoningEffort.MEDIUM -> 2048
         ReasoningEffort.HIGH -> 8192
+        ReasoningEffort.MAX -> 24576
         null -> 2048
     }
 
@@ -181,6 +182,7 @@ object ReasoningAdapter {
         ReasoningEffort.LOW -> 1024
         ReasoningEffort.MEDIUM -> 2048
         ReasoningEffort.HIGH -> 4096
+        ReasoningEffort.MAX -> 8192
     }
 
     private fun geminiBudget(model: ModelConfig): Int = when {
@@ -188,6 +190,7 @@ object ReasoningAdapter {
         model.reasoningEffort == ReasoningEffort.LOW -> 1024
         model.reasoningEffort == ReasoningEffort.MEDIUM -> 2048
         model.reasoningEffort == ReasoningEffort.HIGH -> 8192
+        model.reasoningEffort == ReasoningEffort.MAX -> 24576
         else -> 2048
     }
 }

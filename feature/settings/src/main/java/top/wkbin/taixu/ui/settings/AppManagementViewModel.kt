@@ -27,6 +27,10 @@ class AppManagementViewModel @Inject constructor(
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
+    /** 当前 message 是否为失败结果（类型化标记，避免 UI 用字符串匹配判断样式）。 */
+    private val _messageIsError = MutableStateFlow(false)
+    val messageIsError: StateFlow<Boolean> = _messageIsError.asStateFlow()
+
     fun synchronize() {
         if (_syncing.value) return
         viewModelScope.launch {
@@ -37,6 +41,7 @@ class AppManagementViewModel @Inject constructor(
                 onSuccess = { "已同步 ${it.total} 个应用：${it.userApps} 个用户应用、${it.systemApps} 个系统应用。" },
                 onFailure = { it.message ?: "应用同步失败" },
             )
+            _messageIsError.value = result.isFailure
         }
     }
 

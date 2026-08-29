@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,8 +59,8 @@ fun WorkshopSigningScreen(onBack: () -> Unit, viewModel: WorkshopSigningViewMode
     val keystores by viewModel.keystores.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
-    var showCreate by remember { mutableStateOf(false) }
-    var showImport by remember { mutableStateOf(false) }
+    var showCreate by rememberSaveable { mutableStateOf(false) }
+    var showImport by rememberSaveable { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<WorkshopKeystore?>(null) }
 
     Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = { RuntimeTopBar(stringResource(R.string.workshop_signing_title), onBack, stringResource(R.string.workshop_signing_subtitle)) }) { padding ->
@@ -156,7 +157,9 @@ private fun CreateKeystoreDialog(
     onDismiss: () -> Unit,
     onConfirm: (WorkshopSigningCreationDraft) -> Unit,
 ) {
-    var draft by remember { mutableStateOf(WorkshopSigningCreationDraft()) }
+    var draft by rememberSaveable(stateSaver = creationDraftSaver) { mutableStateOf(WorkshopSigningCreationDraft()) }
+    // 密码不足 6 位时显式标错，而不是静默禁用按钮
+    val storePasswordInvalid = draft.storePassword.isNotEmpty() && draft.storePassword.length < 6
     val valid = draft.name.isNotBlank() && draft.storePassword.length >= 6
     RuntimeAlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
@@ -169,9 +172,19 @@ private fun CreateKeystoreDialog(
                 Text(stringResource(R.string.workshop_signing_create_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 SigningField(stringResource(R.string.workshop_signing_field_name), draft.name) { draft = draft.copy(name = it) }
                 SigningField(stringResource(R.string.workshop_signing_field_alias), draft.alias, optional = true) { draft = draft.copy(alias = it) }
-                SigningField(stringResource(R.string.workshop_signing_field_store_password), draft.storePassword, password = true) { draft = draft.copy(storePassword = it) }
+                SigningField(
+                    stringResource(R.string.workshop_signing_field_store_password),
+                    draft.storePassword,
+                    password = true,
+                    isError = storePasswordInvalid,
+                    supportingText = stringResource(R.string.workshop_signing_password_hint),
+                ) { draft = draft.copy(storePassword = it) }
                 SigningField(stringResource(R.string.workshop_signing_field_key_password), draft.keyPassword, password = true, optional = true) { draft = draft.copy(keyPassword = it) }
-                SigningField(stringResource(R.string.workshop_signing_field_validity), draft.validityYears.toString()) { text ->
+                SigningField(
+                    stringResource(R.string.workshop_signing_field_validity),
+                    draft.validityYears.toString(),
+                    supportingText = stringResource(R.string.workshop_signing_validity_hint, WorkshopKeystore.DEFAULT_VALIDITY_YEARS),
+                ) { text ->
                     draft = draft.copy(validityYears = text.filter(Char::isDigit).take(3).toIntOrNull() ?: WorkshopKeystore.DEFAULT_VALIDITY_YEARS)
                 }
                 SigningField(stringResource(R.string.workshop_signing_field_organization), draft.organization, optional = true) { draft = draft.copy(organization = it) }
@@ -192,7 +205,7 @@ private fun ImportKeystoreDialog(
     onDismiss: () -> Unit,
     onConfirm: (WorkshopSigningImportDraft) -> Unit,
 ) {
-    var draft by remember { mutableStateOf(WorkshopSigningImportDraft()) }
+    var draft by rememberSaveable(stateSaver = importDraftSaver) { mutableStateOf(WorkshopSigningImportDraft()) }
     val context = androidx.compose.ui.platform.LocalContext.current
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -247,6 +260,8 @@ private fun SigningField(
     value: String,
     password: Boolean = false,
     optional: Boolean = false,
+    isError: Boolean = false,
+    supportingText: String? = null,
     onValueChange: (String) -> Unit,
 ) {
     OutlinedTextField(
@@ -254,6 +269,8 @@ private fun SigningField(
         onValueChange = onValueChange,
         label = { Text(if (optional) "$label（可选）" else label) },
         singleLine = true,
+        isError = isError,
+        supportingText = supportingText?.let { hint -> { Text(hint) } },
         visualTransformation = if (password) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
         modifier = Modifier.fillMaxWidth(),
         textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = if (password) FontFamily.Default else FontFamily.Monospace),
@@ -262,6 +279,35 @@ private fun SigningField(
 
 private fun formatDate(millis: Long): String =
     if (millis <= 0L) "-" else SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(millis))
+
+// 弹窗草稿用 listSaver 保存，旋转后不丢输入（S3）
+private val creationDraftSaver = androidx.compose.runtime.saveable.listSaver<WorkshopSigningCreationDraft, Any>(
+    save = { listOf(it.name, it.alias, it.storePassword, it.keyPassword, it.validityYears, it.organization) },
+    restore = {
+        WorkshopSigningCreationDraft(
+            name = it[0] as String,
+            alias = it[1] as String,
+            storePassword = it[2] as String,
+            keyPassword = it[3] as String,
+            validityYears = it[4] as Int,
+            organization = it[5] as String,
+        )
+    },
+)
+
+private val importDraftSaver = androidx.compose.runtime.saveable.listSaver<WorkshopSigningImportDraft, Any>(
+    save = { listOf(it.uri, it.displayName, it.name, it.alias, it.storePassword, it.keyPassword) },
+    restore = {
+        WorkshopSigningImportDraft(
+            uri = it[0] as String,
+            displayName = it[1] as String,
+            name = it[2] as String,
+            alias = it[3] as String,
+            storePassword = it[4] as String,
+            keyPassword = it[5] as String,
+        )
+    },
+)
 
 private fun queryDisplayName(context: android.content.Context, uri: android.net.Uri): String? = runCatching {
     context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->

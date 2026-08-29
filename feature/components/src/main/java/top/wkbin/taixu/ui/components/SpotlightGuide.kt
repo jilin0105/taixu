@@ -38,9 +38,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import top.wkbin.taixu.feature.components.R
 
 /**
  * 🎯 首次使用引导（Coach Mark）通用工具。
@@ -78,11 +80,14 @@ fun SpotlightGuideOverlay(
     anchor: SpotlightAnchor,
     title: String,
     message: String,
-    confirmText: String = "知道了",
+    confirmText: String? = null,
     icon: RuntimeIconName? = null,
     tooltipWidthFraction: Float = 0.8f,
     onDismiss: () -> Unit,
 ) {
+    // 确认按钮文案参数化：默认从组件模块资源解析（values-en 同步"Got it"），
+    // 调用点也可显式传入本地化文案覆盖默认值。
+    val resolvedConfirmText = confirmText ?: stringResource(R.string.components_guide_confirm)
     val anchorBounds = anchor.bounds ?: return
     var overlayOrigin by remember { mutableStateOf(Offset.Zero) }
     var overlaySize by remember { mutableStateOf(IntSize.Zero) }
@@ -186,7 +191,7 @@ fun SpotlightGuideOverlay(
                 modifier = Modifier.align(Alignment.End),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp),
             ) {
-                Text(confirmText, style = MaterialTheme.typography.labelMedium)
+                Text(resolvedConfirmText, style = MaterialTheme.typography.labelMedium)
             }
         }
     }

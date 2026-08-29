@@ -137,6 +137,7 @@ class MainActivity : AppCompatActivity() {
                 var updateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
                 var downloadProgress by remember { mutableStateOf<Float?>(null) }
                 var isDownloading by remember { mutableStateOf(false) }
+                var downloadFailed by remember { mutableStateOf(false) }
                 val scope = rememberCoroutineScope()
                 val mainContext = LocalContext.current
                 val currentVersionName = remember {
@@ -227,6 +228,14 @@ class MainActivity : AppCompatActivity() {
                                         }
                                     }
                                 }
+                                if (downloadFailed) {
+                                    // 下载失败必须可见：不再静默停止
+                                    Text(
+                                        text = stringResource(R.string.taixu_update_download_failed),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.error,
+                                    )
+                                }
                             }
                         },
                         confirmButton = {
@@ -236,6 +245,7 @@ class MainActivity : AppCompatActivity() {
                                     onClick = {
                                         isDownloading = true
                                         downloadProgress = 0f
+                                        downloadFailed = false
                                         scope.launch {
                                             val res = appUpdateManager.downloadApk(apkUrl) { dl, tot ->
                                                 if (tot != null && tot > 0) downloadProgress = dl.toFloat() / tot.toFloat()
@@ -245,6 +255,9 @@ class MainActivity : AppCompatActivity() {
                                                 downloadProgress = 1f
                                                 appUpdateManager.installApk(apkFile)
                                                 updateInfo = null
+                                            }.onFailure {
+                                                // 下载失败：在更新对话框内给出可见的错误文案（跟随现有 UI 模式）
+                                                downloadFailed = true
                                             }
                                         }
                                     },

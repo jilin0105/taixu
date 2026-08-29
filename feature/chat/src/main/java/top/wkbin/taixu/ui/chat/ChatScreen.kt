@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import android.util.LruCache
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -45,6 +46,7 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -97,10 +99,12 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
@@ -110,6 +114,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import top.wkbin.taixu.feature.chat.R
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -141,6 +147,7 @@ import top.wkbin.taixu.harness.CapabilityEvent
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.harness.UserMessage
+import top.wkbin.taixu.harness.session.ConversationBranch
 import top.wkbin.taixu.runtime.WorkspaceProject
 import top.wkbin.taixu.ui.components.MainDestination
 import top.wkbin.taixu.ui.components.NoticeBanner
@@ -161,6 +168,15 @@ private val DotRunning = Color(0xFFB25E00)
 private val DotSuccess = Color(0xFF2E7D32)
 private val DotFailed = Color(0xFFBA1A1A)
 private val AgentBottomBarHeight = 78.dp
+
+/**
+ * 工具卡片折叠状态 Saver：Map 本身不能存入 Bundle（rememberSaveable 会抛 IllegalArgumentException），
+ * 把 entries 序列化为 ArrayList<Pair<String, Boolean>>（两者均可安全保存）。
+ */
+private val ExpandedOverridesSaver = Saver<Map<String, Boolean>, ArrayList<Pair<String, Boolean>>>(
+    save = { state -> ArrayList(state.map { (key, value) -> key to value }) },
+    restore = { saved -> saved.toMap() },
+)
 
 @Composable
 private fun chatBottomInsets(bottomBarHeight: Dp): WindowInsets {
@@ -232,17 +248,24 @@ fun ChatScreen(
     val contextUsage by viewModel.contextUsage.collectAsStateWithLifecycle()
     val quickPhrases by viewModel.quickPhrases.collectAsStateWithLifecycle()
     val onboardingPrivilege by viewModel.privilegeOnboarding.collectAsStateWithLifecycle()
+    val attachmentsProcessing by viewModel.attachmentsProcessing.collectAsStateWithLifecycle()
+    val notice by viewModel.notice.collectAsStateWithLifecycle()
 
-    var showSessions by remember { mutableStateOf(false) }
-    var showNewSession by remember { mutableStateOf(false) }
-    var showModels by remember { mutableStateOf(false) }
-    var showApprovalModes by remember { mutableStateOf(false) }
-    var showSkillsMcpSheet by remember { mutableStateOf(false) }
-    var showBranches by remember { mutableStateOf(false) }
-    var showRuntimeTimeline by remember { mutableStateOf(false) }
-    var showMemorySheet by remember { mutableStateOf(false) }
-    var branchFromMessageId by remember { mutableStateOf<String?>(null) }
-    var editTargetMessage by remember { mutableStateOf<UserMessage?>(null) }
+    // 弹窗开关与编辑目标：用 rememberSaveable 保存，旋转 / 进程重建后不丢失
+    var showSessions by rememberSaveable { mutableStateOf(false) }
+    var showNewSession by rememberSaveable { mutableStateOf(false) }
+    var showModels by rememberSaveable { mutableStateOf(false) }
+    var showApprovalModes by rememberSaveable { mutableStateOf(false) }
+    var showSkillsMcpSheet by rememberSaveable { mutableStateOf(false) }
+    var showBranches by rememberSaveable { mutableStateOf(false) }
+    var showRuntimeTimeline by rememberSaveable { mutableStateOf(false) }
+    var showMemorySheet by rememberSaveable { mutableStateOf(false) }
+    var branchFromMessageId by rememberSaveable { mutableStateOf<String?>(null) }
+    // 编辑目标消息只保存 id，避免把不可保存的实体放进状态保存器
+    var editTargetMessageId by rememberSaveable { mutableStateOf<String?>(null) }
+    val editTargetMessage = remember(messages, editTargetMessageId) {
+        messages.filterIsInstance<UserMessage>().firstOrNull { it.id == editTargetMessageId }
+    }
 
     val activeSkillsCount = remember(allSkills) { allSkills.count { it.isEnabled } }
     val activeMcpCount = remember(mcpServers) { mcpServers.count { it.isEnabled } }
@@ -274,12 +297,11 @@ fun ChatScreen(
     val toolResults = remember(messages) {
         messages.filterIsInstance<ToolResult>().associateBy { it.toolCallId }
     }
-    val liveThinkingMessageId = remember(messages) {
-        messages.filterIsInstance<AssistantText>().lastOrNull()?.id
-    }
     val lastAssistantMessageId = remember(messages) {
         messages.filterIsInstance<AssistantText>().lastOrNull()?.id
     }
+    // 两者语义不同（实时思考高亮 vs 重新生成定位），但取值一致，复用同一计算结果
+    val liveThinkingMessageId = lastAssistantMessageId
     val currentBranch = remember(branches) { branches.firstOrNull { it.isCurrent } }
 
     val isImeVisible = WindowInsets.isImeVisible
@@ -335,11 +357,13 @@ fun ChatScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     val appContext = LocalContext.current.applicationContext
+    val grantLabel = stringResource(R.string.chat_snackbar_grant)
+    val gotItLabel = stringResource(R.string.chat_snackbar_got_it)
     LaunchedEffect(Unit) {
         viewModel.permissionRequests.collect { req ->
             val actionLabel = when (req.permission) {
-                "WRITE_SETTINGS" -> "去授权"
-                else -> "知道了"
+                "WRITE_SETTINGS" -> grantLabel
+                else -> gotItLabel
             }
             val result = snackbarHostState.showSnackbar(
                 message = req.reason,
@@ -358,6 +382,14 @@ fun ChatScreen(
         }
     }
 
+    // VM 层轻量通知（附件处理失败 / 模型档案已存在 / 新会话已创建等）以 Toast 上抛
+    LaunchedEffect(notice) {
+        notice?.let {
+            Toast.makeText(appContext, it, Toast.LENGTH_SHORT).show()
+            viewModel.clearNotice()
+        }
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -366,121 +398,85 @@ fun ChatScreen(
                 title = stringResource(R.string.chat_title),
                 statusText = stringResource(R.string.chat_status, if (workspace.isNotBlank()) workspace else stringResource(R.string.chat_default_workspace), distroDisplayName),
             ) {
-                // 🌟 1. 一体化模型切换胶囊
+                // 🌟 1. 模型与审批模式上下垂直排列复合区 (Vertical Stack: Model & Approval Mode)
                 val activeSub = activeModel?.let { entity ->
                     entity.model.split(",").firstOrNull()?.trim().takeUnless { it.isNullOrBlank() } ?: entity.name
                 } ?: stringResource(R.string.chat_no_model_selected)
 
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    shape = RoundedCornerShape(14.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                    modifier = Modifier.clickable { showModels = true },
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    modifier = Modifier.padding(vertical = 2.dp),
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    // 上排：模型切换胶囊（限制字数/宽度，超出显示省略号）
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                        modifier = Modifier.clickable { showModels = true },
                     ) {
-                        Text(
-                            text = activeSub,
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                        )
-                        RuntimeIcon(RuntimeIconName.ChevronDown, Modifier.size(11.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                        ) {
+                            Text(
+                                text = activeSub,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                ),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 110.dp),
+                            )
+                            RuntimeIcon(RuntimeIconName.ChevronDown, Modifier.size(10.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+
+                    // 下排：审批模式状态胶囊
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                        modifier = Modifier.clickable { showApprovalModes = true },
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                        ) {
+                            RuntimeIcon(
+                                RuntimeIconName.Shield,
+                                Modifier.size(10.dp),
+                                tint = when (currentApprovalMode) {
+                                    ApprovalMode.FULL_ACCESS -> Color(0xFFE65100)
+                                    ApprovalMode.ASSISTED -> Color(0xFF1976D2)
+                                    ApprovalMode.REQUEST -> Color(0xFF388E3C)
+                                }
+                            )
+                            Text(
+                                text = stringResource(currentApprovalMode.labelRes),
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                ),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 110.dp),
+                            )
+                        }
                     }
                 }
 
-                // 🌟 2. 智枢工作台与功能聚合菜单 (Workbench & Tools Menu)
-                var showWorkbenchMenu by remember { mutableStateOf(false) }
-                Box {
-                    IconButton(onClick = { showWorkbenchMenu = true }) {
-                        RuntimeIcon(
-                            name = RuntimeIconName.Hub,
-                            modifier = Modifier.size(19.dp),
-                            tint = if (running) Color(0xFF7C4DFF) else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    DropdownMenu(
-                        expanded = showWorkbenchMenu,
-                        onDismissRequest = { showWorkbenchMenu = false },
-                    ) {
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text("分支调度", fontWeight = FontWeight.SemiBold)
-                                    Text(currentBranch?.name ?: "主线分支", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            },
-                            leadingIcon = { RuntimeIcon(RuntimeIconName.Hub, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary) },
-                            onClick = {
-                                showWorkbenchMenu = false
-                                showBranches = true
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text("运行事件与时间线", fontWeight = FontWeight.SemiBold)
-                                    Text("${runtimeEvents.size} 个事件", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            },
-                            leadingIcon = { RuntimeIcon(RuntimeIconName.Logs, Modifier.size(18.dp), tint = Color(0xFF7C4DFF)) },
-                            onClick = {
-                                showWorkbenchMenu = false
-                                showRuntimeTimeline = true
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text("工作区长期记忆", fontWeight = FontWeight.SemiBold)
-                                    Text("${memories.size} 条记忆事实", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            },
-                            leadingIcon = { RuntimeIcon(RuntimeIconName.Brain, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.tertiary) },
-                            onClick = {
-                                showWorkbenchMenu = false
-                                showMemorySheet = true
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text("专精技能与 MCP", fontWeight = FontWeight.SemiBold)
-                                    Text("${activeSkillsCount + activeMcpCount} 项已激活", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            },
-                            leadingIcon = { RuntimeIcon(RuntimeIconName.Extension, Modifier.size(18.dp), tint = Color(0xFF10B981)) },
-                            onClick = {
-                                showWorkbenchMenu = false
-                                showSkillsMcpSheet = true
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text("审批权限模式", fontWeight = FontWeight.SemiBold)
-                                    Text(stringResource(currentApprovalMode.labelRes), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            },
-                            leadingIcon = { RuntimeIcon(RuntimeIconName.Shield, Modifier.size(18.dp), tint = Color(0xFFFF9800)) },
-                            onClick = {
-                                showWorkbenchMenu = false
-                                showApprovalModes = true
-                            },
-                        )
-                    }
-                }
-
-                // 🌟 3. 会话抽屉/列表
-                IconButton(onClick = { showSessions = true }) {
+                // 🌟 2. 会话抽屉/列表（内部包含「新建会话」功能）
+                IconButton(
+                    onClick = { showSessions = true },
+                    contentDescription = stringResource(R.string.chat_open_session_list),
+                ) {
                     RuntimeIcon(RuntimeIconName.List, Modifier.size(20.dp), MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                // 🌟 4. 新建会话
-                IconButton(onClick = { showNewSession = true }) {
-                    RuntimeIcon(RuntimeIconName.Plus, Modifier.size(20.dp), MaterialTheme.colorScheme.primary)
                 }
             }
         },
@@ -524,7 +520,7 @@ fun ChatScreen(
                         workspace = workspace,
                         workspaceProject = effectiveWorkspaceProject,
                         onOpenFile = onOpenFile,
-                        onEditMessage = { editTargetMessage = it },
+                        onEditMessage = { editTargetMessageId = it.id },
                         onDeleteMessage = viewModel::deleteMessage,
                         error = error,
                         onClearError = viewModel::clearError,
@@ -535,6 +531,7 @@ fun ChatScreen(
                         queuedPrompts = queuedPrompts,
                         onEditQueuedPrompt = viewModel::editQueuedPrompt,
                         onRemoveQueuedPrompt = viewModel::removeQueuedPrompt,
+                        onConvertToSteer = viewModel::convertQueuedPromptToSteer,
                         sendMode = sendMode,
                         onSendModeChange = viewModel::setSendMode,
                         input = input,
@@ -544,6 +541,7 @@ fun ChatScreen(
                         onRemoveMention = viewModel::removeMention,
                         onTriggerMention = viewModel::triggerMentionInput,
                         attachments = pendingAttachments,
+                        attachmentsProcessing = attachmentsProcessing,
                         onAttachmentsPicked = viewModel::onAttachmentsPicked,
                         onRemoveAttachment = viewModel::removeAttachment,
                         onSend = viewModel::sendFromComposer,
@@ -619,7 +617,7 @@ fun ChatScreen(
                     workspace = workspace,
                     workspaceProject = effectiveWorkspaceProject,
                     onOpenFile = onOpenFile,
-                    onEditMessage = { editTargetMessage = it },
+                    onEditMessage = { editTargetMessageId = it.id },
                     onDeleteMessage = viewModel::deleteMessage,
                     error = error,
                     onClearError = viewModel::clearError,
@@ -630,6 +628,7 @@ fun ChatScreen(
                     queuedPrompts = queuedPrompts,
                     onEditQueuedPrompt = viewModel::editQueuedPrompt,
                     onRemoveQueuedPrompt = viewModel::removeQueuedPrompt,
+                    onConvertToSteer = viewModel::convertQueuedPromptToSteer,
                     sendMode = sendMode,
                     onSendModeChange = viewModel::setSendMode,
                     input = input,
@@ -639,6 +638,7 @@ fun ChatScreen(
                     onRemoveMention = viewModel::removeMention,
                     onTriggerMention = viewModel::triggerMentionInput,
                     attachments = pendingAttachments,
+                    attachmentsProcessing = attachmentsProcessing,
                     onAttachmentsPicked = viewModel::onAttachmentsPicked,
                     onRemoveAttachment = viewModel::removeAttachment,
                     onSend = viewModel::sendFromComposer,
@@ -687,10 +687,10 @@ fun ChatScreen(
     editTargetMessage?.let { target ->
         EditAndResendDialog(
             originalText = target.text,
-            onDismiss = { editTargetMessage = null },
+            onDismiss = { editTargetMessageId = null },
             onConfirm = { newText ->
                 viewModel.editAndResend(target.id, newText)
-                editTargetMessage = null
+                editTargetMessageId = null
             },
         )
     }
@@ -803,25 +803,28 @@ fun ChatScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text(
-                        text = "审批权限模式",
+                        text = stringResource(R.string.chat_menu_approval_mode),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                     )
-                    IconButton(onClick = { showApprovalModes = false }) {
+                    IconButton(
+                        onClick = { showApprovalModes = false },
+                        contentDescription = stringResource(R.string.chat_close),
+                    ) {
                         RuntimeIcon(RuntimeIconName.Close, Modifier.size(20.dp))
                     }
                 }
 
                 Text(
-                    text = "控制 Agent 执行 Bash 命令、文件读写及系统操作时的拦截与确认策略：",
+                    text = stringResource(R.string.chat_approval_mode_hint),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
 
                 listOf(
-                    Triple(ApprovalMode.REQUEST, "询问模式 (安全严谨)", stringResource(R.string.chat_approval_request_description)),
-                    Triple(ApprovalMode.ASSISTED, "辅助模式 (半自动)", stringResource(R.string.chat_approval_assisted_description)),
-                    Triple(ApprovalMode.FULL_ACCESS, "全自动模式 (极速通行)", stringResource(R.string.chat_approval_full_access_description)),
+                    Triple(ApprovalMode.REQUEST, stringResource(R.string.chat_approval_request_title), stringResource(R.string.chat_approval_request_description)),
+                    Triple(ApprovalMode.ASSISTED, stringResource(R.string.chat_approval_assisted_title), stringResource(R.string.chat_approval_assisted_description)),
+                    Triple(ApprovalMode.FULL_ACCESS, stringResource(R.string.chat_approval_full_access_title), stringResource(R.string.chat_approval_full_access_description)),
                 ).forEach { (mode, title, desc) ->
                     val isSelected = mode == currentApprovalMode
                     Surface(
@@ -916,6 +919,7 @@ private fun ChatPaneContent(
     queuedPrompts: List<top.wkbin.taixu.harness.QueuedPrompt>,
     onEditQueuedPrompt: (top.wkbin.taixu.harness.QueuedPrompt) -> Unit,
     onRemoveQueuedPrompt: (top.wkbin.taixu.harness.QueuedPrompt) -> Unit,
+    onConvertToSteer: (top.wkbin.taixu.harness.QueuedPrompt) -> Unit = {},
     sendMode: ComposerSendMode,
     onSendModeChange: (ComposerSendMode) -> Unit,
     input: String,
@@ -925,6 +929,7 @@ private fun ChatPaneContent(
     onRemoveMention: (MentionItem) -> Unit = {},
     onTriggerMention: () -> Unit = {},
     attachments: List<ChatAttachment> = emptyList(),
+    attachmentsProcessing: Boolean = false,
     onAttachmentsPicked: (List<android.net.Uri>, Boolean) -> Unit = { _, _ -> },
     onRemoveAttachment: (ChatAttachment) -> Unit = {},
     onSend: () -> Unit,
@@ -959,8 +964,9 @@ private fun ChatPaneContent(
     quickPhrases: List<top.wkbin.taixu.core.model.QuickPhrase> = emptyList(),
     onSelectPhrase: (top.wkbin.taixu.core.model.QuickPhrase) -> Unit = {},
 ) {
-    var showReasoningSlider by remember { mutableStateOf(false) }
-    var expandedOverrides by rememberSaveable { mutableStateOf(mapOf<String, Boolean>()) }
+    var showReasoningSlider by rememberSaveable { mutableStateOf(false) }
+    // 折叠状态用自定义 Saver：Map 不能直接存入 Bundle（会抛 IllegalArgumentException）
+    var expandedOverrides by rememberSaveable(stateSaver = ExpandedOverridesSaver) { mutableStateOf(mapOf<String, Boolean>()) }
 
     // 🌟 任务执行中的极光流光边框动效 (Aurora Glow Border Animation)
     val infiniteTransition = rememberInfiniteTransition(label = "capsuleGlowTransition")
@@ -1015,7 +1021,8 @@ private fun ChatPaneContent(
     val coroutineScope = rememberCoroutineScope()
 
     val doSend = {
-        if (input.isNotBlank() || attachments.isNotEmpty()) {
+        // 初始化（会话尚未恢复）期间发送目标未定，禁止误发
+        if (!initializing && (input.isNotBlank() || attachments.isNotEmpty())) {
             onSend()
             coroutineScope.launch {
                 delay(60)
@@ -1028,6 +1035,18 @@ private fun ChatPaneContent(
     }
 
     Column(modifier = modifier) {
+        // 🌟 顶部向顶收缩/展开的工作台状态栏 (Collapsible Top Workbench Strip)
+        CollapsibleChatWorkbenchStrip(
+            currentBranch = currentBranch,
+            runtimeEvents = runtimeEvents,
+            running = running,
+            memoryCount = memoryCount,
+            scratchpadCount = scratchpadCount,
+            onOpenBranches = onOpenBranches,
+            onOpenRuntime = onOpenRuntime,
+            onOpenMemory = onOpenMemory,
+        )
+
         val renderItems = remember(messages, toolResults, expandedOverrides) {
             projectChatMessages(
                 messages = messages,
@@ -1039,8 +1058,7 @@ private fun ChatPaneContent(
             state = listState,
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth()
-                .scrollFadingEdge(top = 8.dp, bottom = 8.dp),
+                .fillMaxWidth(),
         ) {
             if (initializing) {
                 item {
@@ -1196,13 +1214,39 @@ private fun ChatPaneContent(
             )
         }
 
-        QueuedPromptStack(prompts = queuedPrompts, onEdit = onEditQueuedPrompt, onRemove = onRemoveQueuedPrompt)
+        QueuedPromptStack(
+            prompts = queuedPrompts,
+            onEdit = onEditQueuedPrompt,
+            onRemove = onRemoveQueuedPrompt,
+            onConvertToSteer = onConvertToSteer,
+        )
 
         // 待发送附件预览栏
         AttachmentPreviewRow(
             attachments = attachments,
             onRemove = onRemoveAttachment,
         )
+
+        // 附件处理中（复制/压缩/编码）加载指示
+        if (attachmentsProcessing) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                )
+                Text(
+                    stringResource(R.string.chat_attachment_processing),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
 
         // 🌟 思考/推理强度浮动调节胶囊 (ChatGPT 同款滑块面板)
         androidx.compose.animation.AnimatedVisibility(
@@ -1220,7 +1264,7 @@ private fun ChatPaneContent(
             )
         }
 
-        // 🌟 底部悬浮工具活动胶囊 (Floating Tool Activity Strip / Live Pill)
+        // 🌟 底部工具执行状态与中止胶囊
         ToolActivityPill(
             running = running,
             status = status,
@@ -1229,6 +1273,7 @@ private fun ChatPaneContent(
             workspace = workspace,
             onStop = onStop,
         )
+
 
         // 现代化一体化输入胶囊 (Unified Chat Input Capsule with Aurora Glow)
         val auroraBrush = if (running) {
@@ -1273,11 +1318,6 @@ private fun ChatPaneContent(
                     .padding(horizontal = 10.dp, vertical = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                // 仅在运行中且用户开始输入时展示，避免发送后立刻占位/换行
-                if (running && input.isNotBlank()) {
-                    ComposerModeSelector(mode = sendMode, onModeChange = onSendModeChange)
-                }
-
                 // 🌟 常驻/已钉选能力与临时挂载胶囊栏 (Pinned & Attached Capabilities Strip)
                 val allDisplayItems = remember(pinnedCapabilities, attachedMentions) {
                     (pinnedCapabilities + attachedMentions).distinctBy { it.id }
@@ -1290,7 +1330,7 @@ private fun ChatPaneContent(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        items(allDisplayItems.size) { index ->
+                        items(allDisplayItems.size, key = { allDisplayItems[it].id }) { index ->
                             val item = allDisplayItems[index]
                             val isSkill = item.type == MentionType.SKILL
                             val isAttached = attachedMentions.any { it.id == item.id }
@@ -1335,7 +1375,7 @@ private fun ChatPaneContent(
                                             shape = RoundedCornerShape(4.dp),
                                         ) {
                                             Text(
-                                                "常驻",
+                                                stringResource(R.string.chat_pinned_badge),
                                                 modifier = Modifier.padding(horizontal = 3.5.dp, vertical = 0.5.dp),
                                                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.5.sp, fontWeight = FontWeight.Bold),
                                                 color = tagColor,
@@ -1369,7 +1409,7 @@ private fun ChatPaneContent(
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                     Text(
-                                        "挂载",
+                                        stringResource(R.string.chat_attach_button),
                                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -1453,89 +1493,109 @@ private fun ChatPaneContent(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    // 左侧工具图标栏
+                    // 左侧：+ 号展开选单 + 思考深度胶囊
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        modifier = Modifier.weight(1f, fill = false),
                     ) {
-                        // 📎 附件弹出菜单（图片 / 文件）
-                        var showAttachmentMenu by remember { mutableStateOf(false) }
+                        var showPlusMenu by rememberSaveable { mutableStateOf(false) }
                         Box {
                             IconButton(
-                                onClick = { showAttachmentMenu = true },
-                                modifier = Modifier.size(28.dp),
+                                onClick = { showPlusMenu = true },
+                                modifier = Modifier.minimumInteractiveComponentSize(),
+                                contentDescription = stringResource(R.string.chat_add_attachment),
                             ) {
                                 RuntimeIcon(
-                                    name = RuntimeIconName.Attach,
-                                    modifier = Modifier.size(17.dp),
-                                    tint = if (attachments.isNotEmpty()) MaterialTheme.colorScheme.primary
+                                    name = RuntimeIconName.Plus,
+                                    modifier = Modifier.size(19.dp),
+                                    tint = if (attachments.isNotEmpty() || attachedMentions.isNotEmpty()) MaterialTheme.colorScheme.primary
                                     else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                             DropdownMenu(
-                                expanded = showAttachmentMenu,
-                                onDismissRequest = { showAttachmentMenu = false },
+                                expanded = showPlusMenu,
+                                onDismissRequest = { showPlusMenu = false },
                             ) {
                                 DropdownMenuItem(
-                                    text = { Text("发送图片", fontSize = 13.sp) },
-                                    leadingIcon = { RuntimeIcon(RuntimeIconName.Image, Modifier.size(16.dp)) },
+                                    text = { Text(stringResource(R.string.chat_send_image), fontSize = 13.sp) },
+                                    leadingIcon = { RuntimeIcon(RuntimeIconName.Image, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) },
                                     onClick = {
-                                        showAttachmentMenu = false
+                                        showPlusMenu = false
                                         imagePickerLauncher.launch("image/*")
                                     },
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("发送文件 / 产物", fontSize = 13.sp) },
-                                    leadingIcon = { RuntimeIcon(RuntimeIconName.Document, Modifier.size(16.dp)) },
+                                    text = { Text(stringResource(R.string.chat_send_file), fontSize = 13.sp) },
+                                    leadingIcon = { RuntimeIcon(RuntimeIconName.Document, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.secondary) },
                                     onClick = {
-                                        showAttachmentMenu = false
+                                        showPlusMenu = false
                                         filePickerLauncher.launch("*/*")
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.chat_menu_capabilities_short), fontSize = 13.sp) },
+                                    leadingIcon = { RuntimeIcon(RuntimeIconName.Brain, Modifier.size(16.dp), tint = Color(0xFF10B981)) },
+                                    onClick = {
+                                        showPlusMenu = false
+                                        onOpenSkillsMcp()
                                     },
                                 )
                             }
                         }
 
-                        // 🧠 大脑能力快捷入口（@ 快捷选单）
-                        IconButton(
-                            onClick = {
-                                onTriggerMention()
-                                runCatching { focusRequester.requestFocus() }
-                            },
-                            modifier = Modifier.size(28.dp),
-                        ) {
-                            RuntimeIcon(
-                                name = RuntimeIconName.Brain,
-                                modifier = Modifier.size(17.dp),
-                                tint = if (attachedMentions.isNotEmpty()) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                        // ⚡ 思考深度独立胶囊（直接显示：轻度 / 中度 / 深度 / 极度 / 关闭 ^）
+                        val effortLabel = when {
+                            activeModel?.reasoningMode == "disabled" -> stringResource(R.string.chat_depth_off)
+                            activeModel?.reasoningEffort == "low" -> stringResource(R.string.chat_depth_light)
+                            activeModel?.reasoningEffort == "extreme" || activeModel?.reasoningEffort == "max" -> stringResource(R.string.chat_depth_extreme)
+                            activeModel?.reasoningEffort == "high" -> stringResource(R.string.chat_depth_deep)
+                            activeModel?.reasoningEffort == "medium" -> stringResource(R.string.chat_depth_medium)
+                            else -> stringResource(R.string.chat_depth_medium)
                         }
 
-                        // ⏱️ 思考/推理强度滑块开关
-                        IconButton(
+                        val effortTint = when {
+                            activeModel?.reasoningMode == "disabled" -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                            activeModel?.reasoningEffort == "low" -> Color(0xFF10B981)
+                            activeModel?.reasoningEffort == "extreme" || activeModel?.reasoningEffort == "max" -> Color(0xFFEC4899)
+                            activeModel?.reasoningEffort == "high" -> Color(0xFF8B5CF6)
+                            else -> Color(0xFF3B82F6)
+                        }
+
+                        Surface(
                             onClick = { showReasoningSlider = !showReasoningSlider },
-                            modifier = Modifier.size(28.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (showReasoningSlider) effortTint.copy(alpha = 0.15f)
+                            else Color.Transparent,
+                            border = if (showReasoningSlider) BorderStroke(0.8.dp, effortTint.copy(alpha = 0.4f)) else null,
+                            modifier = Modifier.padding(start = 2.dp),
                         ) {
-                            val isReasoningDisabled = activeModel?.reasoningMode == "disabled"
-                            val isHigh = activeModel?.reasoningEffort == "high"
-                            val isLow = activeModel?.reasoningEffort == "low"
-                            val speedIconTint = when {
-                                showReasoningSlider -> MaterialTheme.colorScheme.primary
-                                isReasoningDisabled -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
-                                isHigh -> Color(0xFF8B5CF6)
-                                isLow -> Color(0xFF10B981)
-                                else -> Color(0xFF3B82F6)
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(
+                                    text = effortLabel,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                    ),
+                                    color = if (showReasoningSlider) effortTint else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                RuntimeIcon(
+                                    name = if (showReasoningSlider) RuntimeIconName.ChevronDown else RuntimeIconName.ChevronUp,
+                                    modifier = Modifier.size(11.dp),
+                                    tint = if (showReasoningSlider) effortTint else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
-                            RuntimeIcon(
-                                name = RuntimeIconName.Speed,
-                                modifier = Modifier.size(17.dp),
-                                tint = speedIconTint,
-                            )
                         }
                     }
 
                     // 右侧发送 / 停止控制区（圆形灵动按钮）
-                    val canSend = input.isNotBlank() || attachments.isNotEmpty()
+                    val canSend = !initializing && (input.isNotBlank() || attachments.isNotEmpty())
                     if (running) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -1547,11 +1607,15 @@ private fun ChatPaneContent(
                                     ComposerSendMode.STEER -> Color(0xFF7C4DFF)
                                     ComposerSendMode.NEXT_RUN -> MaterialTheme.colorScheme.secondary
                                 }
+                                val sendDesc = stringResource(R.string.chat_send)
                                 Surface(
                                     onClick = doSend,
                                     shape = CircleShape,
                                     color = sendTint,
-                                    modifier = Modifier.size(30.dp),
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .size(32.dp)
+                                        .semantics { contentDescription = sendDesc },
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         RuntimeIcon(
@@ -1562,11 +1626,15 @@ private fun ChatPaneContent(
                                     }
                                 }
                             } else {
+                                val stopDesc = stringResource(R.string.chat_stop_generation)
                                 Surface(
                                     onClick = onStop,
                                     shape = CircleShape,
                                     color = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(30.dp),
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .size(32.dp)
+                                        .semantics { contentDescription = stopDesc },
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         RuntimeIcon(
@@ -1584,13 +1652,17 @@ private fun ChatPaneContent(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             ContextUsageRing(contextUsage)
+                            val sendDesc = stringResource(R.string.chat_send)
                             Surface(
                                 onClick = { if (canSend) doSend() },
                                 enabled = canSend,
                                 shape = CircleShape,
                                 color = if (canSend) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.surfaceContainerHighest,
-                                modifier = Modifier.size(30.dp),
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .size(32.dp)
+                                    .semantics { contentDescription = sendDesc },
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     RuntimeIcon(
@@ -1947,7 +2019,7 @@ private fun MentionPopup(
             LazyColumn(
                 modifier = Modifier.heightIn(max = 240.dp),
             ) {
-                items(mentions.size) { index ->
+                items(mentions.size, key = { mentions[it].id }) { index ->
                     val item = mentions[index]
                     val isSkill = item.type == MentionType.SKILL
                     val tagBg = if (isSkill) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
@@ -1998,7 +2070,7 @@ private fun MentionPopup(
                                     shape = RoundedCornerShape(4.dp),
                                 ) {
                                     Text(
-                                        if (isSkill) stringResource(R.string.chat_skill_badge) else "🔌 MCP",
+                                        if (isSkill) stringResource(R.string.chat_skill_badge) else stringResource(R.string.chat_mcp_badge),
                                         modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
                                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Medium),
                                         color = tagColor,
@@ -2031,6 +2103,8 @@ private fun UserBubble(
 ) {
     val context = LocalContext.current
     var showMenu by remember { mutableStateOf(false) }
+    // 删除消息为破坏性操作，先经确认对话框
+    var showDeleteConfirm by rememberSaveable { mutableStateOf(false) }
 
     val copyText = {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -2056,6 +2130,7 @@ private fun UserBubble(
                         ImageThumbnail(
                             imageUrl = imageUrl,
                             cacheKey = "chat-image-${message.id}-$index",
+                            onClick = { showMenu = true },
                         )
                     }
                 }
@@ -2140,10 +2215,39 @@ private fun UserBubble(
                 },
                 onClick = {
                     showMenu = false
-                    onDelete()
+                    showDeleteConfirm = true
                 },
             )
         }
+    }
+
+    // 删除消息二次确认
+    if (showDeleteConfirm) {
+        RuntimeAlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text(stringResource(R.string.chat_delete_message_title), fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    stringResource(R.string.chat_delete_message_message),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteConfirm = false
+                        onDelete()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                ) {
+                    Text(stringResource(R.string.chat_confirm_delete), color = MaterialTheme.colorScheme.onError)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) { Text(stringResource(R.string.chat_cancel)) }
+            },
+        )
     }
 }
 
@@ -2158,6 +2262,7 @@ private fun UserBubble(
 private fun ImageThumbnail(
     imageUrl: String,
     cacheKey: String,
+    onClick: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val thumbnailPx = with(LocalDensity.current) { 130.dp.roundToPx() }
@@ -2187,7 +2292,9 @@ private fun ImageThumbnail(
                 1.dp,
                 MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
                 RoundedCornerShape(12.dp),
-            ),
+            )
+            // 与文字气泡一致的点击语义：弹出操作菜单
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
     )
 }
 
@@ -2302,7 +2409,10 @@ private data class TaskStepItem(
     val isCompleted: Boolean,
 )
 
+private val taskPlanCache = LruCache<String, List<TaskStepItem>>(200)
+
 private fun extractTaskPlanSteps(text: String): List<TaskStepItem> {
+    taskPlanCache.get(text)?.let { return it }
     val lines = text.lines()
     val steps = mutableListOf<TaskStepItem>()
     val checkboxRegex = Regex("""^(\s*[-*]|\s*\d+[\.\)])?\s*\[([ xX])\]\s*(.+)""")
@@ -2317,6 +2427,7 @@ private fun extractTaskPlanSteps(text: String): List<TaskStepItem> {
             }
         }
     }
+    taskPlanCache.put(text, steps)
     return steps
 }
 
@@ -2484,72 +2595,69 @@ private fun ThinkingBlock(
     Column(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .then(
-                if (live) Modifier.border(
-                    1.dp,
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
-                    RoundedCornerShape(12.dp),
-                ) else Modifier,
-            )
             .clickable {
                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                 expanded = !expanded
             }
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(vertical = 1.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 3.dp),
         ) {
-            if (live) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(12.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            } else {
-                RuntimeIcon(
-                    RuntimeIconName.Chat,
-                    modifier = Modifier.size(14.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
+            Box(
+                modifier = Modifier.size(16.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (live) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(12.dp),
+                        strokeWidth = 1.5.dp,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                } else {
+                    RuntimeIcon(
+                        RuntimeIconName.Brain,
+                        modifier = Modifier.size(13.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    )
+                }
             }
 
             Text(
                 stringResource(if (live) R.string.chat_deep_reasoning else R.string.chat_reasoning_process),
-                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Medium,
+                ),
+                color = if (live) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
             Spacer(Modifier.weight(1f))
 
-            IconButton(
-                onClick = copyToClipboard,
-                modifier = Modifier.size(24.dp),
-            ) {
-                RuntimeIcon(
-                    RuntimeIconName.Copy,
-                    Modifier.size(13.dp),
-                    MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                shape = CircleShape,
-                modifier = Modifier.size(22.dp),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
+            if (expanded) {
+                IconButton(
+                    onClick = copyToClipboard,
+                    modifier = Modifier.size(22.dp),
+                    contentDescription = stringResource(R.string.chat_copy_reasoning),
+                ) {
                     RuntimeIcon(
-                        if (expanded) RuntimeIconName.ChevronDown else RuntimeIconName.ChevronRight,
-                        Modifier.size(12.dp),
-                        MaterialTheme.colorScheme.onSurfaceVariant,
+                        RuntimeIconName.Copy,
+                        Modifier.size(11.dp),
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                     )
                 }
             }
+
+            RuntimeIcon(
+                if (expanded) RuntimeIconName.ChevronDown else RuntimeIconName.ChevronRight,
+                Modifier.size(11.dp),
+                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+            )
         }
 
         AnimatedVisibility(
@@ -2560,18 +2668,35 @@ private fun ThinkingBlock(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 4.dp),
+                    .drawBehind {
+                        // 左侧极简灰色强调线，对齐上方 16dp 容器的水平中轴 (x = 8dp)
+                        val lineX = 8.dp.toPx()
+                        drawLine(
+                            color = Color(0xFF6B7280).copy(alpha = 0.35f),
+                            start = Offset(lineX, 0f),
+                            end = Offset(lineX, size.height),
+                            strokeWidth = 1.5.dp.toPx(),
+                        )
+                    }
+                    .padding(start = 22.dp, top = 2.dp, bottom = 4.dp),
             ) {
                 if (live) {
                     SelectionContainer {
                         Text(
                             text = reasoning,
                             modifier = Modifier.fillMaxWidth(),
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 12.sp,
+                                lineHeight = 17.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                            ),
                         )
                     }
                 } else {
-                    MarkdownText(reasoning, modifier = Modifier.fillMaxWidth())
+                    MarkdownText(
+                        reasoning,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
         }
@@ -2584,31 +2709,40 @@ private fun CapabilityEventCard(event: CapabilityEvent) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(12.dp))
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        RuntimeIcon(
-            if (isSkill) RuntimeIconName.Brain else RuntimeIconName.Cpu,
-            Modifier.size(18.dp),
-            MaterialTheme.colorScheme.primary,
-        )
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(
-                if (isSkill) "Skill: ${event.name}" else "MCP: ${event.name}",
-                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.primary,
+        Box(
+            modifier = Modifier.size(16.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            RuntimeIcon(
+                if (isSkill) RuntimeIconName.Brain else RuntimeIconName.Cpu,
+                Modifier.size(13.dp),
+                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
             )
-            if (event.details.isNotBlank()) {
-                Text(
-                    event.details,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+        }
+        Text(
+            stringResource(
+                if (isSkill) R.string.chat_capability_skill_fmt else R.string.chat_capability_mcp_fmt,
+                event.name,
+            ),
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Medium,
+            ),
+            color = MaterialTheme.colorScheme.primary,
+        )
+        if (event.details.isNotBlank()) {
+            Text(
+                "· ${event.details}",
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
@@ -2632,16 +2766,19 @@ private fun ToolCard(
         result?.success == false -> DotFailed
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
+    // 状态点补充文本语义，避免 TalkBack 只感知到一块颜色
+    val dotDesc = when {
+        result == null && running -> stringResource(R.string.chat_tool_state_running)
+        result?.success == true -> stringResource(R.string.chat_tool_state_success)
+        result?.success == false -> stringResource(R.string.chat_tool_state_failed)
+        else -> null
+    }
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .background(
-                    MaterialTheme.colorScheme.surfaceContainerLow,
-                    RoundedCornerShape(12.dp),
-                )
-                .padding(start = 12.dp, top = 10.dp, end = 10.dp, bottom = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+                .padding(vertical = 1.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             if (showReasoning) {
                 call.reasoning?.takeIf { it.isNotBlank() }
@@ -2653,13 +2790,30 @@ private fun ToolCard(
                         )
                     }
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(Modifier.size(7.dp).clip(CircleShape).background(dotColor))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable { expanded = !expanded }
+                    .padding(vertical = 3.dp),
+            ) {
+                Box(
+                    modifier = Modifier.size(16.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val dotModifier = if (dotDesc != null) {
+                        Modifier.semantics { contentDescription = dotDesc }
+                    } else Modifier
+                    Box(dotModifier.size(6.dp).clip(CircleShape).background(dotColor))
+                }
                 Text(
                     if (call.tool == HarnessTool.MCP) stringResource(R.string.chat_call_tool) else toolName(call.tool, call.rawToolName),
-                    style = MaterialTheme.typography.labelLarge.copy(
+                    style = MaterialTheme.typography.labelSmall.copy(
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.SemiBold,
+                        fontSize = 11.5.sp,
                     ),
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -2669,7 +2823,7 @@ private fun ToolCard(
                     } else {
                         toolArgsSummary(call)
                     },
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -2683,7 +2837,8 @@ private fun ToolCard(
                     LaunchedEffect(call.id) {
                         while (true) {
                             elapsed = (System.currentTimeMillis() - call.createdAt).coerceAtLeast(0L)
-                            delay(100)
+                            // 500ms 刷新足够展示秒级耗时；过密轮询会让长会话持续重组抖动
+                            delay(500)
                         }
                     }
                     formatDuration(elapsed)
@@ -2693,22 +2848,16 @@ private fun ToolCard(
                 durationText?.let {
                     Text(
                         it,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.5.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                         fontFamily = FontFamily.Monospace,
                     )
                 }
-                Surface(
-                    modifier = Modifier.clickable { expanded = !expanded },
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    shape = CircleShape,
-                ) {
-                    RuntimeIcon(
-                        if (expanded) RuntimeIconName.ChevronDown else RuntimeIconName.ChevronRight,
-                        Modifier.padding(5.dp).size(14.dp),
-                        MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                RuntimeIcon(
+                    if (expanded) RuntimeIconName.ChevronDown else RuntimeIconName.ChevronRight,
+                    Modifier.size(11.dp),
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                )
             }
 
             val downloadingPrefix = stringResource(R.string.chat_downloading_prefix)
@@ -2720,22 +2869,22 @@ private fun ToolCard(
             if (downloadStatus != null) {
                 Text(
                     downloadStatus,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.5.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = FontFamily.Monospace,
                 )
                 val percent = Regex("\\((\\d+)%\\)").find(downloadStatus)
                     ?.groupValues?.getOrNull(1)?.toFloatOrNull()?.div(100f)
                 if (percent == null) {
-                LinearProgressIndicator(
-                        modifier = Modifier.fillMaxWidth(),
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().height(2.dp),
                         color = MaterialTheme.colorScheme.primary,
                         trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                     )
                 } else {
                     LinearProgressIndicator(
                         progress = { percent },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().height(2.dp),
                         color = MaterialTheme.colorScheme.primary,
                         trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                     )
@@ -2753,9 +2902,9 @@ private fun ToolCard(
                 if (result != null && !running) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                         TextButton(onClick = onRetry) {
-                            RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(15.dp), MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.width(6.dp))
-                            Text(stringResource(R.string.chat_retry_from_tool))
+                            RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(13.dp), MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(4.dp))
+                            Text(stringResource(R.string.chat_retry_from_tool), fontSize = 11.5.sp)
                         }
                     }
                 }
@@ -2823,9 +2972,25 @@ private fun ApprovalRequestCard(
                 )
             }
 
+            // 审批处理期间禁用按钮，防止重复提交
+            var resolving by remember { mutableStateOf(false) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = onReject, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.chat_reject)) }
-                Button(onClick = onApprove, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.chat_approve_continue)) }
+                OutlinedButton(
+                    onClick = {
+                        resolving = true
+                        onReject()
+                    },
+                    enabled = !resolving,
+                    modifier = Modifier.weight(1f),
+                ) { Text(stringResource(R.string.chat_reject)) }
+                Button(
+                    onClick = {
+                        resolving = true
+                        onApprove()
+                    },
+                    enabled = !resolving,
+                    modifier = Modifier.weight(1f),
+                ) { Text(stringResource(R.string.chat_approve_continue)) }
             }
         }
     }
@@ -2881,7 +3046,9 @@ private fun SessionsDialog(
     onDelete: (String) -> Unit,
     onRename: (String, String) -> Unit,
 ) {
-    var renameTarget by remember { mutableStateOf<HarnessSessionEntity?>(null) }
+    // 重命名 / 删除目标只保存 id，旋转后可从 sessions 恢复
+    var renameTargetId by rememberSaveable { mutableStateOf<String?>(null) }
+    var deleteTargetId by rememberSaveable { mutableStateOf<String?>(null) }
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -2938,7 +3105,7 @@ private fun SessionsDialog(
                     modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    items(sessions.size) { index ->
+                    items(sessions.size, key = { sessions[it].id }) { index ->
                         val session = sessions[index]
                         val isCurrent = session.id == currentSessionId
                         val runState = sessionRunStates[session.id] ?: top.wkbin.taixu.core.model.SessionRunState.IDLE
@@ -3046,10 +3213,18 @@ private fun SessionsDialog(
                                         }
                                     }
                                 }
-                                IconButton(onClick = { renameTarget = session }, modifier = Modifier.size(28.dp)) {
+                                IconButton(
+                                    onClick = { renameTargetId = session.id },
+                                    modifier = Modifier.minimumInteractiveComponentSize(),
+                                    contentDescription = stringResource(R.string.chat_rename_session_button),
+                                ) {
                                     RuntimeIcon(RuntimeIconName.Settings, Modifier.size(15.dp), MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                IconButton(onClick = { onDelete(session.id) }, modifier = Modifier.size(28.dp)) {
+                                IconButton(
+                                    onClick = { deleteTargetId = session.id },
+                                    modifier = Modifier.minimumInteractiveComponentSize(),
+                                    contentDescription = stringResource(R.string.chat_delete_session),
+                                ) {
                                     RuntimeIcon(RuntimeIconName.Trash, Modifier.size(15.dp), MaterialTheme.colorScheme.error)
                                 }
                             }
@@ -3071,13 +3246,48 @@ private fun SessionsDialog(
         },
     )
 
+    val renameTarget = renameTargetId?.let { id -> sessions.firstOrNull { it.id == id } }
     renameTarget?.let { target ->
         RenameSessionDialog(
             currentTitle = target.title,
-            onDismiss = { renameTarget = null },
+            onDismiss = { renameTargetId = null },
             onRename = { title ->
-                if (title.isNotBlank()) onRename(target.id, title)
-                renameTarget = null
+                onRename(target.id, title)
+                renameTargetId = null
+            },
+        )
+    }
+
+    // 删除会话二次确认（运行中会话也提示，避免误删不可恢复）
+    deleteTargetId?.let { targetId ->
+        RuntimeAlertDialog(
+            onDismissRequest = { deleteTargetId = null },
+            title = { Text(stringResource(R.string.chat_delete_session_title), fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        stringResource(R.string.chat_delete_session_message),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        deleteTargetId = null
+                        onDelete(targetId)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        disabledContainerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.3f),
+                    ),
+                ) {
+                    Text(stringResource(R.string.chat_confirm_delete), color = MaterialTheme.colorScheme.onError)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTargetId = null }) { Text(stringResource(R.string.chat_cancel)) }
             },
         )
     }
@@ -3090,6 +3300,7 @@ private fun RenameSessionDialog(
     onRename: (String) -> Unit,
 ) {
     var title by remember(currentTitle) { mutableStateOf(currentTitle) }
+    val titleBlank = title.isBlank()
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.chat_rename_session), fontWeight = FontWeight.Bold) },
@@ -3099,10 +3310,24 @@ private fun RenameSessionDialog(
                 onValueChange = { title = it },
                 label = { Text(stringResource(R.string.chat_title_label)) },
                 singleLine = true,
+                isError = titleBlank,
+                supportingText = {
+                    if (titleBlank) {
+                        Text(
+                            stringResource(R.string.chat_title_required),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                },
                 modifier = Modifier.fillMaxWidth(),
             )
         },
-        confirmButton = { TextButton(onClick = { onRename(title) }) { Text(stringResource(R.string.chat_save), color = MaterialTheme.colorScheme.primary) } },
+        confirmButton = {
+            TextButton(
+                onClick = { onRename(title) },
+                enabled = !titleBlank,
+            ) { Text(stringResource(R.string.chat_save), color = MaterialTheme.colorScheme.primary) }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.chat_cancel)) } },
     )
 }
@@ -3124,7 +3349,9 @@ private fun ModelDialog(
     onAdd: (String, String, String, String) -> Unit,
     onDelete: (String) -> Unit,
 ) {
-    var showAdd by remember { mutableStateOf(false) }
+    var showAdd by rememberSaveable { mutableStateOf(false) }
+    // 删除模型档案为破坏性操作，先记录目标 id 并经确认对话框
+    var deleteModelTargetId by rememberSaveable { mutableStateOf<String?>(null) }
     if (showAdd) {
         AddModelDialog(
             onDismiss = { showAdd = false },
@@ -3214,7 +3441,11 @@ private fun ModelDialog(
                                     )
                                 }
                             }
-                            IconButton(onClick = { onDelete(model.id) }, modifier = Modifier.size(28.dp)) {
+                            IconButton(
+                                onClick = { deleteModelTargetId = model.id },
+                                modifier = Modifier.minimumInteractiveComponentSize(),
+                                contentDescription = stringResource(R.string.chat_delete_model_profile),
+                            ) {
                                 RuntimeIcon(RuntimeIconName.Trash, Modifier.size(15.dp), MaterialTheme.colorScheme.error)
                             }
                         }
@@ -3305,6 +3536,38 @@ private fun ModelDialog(
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.chat_close)) }
         },
     )
+
+    // 删除模型档案二次确认
+    deleteModelTargetId?.let { targetId ->
+        RuntimeAlertDialog(
+            onDismissRequest = { deleteModelTargetId = null },
+            title = { Text(stringResource(R.string.chat_delete_model_title), fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    stringResource(R.string.chat_delete_model_message),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        deleteModelTargetId = null
+                        onDelete(targetId)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        disabledContainerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.3f),
+                    ),
+                ) {
+                    Text(stringResource(R.string.chat_confirm_delete), color = MaterialTheme.colorScheme.onError)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteModelTargetId = null }) { Text(stringResource(R.string.chat_cancel)) }
+            },
+        )
+    }
 }
 
 @Composable
@@ -3434,24 +3697,44 @@ private fun AddModelDialog(
     onDismiss: () -> Unit,
     onAdd: (String, String, String, String) -> Unit,
 ) {
-    var name by remember { mutableStateOf("") }
+    var name by rememberSaveable { mutableStateOf("") }
     val defaultProvider = stringResource(R.string.chat_custom_provider)
-    var provider by remember { mutableStateOf(defaultProvider) }
-    var model by remember { mutableStateOf("") }
-    var baseUrl by remember { mutableStateOf("") }
+    var provider by rememberSaveable { mutableStateOf(defaultProvider) }
+    var model by rememberSaveable { mutableStateOf("") }
+    var baseUrl by rememberSaveable { mutableStateOf("") }
+    // baseUrl 基础格式校验：必须以 http:// 或 https:// 开头（留空走供应商默认端点）
+    val baseUrlInvalid = baseUrl.isNotBlank() && !baseUrl.trim().startsWith("http://") && !baseUrl.trim().startsWith("https://")
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.chat_add_model), fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text(stringResource(R.string.chat_optional_name)) }, singleLine = true)
-                OutlinedTextField(value = provider, onValueChange = { provider = it }, label = { Text("Provider") }, singleLine = true)
-                OutlinedTextField(value = baseUrl, onValueChange = { baseUrl = it }, label = { Text(stringResource(R.string.chat_optional_base_url)) }, placeholder = { Text("https://api.openai.com/v1") }, singleLine = true)
+                OutlinedTextField(value = provider, onValueChange = { provider = it }, label = { Text(stringResource(R.string.chat_provider_label)) }, singleLine = true)
+                OutlinedTextField(
+                    value = baseUrl,
+                    onValueChange = { baseUrl = it },
+                    label = { Text(stringResource(R.string.chat_optional_base_url)) },
+                    placeholder = { Text("https://api.openai.com/v1") },
+                    isError = baseUrlInvalid,
+                    supportingText = {
+                        if (baseUrlInvalid) {
+                            Text(
+                                stringResource(R.string.chat_base_url_invalid),
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    },
+                    singleLine = true,
+                )
                 OutlinedTextField(value = model, onValueChange = { model = it }, label = { Text(stringResource(R.string.chat_model_id)) }, placeholder = { Text("deepseek-chat / gpt-4o") }, singleLine = true)
             }
         },
         confirmButton = {
-            TextButton(onClick = { onAdd(name, provider, model, baseUrl) }, enabled = model.isNotBlank()) { Text(stringResource(R.string.chat_confirm_add), color = MaterialTheme.colorScheme.primary) }
+            TextButton(
+                onClick = { onAdd(name, provider, model, baseUrl) },
+                enabled = model.isNotBlank() && !baseUrlInvalid,
+            ) { Text(stringResource(R.string.chat_confirm_add), color = MaterialTheme.colorScheme.primary) }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.chat_cancel)) }
@@ -3466,10 +3749,12 @@ private fun NewSessionDialog(
     onCreate: (title: String, workspace: String, projectType: top.wkbin.taixu.runtime.ProjectType) -> Unit,
 ) {
     val defaultTitle = stringResource(R.string.chat_new_session)
-    var title by remember { mutableStateOf(defaultTitle) }
-    var selected by remember { mutableStateOf("") }
-    var selectedType by remember { mutableStateOf(top.wkbin.taixu.runtime.ProjectType.GENERAL) }
-    var typeMenuExpanded by remember { mutableStateOf(false) }
+    // 表单状态旋转后保留；枚举以 name 字符串保存
+    var title by rememberSaveable { mutableStateOf(defaultTitle) }
+    var selected by rememberSaveable { mutableStateOf("") }
+    var selectedTypeName by rememberSaveable { mutableStateOf(top.wkbin.taixu.runtime.ProjectType.GENERAL.name) }
+    val selectedType = top.wkbin.taixu.runtime.ProjectType.valueOf(selectedTypeName)
+    var typeMenuExpanded by rememberSaveable { mutableStateOf(false) }
     val quickTags = listOf(
         defaultTitle,
         stringResource(R.string.chat_quick_bug),
@@ -3545,14 +3830,14 @@ private fun NewSessionDialog(
                     item {
                         WorkspaceOption(stringResource(R.string.chat_no_workspace), "/root", selected == "", onSelect = {
                             selected = ""
-                            selectedType = top.wkbin.taixu.runtime.ProjectType.GENERAL
+                            selectedTypeName = top.wkbin.taixu.runtime.ProjectType.GENERAL.name
                         })
                     }
-                    items(workspaces.size) { index ->
+                    items(workspaces.size, key = { workspaces[it].linuxPath }) { index ->
                         val ws = workspaces[index]
                         WorkspaceOption(ws.name, ws.linuxPath, selected == ws.linuxPath) {
                             selected = ws.linuxPath
-                            selectedType = ws.projectType
+                            selectedTypeName = ws.projectType.name
                         }
                     }
                 }
@@ -3592,7 +3877,7 @@ private fun NewSessionDialog(
                             DropdownMenuItem(
                                 text = { Text(type.displayName) },
                                 onClick = {
-                                    selectedType = type
+                                    selectedTypeName = type.name
                                     typeMenuExpanded = false
                                 },
                             )
@@ -3655,14 +3940,14 @@ private fun RoundCollapseButton(
     modifier: Modifier = Modifier,
 ) {
     val text = if (item.isExpanded) {
-        "收起"
+        stringResource(R.string.chat_collapse)
     } else {
         val durationSuffix = if (item.hiddenDurationMs > 0) {
             " · " + formatDuration(item.hiddenDurationMs)
         } else {
             ""
         }
-        "展开更多 ${item.hiddenSteps} 步（共 ${item.totalSteps} 步）$durationSuffix"
+        stringResource(R.string.chat_expand_more, item.hiddenSteps, item.totalSteps, durationSuffix)
     }
 
     Row(
@@ -3768,7 +4053,7 @@ private fun SkillsAndMcpSheet(
     onNavigateToSettings: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     val activeSkillsCount = remember(allSkills) { allSkills.count { it.isEnabled } }
     val activeMcpCount = remember(mcpServers) { mcpServers.count { it.isEnabled } }
 
@@ -3874,7 +4159,7 @@ private fun SkillsAndMcpSheet(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            items(allSkills.size) { index ->
+                            items(allSkills.size, key = { allSkills[it].id }) { index ->
                                 val skill = allSkills[index]
                                 val isPinned = skill.id in pinnedMentionIds || skill.name.lowercase() in pinnedMentionIds
                                 Surface(
@@ -3943,10 +4228,12 @@ private fun SkillsAndMcpSheet(
                                                     0.8.dp,
                                                     if (isPinned) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
                                                 ),
-                                                modifier = Modifier.clickable { onTogglePin(skill.id) },
+                                                modifier = Modifier
+                                                    .minimumInteractiveComponentSize()
+                                                    .clickable { onTogglePin(skill.id) },
                                             ) {
                                                 Text(
-                                                    if (isPinned) "📌 已常驻" else "📌 设为常驻",
+                                                    if (isPinned) stringResource(R.string.chat_pinned_on) else stringResource(R.string.chat_pinned_off),
                                                     style = MaterialTheme.typography.labelSmall.copy(
                                                         fontSize = 10.sp,
                                                         fontWeight = if (isPinned) FontWeight.Bold else FontWeight.Normal,
@@ -3991,7 +4278,7 @@ private fun SkillsAndMcpSheet(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            items(mcpServers.size) { index ->
+                            items(mcpServers.size, key = { mcpServers[it].id }) { index ->
                                 val server = mcpServers[index]
                                 val isPinned = server.id in pinnedMentionIds || server.name.lowercase() in pinnedMentionIds
                                 val connState = mcpConnectionStates[server.id] ?: top.wkbin.taixu.core.model.McpConnectionState.UNKNOWN
@@ -4023,8 +4310,17 @@ private fun SkillsAndMcpSheet(
                                                     ),
                                                     color = MaterialTheme.colorScheme.onSurface,
                                                 )
+                                                // 连通状态点补充文本语义，避免 TalkBack 只感知到一块颜色
+                                                val connStateDesc = when {
+                                                    !server.isEnabled -> stringResource(R.string.chat_mcp_state_disabled)
+                                                    connState == top.wkbin.taixu.core.model.McpConnectionState.CHECKING -> stringResource(R.string.chat_mcp_state_checking)
+                                                    connState == top.wkbin.taixu.core.model.McpConnectionState.ONLINE -> stringResource(R.string.chat_mcp_state_online)
+                                                    connState == top.wkbin.taixu.core.model.McpConnectionState.OFFLINE -> stringResource(R.string.chat_mcp_state_offline)
+                                                    else -> stringResource(R.string.chat_mcp_state_unknown)
+                                                }
                                                 Box(
                                                     modifier = Modifier
+                                                        .semantics { contentDescription = connStateDesc }
                                                         .size(9.dp)
                                                         .clip(CircleShape)
                                                         .background(
@@ -4079,10 +4375,12 @@ private fun SkillsAndMcpSheet(
                                                     0.8.dp,
                                                     if (isPinned) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
                                                 ),
-                                                modifier = Modifier.clickable { onTogglePin(server.id) },
+                                                modifier = Modifier
+                                                    .minimumInteractiveComponentSize()
+                                                    .clickable { onTogglePin(server.id) },
                                             ) {
                                                 Text(
-                                                    if (isPinned) "📌 已常驻" else "📌 设为常驻",
+                                                    if (isPinned) stringResource(R.string.chat_pinned_on) else stringResource(R.string.chat_pinned_off),
                                                     style = MaterialTheme.typography.labelSmall.copy(
                                                         fontSize = 10.sp,
                                                         fontWeight = if (isPinned) FontWeight.Bold else FontWeight.Normal,
@@ -4163,6 +4461,7 @@ private fun ReasoningEffortSlider(
         Triple(stringResource(R.string.chat_reasoning_low), stringResource(R.string.chat_reasoning_low_description), "enabled" to "low"),
         Triple(stringResource(R.string.chat_reasoning_medium), stringResource(R.string.chat_reasoning_medium_description), "enabled" to "medium"),
         Triple(stringResource(R.string.chat_reasoning_high), stringResource(R.string.chat_reasoning_high_description), "enabled" to "high"),
+        Triple(stringResource(R.string.chat_reasoning_extreme), stringResource(R.string.chat_reasoning_extreme_description), "enabled" to "max"),
     )
 
     val currentIndex = when {
@@ -4170,6 +4469,7 @@ private fun ReasoningEffortSlider(
         currentMode == "enabled" && currentEffort == "low" -> 1
         currentMode == "enabled" && currentEffort == "medium" -> 2
         currentMode == "enabled" && currentEffort == "high" -> 3
+        currentMode == "enabled" && (currentEffort == "extreme" || currentEffort == "max") -> 4
         else -> 2 // 默认中推理
     }
 
@@ -4216,6 +4516,7 @@ private fun ReasoningEffortSlider(
                             1 -> Color(0xFF10B981)
                             2 -> Color(0xFF3B82F6)
                             3 -> Color(0xFF8B5CF6)
+                            4 -> Color(0xFFEC4899)
                             else -> MaterialTheme.colorScheme.primary
                         },
                     )
@@ -4225,7 +4526,11 @@ private fun ReasoningEffortSlider(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                IconButton(onClick = onClose, modifier = Modifier.size(24.dp)) {
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier.minimumInteractiveComponentSize(),
+                    contentDescription = stringResource(R.string.chat_close),
+                ) {
                     RuntimeIcon(RuntimeIconName.Close, Modifier.size(13.dp), MaterialTheme.colorScheme.outline)
                 }
             }
@@ -4252,6 +4557,7 @@ private fun ReasoningEffortSlider(
                             1 -> Color(0xFF10B981)
                             2 -> Color(0xFF3B82F6)
                             3 -> Color(0xFF8B5CF6)
+                            4 -> Color(0xFFEC4899)
                             else -> MaterialTheme.colorScheme.primary
                         }
 
@@ -4267,6 +4573,7 @@ private fun ReasoningEffortSlider(
                                             1 -> Color(0xFF10B981).copy(alpha = 0.25f)
                                             2 -> Color(0xFF3B82F6).copy(alpha = 0.25f)
                                             3 -> Color(0xFF8B5CF6).copy(alpha = 0.25f)
+                                            4 -> Color(0xFFEC4899).copy(alpha = 0.25f)
                                             else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
                                         }
                                     } else Color.Transparent,
@@ -4284,16 +4591,41 @@ private fun ReasoningEffortSlider(
                                     1 -> stringResource(R.string.chat_depth_light)
                                     2 -> stringResource(R.string.chat_depth_medium)
                                     3 -> stringResource(R.string.chat_depth_deep)
+                                    4 -> stringResource(R.string.chat_depth_extreme)
                                     else -> ""
                                 },
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                    fontSize = 12.sp,
+                                    fontSize = 11.5.sp,
                                 ),
                                 color = if (isSelected) itemColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
                             )
                         }
                     }
+                }
+            }
+
+            // 💡 说明提示：必须模型支持才生效
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    RuntimeIcon(
+                        name = RuntimeIconName.Info,
+                        modifier = Modifier.size(15.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        text = stringResource(R.string.chat_reasoning_model_support_notice),
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 15.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }

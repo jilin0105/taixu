@@ -225,7 +225,7 @@ fun SettingsScreen(
                     iconBg = Color(0xFF3B82F6).copy(alpha = 0.12f),
                     title = "关于、更新与官方社区",
                     subtitle = "检查新版本 · GitHub 开源仓库 · 官方 QQ 交流群",
-                    badge = "v$appVersionName 稳定版",
+                    badge = if (appVersionName == "unknown") "版本号未知 · 稳定版" else "v$appVersionName 稳定版",
                     onClick = onOpenAboutCommunity,
                 )
             }
@@ -440,9 +440,12 @@ fun LinuxEnvironmentSettingsScreen(
     val installedDistros by viewModel.installedDistros.collectAsStateWithLifecycle()
     val webChatStatus by viewModel.webChatStatus.collectAsStateWithLifecycle()
 
-    var showExecutionModeDialog by remember { mutableStateOf(false) }
-    var showWebChatDialog by remember { mutableStateOf(false) }
-    var privilegeResultMessage by remember { mutableStateOf<String?>(null) }
+    var showExecutionModeDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var showWebChatDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var privilegeResultMessage by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    // Web 开关切换进行中指示，防止重复点击
+    var webChatToggling by remember { mutableStateOf(false) }
+    LaunchedEffect(webChatStatus.isRunning) { webChatToggling = false }
 
     if (showExecutionModeDialog) {
         ExecutionModeDialog(
@@ -479,7 +482,11 @@ fun LinuxEnvironmentSettingsScreen(
     if (showWebChatDialog) {
         WebChatBridgeDialog(
             status = webChatStatus,
-            onToggle = { enabled -> viewModel.toggleWebChatServer(enabled) },
+            toggling = webChatToggling,
+            onToggle = { enabled ->
+                webChatToggling = true
+                viewModel.toggleWebChatServer(enabled)
+            },
             onDismiss = { showWebChatDialog = false },
         )
     }
@@ -600,11 +607,14 @@ fun EnvironmentVariableSettingsScreen(
     val error by viewModel.environmentError.collectAsStateWithLifecycle()
     val activeDistroId by viewModel.activeDistroId.collectAsStateWithLifecycle()
     val runtimeState by viewModel.runtimeState.collectAsStateWithLifecycle()
-    var showEditor by remember { mutableStateOf(false) }
-    var editing by remember { mutableStateOf<top.wkbin.taixu.core.model.EnvironmentVariable?>(null) }
-    var editorInitialKey by remember { mutableStateOf("") }
-    var editorInitialValue by remember { mutableStateOf("") }
-    var showDelete by remember { mutableStateOf<top.wkbin.taixu.core.model.EnvironmentVariable?>(null) }
+    // 对象状态仅保存可 Bundle 化的字段，旋转后按 key/entry 恢复
+    var showEditor by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var editingKey by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    var editorInitialKey by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    var editorInitialValue by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    var deleteKey by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    val editing = editingKey?.let { key -> entries.firstOrNull { it.id == key } }
+    val showDelete = deleteKey?.let { key -> entries.firstOrNull { it.id == key } }
 
     fun openEnvironmentEditor(
         entry: top.wkbin.taixu.core.model.EnvironmentVariable?,
@@ -612,7 +622,7 @@ fun EnvironmentVariableSettingsScreen(
         value: String,
     ) {
         viewModel.clearEnvironmentError()
-        editing = entry
+        editingKey = entry?.id
         editorInitialKey = key
         editorInitialValue = value
         showEditor = true
@@ -627,21 +637,21 @@ fun EnvironmentVariableSettingsScreen(
             onDismiss = {
                 viewModel.clearEnvironmentError()
                 showEditor = false
-                editing = null
+                editingKey = null
             },
             onSave = { key, value, note ->
                 if (editing == null) viewModel.addEnvironmentVariable(key, value, note) { if (it) { showEditor = false } }
-                else viewModel.updateEnvironmentVariable(editing!!.id, key, value, note) { if (it) { showEditor = false; editing = null } }
+                else viewModel.updateEnvironmentVariable(editing!!.id, key, value, note) { if (it) { showEditor = false; editingKey = null } }
             },
         )
     }
     showDelete?.let { entry ->
         RuntimeAlertDialog(
-            onDismissRequest = { showDelete = null },
+            onDismissRequest = { deleteKey = null },
             title = { Text("删除环境变量") },
             text = { Text("确定删除 ${entry.key}？") },
-            confirmButton = { TextButton(onClick = { viewModel.deleteEnvironmentVariable(entry.id); showDelete = null }) { Text("删除") } },
-            dismissButton = { TextButton(onClick = { showDelete = null }) { Text("取消") } },
+            confirmButton = { TextButton(onClick = { viewModel.deleteEnvironmentVariable(entry.id); deleteKey = null }) { Text("删除") } },
+            dismissButton = { TextButton(onClick = { deleteKey = null }) { Text("取消") } },
         )
     }
 
@@ -688,7 +698,7 @@ fun EnvironmentVariableSettingsScreen(
                         RuntimeIcon(RuntimeIconName.Alert, tint = MaterialTheme.colorScheme.tertiary)
                         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             Text(
-                                "Warning · 修改环境变量可能导致运行异常",
+                                "警告 · 修改环境变量可能导致运行异常",
                                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                                 color = MaterialTheme.colorScheme.onTertiaryContainer,
                             )
@@ -753,7 +763,7 @@ fun EnvironmentVariableSettingsScreen(
                                 )
                             }
                             IconButton(onClick = { openEnvironmentEditor(entry, entry.key, values[entry.key].orEmpty()) }) { RuntimeIcon(RuntimeIconName.Edit) }
-                            IconButton(onClick = { showDelete = entry }) { RuntimeIcon(RuntimeIconName.Trash, tint = MaterialTheme.colorScheme.error) }
+                            IconButton(onClick = { deleteKey = entry.id }) { RuntimeIcon(RuntimeIconName.Trash, tint = MaterialTheme.colorScheme.error) }
                         }
                     }
                 }
@@ -862,9 +872,9 @@ fun SystemDevSettingsScreen(
     val phantomBusy by viewModel.phantomProcessBusy.collectAsStateWithLifecycle()
     val phantomMessage by viewModel.phantomProcessMessage.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
-    var showBatteryDialog by remember { mutableStateOf(false) }
-    var showPhantomProcessDialog by remember { mutableStateOf(false) }
-    var batteryExempted by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
+    var showBatteryDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var showPhantomProcessDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var batteryExempted by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
     val isRestrictiveRom = remember { RomAutostartHelper.isKnownRestrictiveRom() }
     val romLabel = remember { RomAutostartHelper.romLabel() }
 
@@ -931,7 +941,11 @@ fun SystemDevSettingsScreen(
                             title = "$romLabel 快捷自启动跳转",
                             subtitle = "一键直达厂商系统自启动管理设置项",
                             value = "前往开启",
-                            onClick = { runCatching { RomAutostartHelper.openAutostartSettings(context) } },
+                            onClick = {
+                                runCatching { RomAutostartHelper.openAutostartSettings(context) }.onFailure {
+                                    Toast.makeText(context, "无法跳转厂商设置，请在系统设置的应用管理中手动配置", Toast.LENGTH_LONG).show()
+                                }
+                            },
                         )
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -1038,7 +1052,7 @@ fun AboutCommunityScreen(
     val downloadProgress by viewModel.downloadProgress.collectAsStateWithLifecycle()
     val isDownloading by viewModel.isDownloading.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
-    var showAboutDialog by remember { mutableStateOf(false) }
+    var showAboutDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     val currentVersion = rememberAppVersion()
 
     // 版本更新弹窗
@@ -1058,7 +1072,7 @@ fun AboutCommunityScreen(
                     onDismissRequest = { viewModel.clearUpdateState() },
                     title = {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            RuntimeIcon(RuntimeIconName.Check, Modifier.size(22.dp), tint = Color(0xFF2E7D32))
+                            RuntimeIcon(RuntimeIconName.Check, Modifier.size(22.dp), tint = successStatusColor())
                             Text("已是最新版本", fontWeight = FontWeight.Bold)
                         }
                     },
@@ -1119,7 +1133,12 @@ fun AboutCommunityScreen(
                         title = "检查新版本",
                         subtitle = "基于 GitHub Releases 自动检测与在线升级",
                         value = if (updateCheckState is top.wkbin.taixu.core.model.UpdateCheckState.Checking) "检查中…" else "v$currentVersion",
-                        onClick = { viewModel.checkForUpdates(currentVersion) },
+                        onClick = {
+                            // 检查进行中禁止重复触发
+                            if (updateCheckState !is top.wkbin.taixu.core.model.UpdateCheckState.Checking) {
+                                viewModel.checkForUpdates(currentVersion)
+                            }
+                        },
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     ToggleRow(
@@ -1346,6 +1365,8 @@ private fun BatteryOptimizationDialog(
                                     Uri.parse("package:${context.packageName}"),
                                 ),
                             )
+                        }.onFailure {
+                            Toast.makeText(context, "无法打开系统设置，请手动进入设置授予电池优化豁免", Toast.LENGTH_LONG).show()
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -1362,6 +1383,8 @@ private fun BatteryOptimizationDialog(
                                     Uri.parse("package:${context.packageName}"),
                                 ),
                             )
+                        }.onFailure {
+                            Toast.makeText(context, "无法打开应用详情，请手动进入系统设置", Toast.LENGTH_LONG).show()
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -1926,6 +1949,7 @@ internal fun ToggleRow(
 @Composable
 fun WebChatBridgeDialog(
     status: top.wkbin.taixu.runtime.webchat.WebChatServerStatus,
+    toggling: Boolean = false,
     onToggle: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -1961,10 +1985,16 @@ fun WebChatBridgeDialog(
                                 text = "协作服务状态",
                                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                             )
-                            RuntimeSwitch(
-                                checked = status.isRunning,
-                                onCheckedChange = onToggle,
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (toggling) {
+                                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                }
+                                RuntimeSwitch(
+                                    checked = status.isRunning,
+                                    onCheckedChange = onToggle,
+                                    enabled = !toggling,
+                                )
+                            }
                         }
 
                         if (status.isRunning) {

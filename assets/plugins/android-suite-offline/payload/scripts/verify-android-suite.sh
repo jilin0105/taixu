@@ -58,6 +58,14 @@ require_executable /opt/taixu/bin/flutter
 # Android-only policy: web/desktop/iOS artifacts are intentionally not required.
 require_directory /opt/flutter/bin/cache/artifacts/engine/android-arm64-release
 require_directory /opt/flutter/bin/cache/artifacts/engine/android-arm64-profile
+if [ -f /opt/flutter/bin/cache/artifacts/engine/linux-arm64/gen_snapshot ]; then
+    require_executable /opt/flutter/bin/cache/artifacts/engine/linux-arm64/gen_snapshot
+    require_aarch64 /opt/flutter/bin/cache/artifacts/engine/linux-arm64/gen_snapshot
+fi
+if [ -f /opt/flutter/bin/cache/artifacts/engine/android-arm64-release/linux-arm64/gen_snapshot ]; then
+    require_executable /opt/flutter/bin/cache/artifacts/engine/android-arm64-release/linux-arm64/gen_snapshot
+    require_aarch64 /opt/flutter/bin/cache/artifacts/engine/android-arm64-release/linux-arm64/gen_snapshot
+fi
 
 if [ -f /opt/taixu/bin/rg ]; then
     require_executable /opt/taixu/bin/rg

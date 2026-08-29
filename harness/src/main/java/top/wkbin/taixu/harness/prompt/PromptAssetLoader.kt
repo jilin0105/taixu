@@ -2,6 +2,7 @@ package top.wkbin.taixu.harness.prompt
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -10,8 +11,12 @@ import javax.inject.Singleton
 class PromptAssetLoader @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
+    private val assetCache = ConcurrentHashMap<String, String>()
+
     fun read(path: String): String =
-        context.assets.open(path).bufferedReader().use { it.readText() }.trim()
+        assetCache.computeIfAbsent(path) {
+            context.assets.open(path).bufferedReader().use { it.readText() }.trim()
+        }
 
     fun render(path: String, variables: Map<String, String> = emptyMap()): String =
         renderTemplate(path, read(path), variables)

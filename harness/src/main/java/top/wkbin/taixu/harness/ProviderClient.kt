@@ -537,12 +537,13 @@ class ProviderClient @Inject constructor(
                 } else {
                     this
                 }
-            "low", "medium", "high" -> {
+            "low", "medium", "high", "extreme", "max" -> {
                 if (!caps.supportsEffort) return this // 不支持强度 -> 跟随服务端默认
                 val effort = when (depth) {
                     "low" -> ReasoningEffort.LOW
                     "medium" -> ReasoningEffort.MEDIUM
-                    else -> ReasoningEffort.HIGH
+                    "high" -> ReasoningEffort.HIGH
+                    else -> ReasoningEffort.MAX
                 }
                 if (reasoningMode == ReasoningMode.AUTO) {
                     copy(reasoningMode = ReasoningMode.ENABLED, reasoningEffort = effort)
@@ -618,6 +619,7 @@ class ProviderClient @Inject constructor(
                     "low" -> ReasoningEffort.LOW
                     "medium" -> ReasoningEffort.MEDIUM
                     "high" -> ReasoningEffort.HIGH
+                    "extreme", "max" -> ReasoningEffort.MAX
                     else -> null
                 },
                 toolCallMode = when (toolCallMode?.lowercase()) {

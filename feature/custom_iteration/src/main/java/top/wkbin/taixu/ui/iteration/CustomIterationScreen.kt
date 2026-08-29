@@ -103,11 +103,12 @@ fun CustomIterationScreen(
                 badgeColor = MaterialTheme.colorScheme.primary
             )
 
-            // 错误提示
+            // 错误提示：可关闭，不再常驻；重试走下方"开启自定义迭代"按钮
             if (uiState.errorMessage != null) {
                 NoticeBanner(
                     text = uiState.errorMessage ?: "",
-                    isError = true
+                    isError = true,
+                    onDismiss = viewModel::dismissError
                 )
             }
 

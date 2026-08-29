@@ -48,17 +48,24 @@ class LaneManager @Inject constructor(
         val entries = repository.listEntries(sessionId)
         val lanes = repository.observeLanes(sessionId).first()
         val main = lanes.firstOrNull { it.name == SessionTreeStore.MAIN_LANE }
+        val entryMap = entries.associateBy { it.id }
         val parentIds = entries.mapNotNullTo(mutableSetOf()) { it.parentId }
         val leafIds = entries.asSequence().map { it.id }.filter { it !in parentIds }.toList()
         val targets = (leafIds + lanes.mapNotNull { it.leafId } + listOfNotNull(main?.leafId)).distinct()
 
         return targets.mapIndexed { index, leafId ->
-            val pathEntries = repository.branch(sessionId, leafId)
+            val pathEntries = buildList {
+                var current = leafId?.let { entryMap[it] }
+                val visited = mutableSetOf<String>()
+                while (current != null && visited.add(current.id)) {
+                    add(current)
+                    current = current.parentId?.let { entryMap[it] }
+                }
+            }.asReversed()
             val pathIds = pathEntries.mapTo(hashSetOf()) { it.id }
             val namedLane = lanes
                 .filter { it.name != SessionTreeStore.MAIN_LANE && it.leafId in pathIds }
                 .maxByOrNull { lane -> pathEntries.indexOfLast { it.id == lane.leafId } }
-            val messages = treeStore.loadAt(sessionId, leafId)
             val kind = when {
                 namedLane?.name?.startsWith(SUBAGENT_PREFIX) == true -> ConversationBranchKind.SUBAGENT
                 namedLane?.name?.startsWith(BRANCH_PREFIX) == true -> ConversationBranchKind.BRANCH
@@ -77,26 +84,30 @@ class LaneManager @Inject constructor(
                     .ifBlank { "子智能体" }
                 ConversationBranchKind.HISTORY -> "历史分支 ${index + 1}"
             }
-            val preview = messages.asReversed().firstNotNullOfOrNull { message ->
-                when (message) {
-                    is AssistantText -> message.text.takeIf { it.isNotBlank() }
-                    is UserMessage -> message.text.takeIf { it.isNotBlank() }
-                    else -> null
-                }
-            }.orEmpty()
+            val preview = pathEntries.asReversed().asSequence()
+                .filter { it.customType == "assistant" || it.customType == "user" }
+                .mapNotNull { treeStore.decode(it) }
+                .firstNotNullOfOrNull { message ->
+                    when (message) {
+                        is AssistantText -> message.text.takeIf { it.isNotBlank() }
+                        is UserMessage -> message.text.takeIf { it.isNotBlank() }
+                        else -> null
+                    }
+                }.orEmpty()
+            val toolCallCount = pathEntries.count { it.customType == "tool_call" }
             ConversationBranch(
                 // Always key by leaf: one named lane can sit on many leaf paths (siblings/descendants).
                 id = namedLane?.let { "${it.name}@$leafId" } ?: "leaf:$leafId",
                 name = displayName,
                 leafId = leafId,
-                depth = messages.size,
+                depth = pathEntries.size,
                 preview = preview,
                 updatedAt = pathEntries.lastOrNull()?.createdAt ?: namedLane?.updatedAt ?: 0L,
                 kind = kind,
                 isCurrent = leafId == main?.leafId,
                 isBusy = namedLane?.currentOperationId != null || (leafId == main?.leafId && main.currentOperationId != null),
                 faulted = namedLane?.faulted == true,
-                toolCallCount = messages.count { it is ToolCall },
+                toolCallCount = toolCallCount,
             )
         }.sortedWith(compareByDescending<ConversationBranch> { it.isCurrent }.thenByDescending { it.updatedAt })
     }

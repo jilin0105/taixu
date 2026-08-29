@@ -122,11 +122,8 @@ object ContextWindowPolicy {
         } else {
             0
         }
-        val toolCallDetails = messages.filterIsInstance<ToolCall>().associate {
-            it.id to ((it.rawToolName ?: HarnessApiMapper.apiName(it.tool)) to it.args)
-        }
         var conversationTokens = if (keepFrom > 0) {
-            estimateTokens(buildHistorySummary(messages.take(keepFrom), toolCallDetails))
+            minOf(600, keepFrom * 30)
         } else {
             0
         }
@@ -214,31 +211,31 @@ object ContextWindowPolicy {
         }
         val lastAssistant = messages.filterIsInstance<AssistantText>().lastOrNull()?.text
             ?.replace('\n', ' ')?.take(240)
-        val allText = messages.filter { it is UserMessage || it is AssistantText }
-            .joinToString("\n") { message ->
-                when (message) {
-                    is UserMessage -> message.text
-                    is AssistantText -> message.text
-                    else -> ""
-                }
+        val textMessages = messages.mapNotNull {
+            when (it) {
+                is UserMessage -> it.text
+                is AssistantText -> it.text
+                else -> null
             }
-        val constraints = allText.lineSequence()
+        }
+        val constraints = textMessages.asSequence()
+            .flatMap { it.lineSequence() }
             .filter { line -> CONSTRAINT_MARKERS.any { marker -> line.contains(marker, ignoreCase = true) } }
-            .map { it.trim().replace(Regex("\\s+"), " ").take(220) }
+            .map { it.trim().replace(WHITESPACE_REGEX, " ").take(220) }
             .filter { it.isNotBlank() }
             .distinct()
             .toList()
             .takeLast(8)
-        val decisions = allText.lineSequence()
+        val decisions = textMessages.asSequence()
+            .flatMap { it.lineSequence() }
             .filter { line -> DECISION_MARKERS.any { marker -> line.contains(marker, ignoreCase = true) } }
-            .map { it.trim().replace(Regex("\\s+"), " ").take(220) }
+            .map { it.trim().replace(WHITESPACE_REGEX, " ").take(220) }
             .filter { it.isNotBlank() }
             .distinct()
             .toList()
             .takeLast(8)
-        val files = Regex("(?:/workspace|/sdcard|[A-Za-z]:[\\\\/])[^\\s,，。；;，)\\]]+")
-            .findAll(allText)
-            .map { it.value.take(180) }
+        val files = textMessages.asSequence()
+            .flatMap { text -> FILE_PATH_REGEX.findAll(text.take(4000)).map { it.value.take(180) } }
             .distinct()
             .toList()
             .takeLast(12)
@@ -262,6 +259,8 @@ object ContextWindowPolicy {
 
     private val CONSTRAINT_MARKERS = listOf("必须", "不得", "禁止", "不能", "严禁", "要求", "must", "never", "should not")
     private val DECISION_MARKERS = listOf("决定", "采用", "改为", "选择", "方案", "decision", "use", "采用")
+    private val WHITESPACE_REGEX = Regex("\\s+")
+    private val FILE_PATH_REGEX = Regex("(?:/workspace|/sdcard|[A-Za-z]:[\\\\/])[^\\s,，。；;，)\\]]+")
 }
 
 data class EffectiveContextUsage(

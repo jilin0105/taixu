@@ -80,6 +80,14 @@ class LocalLlmViewModel @Inject constructor(
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
+    private val _messageIsError = MutableStateFlow(false)
+    val messageIsError: StateFlow<Boolean> = _messageIsError.asStateFlow()
+
+    fun showMessage(msg: String, isError: Boolean = false) {
+        _message.value = msg
+        _messageIsError.value = isError
+    }
+
     private var transferJob: Job? = null
 
     init {
@@ -88,7 +96,7 @@ class LocalLlmViewModel @Inject constructor(
 
     fun download(url: String, sha256: String? = null) {
         if (url.isBlank()) {
-            _message.value = "请先输入 GGUF 的 HTTPS 下载地址"
+            showMessage("请先输入 GGUF 的 HTTPS 下载地址", isError = true)
             return
         }
         startTransfer("正在下载模型") { localLlmManager.download(url, sha256) }
@@ -96,7 +104,7 @@ class LocalLlmViewModel @Inject constructor(
 
     fun downloadPreset(preset: MobileModelPreset) {
         if (!isDeviceSuitable(preset)) {
-            _message.value = "设备总内存低于该模型建议值，不建议在本机运行 ${preset.name}"
+            showMessage("设备总内存低于该模型建议值，不建议在本机运行 ${preset.name}", isError = true)
             return
         }
         download(preset.url, preset.sha256)
@@ -132,7 +140,7 @@ class LocalLlmViewModel @Inject constructor(
 
     fun importPath(path: String) {
         if (path.isBlank()) {
-            _message.value = "请输入 GGUF 文件路径"
+            showMessage("请输入 GGUF 文件路径", isError = true)
             return
         }
         startTransfer("正在导入模型") { localLlmManager.importPath(path) }
@@ -147,14 +155,15 @@ class LocalLlmViewModel @Inject constructor(
     fun start(fileName: String) {
         viewModelScope.launch {
             _message.value = null
+            _messageIsError.value = false
             runCatching {
                 localLlmManager.start(fileName)
                 activateLocalProfile(fileName)
             }.onSuccess {
-                _message.value = "模型服务已启动，并已设为当前对话模型"
+                showMessage("模型服务已启动，并已设为当前对话模型", isError = false)
             }.onFailure { throwable ->
                 if (throwable !is CancellationException) {
-                    _message.value = throwable.message ?: "模型启动失败"
+                    showMessage(throwable.message ?: "模型启动失败", isError = true)
                 }
             }
         }
@@ -163,24 +172,25 @@ class LocalLlmViewModel @Inject constructor(
     fun stop() {
         viewModelScope.launch {
             runCatching { localLlmManager.stop() }
-                .onFailure { _message.value = it.message ?: "停止服务失败" }
+                .onFailure { showMessage(it.message ?: "停止服务失败", isError = true) }
         }
     }
 
     fun delete(fileName: String) {
         viewModelScope.launch {
             runCatching { localLlmManager.delete(fileName) }
-                .onFailure { _message.value = it.message ?: "删除模型失败" }
+                .onFailure { showMessage(it.message ?: "删除模型失败", isError = true) }
         }
     }
 
     fun installEngine() {
         toolManager.startInstall(LocalLlmManager.TOOL_ID)
-        _message.value = "已提交 llama.cpp 推理引擎安装任务，可在工具中心查看进度"
+        showMessage("已提交 llama.cpp 推理引擎安装任务，可在工具中心查看进度", isError = false)
     }
 
     fun consumeMessage() {
         _message.value = null
+        _messageIsError.value = false
     }
 
     private fun startTransfer(
@@ -188,11 +198,12 @@ class LocalLlmViewModel @Inject constructor(
         source: () -> kotlinx.coroutines.flow.Flow<LocalModelTransfer>,
     ) {
         if (transferJob?.isActive == true) {
-            _message.value = "已有模型传输任务正在进行"
+            showMessage("已有模型传输任务正在进行", isError = true)
             return
         }
         transferJob = viewModelScope.launch {
             _message.value = null
+            _messageIsError.value = false
             try {
                 source().collect { event ->
                     _transfer.value = when (event) {
@@ -207,13 +218,13 @@ class LocalLlmViewModel @Inject constructor(
                         is LocalModelTransfer.Completed -> LocalModelTransferUiState()
                     }
                     if (event is LocalModelTransfer.Completed) {
-                        _message.value = "模型已就绪：${event.model.fileName}"
+                        showMessage("模型已就绪：${event.model.fileName}", isError = false)
                     }
                 }
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (throwable: Throwable) {
-                _message.value = throwable.message ?: "模型传输失败"
+                showMessage(throwable.message ?: "模型传输失败", isError = true)
             } finally {
                 _transfer.value = LocalModelTransferUiState()
                 transferJob = null

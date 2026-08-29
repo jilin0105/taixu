@@ -9,8 +9,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -88,52 +92,22 @@ private fun EditToolDiff(
     // 顶部路径与在编辑器中打开/产物预览按钮
     FilePathHeader(path = path, workspace = workspace, onOpenFile = onOpenFile, previewContent = newText.ifEmpty { oldText })
 
-    // Diff 区域
-    Column(
+    val oldLines = remember(oldText) { if (oldText.isEmpty()) emptyList() else oldText.split('\n') }
+    val newLines = remember(newText) { if (newText.isEmpty()) emptyList() else newText.split('\n') }
+
+    // Diff 区域：LazyColumn 虚拟化渲染，大 diff 只组合可见行，不再整块全量重组
+    LazyColumn(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFF06090F), RoundedCornerShape(6.dp))
+            .heightIn(max = 320.dp)
             .padding(vertical = 4.dp),
     ) {
-        val oldLines = remember(oldText) { if (oldText.isEmpty()) emptyList() else oldText.split('\n') }
-        val newLines = remember(newText) { if (newText.isEmpty()) emptyList() else newText.split('\n') }
-
-        // 删除行
-        oldLines.forEach { line ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(DiffRemovedBg)
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 8.dp, vertical = 2.dp),
-            ) {
-                Text(
-                    text = "- $line",
-                    color = DiffRemovedText,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 12.sp,
-                    lineHeight = 17.sp,
-                )
-            }
+        itemsIndexed(oldLines, key = { index, _ -> "old-$index" }) { _, line ->
+            DiffLine(text = "- $line", background = DiffRemovedBg, foreground = DiffRemovedText)
         }
-
-        // 新增行
-        newLines.forEach { line ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(DiffAddedBg)
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 8.dp, vertical = 2.dp),
-            ) {
-                Text(
-                    text = "+ $line",
-                    color = DiffAddedText,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 12.sp,
-                    lineHeight = 17.sp,
-                )
-            }
+        itemsIndexed(newLines, key = { index, _ -> "new-$index" }) { _, line ->
+            DiffLine(text = "+ $line", background = DiffAddedBg, foreground = DiffAddedText)
         }
     }
 
@@ -147,6 +121,21 @@ private fun EditToolDiff(
             )
         }
     }
+}
+
+@Composable
+private fun DiffLine(text: String, background: Color, foreground: Color) {
+    Text(
+        text = text,
+        color = foreground,
+        fontFamily = FontFamily.Monospace,
+        fontSize = 12.sp,
+        lineHeight = 17.sp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(background)
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+    )
 }
 
 @Composable
@@ -355,7 +344,7 @@ private fun FilePathHeader(
                 Surface(
                     color = Color(0xFF1B2C47),
                     shape = RoundedCornerShape(4.dp),
-                    modifier = Modifier.clickable { showPreviewSheet = true },
+                    modifier = Modifier.minimumInteractiveComponentSize().clickable { showPreviewSheet = true },
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
@@ -364,7 +353,7 @@ private fun FilePathHeader(
                     ) {
                         RuntimeIcon(RuntimeIconName.Document, Modifier.size(12.dp), tint = Color(0xFF79C0FF))
                         Text(
-                            text = "产物预览",
+                            text = stringResource(R.string.chat_artifact_preview),
                             style = MaterialTheme.typography.labelSmall,
                             color = Color(0xFF79C0FF),
                         )
@@ -376,7 +365,7 @@ private fun FilePathHeader(
                 Surface(
                     color = Color(0xFF1E283D),
                     shape = RoundedCornerShape(4.dp),
-                    modifier = Modifier.clickable { onOpenFile(projectName, relativePath) },
+                    modifier = Modifier.minimumInteractiveComponentSize().clickable { onOpenFile(projectName, relativePath) },
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),

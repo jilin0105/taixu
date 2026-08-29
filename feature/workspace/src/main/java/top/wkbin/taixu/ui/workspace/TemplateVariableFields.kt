@@ -19,11 +19,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
+import top.wkbin.taixu.feature.workspace.R
 import top.wkbin.taixu.template.ProjectTemplateInputType
 import top.wkbin.taixu.template.ProjectTemplateVariable
 
@@ -122,12 +124,24 @@ internal fun TemplateVariableFields(
     }
 }
 
-internal fun templateVariableError(variable: ProjectTemplateVariable, value: String): String? {
-    if (variable.required && value.isBlank()) return "${variable.label} is required"
+/** 校验失败类型：REQUIRED = 必填为空；INVALID_FORMAT = 不满足 validationRegex。 */
+internal enum class TemplateVariableErrorKind { REQUIRED, INVALID_FORMAT }
+
+internal fun templateVariableErrorKind(variable: ProjectTemplateVariable, value: String): TemplateVariableErrorKind? {
+    if (variable.required && value.isBlank()) return TemplateVariableErrorKind.REQUIRED
     if (value.isNotBlank() && variable.validationRegex.isNotBlank() &&
         !runCatching { Regex(variable.validationRegex).matches(value) }.getOrDefault(false)
     ) {
-        return "${variable.label} has an invalid format"
+        return TemplateVariableErrorKind.INVALID_FORMAT
     }
     return null
 }
+
+/** 校验失败的本地化文案（必须在 Composable 上下文中调用）。 */
+@Composable
+internal fun templateVariableError(variable: ProjectTemplateVariable, value: String): String? =
+    when (templateVariableErrorKind(variable, value)) {
+        null -> null
+        TemplateVariableErrorKind.REQUIRED -> stringResource(R.string.template_variable_required, variable.label)
+        TemplateVariableErrorKind.INVALID_FORMAT -> stringResource(R.string.template_variable_invalid_format, variable.label)
+    }

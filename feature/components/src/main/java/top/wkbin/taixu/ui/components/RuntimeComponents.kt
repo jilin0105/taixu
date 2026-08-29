@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -155,11 +156,11 @@ import kotlin.time.Duration.Companion.milliseconds
  * 太墟 (TaiXu) 四大核心中枢导航定义：
  * 太墟（开辟画布）· 智枢（AI 结对）· 工坊（工作区）· 乾坤（设置与模型）
  */
-enum class MainDestination(val labelRes: Int, val subtitle: String, val icon: RuntimeIconName) {
-    Home(R.string.components_nav_home, "Genesis", RuntimeIconName.NavDashboard),
-    Agent(R.string.components_nav_agent, "AI Agent", RuntimeIconName.NavMessage),
-    Workspace(R.string.components_nav_workspace, "Workspace", RuntimeIconName.NavRepository),
-    Settings(R.string.components_nav_settings, "Settings", RuntimeIconName.NavSettings),
+enum class MainDestination(val labelRes: Int, val subtitleRes: Int, val icon: RuntimeIconName) {
+    Home(R.string.components_nav_home, R.string.components_nav_subtitle_home, RuntimeIconName.NavDashboard),
+    Agent(R.string.components_nav_agent, R.string.components_nav_subtitle_agent, RuntimeIconName.NavMessage),
+    Workspace(R.string.components_nav_workspace, R.string.components_nav_subtitle_workspace, RuntimeIconName.NavRepository),
+    Settings(R.string.components_nav_settings, R.string.components_nav_subtitle_settings, RuntimeIconName.NavSettings),
 }
 
 /**
@@ -1073,10 +1074,18 @@ fun RuntimeIconButton(
     val contentColor = MaterialTheme.colorScheme.onSurface
     val glassSurfaceColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.22f)
     if (backdrop == null) {
-        IconButton(onClick = onClick, modifier = modifier, enabled = enabled, content = content)
+        // Material fallback：将无障碍标签挂到按钮节点上（Icon 自身 contentDescription 恒为 null）
+        IconButton(
+            onClick = onClick,
+            modifier = modifier.semantics { accessibilityLabel?.let { this.contentDescription = it } },
+            enabled = enabled,
+            content = content,
+        )
     } else {
         Box(
             modifier = modifier
+                // 玻璃主题分支同样保证 ≥48dp 最小触摸目标（Material 分支由 IconButton 内部保证）
+                .minimumInteractiveComponentSize()
                 .size(40.dp)
                 .graphicsLayer { alpha = if (enabled) 1f else 0.45f }
                 .clip(CircleShape)
@@ -1556,7 +1565,12 @@ fun EmptyPanel(
 }
 
 @Composable
-fun NoticeBanner(text: String, modifier: Modifier = Modifier, isError: Boolean = false) {
+fun NoticeBanner(
+    text: String,
+    modifier: Modifier = Modifier,
+    isError: Boolean = false,
+    onDismiss: (() -> Unit)? = null,
+) {
     val color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
     Row(
         modifier = modifier
@@ -1575,6 +1589,16 @@ fun NoticeBanner(text: String, modifier: Modifier = Modifier, isError: Boolean =
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f),
         )
+        if (onDismiss != null) {
+            val dismissLabel = stringResource(R.string.components_close)
+            RuntimeIconButton(
+                onClick = onDismiss,
+                modifier = Modifier.size(24.dp),
+                contentDescription = dismissLabel,
+            ) {
+                RuntimeIcon(RuntimeIconName.Close, Modifier.size(14.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
     }
 }
 

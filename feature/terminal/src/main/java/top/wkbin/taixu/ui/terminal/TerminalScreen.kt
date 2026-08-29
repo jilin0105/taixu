@@ -1,10 +1,11 @@
-﻿package top.wkbin.taixu.ui.terminal
+package top.wkbin.taixu.ui.terminal
 
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.Build
 import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -95,7 +97,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import top.wkbin.taixu.ui.components.NoticeBanner
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
@@ -120,6 +121,7 @@ private const val MAX_TERMINAL_FONT_SIZE_SP = 24f
 fun TerminalScreen(
     onBack: () -> Unit,
     project: String = "",
+    showBackButton: Boolean = true,
     viewModel: TerminalViewModel = hiltViewModel(),
 ) {
     val screen by viewModel.screen.collectAsStateWithLifecycle()
@@ -141,6 +143,7 @@ fun TerminalScreen(
     var fontSizeSp by remember { mutableFloatStateOf(configuredFontSize.toFloat()) }
     var terminalPxWidth by remember { mutableFloatStateOf(0f) }
     var terminalPxHeight by remember { mutableFloatStateOf(0f) }
+    var sessionToClose by remember { mutableStateOf<String?>(null) }
 
     val sysSurfaceLowest = MaterialTheme.colorScheme.surfaceContainerLowest
     val sysSurfaceHigh = MaterialTheme.colorScheme.surfaceContainerHigh
@@ -288,12 +291,14 @@ fun TerminalScreen(
         topBar = {
             RuntimeTopBar(
                 title = if (project.isNotBlank()) stringResource(R.string.terminal_project_title, project) else stringResource(R.string.terminal_console_title),
-                onBack = navigateBack,
-                statusText = "$distributionName · PRoot",
+                // Agent 内嵌终端面板不属于导航栈节点，隐藏返回箭头避免「点了没反应」
+                onBack = if (showBackButton) navigateBack else null,
+                statusText = stringResource(R.string.terminal_engine_status, distributionName),
             ) {
                 IconButton(
                     onClick = { showSessions = true },
                     modifier = Modifier.spotlightAnchor(sessionsAnchor),
+                    contentDescription = stringResource(R.string.terminal_sessions_desc),
                 ) {
                     RuntimeIcon(RuntimeIconName.List, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                 }
@@ -332,7 +337,11 @@ fun TerminalScreen(
                             TerminalDot(Color(0xFF00E676))
                         }
                         Text(
-                            "PTY ${distributionName.substringBefore(" (").uppercase()} AARCH64",
+                            stringResource(
+                                R.string.terminal_pty_header,
+                                distributionName.substringBefore(" (").uppercase(),
+                                Build.SUPPORTED_ABIS.firstOrNull()?.uppercase() ?: "UNKNOWN",
+                            ),
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontFamily = FontFamily.Monospace,
@@ -346,6 +355,7 @@ fun TerminalScreen(
                             Text(
                                 stringResource(R.string.terminal_copy),
                                 modifier = Modifier
+                                    .minimumInteractiveComponentSize()
                                     .clip(RoundedCornerShape(4.dp))
                                     .clickable(onClick = copyScreen)
                                     .padding(horizontal = 6.dp, vertical = 2.dp),
@@ -355,6 +365,7 @@ fun TerminalScreen(
                             Text(
                                 stringResource(R.string.terminal_paste),
                                 modifier = Modifier
+                                    .minimumInteractiveComponentSize()
                                     .clip(RoundedCornerShape(4.dp))
                                     .clickable(onClick = pasteToTerminal)
                                     .padding(horizontal = 6.dp, vertical = 2.dp),
@@ -400,12 +411,26 @@ fun TerminalScreen(
                             },
                     ) {
                         when {
-                            error != null -> Text(
-                                error.orEmpty(),
-                                color = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.padding(12.dp),
-                                fontFamily = FontFamily.Monospace,
-                            )
+                            error != null -> Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Text(
+                                    error.orEmpty(),
+                                    color = MaterialTheme.colorScheme.error,
+                                    fontFamily = FontFamily.Monospace,
+                                )
+                                Button(
+                                    onClick = { viewModel.retryInitialize(project) },
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                ) {
+                                    RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(14.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(stringResource(R.string.terminal_retry))
+                                }
+                            }
                             screen.isEmpty() || screen.all { it.cells.isEmpty() } -> Text(
                                 stringResource(R.string.terminal_starting),
                                 Modifier.padding(12.dp),
@@ -425,7 +450,7 @@ fun TerminalScreen(
                             ) {
                                 itemsIndexed(
                                     screen,
-                                    key = { index, _ -> index },
+                                    key = { index, line -> "$index-${line.cells.hashCode()}" },
                                 ) { index, line ->
                                     TerminalLineRow(
                                         line = line,
@@ -522,8 +547,6 @@ fun TerminalScreen(
                 ExtraKey("cd ..", hapticsEnabled = hapticsEnabled) { viewModel.sendText("cd ..\r") }
                 ExtraKey("Clear", hapticsEnabled = hapticsEnabled) { viewModel.sendText("clear\r") }
             }
-
-            error?.let { NoticeBanner(it, isError = true) }
         }
     }
 
@@ -531,8 +554,8 @@ fun TerminalScreen(
     if ("terminal_sessions" !in firstUseGuidesShown) {
         SpotlightGuideOverlay(
             anchor = sessionsAnchor,
-            title = "多会话并行终端",
-            message = "点击顶栏的列表按钮即可管理多个终端会话：一边编译一边继续敲命令，或同时操作多个项目，互不干扰。",
+            title = stringResource(R.string.terminal_guide_title),
+            message = stringResource(R.string.terminal_guide_message),
             onDismiss = { viewModel.markFirstUseGuideShown("terminal_sessions") },
         )
     }
@@ -548,12 +571,23 @@ fun TerminalScreen(
                 showSessions = false
                 showCreateSession = true
             },
-            onClose = { id ->
-                viewModel.closeSession(id)
-                if (handles.size == 1) {
-                    Toast.makeText(context, context.getString(R.string.terminal_reset_complete), Toast.LENGTH_SHORT).show()
+            onClose = { id -> showSessions = false; sessionToClose = id },
+        )
+    }
+
+    // 关闭会话二次确认：会话关闭会杀死其中运行的所有进程
+    sessionToClose?.let { closingId ->
+        CloseSessionConfirmDialog(
+            onConfirm = {
+                sessionToClose = null
+                val wasOnlySession = handles.size == 1
+                viewModel.closeSession(closingId) { success ->
+                    if (success && wasOnlySession) {
+                        Toast.makeText(context, context.getString(R.string.terminal_reset_complete), Toast.LENGTH_SHORT).show()
+                    }
                 }
             },
+            onDismiss = { sessionToClose = null },
         )
     }
 
@@ -885,16 +919,16 @@ private fun SessionListDialog(
                                 if (handles.size == 1) {
                                     IconButton(
                                         onClick = { onClose(handle.id) },
-                                        modifier = Modifier.size(28.dp),
+                                        contentDescription = stringResource(R.string.terminal_reset_session_desc),
                                     ) {
-                                        RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(16.dp), MaterialTheme.colorScheme.primary)
+                                        RuntimeIcon(RuntimeIconName.PowerSettingsNew, Modifier.size(18.dp), MaterialTheme.colorScheme.primary)
                                     }
                                 } else {
                                     IconButton(
                                         onClick = { onClose(handle.id) },
-                                        modifier = Modifier.size(28.dp),
+                                        contentDescription = stringResource(R.string.terminal_close_session_desc),
                                     ) {
-                                        RuntimeIcon(RuntimeIconName.Close, Modifier.size(14.dp), MaterialTheme.colorScheme.error)
+                                        RuntimeIcon(RuntimeIconName.Close, Modifier.size(16.dp), MaterialTheme.colorScheme.error)
                                     }
                                 }
                             }
@@ -913,6 +947,61 @@ private fun SessionListDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.terminal_close)) }
+        },
+    )
+}
+
+/**
+ * 关闭终端会话二次确认弹窗（样式对齐 DistroManagementScreen 的倒计时确认弹窗）：
+ * 关闭会杀死会话中运行的所有进程，属破坏性操作。
+ */
+@Composable
+private fun CloseSessionConfirmDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var countdown by remember { mutableStateOf(3) }
+
+    LaunchedEffect(Unit) {
+        while (countdown > 0) {
+            delay(1000)
+            countdown--
+        }
+    }
+
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = stringResource(R.string.terminal_close_confirm_title),
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            )
+        },
+        text = {
+            Text(
+                text = stringResource(R.string.terminal_close_confirm_message),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                enabled = countdown == 0,
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    disabledContainerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.3f),
+                ),
+            ) {
+                Text(
+                    text = if (countdown > 0) stringResource(R.string.terminal_close_confirm_countdown, countdown)
+                    else stringResource(R.string.terminal_close_confirm),
+                    color = if (countdown == 0) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onError.copy(alpha = 0.6f),
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.terminal_cancel)) }
         },
     )
 }
@@ -944,6 +1033,7 @@ private fun ExtraKey(
 
     Surface(
         modifier = Modifier
+            .minimumInteractiveComponentSize()
             .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = {
                 if (hapticsEnabled) {

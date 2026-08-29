@@ -13,6 +13,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -66,6 +67,7 @@ import top.wkbin.taixu.ui.components.ProviderBadge
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 import top.wkbin.taixu.ui.components.RuntimeButton
 import top.wkbin.taixu.ui.components.RuntimeCard
+import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator
 import top.wkbin.taixu.ui.components.RuntimeCheckbox
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconButton
@@ -92,6 +94,7 @@ fun ModelProfilesScreen(
     var showExportAllDialog by remember { mutableStateOf(false) }
     var singleExportModel by remember { mutableStateOf<AiModelEntity?>(null) }
     var modelPendingDelete by remember { mutableStateOf<AiModelEntity?>(null) }
+    var importing by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -147,16 +150,21 @@ fun ModelProfilesScreen(
     if (showImportDialog) {
         ModelImportDialog(
             onDismiss = { showImportDialog = false },
+            importing = importing,
             onImportJson = { jsonStr ->
+                if (importing) return@ModelImportDialog
+                importing = true
                 coroutineScope.launch {
                     val result = viewModel.importProfilesFromJson(jsonStr)
+                    importing = false
                     result.fold(
                         onSuccess = { count ->
                             Toast.makeText(context, "成功导入 $count 个模型档案", Toast.LENGTH_SHORT).show()
                             showImportDialog = false
                         },
                         onFailure = { err ->
-                            Toast.makeText(context, "导入失败: ${err.message}", Toast.LENGTH_LONG).show()
+                            android.util.Log.e("ModelProfiles", "Profile import failed: ${err.message}", err)
+                            Toast.makeText(context, "导入失败：JSON 无法解析或配置无效，请检查后重试", Toast.LENGTH_LONG).show()
                         }
                     )
                 }
@@ -351,7 +359,10 @@ private fun ModelProfileCard(
             Box {
                 RuntimeIconButton(
                     onClick = { menuExpanded = true },
-                    modifier = Modifier.size(32.dp),
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .size(32.dp),
+                    contentDescription = "更多操作",
                 ) {
                     RuntimeIcon(
                         name = RuntimeIconName.More,
@@ -484,6 +495,7 @@ private fun ModelProfileCard(
  */
 @Composable
 fun ModelImportDialog(
+    importing: Boolean = false,
     onDismiss: () -> Unit,
     onImportJson: (String) -> Unit,
 ) {
@@ -596,9 +608,13 @@ fun ModelImportDialog(
         confirmButton = {
             RuntimeButton(
                 onClick = { onImportJson(jsonText) },
-                enabled = jsonText.isNotBlank(),
+                enabled = jsonText.isNotBlank() && !importing,
             ) {
-                Text("开始导入")
+                if (importing) {
+                    RuntimeCircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text(if (importing) "正在导入…" else "开始导入")
             }
         },
         dismissButton = {

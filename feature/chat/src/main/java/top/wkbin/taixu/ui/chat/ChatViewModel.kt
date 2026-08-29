@@ -40,6 +40,9 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import android.content.Context
 import android.net.Uri
+import android.util.Log
+import android.widget.Toast
+import androidx.lifecycle.SavedStateHandle
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import top.wkbin.taixu.feature.chat.R
@@ -64,6 +67,8 @@ import kotlinx.coroutines.launch
 import top.wkbin.taixu.runtime.terminal.TerminalSessionManager
 
 private const val MAX_RUNTIME_EVENTS = 160
+private const val TAG = "ChatViewModel"
+private const val KEY_INPUT_DRAFT = "chat_input_draft"
 
 /** 空会话首屏的权限感知引导档位；决定开场提示卡的文案与色调。 */
 enum class OnboardingPrivilege { SANDBOX, SANDBOX_UNLOCKABLE, SHIZUKU_READY, ROOT_READY }
@@ -71,6 +76,7 @@ enum class OnboardingPrivilege { SANDBOX, SANDBOX_UNLOCKABLE, SHIZUKU_READY, ROO
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val savedStateHandle: SavedStateHandle,
     private val harnessLoop: HarnessLoop,
     private val sessionDao: HarnessSessionRepository,
     private val aiModelDao: AiModelRepository,
@@ -296,8 +302,15 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch { settingsDataStore.setThinkingExpanded(value) }
     }
 
-    private val _input = MutableStateFlow("")
+    // 输入草稿：同步写入 SavedStateHandle，进程重建 / 旋转后可恢复
+    private val _input = MutableStateFlow(savedStateHandle.get<String>(KEY_INPUT_DRAFT) ?: "")
     val input: StateFlow<String> = _input.asStateFlow()
+
+    /** 统一输入写入入口：StateFlow 供组合使用，SavedStateHandle 供状态恢复使用 */
+    private fun setInput(value: String) {
+        _input.value = value
+        savedStateHandle[KEY_INPUT_DRAFT] = value
+    }
 
     val activeSkills: StateFlow<List<top.wkbin.taixu.core.model.AgentSkill>> = agentSkillRepository.activeSkills
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -511,25 +524,32 @@ class ChatViewModel @Inject constructor(
     }
 
     fun onInputChanged(value: String) {
-        _input.value = value
+        setInput(value)
     }
 
     fun applySlashCommand(command: SlashCommandItem) {
         if (command.command == "/clear") {
             createSession(context.getString(R.string.chat_new_session))
-            _input.value = ""
+            setInput("")
+            notifyNewSessionCreated()
         } else {
-            _input.value = command.template
+            setInput(command.template)
         }
     }
 
     fun applyQuickPhrase(phrase: top.wkbin.taixu.core.model.QuickPhrase) {
         if (phrase.content.trim() == "/clear") {
             createSession(context.getString(R.string.chat_new_session))
-            _input.value = ""
+            setInput("")
+            notifyNewSessionCreated()
         } else {
-            _input.value = phrase.content
+            setInput(phrase.content)
         }
+    }
+
+    /** /clear 会静默重建会话，用 Toast 明确告知用户上下文已重置 */
+    private fun notifyNewSessionCreated() {
+        Toast.makeText(context, context.getString(R.string.chat_new_session_created), Toast.LENGTH_SHORT).show()
     }
 
     fun applyMention(item: MentionItem) {
@@ -538,7 +558,7 @@ class ChatViewModel @Inject constructor(
         val prefix = if (atIndex >= 0) text.substring(0, atIndex) else text
         // Persist the stable id so names containing spaces or punctuation cannot be
         // truncated by the mention parser; the attached chip still shows the friendly name.
-        _input.value = "${prefix}@${item.id} "
+        setInput("${prefix}@${item.id} ")
     }
 
     /** 从输入框中整块移除某个已挂载的 @能力 标签 */
@@ -548,13 +568,13 @@ class ChatViewModel @Inject constructor(
         val updated = current.replace(Regex("""@${Regex.escape(item.name)}\s*"""), "")
             .replace(Regex("""@${Regex.escape(item.id)}\s*"""), "")
             .trimStart()
-        _input.value = updated
+        setInput(updated)
     }
 
     fun triggerMentionInput() {
         val current = _input.value
         if (!current.endsWith("@")) {
-            _input.value = if (current.isBlank()) "@" else "$current @"
+            setInput(if (current.isBlank()) "@" else "$current @")
         }
     }
 
@@ -567,11 +587,29 @@ class ChatViewModel @Inject constructor(
     /** 待发送附件；处理（复制/压缩/编码）在 IO 线程完成 */
     val pendingAttachments: StateFlow<List<ChatAttachment>> = _pendingAttachments.asStateFlow()
 
+    /** 附件处理中（复制/压缩/编码期间为 true，UI 据此展示加载指示） */
+    private val _attachmentsProcessing = MutableStateFlow(false)
+    val attachmentsProcessing: StateFlow<Boolean> = _attachmentsProcessing.asStateFlow()
+
+    /** 需要以 Toast 提示用户的轻量通知（附件失败、模型档案已存在等），展示后调用 clearNotice() */
+    private val _notice = MutableStateFlow<String?>(null)
+    val notice: StateFlow<String?> = _notice.asStateFlow()
+
+    fun clearNotice() {
+        _notice.value = null
+    }
+
     fun onAttachmentsPicked(uris: List<Uri>, isImage: Boolean) {
         if (uris.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
+            _attachmentsProcessing.value = true
             val items = uris.mapNotNull { AttachmentHelper.processUri(context, it, isImage) }
+            val failed = uris.size - items.size
+            if (failed > 0) {
+                _notice.value = context.getString(R.string.chat_attachment_process_failed, failed)
+            }
             _pendingAttachments.update { it + items }
+            _attachmentsProcessing.value = false
         }
     }
 
@@ -611,7 +649,7 @@ class ChatViewModel @Inject constructor(
     fun send(customText: String? = null, imageUrls: List<String> = emptyList()) {
         val rawText = (customText ?: _input.value).trim()
         if (rawText.isBlank() && imageUrls.isEmpty()) return
-        _input.value = ""
+        setInput("")
 
         val pinnedIds = _pinnedMentionIds.value
         val effectiveText = if (pinnedIds.isNotEmpty()) {
@@ -642,7 +680,7 @@ class ChatViewModel @Inject constructor(
     fun startHealingTask(title: String, prompt: String) {
         viewModelScope.launch {
             harnessLoop.newSession(title = title)
-            _input.value = ""
+            setInput("")
             harnessLoop.send(prompt)
         }
     }
@@ -702,10 +740,16 @@ class ChatViewModel @Inject constructor(
         if (index >= 0) harnessLoop.removeQueuedPrompt(prompt.queue, index)
     }
 
+    /** 将排队消息转为即时修正（Steer）指令并插入下一轮 */
+    fun convertQueuedPromptToSteer(prompt: QueuedPrompt) {
+        removeQueuedPrompt(prompt)
+        harnessLoop.steer(prompt.message.text, imageUrls = prompt.message.imageUrls)
+    }
+
     /** 编辑排队消息：先移出队列（不发送），把原文回显到输入框，修改后由用户手动发送。 */
     fun editQueuedPrompt(prompt: QueuedPrompt) {
         removeQueuedPrompt(prompt)
-        _input.value = prompt.message.text
+        setInput(prompt.message.text)
     }
 
     fun clearPendingMessages() = harnessLoop.clearPendingMessages()
@@ -752,6 +796,11 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             val id = "${provider.trim().lowercase()}-${trimmedModel.lowercase()}"
                 .replace(Regex("[^a-z0-9-]"), "-")
+            // 派生 id 与既有档案冲突时提示而非静默覆盖
+            if (aiModelDao.findById(id) != null) {
+                _notice.value = context.getString(R.string.chat_model_profile_exists)
+                return@launch
+            }
             profileWriter.upsertProfile(
                 AiProfileWriter.UpsertRequest(
                     id = id,
@@ -822,8 +871,8 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 .onFailure {
-                    _providerModelDiscoveryError.value = it.message
-                        ?: context.getString(R.string.chat_model_discovery_failed)
+                    Log.w(TAG, "模型发现失败 profile=$profileId", it)
+                    _providerModelDiscoveryError.value = context.getString(R.string.chat_model_discovery_failed)
                 }
             _discoveringProviderModels.value = false
         }

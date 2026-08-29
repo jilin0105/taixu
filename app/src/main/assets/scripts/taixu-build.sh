@@ -208,6 +208,18 @@ doctor() {
         need_exec "$FLUTTER_HOME/bin/flutter" "Flutter SDK"
         need_exec "$FLUTTER_HOME/bin/cache/dart-sdk/bin/dart" "Dart SDK"
         check_elf_machine "$FLUTTER_HOME/bin/cache/dart-sdk/bin/dart" b700 "Dart SDK"
+        engine_dir="$FLUTTER_HOME/bin/cache/artifacts/engine"
+        native_gen_snapshot="$engine_dir/linux-arm64/gen_snapshot"
+        if test -f "$native_gen_snapshot"; then
+            check_elf_machine "$native_gen_snapshot" b700 "Flutter gen_snapshot"
+            for mode in release profile; do
+                target_dir="$engine_dir/android-arm64-$mode/linux-arm64"
+                mkdir -p "$target_dir" 2>/dev/null || true
+                if test ! -e "$target_dir/gen_snapshot"; then
+                    ln -sf "$native_gen_snapshot" "$target_dir/gen_snapshot" 2>/dev/null || true
+                fi
+            done
+        fi
         test -d "$project/android" || fail "Flutter 工程缺少 android 宿主目录"
     elif test "$kind" = unknown; then
         warn "无法识别项目类型，将只检查通用 Android 工具链"

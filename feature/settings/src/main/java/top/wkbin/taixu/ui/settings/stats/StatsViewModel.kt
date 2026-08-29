@@ -17,6 +17,7 @@ data class StatsUiState(
     val range: StatsDateRange = StatsDateRange.allTime(),
     val snapshot: StatsSnapshot? = null,
     val isLoading: Boolean = true,
+    val error: String? = null,
 )
 
 @HiltViewModel
@@ -54,13 +55,23 @@ class StatsViewModel @Inject constructor(
 
     private fun loadSnapshot(range: StatsDateRange) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(range = range, isLoading = true)
-            val snapshot = statsRepository.buildSnapshot(range)
-            _uiState.value = _uiState.value.copy(
-                range = range,
-                snapshot = snapshot,
-                isLoading = false,
-            )
+            _uiState.value = _uiState.value.copy(range = range, isLoading = true, error = null)
+            try {
+                val snapshot = statsRepository.buildSnapshot(range)
+                _uiState.value = _uiState.value.copy(
+                    range = range,
+                    snapshot = snapshot,
+                    isLoading = false,
+                )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("StatsViewModel", "Failed to build stats snapshot: ${e.message}", e)
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    error = "统计数据加载失败，请点击重试",
+                )
+            }
         }
     }
 }

@@ -52,4 +52,23 @@
     <string name="home_mode_active">已激活</string>
     <string name="home_mode_inactive">未生效</string>
     <string name="home_mode_checking">检测中</string>
+    <string name="home_mode_degraded">已降级</string>
+    <string name="home_mode_degraded_reason">首选 %1$s 暂不可用：%2$s</string>
+    <string name="home_refresh">刷新</string>
+    <string name="home_grant_access">去授权</string>
+    <string name="home_android_env_title">获取 Android 全量开发环境</string>
+    <string name="home_android_env_desc">离线包已集成 Android · Flutter · 反编译三大环境</string>
+    <string name="home_android_env_qq">进群取离线包</string>
+    <string name="home_android_env_tool_center">插件中心安装</string>
+    <string name="home_qq_clipboard_label">太墟官方交流群</string>
+    <string name="home_qq_copied">已复制 QQ 群号：%1$s，可打开 QQ 搜索加入</string>
+    <string name="home_webchat_title">WebChat 电脑大屏协作</string>
+    <string name="home_webchat_running">局域网服务运行中 · 已保活</string>
+    <string name="home_webchat_idle">默认关闭 · 按需开启免耗电</string>
+    <string name="home_webchat_url_label">电脑浏览器访问地址</string>
+    <string name="home_webchat_pin_label">配对码 (PIN)</string>
+    <string name="home_webchat_copy">一键复制</string>
+    <string name="home_webchat_copied">已复制免密链接，发到电脑打开即可自动进入工作台！</string>
+    <string name="home_webchat_hint">💡 提示：电脑需与手机连接至同一 Wi-Fi；当前在线设备：%1$d 台</string>
+    <string name="home_webchat_intro">无需数据线，在同一 Wi-Fi 下使用电脑浏览器直接连入太墟 Agent、审阅代码并管理沙箱工作区。</string>
 </resources>

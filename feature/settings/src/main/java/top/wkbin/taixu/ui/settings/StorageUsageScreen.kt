@@ -23,6 +23,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -48,6 +50,7 @@ fun StorageUsageScreen(
     val usage by viewModel.usage.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
+    val messageIsError by viewModel.messageIsError.collectAsStateWithLifecycle()
     var clearCacheConfirmation by remember { mutableStateOf(false) }
 
     if (clearCacheConfirmation) {
@@ -85,7 +88,7 @@ fun StorageUsageScreen(
                     }
                 }
             }
-            message?.let { item { NoticeBanner(it, isError = it.startsWith("读取") || it.startsWith("清理缓存失败")) } }
+            message?.let { item { NoticeBanner(it, isError = messageIsError, onDismiss = viewModel::dismissMessage) } }
             item {
                 androidx.compose.material3.Text("按大类查看", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             }
@@ -101,10 +104,27 @@ private fun StorageSummary(usage: StorageUsage) = RuntimeCard(Modifier.fillMaxWi
     androidx.compose.material3.Text("太墟已管理", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
     androidx.compose.material3.Text(usage.totalManagedBytes.readableSize(), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
     Spacer(Modifier.height(12.dp))
-    Row(Modifier.fillMaxWidth().height(12.dp).clip(MaterialTheme.shapes.small)) {
-        val visible = usage.categories.filter { it.bytes > 0L }
-        if (visible.isEmpty()) Spacer(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant))
-        visible.forEachIndexed { index, category ->
+    // 占比条各色块补充语义描述，TalkBack 可读出类别与占比；图例见下方按大类卡片色块
+    val visibleCategories = usage.categories.filter { it.bytes > 0L }
+    val totalBytes = visibleCategories.sumOf { it.bytes }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(12.dp)
+            .clip(MaterialTheme.shapes.small)
+            .semantics {
+                contentDescription = if (visibleCategories.isEmpty()) {
+                    "暂无存储占用明细"
+                } else {
+                    visibleCategories.joinToString("；") { category ->
+                        val percent = if (totalBytes > 0) (category.bytes * 100 / totalBytes) else 0L
+                        "${category.name} 约占 ${percent}%"
+                    }
+                }
+            },
+    ) {
+        if (visibleCategories.isEmpty()) Spacer(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant))
+        visibleCategories.forEachIndexed { index, category ->
             Spacer(Modifier.weight(category.bytes.toFloat()).fillMaxSize().background(categoryColor(index)))
         }
     }
