@@ -54,7 +54,7 @@ internal class ChatApi(
                 val message = parsed.choices.firstOrNull()?.message ?: ChatResponseMessage()
                 val calls = message.tool_calls.orEmpty().mapNotNull { call ->
                     call.function.let { fn ->
-                        if (fn.name.isBlank()) null else ApiToolCallSpec(call.id, fn.name, fn.arguments)
+                        if (fn.name.isBlank()) null else ApiToolCallSpec(call.id, fn.name, fn.arguments.ifBlank { "{}" })
                     }
                 }
                 val (extractedContent, extractedReasoning) = ProviderClient.extractThinkTags(message.content, message.reasoning_content)
@@ -159,7 +159,10 @@ internal class ChatApi(
                     }
                 }
                 demuxer.flush()
-                val calls = toolCalls.values.map { ApiToolCallSpec(it.id, it.name, it.arguments.toString()) }
+                // 部分 OpenAI 兼容端对无参数函数不下发 arguments 分片，空串须兜底为 "{}"
+                val calls = toolCalls.values.map {
+                    ApiToolCallSpec(it.id, it.name, it.arguments.toString().ifBlank { "{}" })
+                }
                 ChatResult(
                     content = demuxer.fullText.toString().ifEmpty { null },
                     toolCalls = calls,

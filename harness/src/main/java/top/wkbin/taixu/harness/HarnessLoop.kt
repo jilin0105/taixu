@@ -1045,9 +1045,29 @@ class HarnessLoop @Inject constructor(
         specs.forEach { spec ->
             val tool = HarnessApiMapper.toolByName(spec.name)
             val toolNameTrimmed = spec.name.trim()
+            // 工具名校验必须在参数解析之前：名字未知时（哪怕参数为空/非法）
+            // 也要第一时间回写真实工具清单，否则模型会在"解析失败"上盲目重试。
+            if (toolNameTrimmed.lowercase() !in KNOWN_TOOL_NAMES && !toolNameTrimmed.startsWith("mcp__")) {
+                appendToolCallAndResult(
+                    sessId = sessId,
+                    spec = spec,
+                    tool = tool,
+                    args = buildJsonObject {},
+                    reasoning = reasoning,
+                    rawToolName = toolNameTrimmed,
+                    output = unknownToolGuidance(toolNameTrimmed, effectiveModel),
+                )
+                loopDetector.recordSettled(toolNameTrimmed, buildJsonObject {}, success = false)
+                return@forEach
+            }
             val parsedArgs = try {
-                json.parseToJsonElement(spec.argumentsJson) as? JsonObject
-                    ?: throw IllegalArgumentException("参数不是 JSON 对象")
+                // 无参数调用（arguments 为空/空白）是合法形态，兜底为空对象而不是解析失败
+                if (spec.argumentsJson.isBlank()) {
+                    buildJsonObject {}
+                } else {
+                    json.parseToJsonElement(spec.argumentsJson) as? JsonObject
+                        ?: throw IllegalArgumentException("参数不是 JSON 对象")
+                }
             } catch (parseError: Throwable) {
                 // 尝试自动修复因 Token 截断或网络抖动未闭合的 JSON
                 val repaired = runCatching {
@@ -1062,26 +1082,13 @@ class HarnessLoop @Inject constructor(
                         tool = tool,
                         args = buildJsonObject {},
                         reasoning = reasoning,
-                        rawToolName = null,
+                        rawToolName = toolNameTrimmed,
                         output = "工具参数 JSON 解析失败（${friendly(parseError)}），参数可能被截断。" +
                             "请重新发起完整的工具调用，参数必须是合法的 JSON 对象。",
                     )
                     loopDetector.recordSettled(toolNameTrimmed, buildJsonObject {}, success = false)
                     return@forEach
                 }
-            }
-            if (toolNameTrimmed.lowercase() !in KNOWN_TOOL_NAMES && !toolNameTrimmed.startsWith("mcp__")) {
-                appendToolCallAndResult(
-                    sessId = sessId,
-                    spec = spec,
-                    tool = tool,
-                    args = buildJsonObject {},
-                    reasoning = reasoning,
-                    rawToolName = toolNameTrimmed,
-                    output = unknownToolGuidance(toolNameTrimmed, effectiveModel),
-                )
-                loopDetector.recordSettled(toolNameTrimmed, buildJsonObject {}, success = false)
-                return@forEach
             }
             var args = parsedArgs
             if (tool == HarnessTool.BASE && autoCwd && sessionWorkspace.isNotBlank() && args["cwd"] == null) {
@@ -1455,7 +1462,10 @@ class HarnessLoop @Inject constructor(
 
     companion object {
         const val MAX_ROUNDS = 200
+        // MCP 的 apiName "mcp" 只是历史回放别名，不是模型可直接调用的工具；
+        // 剔除后模型误调 "mcp" 会落入 unknownToolGuidance，拿到真实 mcp__ 工具清单自我纠正。
         val KNOWN_TOOL_NAMES: Set<String> = HarnessTool.entries
+            .filter { it != HarnessTool.MCP }
             .map { HarnessApiMapper.apiName(it) }
             .toSet() + "subagent"
         const val MAX_STREAM_RETRIES = 5

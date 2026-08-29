@@ -921,7 +921,7 @@ private fun parseMcpJson(rawJson: String): Result<List<McpServerConfig>> = runCa
                 McpServerConfig(
                     id = "custom_${serverName.lowercase().replace(Regex("[^a-z0-9_]"), "_")}_${System.currentTimeMillis()}",
                     name = serverName,
-                    description = desc.ifBlank { if (isSse) "SSE 远程服务: $url" else "本地 Stdio: $command ${args.joinToString(" ")}" },
+                    description = desc.ifBlank { if (isSse) "远程 HTTP 服务: $url" else "本地 Stdio: $command ${args.joinToString(" ")}" },
                     transportType = if (isSse) McpTransportType.SSE else McpTransportType.STDIO,
                     command = command,
                     args = args,
@@ -947,7 +947,7 @@ private fun parseMcpJson(rawJson: String): Result<List<McpServerConfig>> = runCa
             McpServerConfig(
                 id = "custom_${name.lowercase().replace(Regex("[^a-z0-9_]"), "_")}_${System.currentTimeMillis()}",
                 name = name,
-                description = desc.ifBlank { if (isSse) "SSE 远程服务: $url" else "本地 Stdio: $command ${args.joinToString(" ")}" },
+                description = desc.ifBlank { if (isSse) "远程 HTTP 服务: $url" else "本地 Stdio: $command ${args.joinToString(" ")}" },
                 transportType = if (isSse) McpTransportType.SSE else McpTransportType.STDIO,
                 command = command,
                 args = args,

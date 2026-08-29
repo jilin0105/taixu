@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
+import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.database.McpServerRepository
 import top.wkbin.taixu.core.model.McpConnectionState
 import top.wkbin.taixu.core.model.McpServerConfig
@@ -24,6 +25,7 @@ class McpManager @Inject constructor(
     private val repository: McpServerRepository,
     private val stdio: McpStdioTransport,
     private val http: McpHttpTransport,
+    private val logger: AppLogger,
 ) {
     private val cache = ConcurrentHashMap<String, List<McpToolInfo>>()
     private val _connectionStates = MutableStateFlow<Map<String, McpConnectionState>>(emptyMap())
@@ -47,7 +49,11 @@ class McpManager @Inject constructor(
     suspend fun getActiveMcpTools(): List<McpToolInfo> = repository.servers.first().filter { it.isEnabled }.flatMap { server ->
         cache[server.id] ?: runCatching { discoverTools(server) }
             .onSuccess { cache[server.id] = it; state(server.id, McpConnectionState.ONLINE) }
-            .onFailure { cache.remove(server.id); state(server.id, McpConnectionState.OFFLINE) }
+            .onFailure {
+                // 静默失败会让"模型不调用 MCP 工具"无从排查，这里必须留下线索
+                logger.w("MCP[${server.name}] 工具发现失败，本轮对话不注入该服务的工具: ${it.message}", it)
+                cache.remove(server.id); state(server.id, McpConnectionState.OFFLINE)
+            }
             .getOrDefault(emptyList())
     }
 
@@ -64,6 +70,10 @@ class McpManager @Inject constructor(
         val server = repository.servers.first().firstOrNull { it.id == tool.serverId && it.isEnabled }
             ?: return false to "未找到 MCP 服务：${tool.serverId}"
         return runCatching { transport(server).execute(server, tool.name, arguments) }
+            .onFailure { logger.e("MCP[${server.name}] 工具 ${tool.name} 执行异常: ${it.message}", it) }
+            .onSuccess { (ok, output) ->
+                if (!ok) logger.w("MCP[${server.name}] 工具 ${tool.name} 返回错误: $output".take(500))
+            }
             .getOrElse { false to "MCP 工具执行异常：${it.message ?: it::class.simpleName}" }
     }
 

@@ -8,7 +8,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 enum class McpTransportType {
     STDIO,  // 在 Linux 沙箱内通过标准输入输出与进程交互
-    SSE,    // 通过 HTTP / SSE 连接本地或远程 MCP 服务器
+    SSE,    // 远程 HTTP 服务：连接时自动协商 Streamable HTTP 与 legacy HTTP+SSE 两种协议
 }
 
 /**
@@ -26,7 +26,7 @@ data class McpServerConfig(
     val args: List<String> = emptyList(),
     /** 环境变量 */
     val env: Map<String, String> = emptyMap(),
-    /** SSE 服务的 HTTP 端点 URL（例如 http://127.0.0.1:8000/sse） */
+    /** 远程 MCP 服务的 HTTP 端点 URL（例如 http://127.0.0.1:8000/mcp 或 .../sse） */
     val serverUrl: String = "",
     /** 是否启用 */
     val isEnabled: Boolean = true,
