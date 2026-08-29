@@ -207,6 +207,11 @@
     <string name="chat_workbench_collapse">收起工作台</string>
     <string name="chat_workbench_expand">展开工作台</string>
     <string name="chat_action_convert_to_steer">转为修正</string>
+    <string name="chat_step_chain_summary_fmt">已执行 %1$d 步操作 (%2$s)%3$s</string>
+    <string name="chat_step_chain_running_fmt">正在执行第 %1$d 步：%2$s%3$s</string>
+    <string name="chat_step_chain_title">执行步骤 (%1$d 步)</string>
+    <string name="chat_step_chain_collapse">收起步骤</string>
+    <string name="chat_step_chain_expand">展开步骤</string>
     <string name="chat_deep_thinking_title">深度思考</string>
     <string name="chat_menu_capabilities_short">技能与 MCP</string>
     <string name="chat_menu_reasoning_effort">思考强度</string>

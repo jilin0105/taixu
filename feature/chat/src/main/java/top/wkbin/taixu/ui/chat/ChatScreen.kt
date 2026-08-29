@@ -11,6 +11,7 @@ import android.provider.Settings
 import android.util.LruCache
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -1099,9 +1100,12 @@ private fun ChatPaneContent(
                 }
                 itemsIndexed(renderItems, key = { _, item -> item.stableKey }) { index, item ->
                     val top = when {
-                        item is ChatRenderItem.MessageItem && item.message is ToolCall && prevRenderedIsToolCall(renderItems, index) -> 4.dp
-                        item is ChatRenderItem.MessageItem && item.message is UserMessage -> 14.dp
-                        else -> 10.dp
+                        item is ChatRenderItem.MessageItem && item.message is UserMessage -> 12.dp
+                        // 思考过程、工具调用卡片、能力事件之间的垂直外边距压至紧凑的 2.5dp
+                        isThinkingOrActionItem(item) && isThinkingOrActionItem(renderItems.getOrNull(index - 1)) -> 2.5.dp
+                        // 思考/工具刚结束紧接的最终回复气泡间距压缩为 4dp
+                        item is ChatRenderItem.MessageItem && item.message is AssistantText && isThinkingOrActionItem(renderItems.getOrNull(index - 1)) -> 4.dp
+                        else -> 8.dp
                     }
                     if (index > 0) Spacer(Modifier.height(top))
                     when (item) {
@@ -1293,7 +1297,7 @@ private fun ChatPaneContent(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 2.dp, bottom = 4.dp)
+                .padding(top = 1.dp, bottom = 2.dp)
                 .then(
                     if (running && auroraBrush != null) {
                         Modifier.border(
@@ -1315,8 +1319,8 @@ private fun ChatPaneContent(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
                 // 🌟 常驻/已钉选能力与临时挂载胶囊栏 (Pinned & Attached Capabilities Strip)
                 val allDisplayItems = remember(pinnedCapabilities, attachedMentions) {
@@ -1326,7 +1330,7 @@ private fun ChatPaneContent(
                     LazyRow(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 2.dp, vertical = 2.dp),
+                            .padding(horizontal = 2.dp, vertical = 1.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -2316,7 +2320,7 @@ private fun AssistantBubble(
         Toast.makeText(context, context.getString(R.string.chat_response_copied), Toast.LENGTH_SHORT).show()
     }
 
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
         if (!reasoning.isNullOrBlank()) {
             ThinkingBlock(
                 id = message.id,
@@ -2598,16 +2602,15 @@ private fun ThinkingBlock(
             .clickable {
                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                 expanded = !expanded
-            }
-            .padding(vertical = 1.dp),
-        verticalArrangement = Arrangement.spacedBy(3.dp),
+            },
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 3.dp),
+                .padding(vertical = 1.dp),
         ) {
             Box(
                 modifier = Modifier.size(16.dp),
@@ -2678,7 +2681,7 @@ private fun ThinkingBlock(
                             strokeWidth = 1.5.dp.toPx(),
                         )
                     }
-                    .padding(start = 22.dp, top = 2.dp, bottom = 4.dp),
+                    .padding(start = 22.dp, top = 1.dp, bottom = 2.dp),
             ) {
                 if (live) {
                     SelectionContainer {
@@ -2709,7 +2712,7 @@ private fun CapabilityEventCard(event: CapabilityEvent) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 3.dp),
+            .padding(vertical = 1.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -2775,10 +2778,8 @@ private fun ToolCard(
     }
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
         Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(vertical = 1.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             if (showReasoning) {
                 call.reasoning?.takeIf { it.isNotBlank() }
@@ -2797,7 +2798,7 @@ private fun ToolCard(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(6.dp))
                     .clickable { expanded = !expanded }
-                    .padding(vertical = 3.dp),
+                    .padding(vertical = 1.dp),
             ) {
                 Box(
                     modifier = Modifier.size(16.dp),
@@ -3980,6 +3981,15 @@ private fun RoundCollapseButton(
 private fun prevRenderedIsToolCall(items: List<ChatRenderItem>, index: Int): Boolean {
     val prev = items.getOrNull(index - 1)
     return prev is ChatRenderItem.MessageItem && prev.message is ToolCall
+}
+
+private fun isThinkingOrActionItem(item: ChatRenderItem?): Boolean {
+    if (item !is ChatRenderItem.MessageItem) return false
+    return when (val msg = item.message) {
+        is ToolCall, is CapabilityEvent -> true
+        is AssistantText -> msg.text.isBlank() || msg.reasoning != null
+        else -> false
+    }
 }
 
 private fun reasoningAlreadyShown(messages: List<HarnessMessage>, index: Int, reasoning: String?): Boolean {

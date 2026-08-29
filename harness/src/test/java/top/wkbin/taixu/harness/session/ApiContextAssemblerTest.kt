@@ -168,14 +168,16 @@ class ApiContextAssemblerTest {
     }
 
     @Test
-    fun `thinking mode backfills empty reasoning for reasoning-less assistant`() = runBlocking {
-        push("s-think", UserMessage("u1", 1L, "hi"), AssistantText("a1", 2L, "hello"))
+    fun `historical assistant messages do not leak reasoning content to prevent reasoning loop`() = runBlocking {
+        push("s-think", UserMessage("u1", 1L, "hi"), AssistantText("a1", 2L, "<think>思考中</think>hello", reasoning = "历史思考"))
         val out = assembler.assemble("s-think", nativeModel(), "", thinkingMode = true)
         val assistant = out.last { it.role == "assistant" }
-        assertEquals("", assistant.reasoning_content)
+        assertNull(assistant.reasoning_content)
+        assertEquals("hello", assistant.content)
 
         val off = assembler.assemble("s-think", nativeModel(), "", thinkingMode = false)
         assertNull(off.last { it.role == "assistant" }.reasoning_content)
+        assertEquals("hello", off.last { it.role == "assistant" }.content)
     }
 
     // ---------- JSON_TEXT 协议 ----------

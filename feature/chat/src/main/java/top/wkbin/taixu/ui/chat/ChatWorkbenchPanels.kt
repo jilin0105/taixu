@@ -82,22 +82,22 @@ internal fun CollapsibleChatWorkbenchStrip(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .padding(bottom = 6.dp)
+            .padding(bottom = 2.dp)
             .animateContentSize(),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         if (expanded) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     WorkspacePill(
                         icon = RuntimeIconName.Hub,
@@ -130,15 +130,14 @@ internal fun CollapsibleChatWorkbenchStrip(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 4.dp)
+                        .padding(top = 1.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .clickable { expanded = false }
-                        .padding(vertical = 1.dp),
+                        .clickable { expanded = false },
                     contentAlignment = Alignment.Center,
                 ) {
                     RuntimeIcon(
                         name = RuntimeIconName.ChevronUp,
-                        modifier = Modifier.size(12.dp),
+                        modifier = Modifier.size(10.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
                     )
                 }
@@ -148,9 +147,9 @@ internal fun CollapsibleChatWorkbenchStrip(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
+                    .clip(RoundedCornerShape(10.dp))
                     .clickable { expanded = true }
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                    .padding(horizontal = 8.dp, vertical = 2.5.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
@@ -163,10 +162,10 @@ internal fun CollapsibleChatWorkbenchStrip(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(3.dp),
                     ) {
-                        RuntimeIcon(RuntimeIconName.Hub, Modifier.size(12.dp), MaterialTheme.colorScheme.primary)
+                        RuntimeIcon(RuntimeIconName.Hub, Modifier.size(11.dp), MaterialTheme.colorScheme.primary)
                         Text(
                             currentBranch?.name ?: stringResource(R.string.chat_main_line),
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -177,11 +176,11 @@ internal fun CollapsibleChatWorkbenchStrip(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(3.dp),
                     ) {
-                        RuntimeIcon(RuntimeIconName.Logs, Modifier.size(12.dp), if (running) Color(0xFF7C4DFF) else MaterialTheme.colorScheme.tertiary)
+                        RuntimeIcon(RuntimeIconName.Logs, Modifier.size(11.dp), if (running) Color(0xFF7C4DFF) else MaterialTheme.colorScheme.tertiary)
                         Text(
                             activeRound?.let { stringResource(R.string.chat_round_number, it + 1) }
                                 ?: stringResource(R.string.chat_event_count, runtimeEvents.size),
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                         )
@@ -191,10 +190,10 @@ internal fun CollapsibleChatWorkbenchStrip(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(3.dp),
                     ) {
-                        RuntimeIcon(RuntimeIconName.Brain, Modifier.size(12.dp), MaterialTheme.colorScheme.secondary)
+                        RuntimeIcon(RuntimeIconName.Brain, Modifier.size(11.dp), MaterialTheme.colorScheme.secondary)
                         Text(
                             stringResource(R.string.chat_memory_pill_subtitle, memoryCount, scratchpadCount),
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                         )
@@ -202,7 +201,7 @@ internal fun CollapsibleChatWorkbenchStrip(
                 }
                 RuntimeIcon(
                     name = RuntimeIconName.ChevronDown,
-                    modifier = Modifier.size(12.dp),
+                    modifier = Modifier.size(11.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -223,29 +222,27 @@ private fun WorkspacePill(
     Surface(
         modifier = modifier.clickable(onClick = onClick),
         color = tint.copy(alpha = if (highlight) 0.16f else 0.09f),
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(8.dp),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            RuntimeIcon(icon, Modifier.size(15.dp), tint)
+            RuntimeIcon(icon, Modifier.size(13.dp), tint)
             Column(Modifier.weight(1f)) {
                 Text(
                     title,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     subtitle,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
             }
             RuntimeIcon(RuntimeIconName.ChevronRight, Modifier.size(13.dp), MaterialTheme.colorScheme.onSurfaceVariant)

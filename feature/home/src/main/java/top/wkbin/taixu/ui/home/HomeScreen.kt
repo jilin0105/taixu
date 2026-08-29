@@ -47,6 +47,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -359,22 +360,14 @@ private fun EnvironmentDoctorCard(
     onRequestAllFilesAccess: () -> Unit = {},
     onOpenToolCenter: () -> Unit = {},
 ) {
-    var isCardExpanded by remember { mutableStateOf(false) }
-    var expandedDetails by remember { mutableStateOf(false) }
-    var showLogs by remember { mutableStateOf(false) }
+    var isCardExpanded by rememberSaveable { mutableStateOf(false) }
+    var expandedDetails by rememberSaveable { mutableStateOf(false) }
+    var showLogs by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
 
-    // 修复中时自动展开
+    // 仅在实际触发自愈修复时自动展开
     LaunchedEffect(isRepairing) {
         if (isRepairing) isCardExpanded = true
-    }
-
-    // 检测到 Android 环境未安装时自动展开，让获取引导卡立即可见
-    val missingAndroidEnv = report?.items?.any {
-        it.id == "android_environment" && it.status != DoctorStatus.HEALTHY
-    } == true
-    LaunchedEffect(missingAndroidEnv) {
-        if (missingAndroidEnv) isCardExpanded = true
     }
 
     RuntimeCard(

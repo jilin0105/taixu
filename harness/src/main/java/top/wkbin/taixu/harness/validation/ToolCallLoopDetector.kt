@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.harness.validation
+package top.wkbin.taixu.harness.validation
 
 import kotlinx.serialization.json.JsonObject
 
@@ -81,6 +81,29 @@ class ToolCallLoopDetector(
                     append("请跳出当前循环，总结已获取的信息，推进到下一阶段或向用户汇报。")
                 },
             )
+        }
+
+        // 3. 检测多工具交替震荡死循环（例如 A -> B -> A -> B 或 A -> B -> C -> A -> B -> C）
+        val simulatedHistory = recentCalls.map { "${it.toolName.lowercase()}:${it.argsJson}" } + "${toolName.lowercase()}:$currentArgsJson"
+        for (period in 2..3) {
+            if (simulatedHistory.size >= period * 3) {
+                val cycle1 = simulatedHistory.takeLast(period)
+                val cycle2 = simulatedHistory.dropLast(period).takeLast(period)
+                val cycle3 = simulatedHistory.dropLast(period * 2).takeLast(period)
+                if (cycle1 == cycle2 && cycle2 == cycle3) {
+                    return LoopVerdict.Block(
+                        reason = "检测到交替震荡死循环：工具调用序列以周期 $period 反复交替循环了 3 次",
+                        guidance = buildString {
+                            append("【已强制拦截交替震荡死循环】\n")
+                            append("你正在反复交替执行相同的操作序列（周期 $period）。\n")
+                            append("系统检测到任务陷入来回摆动的震荡死循环，已直接阻断执行。\n\n")
+                            append("请立即执行以下反思：\n")
+                            append("1. 为什么上一个步骤的结果无法推进任务？\n")
+                            append("2. 立即停止当前循环模式，切换到新的解决思路或向用户汇报当前阻碍。")
+                        },
+                    )
+                }
+            }
         }
 
         return LoopVerdict.Pass

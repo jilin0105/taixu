@@ -323,4 +323,19 @@
     <!-- 模板变量校验 -->
     <string name="template_variable_required">%1$s 必填</string>
     <string name="template_variable_invalid_format">%1$s 格式不正确</string>
+
+    <!-- 工坊悬浮小窗 -->
+    <string name="workspace_floating_window">悬浮小窗</string>
+    <string name="workspace_floating_collapse">小窗收起</string>
+    <string name="workspace_floating_permission_title">开启悬浮窗权限</string>
+    <string name="workspace_floating_permission_message">工坊小窗模式需要在其他应用上层显示，以便您在切换至桌面或其他应用时，仍可实时查看工程构建进度、日志并进行快捷操作。</string>
+    <string name="workspace_floating_permission_grant">前往开启</string>
+    <string name="workspace_floating_permission_cancel">暂不开启</string>
+    <string name="workspace_floating_title">太墟 · 工坊小窗</string>
+    <string name="workspace_floating_restore_app">回到工坊</string>
+    <string name="workspace_floating_open_terminal">终端</string>
+    <string name="workspace_floating_open_agent">智枢 AI</string>
+    <string name="workspace_floating_close">关闭小窗</string>
+    <string name="workspace_floating_no_active_project">就绪 · 无活动构建</string>
+    <string name="workspace_floating_building_capsule">正在编译…</string>
 </resources>

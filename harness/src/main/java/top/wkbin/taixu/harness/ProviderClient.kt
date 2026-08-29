@@ -57,10 +57,11 @@ internal class ChatApi(
                         if (fn.name.isBlank()) null else ApiToolCallSpec(call.id, fn.name, fn.arguments)
                     }
                 }
+                val (extractedContent, extractedReasoning) = ProviderClient.extractThinkTags(message.content, message.reasoning_content)
                 ChatResult(
-                    content = message.content,
+                    content = extractedContent,
                     toolCalls = calls,
-                    reasoningContent = message.reasoning_content,
+                    reasoningContent = extractedReasoning,
                     usage = parsed.usage?.toChatUsage() ?: ChatUsage(),
                 )
             }
@@ -113,9 +114,7 @@ internal class ChatApi(
                     throw IllegalStateException(ProviderClient.formatHttpErrorMessage(response.code, rawBody))
                 }
                 val source = response.body.source()
-                val text = StringBuilder()
-                // 推理模型的 thinking 内容（如 DeepSeek-R1 的 reasoning_content），后续轮次需原样传回
-                val reasoningText = StringBuilder()
+                val demuxer = ThinkTagStreamDemuxer(onReasoning, onDelta)
                 val toolCalls = mutableMapOf<Int, ToolCallAccumulator>()
                 var usage = ChatUsage()
                 while (true) {
@@ -135,8 +134,7 @@ internal class ChatApi(
                     val delta = choice["delta"] as? JsonObject
                     delta?.get("content")?.let { it as? JsonPrimitive }?.contentOrNull?.let { chunk ->
                         if (chunk.isNotEmpty()) {
-                            text.append(chunk)
-                            onDelta(chunk)
+                            demuxer.onContentChunk(chunk)
                         }
                     }
                     // 推理增量：兼容 reasoning_content（DeepSeek/GLM 等）与 reasoning（OpenRouter 等网关）两种字段名
@@ -144,10 +142,7 @@ internal class ChatApi(
                         ?.let { it as? JsonPrimitive }?.contentOrNull
                     reasoningChunk?.let { chunk ->
                         if (chunk.isNotEmpty()) {
-                            if (reasoningText.length < ProviderClient.MAX_STREAM_REASONING_CHARS) {
-                                reasoningText.append(chunk.take(ProviderClient.MAX_STREAM_REASONING_CHARS - reasoningText.length))
-                            }
-                            onReasoning(chunk)
+                            demuxer.onExplicitReasoningChunk(chunk)
                         }
                     }
                     delta?.get("tool_calls")?.let { it as? JsonArray }?.forEach { call2 ->
@@ -163,11 +158,12 @@ internal class ChatApi(
                             ?.let { accum.arguments.append(it) }
                     }
                 }
+                demuxer.flush()
                 val calls = toolCalls.values.map { ApiToolCallSpec(it.id, it.name, it.arguments.toString()) }
                 ChatResult(
-                    content = text.toString().ifEmpty { null },
+                    content = demuxer.fullText.toString().ifEmpty { null },
                     toolCalls = calls,
-                    reasoningContent = reasoningText.toString().ifEmpty { null },
+                    reasoningContent = demuxer.fullReasoning.toString().ifEmpty { null },
                     usage = usage,
                 )
             }
@@ -886,5 +882,195 @@ class ProviderClient @Inject constructor(
                 }
             }
         }
+
+        /**
+         * 从模型回复内容中提取 <think>...</think> 标签内容并与正文分离。
+         */
+        fun extractThinkTags(content: String?, explicitReasoning: String?): Pair<String?, String?> {
+            if (content.isNullOrBlank()) return Pair(content, explicitReasoning)
+            val thinkPattern = Regex("""(?s)<think>(.*?)</think>""")
+            val match = thinkPattern.find(content)
+            return if (match != null) {
+                val extractedReasoning = match.groupValues[1].trim()
+                val strippedContent = thinkPattern.replace(content, "").trim().ifEmpty { null }
+                val finalReasoning = explicitReasoning?.takeIf { it.isNotBlank() } ?: extractedReasoning.ifEmpty { null }
+                Pair(strippedContent, finalReasoning)
+            } else {
+                val unclosedPattern = Regex("""(?s)<think>(.*)""")
+                val unclosedMatch = unclosedPattern.find(content)
+                if (unclosedMatch != null) {
+                    val extractedReasoning = unclosedMatch.groupValues[1].trim()
+                    val strippedContent = unclosedPattern.replace(content, "").trim().ifEmpty { null }
+                    val finalReasoning = explicitReasoning?.takeIf { it.isNotBlank() } ?: extractedReasoning.ifEmpty { null }
+                    Pair(strippedContent, finalReasoning)
+                } else {
+                    Pair(content, explicitReasoning)
+                }
+            }
+        }
+
+        /**
+         * 剥离文本中的 <think>...</think> 标签残余。
+         */
+        fun stripThinkTags(content: String?): String? {
+            if (content == null) return null
+            val thinkPattern = Regex("""(?s)<think>(.*?)</think>""")
+            val unclosedPattern = Regex("""(?s)<think>(.*)""")
+            val stripped = unclosedPattern.replace(thinkPattern.replace(content, ""), "").trim()
+            return stripped.ifEmpty { null }
+        }
+    }
+}
+
+/**
+ * 流式 chunk 的 <think> 标签与思考/正文智能分流器。
+ * 兼容：原生 reasoning_chunk、在 content 中输出 <think>...</think> 标签以及跨 chunk 标签碎片。
+ * 内置思维链死循环/重复自旋检测与保护机制。
+ */
+internal class ThinkTagStreamDemuxer(
+    private val onReasoning: (String) -> Unit,
+    private val onDelta: (String) -> Unit,
+    private val maxReasoningChars: Int = ProviderClient.MAX_STREAM_REASONING_CHARS,
+) {
+    val fullText = StringBuilder()
+    val fullReasoning = StringBuilder()
+
+    private var inThinkTag = false
+    private val pendingBuffer = StringBuilder()
+    private var reasoningMutedDueToLoop = false
+
+    fun onExplicitReasoningChunk(chunk: String) {
+        if (chunk.isEmpty()) return
+        appendReasoning(chunk)
+    }
+
+    fun onContentChunk(chunk: String) {
+        if (chunk.isEmpty()) return
+        pendingBuffer.append(chunk)
+        processPending()
+    }
+
+    fun flush() {
+        if (pendingBuffer.isNotEmpty()) {
+            val leftover = pendingBuffer.toString()
+            pendingBuffer.clear()
+            if (inThinkTag) {
+                appendReasoning(leftover)
+            } else {
+                appendText(leftover)
+            }
+        }
+    }
+
+    private fun processPending() {
+        while (pendingBuffer.isNotEmpty()) {
+            if (!inThinkTag) {
+                val thinkStartIdx = pendingBuffer.indexOf("<think>")
+                if (thinkStartIdx != -1) {
+                    val before = pendingBuffer.substring(0, thinkStartIdx)
+                    if (before.isNotEmpty()) {
+                        appendText(before)
+                    }
+                    pendingBuffer.delete(0, thinkStartIdx + "<think>".length)
+                    inThinkTag = true
+                } else {
+                    val possiblePrefixLen = matchTrailingPrefix(pendingBuffer, "<think>")
+                    if (possiblePrefixLen > 0) {
+                        val emitLen = pendingBuffer.length - possiblePrefixLen
+                        if (emitLen > 0) {
+                            val toEmit = pendingBuffer.substring(0, emitLen)
+                            appendText(toEmit)
+                            pendingBuffer.delete(0, emitLen)
+                        }
+                        break
+                    } else {
+                        val textToEmit = pendingBuffer.toString()
+                        pendingBuffer.clear()
+                        appendText(textToEmit)
+                    }
+                }
+            } else {
+                val thinkEndIdx = pendingBuffer.indexOf("</think>")
+                if (thinkEndIdx != -1) {
+                    val reasoningContent = pendingBuffer.substring(0, thinkEndIdx)
+                    if (reasoningContent.isNotEmpty()) {
+                        appendReasoning(reasoningContent)
+                    }
+                    pendingBuffer.delete(0, thinkEndIdx + "</think>".length)
+                    inThinkTag = false
+                } else {
+                    val possiblePrefixLen = matchTrailingPrefix(pendingBuffer, "</think>")
+                    if (possiblePrefixLen > 0) {
+                        val emitLen = pendingBuffer.length - possiblePrefixLen
+                        if (emitLen > 0) {
+                            val toEmit = pendingBuffer.substring(0, emitLen)
+                            appendReasoning(toEmit)
+                            pendingBuffer.delete(0, emitLen)
+                        }
+                        break
+                    } else {
+                        val reasoningToEmit = pendingBuffer.toString()
+                        pendingBuffer.clear()
+                        appendReasoning(reasoningToEmit)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun appendText(str: String) {
+        if (str.isEmpty()) return
+        fullText.append(str)
+        onDelta(str)
+    }
+
+    private fun appendReasoning(str: String) {
+        if (str.isEmpty()) return
+        if (reasoningMutedDueToLoop) return
+
+        if (detectRepetitionLoop(fullReasoning, str)) {
+            reasoningMutedDueToLoop = true
+            val notice = "\n[太墟提示：检测到思维链重复自旋死循环，已自动截断冗余思考内容并继续执行]\n"
+            if (fullReasoning.length + notice.length <= maxReasoningChars) {
+                fullReasoning.append(notice)
+            }
+            onReasoning(notice)
+            return
+        }
+
+        if (fullReasoning.length < maxReasoningChars) {
+            val takeCount = (maxReasoningChars - fullReasoning.length).coerceAtMost(str.length)
+            fullReasoning.append(str.take(takeCount))
+        }
+        onReasoning(str)
+    }
+
+    private fun matchTrailingPrefix(sb: CharSequence, target: String): Int {
+        for (len in target.length - 1 downTo 1) {
+            if (sb.length >= len) {
+                val sub = sb.subSequence(sb.length - len, sb.length)
+                if (target.startsWith(sub)) {
+                    return len
+                }
+            }
+        }
+        return 0
+    }
+
+    private fun detectRepetitionLoop(history: StringBuilder, newChunk: String): Boolean {
+        if (history.length < 200) return false
+        val recent = history.takeLast(300).toString() + newChunk
+        for (patternLen in 12..40) {
+            if (recent.length >= patternLen * 4) {
+                val p = recent.takeLast(patternLen)
+                val p2 = recent.substring(recent.length - patternLen * 2, recent.length - patternLen)
+                val p3 = recent.substring(recent.length - patternLen * 3, recent.length - patternLen * 2)
+                val p4 = recent.substring(recent.length - patternLen * 4, recent.length - patternLen * 3)
+                if (p == p2 && p2 == p3 && p3 == p4) {
+                    return true
+                }
+            }
+        }
+        return false
     }
 }

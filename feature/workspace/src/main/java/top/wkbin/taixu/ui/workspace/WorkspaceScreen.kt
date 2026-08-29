@@ -3,6 +3,7 @@ package top.wkbin.taixu.ui.workspace
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 
 import android.Manifest
+import android.app.Activity
 import android.graphics.BitmapFactory
 import android.content.Context
 import android.content.Intent
@@ -13,6 +14,7 @@ import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.provider.Settings
+import top.wkbin.taixu.ui.workspace.floating.FloatingWorkshopService
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -268,6 +270,7 @@ fun WorkspaceScreen(
     var showImport by rememberSaveable { mutableStateOf(false) }
     var showTemplateManager by rememberSaveable { mutableStateOf(false) }
     var showTemplateSpec by rememberSaveable { mutableStateOf(false) }
+    var showFloatingPermissionDialog by rememberSaveable { mutableStateOf(false) }
     var actionsExpanded by rememberSaveable { mutableStateOf(false) }
 
     // 首次进入引导：高亮右上角「更多」菜单（内含插件中心与工坊设置入口）
@@ -404,21 +407,51 @@ fun WorkspaceScreen(
                 title = stringResource(R.string.workspace_title),
                 statusText = stringResource(R.string.workspace_active_projects, projects.size),
             ) {
-                Box {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(
-                        onClick = { actionsExpanded = true },
+                        onClick = {
+                            if (Settings.canDrawOverlays(context)) {
+                                FloatingWorkshopService.start(context)
+                                (context as? Activity)?.moveTaskToBack(true)
+                            } else {
+                                showFloatingPermissionDialog = true
+                            }
+                        },
                         enabled = !busy,
-                        modifier = Modifier.spotlightAnchor(moreAnchor),
-                        contentDescription = stringResource(R.string.workspace_cd_more),
+                        contentDescription = stringResource(R.string.workspace_floating_collapse),
                     ) {
-                        RuntimeIcon(RuntimeIconName.More, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                        RuntimeIcon(RuntimeIconName.OpenInNew, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.primary)
                     }
-                    DropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }) {
-                        DropdownMenuItem(text = { Text(stringResource(R.string.workspace_menu_create)) }, leadingIcon = { RuntimeIcon(RuntimeIconName.Plus, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; showCreate = true })
-                        DropdownMenuItem(text = { Text(stringResource(R.string.workspace_menu_import)) }, leadingIcon = { RuntimeIcon(RuntimeIconName.FolderDownload, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; showImport = true })
-                        DropdownMenuItem(text = { Text(stringResource(R.string.workspace_menu_templates)) }, leadingIcon = { RuntimeIcon(RuntimeIconName.Package, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; showTemplateManager = true })
-                        DropdownMenuItem(text = { Text(stringResource(R.string.workspace_menu_plugins)) }, leadingIcon = { RuntimeIcon(RuntimeIconName.Package, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; onOpenToolCenter() })
-                        DropdownMenuItem(text = { Text(stringResource(R.string.workspace_menu_settings)) }, leadingIcon = { RuntimeIcon(RuntimeIconName.Settings, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; onOpenWorkshopSettings() })
+
+                    Box {
+                        IconButton(
+                            onClick = { actionsExpanded = true },
+                            enabled = !busy,
+                            modifier = Modifier.spotlightAnchor(moreAnchor),
+                            contentDescription = stringResource(R.string.workspace_cd_more),
+                        ) {
+                            RuntimeIcon(RuntimeIconName.More, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                        }
+                        DropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.workspace_floating_collapse)) },
+                                leadingIcon = { RuntimeIcon(RuntimeIconName.OpenInNew, Modifier.size(18.dp)) },
+                                onClick = {
+                                    actionsExpanded = false
+                                    if (Settings.canDrawOverlays(context)) {
+                                        FloatingWorkshopService.start(context)
+                                        (context as? Activity)?.moveTaskToBack(true)
+                                    } else {
+                                        showFloatingPermissionDialog = true
+                                    }
+                                },
+                            )
+                            DropdownMenuItem(text = { Text(stringResource(R.string.workspace_menu_create)) }, leadingIcon = { RuntimeIcon(RuntimeIconName.Plus, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; showCreate = true })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.workspace_menu_import)) }, leadingIcon = { RuntimeIcon(RuntimeIconName.FolderDownload, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; showImport = true })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.workspace_menu_templates)) }, leadingIcon = { RuntimeIcon(RuntimeIconName.Package, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; showTemplateManager = true })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.workspace_menu_plugins)) }, leadingIcon = { RuntimeIcon(RuntimeIconName.Package, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; onOpenToolCenter() })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.workspace_menu_settings)) }, leadingIcon = { RuntimeIcon(RuntimeIconName.Settings, Modifier.size(18.dp)) }, onClick = { actionsExpanded = false; onOpenWorkshopSettings() })
+                        }
                     }
                 }
             }
@@ -646,6 +679,46 @@ fun WorkspaceScreen(
         )
     }
     } // Box
+
+    // 悬浮窗权限申请提示弹窗
+    if (showFloatingPermissionDialog) {
+        RuntimeAlertDialog(
+            onDismissRequest = { showFloatingPermissionDialog = false },
+            title = {
+                Text(
+                    stringResource(R.string.workspace_floating_permission_title),
+                    fontWeight = FontWeight.Bold,
+                )
+            },
+            text = {
+                Text(
+                    stringResource(R.string.workspace_floating_permission_message),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showFloatingPermissionDialog = false
+                        val intent = Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:${context.packageName}"),
+                        )
+                        context.startActivity(intent)
+                    },
+                ) {
+                    Text(stringResource(R.string.workspace_floating_permission_grant))
+                }
+            },
+            dismissButton = {
+                top.wkbin.taixu.ui.components.RuntimeTextButton(
+                    onClick = { showFloatingPermissionDialog = false },
+                ) {
+                    Text(stringResource(R.string.workspace_floating_permission_cancel))
+                }
+            },
+        )
+    }
 
     // 运行/构建进度与实时日志弹窗 (支持后台运行与随时最小化)
     if (isBuildDialogVisible && buildProgress != null) {

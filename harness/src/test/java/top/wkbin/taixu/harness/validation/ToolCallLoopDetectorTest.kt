@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.harness.validation
+package top.wkbin.taixu.harness.validation
 
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -71,5 +71,32 @@ class ToolCallLoopDetectorTest {
 
         detector.reset()
         assertEquals(ToolCallLoopDetector.LoopVerdict.Pass, detector.evaluate("base", args))
+    }
+
+    @Test
+    fun `oscillating tool calls pattern triggers block`() {
+        val detector = ToolCallLoopDetector()
+        val readArgs = buildJsonObject { put("path", "file.txt") }
+        val editArgs = buildJsonObject { put("path", "file.txt"); put("old_text", "a"); put("new_text", "b") }
+
+        // 模拟 A -> B -> A -> B -> A
+        detector.recordIntent("read", readArgs)
+        detector.recordSettled("read", readArgs, success = true)
+        detector.recordIntent("edit", editArgs)
+        detector.recordSettled("edit", editArgs, success = false)
+
+        detector.recordIntent("read", readArgs)
+        detector.recordSettled("read", readArgs, success = true)
+        detector.recordIntent("edit", editArgs)
+        detector.recordSettled("edit", editArgs, success = false)
+
+        detector.recordIntent("read", readArgs)
+        detector.recordSettled("read", readArgs, success = true)
+
+        // 下一次若是 edit，则形成完整的 3 轮震荡死循环 [read, edit, read, edit, read, edit]
+        val verdict = detector.evaluate("edit", editArgs)
+        assertTrue(verdict is ToolCallLoopDetector.LoopVerdict.Block)
+        val block = verdict as ToolCallLoopDetector.LoopVerdict.Block
+        assertTrue(block.reason.contains("交替震荡死循环"))
     }
 }

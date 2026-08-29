@@ -112,6 +112,11 @@ class ToolExecutor @Inject constructor(
             false to "工具执行异常：${throwable.message ?: throwable::class.simpleName}"
         }
         val (success, rawOutput) = outcome
+        val finalOutput = if (!success && !rawOutput.contains("【太墟") && !rawOutput.contains("【已强制拦截")) {
+            rawOutput + "\n\n【太墟 Harness 调试提示】：本次工具调用未成功。请仔细阅读上方错误信息，分析具体原因并在下一步中调整策略，严禁使用相同参数盲目重试。"
+        } else {
+            rawOutput
+        }
         linuxEnvironmentManager?.refreshIfNeeded()
         return ToolResult(
             id = UUID.randomUUID().toString(),
@@ -119,7 +124,7 @@ class ToolExecutor @Inject constructor(
             toolCallId = toolCall.id,
             success = success,
             output = secretRedactor.redact(
-                value = truncateOutput(rawOutput),
+                value = truncateOutput(finalOutput),
                 secretValues = linuxEnvironmentManager?.values?.value?.values.orEmpty(),
                 privacyMode = if (::settingsDataStore.isInitialized) runCatching { settingsDataStore.environmentPrivacyMode.first() }.getOrDefault(true) else true,
             ),

@@ -200,6 +200,11 @@
     <string name="chat_workbench_collapse">Collapse workbench</string>
     <string name="chat_workbench_expand">Expand workbench</string>
     <string name="chat_action_convert_to_steer">Convert to steer</string>
+    <string name="chat_step_chain_summary_fmt">Executed %1$d steps (%2$s)%3$s</string>
+    <string name="chat_step_chain_running_fmt">Executing step %1$d: %2$s%3$s</string>
+    <string name="chat_step_chain_title">Execution Steps (%1$d steps)</string>
+    <string name="chat_step_chain_collapse">Collapse steps</string>
+    <string name="chat_step_chain_expand">Expand steps</string>
     <string name="chat_deep_thinking_title">Deep Thinking</string>
     <string name="chat_menu_capabilities_short">Skills &amp; MCP</string>
     <string name="chat_menu_reasoning_effort">Reasoning effort</string>

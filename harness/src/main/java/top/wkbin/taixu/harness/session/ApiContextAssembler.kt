@@ -8,6 +8,7 @@ import top.wkbin.taixu.harness.CapabilityEvent
 import top.wkbin.taixu.harness.ContextWindowPolicy
 import top.wkbin.taixu.harness.HarnessApiMapper
 import top.wkbin.taixu.harness.ModelConfig
+import top.wkbin.taixu.harness.ProviderClient
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolCallMode
 import top.wkbin.taixu.harness.ToolResult
@@ -144,7 +145,7 @@ class ApiContextAssembler @Inject constructor(
                                 isCollapsed(i) && message is AssistantText && message.text.length > 120 ->
                                     ApiMessage(
                                         role = "assistant",
-                                        content = ContextWindowPolicy.foldMessageText("助手", message.text),
+                                        content = ContextWindowPolicy.foldMessageText("助手", ProviderClient.stripThinkTags(message.text) ?: message.text),
                                         reasoning_content = null,
                                     )
                                 isCollapsed(i) && message is UserMessage && message.text.length > 120 ->
@@ -154,7 +155,15 @@ class ApiContextAssembler @Inject constructor(
                                         imageUrls = message.imageUrls,
                                     )
                                 isCollapsed(i) && message is AssistantText ->
-                                    HarnessApiMapper.toApiMessage(message).copy(reasoning_content = null)
+                                    HarnessApiMapper.toApiMessage(message).copy(
+                                        content = ProviderClient.stripThinkTags(message.text) ?: message.text,
+                                        reasoning_content = null,
+                                    )
+                                message is AssistantText ->
+                                    HarnessApiMapper.toApiMessage(message).copy(
+                                        content = ProviderClient.stripThinkTags(message.text) ?: message.text,
+                                        reasoning_content = null,
+                                    )
                                 else -> HarnessApiMapper.toApiMessage(message)
                             }
                             add(if (message is UserMessage && !model.visionEnabled) mapped.copy(imageUrls = emptyList()) else mapped)
@@ -170,14 +179,9 @@ class ApiContextAssembler @Inject constructor(
                     }
                     // 预算折叠态：早期 assistant 文本压缩为一行占位，避免撑爆上下文。
                     val text = if (isCollapsed(i) && message is AssistantText && message.text.length > 120) {
-                        ContextWindowPolicy.foldMessageText("助手", message.text)
+                        ContextWindowPolicy.foldMessageText("助手", ProviderClient.stripThinkTags(message.text) ?: message.text)
                     } else {
-                        (message as? AssistantText)?.text
-                    }
-                    // collapsed 历史不携带 reasoning：它是执行过程数据，不应成为长期上下文负担。
-                    val reasoning = if (isCollapsed(i)) null else when (message) {
-                        is AssistantText -> message.reasoning
-                        is ToolCall -> message.reasoning
+                        (message as? AssistantText)?.text?.let { ProviderClient.stripThinkTags(it) ?: it }
                     }
                     val toolCalls = mutableListOf<ApiToolCall>()
                     if (message is ToolCall) toolCalls.add(apiToolCall(message))
@@ -191,12 +195,7 @@ class ApiContextAssembler @Inject constructor(
                         ApiMessage(
                             role = "assistant",
                             content = text,
-                            reasoning_content = when {
-                                isCollapsed(i) -> null
-                                reasoning != null -> reasoning
-                                thinkingMode -> ""
-                                else -> null
-                            },
+                            reasoning_content = null,
                             tool_calls = toolCalls.takeIf { it.isNotEmpty() },
                         ),
                     )
