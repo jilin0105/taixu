@@ -50,8 +50,13 @@ class McpManager @Inject constructor(
         cache[server.id] ?: runCatching { discoverTools(server) }
             .onSuccess { cache[server.id] = it; state(server.id, McpConnectionState.ONLINE) }
             .onFailure {
-                // 静默失败会让"模型不调用 MCP 工具"无从排查，这里必须留下线索
-                logger.w("MCP[${server.name}] 工具发现失败，本轮对话不注入该服务的工具: ${it.message}", it)
+                // 静默失败会让"模型不调用 MCP 工具"无从排查，这里必须留下线索；
+                // 冷却期内的重复失败只记一行，不再打整段堆栈刷屏。
+                val inCooldown = it.message?.contains("冷却中") == true
+                logger.w(
+                    "MCP[${server.name}] 工具发现失败，本轮对话不注入该服务的工具: ${it.message}",
+                    if (inCooldown) null else it,
+                )
                 cache.remove(server.id); state(server.id, McpConnectionState.OFFLINE)
             }
             .getOrDefault(emptyList())

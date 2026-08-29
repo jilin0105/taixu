@@ -49,16 +49,28 @@ class McpHttpTransport @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sessions = ConcurrentHashMap<String, HttpSession>()
 
-    // 握手/列表用短超时；工具调用可能耗时较长；SSE 长连接读流不设超时
-    private val fastClient = client.newBuilder().callTimeout(FAST_TIMEOUT_MS, TimeUnit.MILLISECONDS).build()
-    private val callClient = client.newBuilder().callTimeout(CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS).build()
+    /** 连接失败冷却：服务 id → 冷却截止时间戳。冷却期内直接快速失败，不再空耗连接超时。 */
+    private val downUntil = ConcurrentHashMap<String, Long>()
+
+    // 握手/列表用短超时；工具调用可能耗时较长；SSE 长连接读流不设超时。
+    // connectTimeout 单独收紧：本地端口无服务时（ECONNREFUSED 被系统延迟上报）也要快速失败。
+    private val fastClient = client.newBuilder()
+        .connectTimeout(FAST_CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .callTimeout(FAST_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .build()
+    private val callClient = client.newBuilder()
+        .connectTimeout(CALL_CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .callTimeout(CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .build()
     private val sseClient = client.newBuilder()
+        .connectTimeout(CALL_CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         .callTimeout(0, TimeUnit.MILLISECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .build()
 
     override suspend fun check(server: McpServerConfig) = withContext(Dispatchers.IO) {
-        runCatching { ensureSession(server); true }.getOrDefault(false)
+        // 设置页手动测试连接不受冷却限制
+        runCatching { ensureSession(server, bypassCooldown = true); true }.getOrDefault(false)
     }
 
     override suspend fun discover(server: McpServerConfig): List<McpToolInfo> = withContext(Dispatchers.IO) {
@@ -103,11 +115,23 @@ class McpHttpTransport @Inject constructor(
     private fun isTransportFailure(t: Throwable): Boolean =
         t is IOException || (t is IllegalStateException && t.message?.startsWith("MCP HTTP ") == true)
 
-    private suspend fun ensureSession(server: McpServerConfig): HttpSession {
+    private suspend fun ensureSession(server: McpServerConfig, bypassCooldown: Boolean = false): HttpSession {
         val url = server.serverUrl.trim()
         sessions[server.id]?.let { existing ->
             if (existing.serverUrl == url && existing.isOpen) return existing
             dropSession(server.id, existing)
+        }
+        // 冷却期内直接快速失败：上一轮刚整体握手失败，短时间内大概率仍是同一个故障
+        // （进程未启动 / 端口不对），不值得每轮对话都空耗连接超时。
+        val now = System.currentTimeMillis()
+        if (!bypassCooldown) {
+            val until = downUntil[server.id]
+            if (until != null && now < until) {
+                throw IllegalStateException(
+                    "MCP[${server.name}] 连接冷却中（剩余 ${(until - now) / 1000}s），跳过本次连接；" +
+                        "请确认服务端已启动后再在设置页手动测试",
+                )
+            }
         }
         val preferLegacy = runCatching {
             validatedMcpHttpEndpoint(url).encodedPath.trimEnd('/').endsWith("sse")
@@ -127,6 +151,7 @@ class McpHttpTransport @Inject constructor(
                     createLegacySession(server)
                 }
                 sessions[server.id] = session
+                downUntil.remove(server.id)
                 logger.i("MCP[${server.name}] 连接成功（$label）endpoint=${session.endpoint}")
                 return session
             } catch (t: CancellationException) {
@@ -136,6 +161,7 @@ class McpHttpTransport @Inject constructor(
                 logger.w("MCP[${server.name}] $label 握手失败: ${t.message}", t)
             }
         }
+        downUntil[server.id] = System.currentTimeMillis() + FAILURE_COOLDOWN_MS
         throw IllegalStateException("MCP HTTP 连接失败（${failures.joinToString("；")}）")
     }
 
@@ -440,6 +466,13 @@ class McpHttpTransport @Inject constructor(
         private const val FAST_TIMEOUT_MS = 30_000L
         private const val CALL_TIMEOUT_MS = 120_000L
         private const val HANDSHAKE_TIMEOUT_MS = 20_000L
+
+        /** TCP 连接超时：本地地址端口无服务时快速失败，避免 30s 级别的空等。 */
+        private const val FAST_CONNECT_TIMEOUT_MS = 3_000L
+        private const val CALL_CONNECT_TIMEOUT_MS = 10_000L
+
+        /** 整体握手失败后的冷却时长：期间该服务的工具发现直接快速失败。 */
+        private const val FAILURE_COOLDOWN_MS = 5 * 60_000L
         private val JSON = "application/json".toMediaType()
     }
 }
