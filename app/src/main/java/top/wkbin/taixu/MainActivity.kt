@@ -302,6 +302,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // 主应用回到前台时，自动关闭智枢桌面悬浮小窗，避免主界面与悬浮窗重叠
+        runCatching {
+            top.wkbin.taixu.ui.chat.floating.FloatingChatService.stop(this)
+        }
+    }
+
     override fun onPostResume() {
         super.onPostResume()
         if (notificationPermissionCheckScheduled) return

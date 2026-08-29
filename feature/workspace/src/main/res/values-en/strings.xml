@@ -323,19 +323,4 @@
     <!-- Template variable validation -->
     <string name="template_variable_required">%1$s is required</string>
     <string name="template_variable_invalid_format">%1$s has an invalid format</string>
-
-    <!-- Workshop Floating Window -->
-    <string name="workspace_floating_window">Floating Window</string>
-    <string name="workspace_floating_collapse">Collapse to Float</string>
-    <string name="workspace_floating_permission_title">Enable Floating Window Permission</string>
-    <string name="workspace_floating_permission_message">Workshop Floating Window needs permission to display over other apps so you can monitor build progress, status, and use quick actions while using other apps or the home screen.</string>
-    <string name="workspace_floating_permission_grant">Go to Settings</string>
-    <string name="workspace_floating_permission_cancel">Not Now</string>
-    <string name="workspace_floating_title">TaiXu · Workshop Float</string>
-    <string name="workspace_floating_restore_app">Return to Workshop</string>
-    <string name="workspace_floating_open_terminal">Terminal</string>
-    <string name="workspace_floating_open_agent">Smart Agent</string>
-    <string name="workspace_floating_close">Close Float</string>
-    <string name="workspace_floating_no_active_project">Ready · No active build</string>
-    <string name="workspace_floating_building_capsule">Building…</string>
 </resources>

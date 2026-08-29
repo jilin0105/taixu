@@ -110,7 +110,7 @@
             android:foregroundServiceType="dataSync"
             android:stopWithTask="false" />
         <service
-            android:name="top.wkbin.taixu.ui.workspace.floating.FloatingWorkshopService"
+            android:name="top.wkbin.taixu.ui.chat.floating.FloatingChatService"
             android:exported="false" />
     </application>
 

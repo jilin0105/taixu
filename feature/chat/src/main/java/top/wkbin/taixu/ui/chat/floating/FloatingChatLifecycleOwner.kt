@@ -1,4 +1,4 @@
-package top.wkbin.taixu.ui.workspace.floating
+package top.wkbin.taixu.ui.chat.floating
 
 import android.view.View
 import androidx.lifecycle.Lifecycle
@@ -14,9 +14,9 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 
 /**
- * 为 WindowManager 悬浮 ComposeView 提供独立生命周期与状态注册宿主。
+ * 为 WindowManager 智枢悬浮 ComposeView 提供独立生命周期与状态注册宿主。
  */
-class FloatingWindowLifecycleOwner : LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
+class FloatingChatLifecycleOwner : LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val savedStateRegistryController = SavedStateRegistryController.create(this)
     private val store = ViewModelStore()

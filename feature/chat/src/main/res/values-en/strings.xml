@@ -367,4 +367,20 @@
     <string name="chat_subagent_role_assistant">Assistant</string>
     <!-- Turn anchor bar fallback -->
     <string name="chat_turn_fallback">Turn %1$d</string>
+
+    <!-- Smart Agent Floating Window -->
+    <string name="chat_floating_collapse">Collapse to Float</string>
+    <string name="chat_floating_window">Smart Agent Float</string>
+    <string name="chat_floating_permission_title">Enable Floating Window Permission</string>
+    <string name="chat_floating_permission_message">Smart Agent Floating Window needs permission to display over other apps so you can converse with the AI, inspect reasoning, and monitor execution while using other apps or the home screen.</string>
+    <string name="chat_floating_permission_grant">Go to Settings</string>
+    <string name="chat_floating_permission_cancel">Not Now</string>
+    <string name="chat_floating_restore_app">Return to Chat</string>
+    <string name="chat_floating_input_hint">Send command to Agent…</string>
+    <string name="chat_floating_send">Send</string>
+    <string name="chat_floating_stop">Stop</string>
+    <string name="chat_floating_close">Close Float</string>
+    <string name="chat_floating_idle">Ready</string>
+    <string name="chat_floating_thinking">🧠 Thinking…</string>
+    <string name="chat_floating_running">⚡ Executing…</string>
 </resources>

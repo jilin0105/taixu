@@ -2,12 +2,14 @@ package top.wkbin.taixu.ui.chat
 
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import top.wkbin.taixu.ui.chat.floating.FloatingChatService
 import android.util.LruCache
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
@@ -261,6 +263,7 @@ fun ChatScreen(
     var showBranches by rememberSaveable { mutableStateOf(false) }
     var showRuntimeTimeline by rememberSaveable { mutableStateOf(false) }
     var showMemorySheet by rememberSaveable { mutableStateOf(false) }
+    var showFloatingPermissionDialog by rememberSaveable { mutableStateOf(false) }
     var branchFromMessageId by rememberSaveable { mutableStateOf<String?>(null) }
     // 编辑目标消息只保存 id，避免把不可保存的实体放进状态保存器
     var editTargetMessageId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -472,7 +475,22 @@ fun ChatScreen(
                     }
                 }
 
-                // 🌟 2. 会话抽屉/列表（内部包含「新建会话」功能）
+                // 🌟 2. 智枢悬浮小窗收起按钮 (Collapse to Floating Window)
+                IconButton(
+                    onClick = {
+                        if (Settings.canDrawOverlays(context)) {
+                            FloatingChatService.start(context)
+                            (context as? Activity)?.moveTaskToBack(true)
+                        } else {
+                            showFloatingPermissionDialog = true
+                        }
+                    },
+                    contentDescription = stringResource(R.string.chat_floating_collapse),
+                ) {
+                    RuntimeIcon(RuntimeIconName.OpenInNew, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.primary)
+                }
+
+                // 🌟 3. 会话抽屉/列表（内部包含「新建会话」功能）
                 IconButton(
                     onClick = { showSessions = true },
                     contentDescription = stringResource(R.string.chat_open_session_list),
@@ -692,6 +710,46 @@ fun ChatScreen(
             onConfirm = { newText ->
                 viewModel.editAndResend(target.id, newText)
                 editTargetMessageId = null
+            },
+        )
+    }
+
+    // 智枢悬浮窗权限申请提示弹窗
+    if (showFloatingPermissionDialog) {
+        RuntimeAlertDialog(
+            onDismissRequest = { showFloatingPermissionDialog = false },
+            title = {
+                Text(
+                    stringResource(R.string.chat_floating_permission_title),
+                    fontWeight = FontWeight.Bold,
+                )
+            },
+            text = {
+                Text(
+                    stringResource(R.string.chat_floating_permission_message),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showFloatingPermissionDialog = false
+                        val intent = Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:${context.packageName}"),
+                        )
+                        context.startActivity(intent)
+                    },
+                ) {
+                    Text(stringResource(R.string.chat_floating_permission_grant))
+                }
+            },
+            dismissButton = {
+                top.wkbin.taixu.ui.components.RuntimeTextButton(
+                    onClick = { showFloatingPermissionDialog = false },
+                ) {
+                    Text(stringResource(R.string.chat_floating_permission_cancel))
+                }
             },
         )
     }
