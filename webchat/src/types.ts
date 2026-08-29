@@ -55,11 +55,19 @@ export interface WorkspaceListing {
   items?: WorkspaceItem[];
 }
 
+export interface QuickPhrase {
+  id: string;
+  title: string;
+  content: string;
+  description?: string;
+}
+
 export interface BootstrapPayload {
   workspace?: {
     workspace?: WorkspaceInfo | null;
     root?: { path?: string } | null;
   } | null;
+  quickPhrases?: QuickPhrase[];
 }
 
 export interface ApprovalRequest {

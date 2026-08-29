@@ -11,6 +11,7 @@ import {
 } from "./conversationDraft";
 import { conversationKey } from "./format";
 import { useRealtime } from "./hooks/useRealtime";
+import { normalizeQuickPhrases } from "./quickPhrases";
 import type {
   ApprovalRequest,
   ApprovalResult,
@@ -21,6 +22,7 @@ import type {
   ConversationCreateTarget,
   ConversationMode,
   MobileSection,
+  QuickPhrase,
   RealtimeEventData,
   RealtimeEventName,
   RunResult,
@@ -75,6 +77,7 @@ export default function App() {
   const [workspaceFilePath, setWorkspaceFilePath] = useState<string | null>(null);
   const [workspaceContent, setWorkspaceContent] = useState("");
   const [workspaceDirty, setWorkspaceDirty] = useState(false);
+  const [quickPhrases, setQuickPhrases] = useState<QuickPhrase[]>([]);
   const [mobileSection, setMobileSectionState] = useState<MobileSection>("chat");
   const [conversationsOpen, setConversationsOpen] = useState(false);
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
@@ -265,6 +268,7 @@ export default function App() {
       const info = bootstrap?.workspace?.workspace ?? null;
       const rootPath = bootstrap?.workspace?.root?.path ?? info?.rootPath ?? "";
       setWorkspaceInfo(info);
+      setQuickPhrases(normalizeQuickPhrases(bootstrap?.quickPhrases));
       workspacePathRef.current = rootPath;
       setWorkspacePath(rootPath);
       setAuthenticated(true);
@@ -673,6 +677,7 @@ export default function App() {
           onResolveApproval={resolveApproval}
           onClearError={() => setGlobalError("")}
           onAttachmentError={showError}
+          quickPhrases={quickPhrases}
         />
         <ContextPane
           workspacePath={workspacePath}

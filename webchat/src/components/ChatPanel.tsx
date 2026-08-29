@@ -8,7 +8,7 @@ import {
 } from "react";
 import { isRecord } from "../api";
 import { formatBytes, markdownToHtml, messageContent, messageTime } from "../format";
-import type { ApprovalRequest, Attachment, ChatMessage, Conversation } from "../types";
+import type { ApprovalRequest, Attachment, ChatMessage, Conversation, QuickPhrase } from "../types";
 import {
   ComposerAttachmentIcon,
   ComposerSendIcon,
@@ -30,6 +30,7 @@ interface ChatPanelProps {
   onResolveApproval: (requestId: string, approved: boolean) => void;
   onClearError: () => void;
   onAttachmentError: (error: unknown) => void;
+  quickPhrases: QuickPhrase[];
 }
 
 const GREETING_WORDS = ["聊天", "执行", "构建", "探索", "规划", "总结", "检索", "记忆"];
@@ -275,6 +276,7 @@ export function ChatPanel({
   onResolveApproval,
   onClearError,
   onAttachmentError,
+  quickPhrases,
 }: ChatPanelProps) {
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -317,6 +319,12 @@ export function ChatPanel({
       event.preventDefault();
       void submit();
     }
+  }
+
+  // 与 Android 端 applyQuickPhrase 一致：点击短语直接替换输入框内容
+  function applyPhrase(phrase: QuickPhrase) {
+    setDraft(phrase.content);
+    textareaRef.current?.focus();
   }
 
   async function addAttachments(event: ChangeEvent<HTMLInputElement>) {
@@ -414,6 +422,21 @@ export function ChatPanel({
                     <Icon name="x" size={12} />
                   </button>
                 </div>
+              ))}
+            </div>
+          )}
+          {Boolean(quickPhrases.length) && (
+            <div className="phrase-bar" role="toolbar" aria-label="快捷短语">
+              {quickPhrases.map((phrase) => (
+                <button
+                  className="phrase-chip"
+                  type="button"
+                  key={phrase.id}
+                  title={phrase.description || phrase.content}
+                  onClick={() => applyPhrase(phrase)}
+                >
+                  {phrase.title}
+                </button>
               ))}
             </div>
           )}
