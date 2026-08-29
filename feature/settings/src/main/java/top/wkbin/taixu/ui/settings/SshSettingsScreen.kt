@@ -70,7 +70,6 @@ fun SshSettingsScreen(
 
     var portText by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(settings.port.toString()) }
     var authorizedKeysText by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(settings.authorizedKeys) }
-    var showLanWarning by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var showPasswordDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(settings.distroId, settings.port) { portText = settings.port.toString() }
     LaunchedEffect(settings.distroId, settings.authorizedKeys) { authorizedKeysText = settings.authorizedKeys }
@@ -81,27 +80,6 @@ fun SshSettingsScreen(
             title = { Text(if (messageIsError) "SSH 操作未完成" else "SSH 远程访问") },
             text = { Text(current) },
             confirmButton = { RuntimeTextButton(onClick = viewModel::consumeMessage) { Text("知道了") } },
-        )
-    }
-
-    if (showLanWarning) {
-        RuntimeAlertDialog(
-            onDismissRequest = { showLanWarning = false },
-            title = { Text("允许局域网访问？") },
-            text = {
-                Text("SSH 将只监听当前手机的局域网 IP（例如 192.168.*.*），同一局域网内的设备都能尝试连接。请只在可信 Wi-Fi 下开启，并妥善保管对应私钥。")
-            },
-            confirmButton = {
-                RuntimeButton(
-                    onClick = {
-                        showLanWarning = false
-                        viewModel.setAllowLan(true)
-                    },
-                ) { Text("确认开启") }
-            },
-            dismissButton = {
-                RuntimeTextButton(onClick = { showLanWarning = false }) { Text("取消") }
-            },
         )
     }
 
@@ -249,11 +227,7 @@ fun SshSettingsScreen(
                             color = MaterialTheme.colorScheme.primary,
                         )
                         Text(
-                            text = if (settings.allowLan) {
-                                "首次连接输入 yes 确认服务器指纹，然后输入 root 登录密码"
-                            } else {
-                                "命令使用当前局域网地址；开启“允许局域网访问”后电脑才能连接"
-                            },
+                            text = "首次连接输入 yes 确认服务器指纹，然后输入 root 登录密码",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -269,10 +243,10 @@ fun SshSettingsScreen(
                 }
             }
 
-            if (settings.allowLan && vpnActive) {
+            if (vpnActive) {
                 item {
                     NoticeBanner(
-                        text = "检测到手机正处于 VPN 连接中，当前 VPN 会接管本应用流量。启用“允许局域网访问”后，请先关闭 VPN 或将本应用加入 VPN 直连/排除名单，否则同一局域网的电脑连接会超时。",
+                        text = "检测到手机正处于 VPN 连接中，当前 VPN 会接管本应用流量，同一局域网的电脑连接可能超时。请先关闭 VPN，或将本应用加入 VPN 直连/排除名单。",
                         isError = true,
                     )
                 }
@@ -306,21 +280,6 @@ fun SshSettingsScreen(
                         )
                         RuntimeOutlinedButton(onClick = { viewModel.savePort(portText) }, enabled = !busy && portValid) { Text("保存") }
                     }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    SettingsRow(
-                        icon = RuntimeIconName.Globe,
-                        title = "允许局域网访问",
-                        subtitle = if (settings.allowLan) "监听当前局域网 IP，请只在可信网络使用" else "仅监听 127.0.0.1（推荐）",
-                        trailing = {
-                            RuntimeSwitch(
-                                checked = settings.allowLan,
-                                onCheckedChange = { enabled ->
-                                    if (enabled) showLanWarning = true else viewModel.setAllowLan(false)
-                                },
-                                enabled = !busy,
-                            )
-                        },
-                    )
                 }
             }
 

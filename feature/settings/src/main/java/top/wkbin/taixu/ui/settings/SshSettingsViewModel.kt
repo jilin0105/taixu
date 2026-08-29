@@ -27,7 +27,6 @@ data class SshSettingsUiState(
     val distroId: String = "ubuntu",
     val enabled: Boolean = false,
     val port: Int = SshRuntimeConfig.DEFAULT_SSH_PORT,
-    val allowLan: Boolean = false,
     val authorizedKeys: String = "",
     val passwordAuthEnabled: Boolean = false,
     val passwordConfigured: Boolean = false,
@@ -58,15 +57,13 @@ class SshSettingsViewModel @Inject constructor(
             combine(
                 preferences.enabled(distroId),
                 preferences.port(distroId),
-                preferences.allowLan(distroId),
                 preferences.authorizedKeys(distroId),
                 preferences.passwordAuthEnabled(distroId),
-            ) { enabled, port, allowLan, authorizedKeys, passwordAuthEnabled ->
+            ) { enabled, port, authorizedKeys, passwordAuthEnabled ->
                 SshSettingsUiState(
                     distroId = distroId,
                     enabled = enabled,
                     port = port,
-                    allowLan = allowLan,
                     authorizedKeys = authorizedKeys,
                     passwordAuthEnabled = passwordAuthEnabled,
                 )
@@ -99,10 +96,6 @@ class SshSettingsViewModel @Inject constructor(
     fun savePort(value: String) = runOperation(successMessage = "SSH 端口已保存") {
         val port = value.trim().toIntOrNull() ?: error("请输入有效的 SSH 端口")
         manager.setPort(port)
-    }
-
-    fun setAllowLan(enabled: Boolean) = runOperation {
-        manager.setAllowLan(enabled)
     }
 
     fun saveAuthorizedKeys(value: String) = runOperation(successMessage = "SSH 授权公钥已保存") {

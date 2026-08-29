@@ -616,16 +616,6 @@ class SettingsDataStore @Inject constructor(
         }
     }
 
-    fun sshAllowLan(distroId: String): Flow<Boolean> = context.settingsDataStore.data.map {
-        it[booleanPreferencesKey("ssh_${normalizedDistroId(distroId)}_allow_lan")] ?: false
-    }
-
-    suspend fun setSshAllowLan(distroId: String, enabled: Boolean) {
-        context.settingsDataStore.edit {
-            it[booleanPreferencesKey("ssh_${normalizedDistroId(distroId)}_allow_lan")] = enabled
-        }
-    }
-
     fun sshAuthorizedKeys(distroId: String): Flow<String> = context.settingsDataStore.data.map {
         it[stringPreferencesKey("ssh_${normalizedDistroId(distroId)}_authorized_keys")].orEmpty()
     }

@@ -129,11 +129,12 @@ class ProotCommandBuilder private constructor(
             provider = config.environment,
             interactive = true,
         )
+        val bannerPrelude = if (config.showBanner) "cat $GUEST_MOTD 2>/dev/null; " else ""
         if (nativePty) {
             // 真 PTY：命令串直接交给 bash 解析。commandLine 已由调用方完成 shell 引用
             // （如 MCP STDIO 的单引号包裹），此处严禁再做引号替换——单层 bash 下
             // '\'' 类转义会把命令名变成带引号的字面量（exec: "'python3'": not found）。
-            add(shellCommand(commandLine = config.commandLine, environment = environment))
+            add(shellCommand(commandLine = bannerPrelude + config.commandLine, environment = environment))
         } else {
             val marker = ptyMarker?.also {
                 require(PTY_MARKER.matches(it)) { "PTY marker path is invalid" }
@@ -145,7 +146,8 @@ class ProotCommandBuilder private constructor(
             add(
                 shellCommand(
                     commandLine =
-                        "if command -v script >/dev/null 2>&1; then " +
+                        bannerPrelude +
+                            "if command -v script >/dev/null 2>&1; then " +
                             "exec script -qfec '$markerPrelude stty cols $columns rows $rows; " +
                             "$scriptEmbed' /dev/null; " +
                             "else ${config.commandLine}; fi",
@@ -277,6 +279,7 @@ class ProotCommandBuilder private constructor(
     private companion object {
         const val GUEST_SHELL = "/bin/sh"
         const val GUEST_KERNEL_RELEASE = "6.17.0-TaiXu"
+        const val GUEST_MOTD = "/opt/taixu/motd"
         const val LINK2SYMLINK_DIRECTORY = ".l2s"
         val PTY_MARKER = Regex("/opt/taixu/\\.pty-[A-Za-z0-9-]{8,64}")
         val ENVIRONMENT_KEY = Regex("[A-Za-z_][A-Za-z0-9_]*")

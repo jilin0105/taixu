@@ -87,14 +87,12 @@ class WorkshopPreferences @Inject constructor(private val store: SettingsDataSto
 class SshPreferences @Inject constructor(private val store: SettingsDataStore) {
     fun enabled(distroId: String) = store.sshEnabled(distroId)
     fun port(distroId: String) = store.sshPort(distroId)
-    fun allowLan(distroId: String) = store.sshAllowLan(distroId)
     fun authorizedKeys(distroId: String) = store.sshAuthorizedKeys(distroId)
     fun passwordAuthEnabled(distroId: String) = store.sshPasswordAuthEnabled(distroId)
     fun passwordConfigured(distroId: String) = store.sshPasswordConfigured(distroId)
 
     suspend fun setEnabled(distroId: String, enabled: Boolean) = store.setSshEnabled(distroId, enabled)
     suspend fun setPort(distroId: String, port: Int) = store.setSshPort(distroId, port)
-    suspend fun setAllowLan(distroId: String, enabled: Boolean) = store.setSshAllowLan(distroId, enabled)
     suspend fun setAuthorizedKeys(distroId: String, keys: String) = store.setSshAuthorizedKeys(distroId, keys)
     suspend fun setPasswordAuthEnabled(distroId: String, enabled: Boolean) = store.setSshPasswordAuthEnabled(distroId, enabled)
     suspend fun setPassword(distroId: String, password: String?) = store.setSshPassword(distroId, password)

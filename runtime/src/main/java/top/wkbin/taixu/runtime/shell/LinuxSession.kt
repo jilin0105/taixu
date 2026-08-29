@@ -20,6 +20,8 @@ data class SessionConfig(
     val environment: Map<String, String> = emptyMap(),
     val commandLine: String = "/bin/bash -i",
     val allowSttyResize: Boolean = commandLine == "/bin/bash -i",
+    /** 终端会话进入时打印 TAIXU 横幅；MCP STDIO 等协议会话必须保持 false 以免污染输出流。 */
+    val showBanner: Boolean = false,
 )
 
 interface LinuxSession {
