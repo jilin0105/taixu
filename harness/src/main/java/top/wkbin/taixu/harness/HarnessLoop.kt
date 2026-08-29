@@ -627,6 +627,15 @@ class HarnessLoop @Inject constructor(
                     operationCoordinator.finish(sessId, "failed", details = result.message)
                     stateMirrors.setError(sessId, result.message)
                     stateMirrors.setRunState(sessId, SessionRunState.FAILED)
+                    // 确保错误在前台消息流中明确展示，消除发消息无回复的卡死假象
+                    messageProjector.append(
+                        sessId,
+                        AssistantText(
+                            id = newId(),
+                            createdAt = now(),
+                            text = "❌ 执行失败：${result.message}",
+                        ),
+                    )
                 }
             }
         } catch (_: CancellationException) {
@@ -640,9 +649,18 @@ class HarnessLoop @Inject constructor(
             stateMirrors.setRunState(sessId, SessionRunState.WAITING_APPROVAL)
         } catch (throwable: Throwable) {
             logger.e("Harness loop failed for session $sessId", throwable)
-            stateMirrors.setError(sessId, throwable.message ?: "执行失败")
-            runCatching { operationCoordinator.finish(sessId, "failed", details = throwable.message) }
+            val msg = throwable.message ?: "执行失败"
+            stateMirrors.setError(sessId, msg)
+            runCatching { operationCoordinator.finish(sessId, "failed", details = msg) }
             stateMirrors.setRunState(sessId, SessionRunState.FAILED)
+            messageProjector.append(
+                sessId,
+                AssistantText(
+                    id = newId(),
+                    createdAt = now(),
+                    text = "❌ 执行异常：$msg",
+                ),
+            )
         } finally {
             finishRun(sessId, selfJob)
         }

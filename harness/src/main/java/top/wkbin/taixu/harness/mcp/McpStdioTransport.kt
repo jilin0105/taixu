@@ -35,6 +35,9 @@ class McpStdioTransport @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val connections = ConcurrentHashMap<String, Connection>()
 
+    /** 连接失败冷却：服务 id → 冷却截止时间戳。避免每轮对话重复空耗沙箱启动超时。 */
+    private val downUntil = ConcurrentHashMap<String, Long>()
+
     init {
         // 空闲回收：常驻 STDIO 进程（尤其 node/python 系）长期不释放会累积内存与 ptrace 负担。
         // 每分钟清扫一次，超过 IDLE_TIMEOUT 未活动的连接被关闭，下次调用按需重建。
@@ -47,7 +50,8 @@ class McpStdioTransport @Inject constructor(
     }
 
     override suspend fun check(server: McpServerConfig): Boolean = runCatching {
-        connection(server).withInitialized { true }
+        // 设置页手动检测连接不受冷却限制
+        connection(server, bypassCooldown = true).withInitialized { true }
     }.getOrDefault(false)
 
     override suspend fun discover(server: McpServerConfig): List<McpToolInfo> = connection(server).withInitialized {
@@ -93,24 +97,43 @@ class McpStdioTransport @Inject constructor(
         connections.values.forEach { it.lastActivityMs = target }
     }
 
-    private suspend fun connection(server: McpServerConfig): Connection {
+    private suspend fun connection(server: McpServerConfig, bypassCooldown: Boolean = false): Connection {
         connections[server.id]?.takeIf { it.session.isAlive && it.fingerprint == fingerprint(server) }?.let {
             it.markActive()
             return it
         }
+        val now = System.currentTimeMillis()
+        if (!bypassCooldown) {
+            val until = downUntil[server.id]
+            if (until != null && now < until) {
+                throw IllegalStateException(
+                    "MCP[${server.name}] 沙箱会话拉起冷却中（剩余 ${(until - now) / 1000}s），跳过本次连接；" +
+                        "请确认沙箱环境就绪后再在设置页手动测试",
+                )
+            }
+        }
         connections.remove(server.id)?.close()
         // startSession 本身无内部超时，沙箱忙或 PRoot 异常时会无限挂起且不留任何日志；
-        // 这里必须有界，让挂起在 15s 内转化为可被上层记录的失败。
-        val session = withTimeoutOrNull(STARTUP_TIMEOUT_MS) {
-            linuxRuntime.startSession(
-                SessionConfig(
-                    workingDirectory = "/root",
-                    environment = server.env,
-                    commandLine = commandLine(server),
-                    allowSttyResize = false,
-                ),
-            )
-        } ?: error("MCP 沙箱会话启动超时（${STARTUP_TIMEOUT_MS / 1000}s）：${server.command}")
+        // 这里必须有界，让挂起在 10s 内转化为可被上层记录的失败。
+        val session = try {
+            withTimeoutOrNull(STARTUP_TIMEOUT_MS) {
+                linuxRuntime.startSession(
+                    SessionConfig(
+                        workingDirectory = "/root",
+                        environment = server.env,
+                        commandLine = commandLine(server),
+                        allowSttyResize = false,
+                    ),
+                )
+            } ?: run {
+                downUntil[server.id] = System.currentTimeMillis() + FAILURE_COOLDOWN_MS
+                error("MCP 沙箱会话启动超时（${STARTUP_TIMEOUT_MS / 1000}s）：${server.command}")
+            }
+        } catch (t: Throwable) {
+            downUntil[server.id] = System.currentTimeMillis() + FAILURE_COOLDOWN_MS
+            throw t
+        }
+        downUntil.remove(server.id)
         return Connection(session, fingerprint(server)).also { connection ->
             connections[server.id] = connection
             connection.startReader()
@@ -217,7 +240,10 @@ class McpStdioTransport @Inject constructor(
 
     companion object {
         /** 沙箱会话拉起超时：正常秒级完成，超时说明沙箱侧挂起。 */
-        internal const val STARTUP_TIMEOUT_MS = 15_000L
+        internal const val STARTUP_TIMEOUT_MS = 10_000L
+
+        /** 启动失败冷却时间：期间快速失败，避免每轮对话重复空耗超时。 */
+        private const val FAILURE_COOLDOWN_MS = 3 * 60 * 1000L
 
         /** 连接/列表等轻量请求超时。 */
         private const val REQUEST_TIMEOUT_MS = 120_000L

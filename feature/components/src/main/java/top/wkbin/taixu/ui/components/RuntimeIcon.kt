@@ -116,6 +116,7 @@ fun RuntimeIcon(
         RuntimeIconName.Fedora -> top.wkbin.taixu.feature.components.R.drawable.components_ic_logo_fedora
         RuntimeIconName.Alpine -> top.wkbin.taixu.feature.components.R.drawable.components_ic_logo_alpine
         RuntimeIconName.Void -> top.wkbin.taixu.feature.components.R.drawable.components_ic_logo_void
+        RuntimeIconName.Linux -> top.wkbin.taixu.feature.components.R.drawable.components_ic_logo_linux
         RuntimeIconName.NavDashboard -> top.wkbin.taixu.feature.components.R.drawable.components_ic_nav_dashboard
         RuntimeIconName.NavMessage -> top.wkbin.taixu.feature.components.R.drawable.components_ic_nav_message
         RuntimeIconName.NavRepository -> top.wkbin.taixu.feature.components.R.drawable.components_ic_nav_repository
@@ -125,6 +126,7 @@ fun RuntimeIcon(
 
     if (brandResId != null) {
         val shouldTint = tint != Color.Unspecified || when (name) {
+            RuntimeIconName.Linux,
             RuntimeIconName.NavDashboard,
             RuntimeIconName.NavMessage,
             RuntimeIconName.NavRepository,

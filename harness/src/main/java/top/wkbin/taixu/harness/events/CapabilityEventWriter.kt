@@ -10,6 +10,8 @@ import top.wkbin.taixu.harness.HarnessMessage
 import top.wkbin.taixu.harness.ModelConfig
 import top.wkbin.taixu.harness.projection.LiveMessagePort
 
+import top.wkbin.taixu.harness.mcp.McpManager
+
 /**
  * @提及 能力事件写入器：当用户消息提及技能或 MCP 服务时，
  * 在会话内插入一条幂等的 [CapabilityEvent] 展示卡片（同一用户消息下不重复）。
@@ -19,6 +21,7 @@ class CapabilityEventWriter @Inject constructor(
     private val port: LiveMessagePort,
     private val skillRepository: AgentSkillRepository,
     private val mcpServerRepository: McpServerRepository,
+    private val mcpManager: McpManager? = null,
 ) {
     suspend fun writeIfMentioned(
         sessionId: String,
@@ -75,17 +78,21 @@ class CapabilityEventWriter @Inject constructor(
             .distinctBy { it.first }
             .filter { (serverId, serverName) -> serverId.lowercase() in mentionedNames || serverName.lowercase() in mentionedNames }
             .forEach { (serverId, serverName) ->
+                val lastError = mcpManager?.getLastError(serverId)
+                val isMounted = model.dynamicMcpTools.any { it.serverId == serverId }
+                val toolCount = model.dynamicMcpTools.count { it.serverId == serverId }
+                val desc = when {
+                    isMounted -> "MCP 工具已挂载（$toolCount 个工具，模型可按需调用）"
+                    lastError != null -> "⚠️ MCP 服务异常：$lastError"
+                    else -> "已选择 MCP 服务，正在尝试发现工具..."
+                }
                 appendEventOnce(
                     existing,
                     sessionId,
                     id = "mcp:$userMessageId:$serverId",
                     kind = CapabilityEvent.Kind.MCP,
                     name = serverName,
-                    description = if (model.dynamicMcpTools.any { it.serverId == serverId }) {
-                        "MCP 工具已挂载，模型可按需调用"
-                    } else {
-                        "已选择 MCP 服务，正在尝试发现工具；若服务离线，后续会显示连接错误"
-                    },
+                    description = desc,
                 )
             }
     }
