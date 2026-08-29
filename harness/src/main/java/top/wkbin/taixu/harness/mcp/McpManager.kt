@@ -12,12 +12,14 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
+import kotlinx.coroutines.withTimeoutOrNull
 import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.database.McpServerRepository
 import top.wkbin.taixu.core.model.McpConnectionState
 import top.wkbin.taixu.core.model.McpServerConfig
 import top.wkbin.taixu.core.model.McpToolInfo
 import top.wkbin.taixu.core.model.McpTransportType
+import top.wkbin.taixu.harness.events.AgentEventLogger
 
 /** Thin MCP registry coordinator; transports own protocol and process details. */
 @Singleton
@@ -26,6 +28,7 @@ class McpManager @Inject constructor(
     private val stdio: McpStdioTransport,
     private val http: McpHttpTransport,
     private val logger: AppLogger,
+    private val agentEventLogger: AgentEventLogger,
 ) {
     private val cache = ConcurrentHashMap<String, List<McpToolInfo>>()
     private val _connectionStates = MutableStateFlow<Map<String, McpConnectionState>>(emptyMap())
@@ -47,7 +50,16 @@ class McpManager @Inject constructor(
     }
 
     suspend fun getActiveMcpTools(): List<McpToolInfo> = repository.servers.first().filter { it.isEnabled }.flatMap { server ->
-        cache[server.id] ?: runCatching { discoverTools(server) }
+        cache[server.id] ?: runCatching {
+            // 总超时兜底：沙箱会话拉起或 MCP 进程挂起时不能阻塞每轮对话（挂起是无日志的），
+            // 超时按失败处理，本轮不注入该服务工具，下一轮重试。
+            agentEventLogger.log(DISCOVERY_LOG_SESSION, "McpDiscovery", "MCP[${server.name}] 工具发现开始（transport=${server.transportType}）")
+            val startedAt = System.currentTimeMillis()
+            val tools = withTimeoutOrNull(DISCOVERY_TIMEOUT_MS) { discoverTools(server) }
+                ?: error("工具发现超时（${DISCOVERY_TIMEOUT_MS / 1000}s）：沙箱会话或 MCP 进程可能已挂起")
+            agentEventLogger.log(DISCOVERY_LOG_SESSION, "McpDiscovery", "MCP[${server.name}] 发现 ${tools.size} 个工具，耗时 ${System.currentTimeMillis() - startedAt}ms")
+            tools
+        }
             .onSuccess { cache[server.id] = it; state(server.id, McpConnectionState.ONLINE) }
             .onFailure {
                 // 静默失败会让"模型不调用 MCP 工具"无从排查，这里必须留下线索；
@@ -86,5 +98,13 @@ class McpManager @Inject constructor(
     private fun transport(server: McpServerConfig): McpTransport = when (server.transportType) {
         McpTransportType.STDIO -> stdio
         McpTransportType.SSE -> http
+    }
+
+    private companion object {
+        /** 单服务器工具发现总超时：覆盖沙箱会话拉起 + initialize + tools/list，超时即本轮跳过注入。 */
+        const val DISCOVERY_TIMEOUT_MS = 30_000L
+
+        /** 工具发现无会话上下文，agent 事件日志用占位 sessionId。 */
+        const val DISCOVERY_LOG_SESSION = "-"
     }
 }

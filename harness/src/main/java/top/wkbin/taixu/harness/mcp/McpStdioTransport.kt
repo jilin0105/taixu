@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.encodeToJsonElement
@@ -98,14 +99,18 @@ class McpStdioTransport @Inject constructor(
             return it
         }
         connections.remove(server.id)?.close()
-        val session = linuxRuntime.startSession(
-            SessionConfig(
-                workingDirectory = "/root",
-                environment = server.env,
-                commandLine = commandLine(server),
-                allowSttyResize = false,
-            ),
-        )
+        // startSession 本身无内部超时，沙箱忙或 PRoot 异常时会无限挂起且不留任何日志；
+        // 这里必须有界，让挂起在 15s 内转化为可被上层记录的失败。
+        val session = withTimeoutOrNull(STARTUP_TIMEOUT_MS) {
+            linuxRuntime.startSession(
+                SessionConfig(
+                    workingDirectory = "/root",
+                    environment = server.env,
+                    commandLine = commandLine(server),
+                    allowSttyResize = false,
+                ),
+            )
+        } ?: error("MCP 沙箱会话启动超时（${STARTUP_TIMEOUT_MS / 1000}s）：${server.command}")
         return Connection(session, fingerprint(server)).also { connection ->
             connections[server.id] = connection
             connection.startReader()
@@ -211,6 +216,9 @@ class McpStdioTransport @Inject constructor(
     private fun shellQuote(value: String) = "'${value.replace("'", "'\"'\"'")}'"
 
     companion object {
+        /** 沙箱会话拉起超时：正常秒级完成，超时说明沙箱侧挂起。 */
+        internal const val STARTUP_TIMEOUT_MS = 15_000L
+
         /** 连接/列表等轻量请求超时。 */
         private const val REQUEST_TIMEOUT_MS = 120_000L
 
