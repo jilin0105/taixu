@@ -55,11 +55,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import android.Manifest
 import android.content.ClipData
@@ -1477,40 +1474,20 @@ private fun WebChatDashboardCard(
             if (status.isRunning) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
 
-                // 访问地址独立成行：协议段小字淡化，主机端口醒目（避免与配对码挤在一起换行）
+                // 访问地址独立成行：统一 Monospace 等宽字体、颜色与大小
                 Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(
                         text = stringResource(R.string.home_webchat_url_label),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    val schemeMuted = MaterialTheme.colorScheme.onSurfaceVariant
-                    val hostAccent = MaterialTheme.colorScheme.primary
-                    val schemeFont = MaterialTheme.typography.labelMedium.fontSize
-                    val hostFont = MaterialTheme.typography.bodyMedium.fontSize
-                    val scheme = status.accessUrl.takeIf { it.contains("://") }
-                        ?.let { it.substringBefore("://") + "://" } ?: ""
-                    val hostPort = if (scheme.isNotEmpty()) status.accessUrl.substringAfter("://") else status.accessUrl
                     Text(
-                        text = buildAnnotatedString {
-                            if (scheme.isNotEmpty()) {
-                                withStyle(
-                                    SpanStyle(
-                                        color = schemeMuted,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = schemeFont,
-                                    ),
-                                ) { append(scheme) }
-                            }
-                            withStyle(
-                                SpanStyle(
-                                    color = hostAccent,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = hostFont,
-                                ),
-                            ) { append(hostPort) }
-                        },
+                        text = status.accessUrl,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                        ),
+                        color = MaterialTheme.colorScheme.primary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
