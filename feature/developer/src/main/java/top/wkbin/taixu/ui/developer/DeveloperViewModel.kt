@@ -94,6 +94,8 @@ class DeveloperViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     private val _agentLogSize = MutableStateFlow(0L)
     val agentLogSize: StateFlow<Long> = _agentLogSize.asStateFlow()
+    private val _agentLogLocation = MutableStateFlow("")
+    val agentLogLocation: StateFlow<String> = _agentLogLocation.asStateFlow()
 
     fun setAgentLoggingEnabled(enabled: Boolean) {
         viewModelScope.launch {
@@ -104,6 +106,7 @@ class DeveloperViewModel @Inject constructor(
 
     fun refreshAgentLogSize() {
         _agentLogSize.value = logger.getAgentLogSizeBytes()
+        _agentLogLocation.value = logger.getAgentLogLocation()
     }
 
     fun readAgentLogs(): String = logger.readAgentLogs()

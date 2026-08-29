@@ -77,6 +77,7 @@ fun DeveloperScreen(
     val registryStatus by viewModel.registryStatus.collectAsStateWithLifecycle()
     val agentLoggingEnabled by viewModel.agentLoggingEnabled.collectAsStateWithLifecycle()
     val agentLogSize by viewModel.agentLogSize.collectAsStateWithLifecycle()
+    val agentLogLocation by viewModel.agentLogLocation.collectAsStateWithLifecycle()
     var manifestUrl by remember(savedManifestUrl) { mutableStateOf(savedManifestUrl) }
     var signatureUrl by remember(savedSignatureUrl) { mutableStateOf(savedSignatureUrl) }
     var publicKey by remember(savedPublicKey) { mutableStateOf(savedPublicKey) }
@@ -253,6 +254,13 @@ fun DeveloperScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        if (agentLogLocation.isNotBlank()) {
+                            Text(
+                                "日志文件：$agentLogLocation",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                     Switch(
                         checked = agentLoggingEnabled,
