@@ -170,7 +170,8 @@ import kotlinx.coroutines.launch
 private val DotRunning = Color(0xFFB25E00)
 private val DotSuccess = Color(0xFF2E7D32)
 private val DotFailed = Color(0xFFBA1A1A)
-private val AgentBottomBarHeight = 78.dp
+// 悬浮玻璃底栏实际占高 = 上下 8dp padding + 64dp 条体 = 80dp，额外留 ~10dp 呼吸空间
+private val AgentBottomBarHeight = 90.dp
 
 /**
  * 工具卡片折叠状态 Saver：Map 本身不能存入 Bundle（rememberSaveable 会抛 IllegalArgumentException），

@@ -31,10 +31,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.isUnspecified
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
@@ -435,93 +437,97 @@ private fun RemoteMediaBlock(block: MdRemoteMedia) {
             .onFailure { Toast.makeText(context, context.getString(R.string.chat_open_link_failed), Toast.LENGTH_SHORT).show() }
         Unit
     }
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(14.dp)
 
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        shape = shape,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth(),
+    // 尺寸策略：按原始宽高比等比缩放，限制在上限框（宽 MEDIA_MAX_WIDTH、高 MEDIA_MAX_HEIGHT）内，
+    // 缩放后至少贴合一边（等比缩放的天然结果）；拿到加载完成后的真实尺寸前用固定高度占位。
+    SubcomposeAsyncImage(
+        model = remember(block.url) {
+            val dataModel: Any = when {
+                block.url.startsWith("http://", ignoreCase = true) ||
+                    block.url.startsWith("https://", ignoreCase = true) ||
+                    block.url.startsWith("data:", ignoreCase = true) ||
+                    block.url.startsWith("file://", ignoreCase = true) -> block.url
+                block.url.startsWith("/") -> java.io.File(block.url)
+                else -> block.url
+            }
+            ImageRequest.Builder(context)
+                .data(dataModel)
+                .crossfade(true)
+                .build()
+        },
+        contentDescription = block.description.ifBlank { stringResource(R.string.chat_web_content) },
+        // 外层不占满宽度：内容自适应尺寸，消息流内自然靠左对齐
+        modifier = Modifier,
     ) {
-        Column {
-            SubcomposeAsyncImage(
-                model = remember(block.url) {
-                    val dataModel: Any = when {
-                        block.url.startsWith("http://", ignoreCase = true) ||
-                            block.url.startsWith("https://", ignoreCase = true) ||
-                            block.url.startsWith("data:", ignoreCase = true) ||
-                            block.url.startsWith("file://", ignoreCase = true) -> block.url
-                        block.url.startsWith("/") -> java.io.File(block.url)
-                        else -> block.url
+        val state = painter.state.collectAsState().value
+        when (state) {
+            is coil3.compose.AsyncImagePainter.State.Error -> MediaStateBox(shape) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    RuntimeIcon(
+                        RuntimeIconName.Image,
+                        Modifier.size(32.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        stringResource(R.string.chat_image_load_failed),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            is coil3.compose.AsyncImagePainter.State.Success -> {
+                val src = state.painter.intrinsicSize
+                val knownSize = !src.isUnspecified && src.width > 0f && src.height > 0f
+                val imageModifier = if (knownSize) {
+                    // 按原始比例等比缩放，撑满宽或高中先到上限的一边
+                    val ratio = src.width / src.height
+                    var width = MEDIA_MAX_WIDTH
+                    var height = width / ratio
+                    if (height > MEDIA_MAX_HEIGHT) {
+                        height = MEDIA_MAX_HEIGHT
+                        width = height * ratio
                     }
-                    ImageRequest.Builder(context)
-                        .data(dataModel)
-                        .crossfade(true)
-                        .build()
-                },
-                contentDescription = block.description.ifBlank { stringResource(R.string.chat_web_content) },
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(4f / 3f)
-                    .clip(shape)
-                    .clickable(onClick = openSource),
-                loading = {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
-                    }
-                },
-                error = {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(20.dp),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        RuntimeIcon(
-                            RuntimeIconName.Image,
-                            Modifier.size(32.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            stringResource(R.string.chat_image_load_failed),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                },
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = openSource)
-                    .padding(horizontal = 12.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                RuntimeIcon(
-                    RuntimeIconName.OpenInNew,
-                    Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.primary,
+                    Modifier.size(width = width, height = height)
+                } else {
+                    // 拿不到真实尺寸时的兜底：固定框内等比缩放（Fit 同样保证填满一边）
+                    Modifier.size(width = MEDIA_MAX_WIDTH, height = MEDIA_PLACEHOLDER_HEIGHT)
+                }
+                androidx.compose.foundation.Image(
+                    painter = state.painter,
+                    contentDescription = null,
+                    contentScale = if (knownSize) ContentScale.FillBounds else ContentScale.Fit,
+                    modifier = imageModifier
+                        .clip(shape)
+                        .clickable(onClick = openSource),
                 )
-                Text(
-                    text = block.url,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    textDecoration = TextDecoration.Underline,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
+            }
+            else -> MediaStateBox(shape) {
+                CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
             }
         }
     }
 }
+
+/** 媒体加载中/失败态的占位块（圆角与成图一致，避免前后跳变）。 */
+@Composable
+private fun MediaStateBox(shape: RoundedCornerShape, content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit) {
+    Box(
+        modifier = Modifier
+            .width(MEDIA_MAX_WIDTH)
+            .height(MEDIA_PLACEHOLDER_HEIGHT)
+            .background(MaterialTheme.colorScheme.surfaceContainerLowest, shape),
+        contentAlignment = Alignment.Center,
+        content = content,
+    )
+}
+
+private val MEDIA_MAX_WIDTH = 260.dp
+private val MEDIA_MAX_HEIGHT = 340.dp
+private val MEDIA_PLACEHOLDER_HEIGHT = 180.dp
 
 @Composable
 private fun CodeBlock(block: MdCodeBlock) {
