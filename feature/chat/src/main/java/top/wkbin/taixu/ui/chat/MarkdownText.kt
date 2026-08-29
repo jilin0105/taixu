@@ -3,6 +3,7 @@ package top.wkbin.taixu.ui.chat
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.util.LruCache
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -10,14 +11,17 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -27,11 +31,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.isUnspecified
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
@@ -110,27 +117,33 @@ private val orderedListRegex = Regex("^\\s*\\d+\\.\\s+(.*)$")
 private val unorderedListRegex = Regex("^\\s*[-*+]\\s+(.*)$")
 private val hrRegex = Regex("^\\s*(?:-{3,}|\\*{3,}|_{3,})\\s*$")
 private val markdownImageRegex = Regex(
-    pattern = "^\\s*!\\[([^]\\n]*)]\\((https?://[^)\\s]+)\\)\\s*$",
+    pattern = """^\s*!\[([^]\n]*)]\(((?:https?://|file://|data:image/|/|\./|\\|\.\\)[^)\s]+)\)\s*$""",
     option = RegexOption.IGNORE_CASE,
 )
 /** 行内图片（不要求独占一行），用于从段落文本中拆出图片块。 */
-private val inlineImageRegex = Regex("!\\[([^]\\n]*)]\\((https?://[^)\\s]+)\\)", RegexOption.IGNORE_CASE)
+private val inlineImageRegex = Regex("""!\[([^]\n]*)]\(((?:https?://|file://|data:image/|/|\./|\\|\.\\)[^)\s]+)\)""", RegexOption.IGNORE_CASE)
 /** HTML <img> 标签，兼容模型直接输出 img 标签的情况。 */
-private val htmlImgRegex = Regex("""<img[^>]+src\s*=\s*["'](https?://[^"'\s]+)["'][^>]*>""", RegexOption.IGNORE_CASE)
+private val htmlImgRegex = Regex("""<img[^>]+src\s*=\s*["']((?:https?://|file://|data:image/|/|\./|\\|\.\\)[^"'\s]+)["'][^>]*>""", RegexOption.IGNORE_CASE)
 private val standaloneWebUrlRegex = Regex("^https?://\\S+$", RegexOption.IGNORE_CASE)
 private val inlineMarkdownLinkRegex = Regex("\\[([^]\\n]+)]\\((https?://[^)\\s]+)\\)", RegexOption.IGNORE_CASE)
 private val inlineWebUrlRegex = Regex("https?://[^\\s<>\\[\\]{}\"']+", RegexOption.IGNORE_CASE)
 /** 视为图片的 URL 后缀（原始 URL 嵌在段落中时，匹配这些后缀则渲染为图片）。 */
 private val imageFileExtensions = setOf("jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "avif", "heic", "heif")
 
+private val markdownBlockCache = LruCache<String, List<MdBlock>>(300)
+private val inlineSpanCache = LruCache<String, AnnotatedString>(500)
+
 private fun parseMarkdownBlocks(md: String): List<MdBlock> {
+    markdownBlockCache.get(md)?.let { return it }
     val raw = parseRawBlocks(md)
     // 段落后处理：把行内的 ![alt](url)、<img src="url">、原始图片 URL 拆成独立图片块，
     // 否则模型带前后文字输出图片时，解析器只当纯文本渲染，Coil 永远不会被调用。
-    return raw.flatMap { block ->
+    val parsed = raw.flatMap { block ->
         if (block is MdParagraph) extractInlineMedia(block.text)
         else listOf(block)
     }
+    markdownBlockCache.put(md, parsed)
+    return parsed
 }
 
 private fun parseRawBlocks(md: String): List<MdBlock> {
@@ -307,7 +320,12 @@ private fun InlineText(
     modifier: Modifier = Modifier,
 ) {
     val linkColor = MaterialTheme.colorScheme.primary
-    val annotated = remember(text, bold, linkColor) { buildInline(text, bold, linkColor) }
+    val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val inlineCodeBg = if (isDark) Color(0xFF21262D) else Color(0xFFEFF1F4)
+    val inlineCodeColor = if (isDark) Color(0xFF79C0FF) else Color(0xFF0969DA)
+    val annotated = remember(text, bold, linkColor, isDark) {
+        buildInline(text, bold, linkColor, inlineCodeBg, inlineCodeColor)
+    }
     Text(annotated, style = style, color = color, modifier = modifier)
 }
 
@@ -315,79 +333,91 @@ private fun buildInline(
     text: String,
     forceBold: Boolean,
     linkColor: Color,
-): AnnotatedString = buildAnnotatedString {
-    if (forceBold) pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
-    val linkStyles = TextLinkStyles(
-        style = SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline),
-        hoveredStyle = SpanStyle(color = linkColor.copy(alpha = 0.8f)),
-        pressedStyle = SpanStyle(color = linkColor.copy(alpha = 0.65f)),
-    )
-    var i = 0
-    while (i < text.length) {
-        when {
-            text.startsWith("~~", i) -> {
-                val end = text.indexOf("~~", i + 2)
-                if (end != -1) {
-                    pushStyle(SpanStyle(textDecoration = TextDecoration.LineThrough))
-                    append(text, i + 2, end)
-                    pop()
-                    i = end + 2
-                } else { append(text[i]); i++ }
+    inlineCodeBg: Color,
+    inlineCodeColor: Color,
+): AnnotatedString {
+    val cacheKey = "$forceBold|${linkColor.value}|${inlineCodeBg.value}|${inlineCodeColor.value}|$text"
+    inlineSpanCache.get(cacheKey)?.let { return it }
+
+    val built = buildAnnotatedString {
+        if (forceBold) pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
+        val linkStyles = TextLinkStyles(
+            style = SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline),
+            hoveredStyle = SpanStyle(color = linkColor.copy(alpha = 0.8f)),
+            pressedStyle = SpanStyle(color = linkColor.copy(alpha = 0.65f)),
+        )
+        var i = 0
+        while (i < text.length) {
+            when {
+                text.startsWith("~~", i) -> {
+                    val end = text.indexOf("~~", i + 2)
+                    if (end != -1) {
+                        pushStyle(SpanStyle(textDecoration = TextDecoration.LineThrough))
+                        append(text, i + 2, end)
+                        pop()
+                        i = end + 2
+                    } else { append(text[i]); i++ }
+                }
+                text.startsWith("**", i) -> {
+                    val end = text.indexOf("**", i + 2)
+                    if (end != -1) {
+                        pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
+                        append(text, i + 2, end)
+                        pop()
+                        i = end + 2
+                    } else { append(text[i]); i++ }
+                }
+                text[i] == '`' -> {
+                    val end = text.indexOf('`', i + 1)
+                    if (end != -1) {
+                        pushStyle(
+                            SpanStyle(
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp,
+                                background = inlineCodeBg,
+                                color = inlineCodeColor,
+                            ),
+                        )
+                        append(text, i + 1, end)
+                        pop()
+                        i = end + 1
+                    } else { append(text[i]); i++ }
+                }
+                text.startsWith("[", i) -> {
+                    val link = inlineMarkdownLinkRegex.find(text, i)
+                    if (link != null && link.range.first == i) {
+                        withLink(LinkAnnotation.Url(link.groupValues[2], linkStyles)) {
+                            append(link.groupValues[1])
+                        }
+                        i = link.range.last + 1
+                    } else { append(text[i]); i++ }
+                }
+                text.regionMatches(i, "https://", 0, 8, ignoreCase = true) ||
+                    text.regionMatches(i, "http://", 0, 7, ignoreCase = true) -> {
+                    val match = inlineWebUrlRegex.find(text, i)
+                    if (match != null && match.range.first == i) {
+                        val url = trimUrlPunctuation(match.value)
+                        withLink(LinkAnnotation.Url(url, linkStyles)) { append(url) }
+                        i += url.length
+                    } else { append(text[i]); i++ }
+                }
+                text[i] == '*' -> {
+                    val end = text.indexOf('*', i + 1)
+                    if (end != -1 && text.getOrNull(end + 1) != '*') {
+                        pushStyle(SpanStyle(fontStyle = FontStyle.Italic))
+                        append(text, i + 1, end)
+                        pop()
+                        i = end + 1
+                    } else { append(text[i]); i++ }
+                }
+                else -> { append(text[i]); i++ }
             }
-            text.startsWith("**", i) -> {
-                val end = text.indexOf("**", i + 2)
-                if (end != -1) {
-                    pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
-                    append(text, i + 2, end)
-                    pop()
-                    i = end + 2
-                } else { append(text[i]); i++ }
-            }
-            text[i] == '`' -> {
-                val end = text.indexOf('`', i + 1)
-                if (end != -1) {
-                    pushStyle(
-                        SpanStyle(
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.SemiBold,
-                        ),
-                    )
-                    append(text, i + 1, end)
-                    pop()
-                    i = end + 1
-                } else { append(text[i]); i++ }
-            }
-            text.startsWith("[", i) -> {
-                val link = inlineMarkdownLinkRegex.find(text, i)
-                if (link != null && link.range.first == i) {
-                    withLink(LinkAnnotation.Url(link.groupValues[2], linkStyles)) {
-                        append(link.groupValues[1])
-                    }
-                    i = link.range.last + 1
-                } else { append(text[i]); i++ }
-            }
-            text.regionMatches(i, "https://", 0, 8, ignoreCase = true) ||
-                text.regionMatches(i, "http://", 0, 7, ignoreCase = true) -> {
-                val match = inlineWebUrlRegex.find(text, i)
-                if (match != null && match.range.first == i) {
-                    val url = trimUrlPunctuation(match.value)
-                    withLink(LinkAnnotation.Url(url, linkStyles)) { append(url) }
-                    i += url.length
-                } else { append(text[i]); i++ }
-            }
-            text[i] == '*' -> {
-                val end = text.indexOf('*', i + 1)
-                if (end != -1 && text.getOrNull(end + 1) != '*') {
-                    pushStyle(SpanStyle(fontStyle = FontStyle.Italic))
-                    append(text, i + 1, end)
-                    pop()
-                    i = end + 1
-                } else { append(text[i]); i++ }
-            }
-            else -> { append(text[i]); i++ }
         }
+        if (forceBold) pop()
     }
-    if (forceBold) pop()
+    inlineSpanCache.put(cacheKey, built)
+    return built
 }
 
 private fun trimUrlPunctuation(value: String): String {
@@ -407,121 +437,142 @@ private fun RemoteMediaBlock(block: MdRemoteMedia) {
             .onFailure { Toast.makeText(context, context.getString(R.string.chat_open_link_failed), Toast.LENGTH_SHORT).show() }
         Unit
     }
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(14.dp)
 
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        shape = shape,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth(),
+    // 尺寸策略：按原始宽高比等比缩放，限制在上限框（宽 MEDIA_MAX_WIDTH、高 MEDIA_MAX_HEIGHT）内，
+    // 缩放后至少贴合一边（等比缩放的天然结果）；拿到加载完成后的真实尺寸前用固定高度占位。
+    SubcomposeAsyncImage(
+        model = remember(block.url) {
+            val dataModel: Any = when {
+                block.url.startsWith("http://", ignoreCase = true) ||
+                    block.url.startsWith("https://", ignoreCase = true) ||
+                    block.url.startsWith("data:", ignoreCase = true) ||
+                    block.url.startsWith("file://", ignoreCase = true) -> block.url
+                block.url.startsWith("/") -> java.io.File(block.url)
+                else -> block.url
+            }
+            ImageRequest.Builder(context)
+                .data(dataModel)
+                .crossfade(true)
+                .build()
+        },
+        contentDescription = block.description.ifBlank { stringResource(R.string.chat_web_content) },
+        // 外层不占满宽度：内容自适应尺寸，消息流内自然靠左对齐
+        modifier = Modifier,
     ) {
-        Column {
-            SubcomposeAsyncImage(
-                model = remember(block.url) {
-                    ImageRequest.Builder(context)
-                        .data(block.url)
-                        .crossfade(true)
-                        .build()
-                },
-                contentDescription = block.description.ifBlank { stringResource(R.string.chat_web_content) },
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(4f / 3f)
-                    .clip(shape)
-                    .clickable(onClick = openSource),
-                loading = {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+        val state = painter.state.collectAsState().value
+        when (state) {
+            is coil3.compose.AsyncImagePainter.State.Error -> MediaStateBox(shape) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    RuntimeIcon(
+                        RuntimeIconName.Image,
+                        Modifier.size(32.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        stringResource(R.string.chat_image_load_failed),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            is coil3.compose.AsyncImagePainter.State.Success -> {
+                val src = state.painter.intrinsicSize
+                val knownSize = !src.isUnspecified && src.width > 0f && src.height > 0f
+                val imageModifier = if (knownSize) {
+                    // 按原始比例等比缩放，撑满宽或高中先到上限的一边
+                    val ratio = src.width / src.height
+                    var width = MEDIA_MAX_WIDTH
+                    var height = width / ratio
+                    if (height > MEDIA_MAX_HEIGHT) {
+                        height = MEDIA_MAX_HEIGHT
+                        width = height * ratio
                     }
-                },
-                error = {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(20.dp),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        RuntimeIcon(
-                            RuntimeIconName.Image,
-                            Modifier.size(32.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            stringResource(R.string.chat_image_load_failed),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                },
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = openSource)
-                    .padding(horizontal = 12.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                RuntimeIcon(
-                    RuntimeIconName.OpenInNew,
-                    Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.primary,
+                    Modifier.size(width = width, height = height)
+                } else {
+                    // 拿不到真实尺寸时的兜底：固定框内等比缩放（Fit 同样保证填满一边）
+                    Modifier.size(width = MEDIA_MAX_WIDTH, height = MEDIA_PLACEHOLDER_HEIGHT)
+                }
+                androidx.compose.foundation.Image(
+                    painter = state.painter,
+                    contentDescription = null,
+                    contentScale = if (knownSize) ContentScale.FillBounds else ContentScale.Fit,
+                    modifier = imageModifier
+                        .clip(shape)
+                        .clickable(onClick = openSource),
                 )
-                Text(
-                    text = block.url,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    textDecoration = TextDecoration.Underline,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
+            }
+            else -> MediaStateBox(shape) {
+                CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
             }
         }
     }
 }
 
+/** 媒体加载中/失败态的占位块（圆角与成图一致，避免前后跳变）。 */
+@Composable
+private fun MediaStateBox(shape: RoundedCornerShape, content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit) {
+    Box(
+        modifier = Modifier
+            .width(MEDIA_MAX_WIDTH)
+            .height(MEDIA_PLACEHOLDER_HEIGHT)
+            .background(MaterialTheme.colorScheme.surfaceContainerLowest, shape),
+        contentAlignment = Alignment.Center,
+        content = content,
+    )
+}
+
+private val MEDIA_MAX_WIDTH = 260.dp
+private val MEDIA_MAX_HEIGHT = 340.dp
+private val MEDIA_PLACEHOLDER_HEIGHT = 180.dp
+
 @Composable
 private fun CodeBlock(block: MdCodeBlock) {
     val context = LocalContext.current
+    val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+
     val copyCode = {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.chat_code_clipboard_label), block.code))
         Toast.makeText(context, context.getString(R.string.chat_code_copied), Toast.LENGTH_SHORT).show()
     }
 
-    val highlightedText = remember(block.code, block.language) {
-        SyntaxHighlighter.highlight(block.code, block.language)
+    val highlightedText = remember(block.code, block.language, isDark) {
+        SyntaxHighlighter.highlight(block.code, block.language, isDark = isDark)
     }
 
+    val containerBg = if (isDark) Color(0xFF0D1117) else Color(0xFFF6F8FA)
+    val headerBg = if (isDark) Color(0xFF161B22) else Color(0xFFEAEEF2)
+    val borderColor = if (isDark) Color(0xFF30363D) else Color(0xFFD0D7DE)
+    val headerTextColor = if (isDark) Color(0xFF8B949E) else Color(0xFF57606A)
+
     Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        shape = RoundedCornerShape(10.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        color = containerBg,
+        shape = RoundedCornerShape(8.dp),
+        border = androidx.compose.foundation.BorderStroke(0.6.dp, borderColor),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column {
-            // 代码块顶部信息栏：语言徽章 + 复制按钮
+            // 代码块顶部信息栏：语言徽章 + 复制按钮 (紧凑设计)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    .padding(horizontal = 12.dp, vertical = 5.dp),
+                    .background(headerBg)
+                    .padding(horizontal = 10.dp, vertical = 3.5.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    text = if (block.language.isNotBlank()) block.language.uppercase() else "CODE",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.SemiBold,
+                    text = if (block.language.isNotBlank()) block.language.uppercase() else stringResource(R.string.chat_code_badge),
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 10.5.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                    color = headerTextColor,
                 )
                 Surface(
                     color = Color.Transparent,
@@ -530,36 +581,36 @@ private fun CodeBlock(block: MdCodeBlock) {
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                     ) {
                         RuntimeIcon(
                             RuntimeIconName.Copy,
-                            Modifier.size(13.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            Modifier.size(11.dp),
+                            tint = headerTextColor,
                         )
                         Text(
                             text = stringResource(R.string.chat_copy),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.5.sp),
+                            color = headerTextColor,
                         )
                     }
                 }
             }
 
-            // 代码高亮显示区
+            // 代码高亮显示区 (紧凑字号与间距)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .padding(12.dp),
+                    .padding(horizontal = 10.dp, vertical = 7.dp),
             ) {
                 Text(
                     text = highlightedText,
                     style = MaterialTheme.typography.bodySmall.copy(
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 13.sp,
-                        lineHeight = 19.sp,
+                        fontSize = 11.5.sp,
+                        lineHeight = 16.5.sp,
                     ),
                 )
             }
@@ -587,32 +638,40 @@ private fun isTableStart(lines: List<String>, i: Int): Boolean =
 @Composable
 private fun TableBlock(table: MdTable) {
     val colCount = (listOf(table.headers) + table.rows).maxOf { it.size }
-    Column(
+    // 多列表格包裹横向滚动容器：窄屏不再把每列挤压成竖条，宽表可左右滑动查看；
+    // IntrinsicSize.Max 让各行列宽按全表最宽行对齐，保持原有等分观感。
+    Box(
         Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-            .padding(10.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(8.dp)),
     ) {
-        Row(Modifier.fillMaxWidth()) {
-            (0 until colCount).forEach { c ->
-                InlineText(
-                    table.headers.getOrNull(c) ?: "",
-                    MaterialTheme.typography.bodySmall,
-                    bold = true,
-                    modifier = Modifier.weight(1f).padding(end = 8.dp),
-                )
-            }
-        }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        table.rows.forEach { row ->
+        Column(
+            Modifier
+                .horizontalScroll(rememberScrollState())
+                .width(IntrinsicSize.Max)
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
             Row(Modifier.fillMaxWidth()) {
                 (0 until colCount).forEach { c ->
                     InlineText(
-                        row.getOrNull(c) ?: "",
+                        table.headers.getOrNull(c) ?: "",
                         MaterialTheme.typography.bodySmall,
+                        bold = true,
                         modifier = Modifier.weight(1f).padding(end = 8.dp),
                     )
+                }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            table.rows.forEach { row ->
+                Row(Modifier.fillMaxWidth()) {
+                    (0 until colCount).forEach { c ->
+                        InlineText(
+                            row.getOrNull(c) ?: "",
+                            MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f).padding(end = 8.dp),
+                        )
+                    }
                 }
             }
         }

@@ -114,7 +114,7 @@ class TerminalSessionManager @Inject constructor(
     ): TerminalSessionHandle {
         val targetDistro = distributionId?.trim()?.takeIf { it.isNotBlank() } ?: linuxRuntime.activeDistroId.value
         val session = linuxRuntime.startSession(
-            config = SessionConfig(workingDirectory = workingDirectory),
+            config = SessionConfig(workingDirectory = workingDirectory, showBanner = true),
             distroId = targetDistro,
         )
         val handle = TerminalSessionHandle(

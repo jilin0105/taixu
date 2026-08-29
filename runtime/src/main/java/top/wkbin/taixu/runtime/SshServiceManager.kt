@@ -42,7 +42,6 @@ import top.wkbin.taixu.runtime.shell.ShellCommand
 
 data class SshRuntimeConfig(
     val port: Int = DEFAULT_SSH_PORT,
-    val allowLan: Boolean = false,
     val authorizedKeys: String = "",
     val passwordAuthEnabled: Boolean = false,
 ) {
@@ -62,7 +61,6 @@ sealed interface SshServiceState {
     data class Running(
         val distroId: String,
         val port: Int,
-        val allowLan: Boolean,
         val host: String,
     ) : SshServiceState
     data class Failed(val distroId: String, val message: String) : SshServiceState
@@ -134,12 +132,6 @@ class SshServiceManager @Inject constructor(
         require(port in 1024..65535) { "SSH 端口必须在 1024..65535 之间" }
         val distroId = linuxRuntime.activeDistroId.value
         preferences.setPort(distroId, port)
-        restartIfRunning(distroId)
-    }
-
-    suspend fun setAllowLan(enabled: Boolean) {
-        val distroId = linuxRuntime.activeDistroId.value
-        preferences.setAllowLan(distroId, enabled)
         restartIfRunning(distroId)
     }
 
@@ -219,7 +211,6 @@ class SshServiceManager @Inject constructor(
         check(authorizedKeys.isNotBlank() || password != null) {
             "请先设置 SSH 登录密码或添加至少一个公钥"
         }
-        val lanAddress = if (config.allowLan) localIpv4Address() else null
 
         try {
             val installed = linuxRuntime.execute(
@@ -246,7 +237,9 @@ class SshServiceManager @Inject constructor(
                     commandLine = SshCommandFactory.configureCommand(
                         config.copy(authorizedKeys = authorizedKeys),
                         password,
-                        listenAddress = if (config.allowLan) lanAddress ?: "0.0.0.0" else "127.0.0.1",
+                        // 始终监听所有 IPv4 接口：本机 127.0.0.1 与局域网设备都能连接，
+                        // 且不随 Wi-Fi IP 变化失效；就绪探测走 127.0.0.1 即可命中。
+                        listenAddress = "0.0.0.0",
                     ),
                     timeoutMs = CONFIGURE_TIMEOUT_MS,
                 ),
@@ -282,8 +275,11 @@ class SshServiceManager @Inject constructor(
             serviceProcess = handle.process
             serviceDistroId = distroId
             activePort = config.port
-            val host = if (config.allowLan) lanAddress ?: "设备局域网 IP" else "127.0.0.1"
-            _state.value = SshServiceState.Running(distroId, config.port, config.allowLan, host)
+            _state.value = SshServiceState.Running(
+                distroId,
+                config.port,
+                host = localIpv4Address() ?: "设备局域网 IP",
+            )
             acquireWakeLock()
             acquireWifiLock()
             monitor(handle.process, distroId)
@@ -331,7 +327,6 @@ class SshServiceManager @Inject constructor(
 
     private suspend fun readConfig(distroId: String) = SshRuntimeConfig(
         port = preferences.port(distroId).first(),
-        allowLan = preferences.allowLan(distroId).first(),
         authorizedKeys = preferences.authorizedKeys(distroId).first(),
         passwordAuthEnabled = preferences.passwordAuthEnabled(distroId).first(),
     )
@@ -503,8 +498,7 @@ internal object SshCommandFactory {
             null
         }
         check(keys.isNotBlank() || normalizedPassword != null) { "请先设置 SSH 登录密码或添加至少一个公钥" }
-        val resolvedListenAddress = listenAddress
-            ?: if (config.allowLan) "0.0.0.0" else "127.0.0.1"
+        val resolvedListenAddress = listenAddress ?: "0.0.0.0"
         val passwordAuth = if (normalizedPassword != null) "yes" else "no"
         val permitRootLogin = if (normalizedPassword != null) "yes" else "prohibit-password"
         val sshdConfig = """

@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -47,6 +48,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -111,7 +114,7 @@ fun ModelEditorScreen(
         }
     }
 
-    var showImportJsonDialog by remember { mutableStateOf(false) }
+    var showImportJsonDialog by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -216,17 +219,20 @@ private fun ModelEditorContent(
     onDismissImportDialog: () -> Unit,
 ) {
     val context = LocalContext.current
-    var providerId by remember(modelId) {
+    // 全部表单字段迁移 rememberSaveable，旋转后输入内容不丢失
+    var providerId by rememberSaveable(modelId) {
         mutableStateOf(providers.firstOrNull { it.name == existing?.provider }?.id ?: providers.first().id)
     }
     val provider = providers.firstOrNull { it.id == providerId } ?: providers.first()
-    var providerMenu by remember { mutableStateOf(false) }
-    var name by remember(modelId) { mutableStateOf(existing?.name.orEmpty()) }
+    var providerMenu by rememberSaveable { mutableStateOf(false) }
+    var name by rememberSaveable(modelId) { mutableStateOf(existing?.name.orEmpty()) }
 
     val existingModelList = remember(existing?.model) {
         existing?.model?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet().orEmpty()
     }
-    var selectedModels by remember(modelId, providerId) {
+    // Set 不能直接进 Bundle：用 listSaver 保存为 List 再还原
+    val stringSetSaver = listSaver<Set<String>, String>(save = { it.toList() }, restore = { it.toSet() })
+    var selectedModels by rememberSaveable(modelId, providerId, stateSaver = stringSetSaver) {
         mutableStateOf(
             if (existing != null) {
                 existingModelList
@@ -235,9 +241,11 @@ private fun ModelEditorContent(
             }
         )
     }
-    var customModelInput by remember(modelId, providerId) { mutableStateOf("") }
-    var url by remember(modelId) { mutableStateOf(existing?.baseUrl ?: provider.baseUrl) }
-    var keyList by remember(modelId, initialApiKey) {
+    var customModelInput by rememberSaveable(modelId, providerId) { mutableStateOf("") }
+    var url by rememberSaveable(modelId) { mutableStateOf(existing?.baseUrl ?: provider.baseUrl) }
+    // API Key 列表等复杂结构用 listSaver
+    val stringListSaver = listSaver<List<String>, String>(save = { it.toList() }, restore = { it })
+    var keyList by rememberSaveable(modelId, initialApiKey, stateSaver = stringListSaver) {
         mutableStateOf(
             initialApiKey.lineSequence()
                 .map { it.trim() }
@@ -246,7 +254,11 @@ private fun ModelEditorContent(
                 .ifEmpty { listOf("") }
         )
     }
-    var revealedKeyIndices by remember { mutableStateOf(setOf<Int>()) }
+    val intSetSaver = listSaver<Set<Int>, Int>(save = { it.toList() }, restore = { it.toSet() })
+    var revealedKeyIndices by rememberSaveable(stateSaver = intSetSaver) { mutableStateOf(setOf<Int>()) }
+    var showBatchImportKeysDialog by rememberSaveable { mutableStateOf(false) }
+    // Base URL 校验：必须以 http/https 开头
+    val urlValid = url.trim().startsWith("http://") || url.trim().startsWith("https://")
 
     LaunchedEffect(initialApiKey) {
         if (keyList.all { it.isBlank() } && initialApiKey.isNotBlank()) {
@@ -267,37 +279,37 @@ private fun ModelEditorContent(
     }
 
     // 高级与推理参数
-    var rpmLimitText by remember(modelId) {
+    var rpmLimitText by rememberSaveable(modelId) {
         mutableStateOf(existing?.requestsPerMinutePerKey?.takeIf { it > 0 }?.toString().orEmpty())
     }
-    var temperature by remember(modelId) { mutableFloatStateOf(existing?.temperature ?: 0.7f) }
-    var maxTokensText by remember(modelId) { mutableStateOf(existing?.maxTokens?.toString().orEmpty()) }
-    var contextTokensText by remember(modelId) { mutableStateOf(existing?.contextTokens?.toString().orEmpty()) }
-    var topP by remember(modelId) { mutableFloatStateOf(existing?.topP ?: 1.0f) }
+    var temperature by rememberSaveable(modelId) { mutableFloatStateOf(existing?.temperature ?: 0.7f) }
+    var maxTokensText by rememberSaveable(modelId) { mutableStateOf(existing?.maxTokens?.toString().orEmpty()) }
+    var contextTokensText by rememberSaveable(modelId) { mutableStateOf(existing?.contextTokens?.toString().orEmpty()) }
+    var topP by rememberSaveable(modelId) { mutableFloatStateOf(existing?.topP ?: 1.0f) }
 
-    var reasoningModeText by remember(modelId) { mutableStateOf(existing?.reasoningMode ?: "auto") }
-    var reasoningEffortText by remember(modelId) { mutableStateOf(existing?.reasoningEffort.orEmpty()) }
-    var reasoningModeMenu by remember { mutableStateOf(false) }
+    var reasoningModeText by rememberSaveable(modelId) { mutableStateOf(existing?.reasoningMode ?: "auto") }
+    var reasoningEffortText by rememberSaveable(modelId) { mutableStateOf(existing?.reasoningEffort.orEmpty()) }
+    var reasoningModeMenu by rememberSaveable { mutableStateOf(false) }
 
     // 功能开关
-    var toolCallEnabled by remember(modelId) {
+    var toolCallEnabled by rememberSaveable(modelId) {
         mutableStateOf(existing?.toolCallMode != "disabled")
     }
-    var pureChatMode by remember(modelId) {
+    var pureChatMode by rememberSaveable(modelId) {
         mutableStateOf(existing?.pureChatMode ?: false)
     }
-    var visionEnabled by remember(modelId) {
+    var visionEnabled by rememberSaveable(modelId) {
         mutableStateOf(existing?.visionEnabled ?: true)
     }
-    var responseApiEnabled by remember(modelId) {
+    var responseApiEnabled by rememberSaveable(modelId) {
         mutableStateOf(existing?.responseApiEnabled ?: false)
     }
 
-    var customHeaders by remember(modelId) { mutableStateOf(existing?.customHeaders.orEmpty()) }
+    var customHeaders by rememberSaveable(modelId) { mutableStateOf(existing?.customHeaders.orEmpty()) }
 
     // 折叠区域控制
-    var reasoningSectionExpanded by remember { mutableStateOf(false) }
-    var advancedSectionExpanded by remember { mutableStateOf(false) }
+    var reasoningSectionExpanded by rememberSaveable { mutableStateOf(false) }
+    var advancedSectionExpanded by rememberSaveable { mutableStateOf(false) }
 
     // 从 JSON 填充表单逻辑
     fun applyProfile(profile: AiModelProfileExport) {
@@ -331,6 +343,29 @@ private fun ModelEditorContent(
         visionEnabled = profile.visionEnabled
         responseApiEnabled = profile.responseApiEnabled
         if (profile.customHeaders.isNotBlank()) customHeaders = profile.customHeaders
+    }
+
+    if (showBatchImportKeysDialog) {
+        BatchImportKeysDialog(
+            onDismiss = { showBatchImportKeysDialog = false },
+            onConfirm = { batchText ->
+                val existingKeys = keyList.map { it.trim() }.filter { it.isNotEmpty() }
+                val importedKeys = batchText.lineSequence()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                    .distinct()
+                    .filter { it !in existingKeys }
+                    .toList()
+                if (importedKeys.isEmpty()) {
+                    Toast.makeText(context, "没有解析到新的密钥", Toast.LENGTH_SHORT).show()
+                } else {
+                    keyList = (existingKeys + importedKeys).ifEmpty { listOf("") }
+                    revealedKeyIndices = emptySet()
+                    Toast.makeText(context, "已导入 ${importedKeys.size} 个密钥", Toast.LENGTH_SHORT).show()
+                    showBatchImportKeysDialog = false
+                }
+            },
+        )
     }
 
     if (showImportDialog) {
@@ -502,6 +537,12 @@ private fun ModelEditorContent(
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("Base URL（接口端点）") },
                         placeholder = { Text("https://api.openai.com/v1") },
+                        isError = url.isNotBlank() && !urlValid,
+                        supportingText = {
+                            if (url.isNotBlank() && !urlValid) {
+                                Text("接口地址需以 http:// 或 https:// 开头")
+                            }
+                        },
                         singleLine = true,
                         shape = compactFieldShape,
                         colors = fieldColors,
@@ -593,10 +634,13 @@ private fun ModelEditorContent(
                                             onClick = {
                                                 revealedKeyIndices = if (isRevealed) revealedKeyIndices - index else revealedKeyIndices + index
                                             },
-                                            modifier = Modifier.size(28.dp),
+                                            modifier = Modifier
+                                                .minimumInteractiveComponentSize()
+                                                .size(28.dp),
+                                            contentDescription = if (isRevealed) "隐藏密钥" else "显示密钥",
                                         ) {
                                             RuntimeIcon(
-                                                name = if (isRevealed) RuntimeIconName.Brain else RuntimeIconName.Key,
+                                                name = if (isRevealed) RuntimeIconName.VisibilityOff else RuntimeIconName.Visibility,
                                                 modifier = Modifier.size(16.dp),
                                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
@@ -617,7 +661,10 @@ private fun ModelEditorContent(
                                             }
                                         }.toSet()
                                     },
-                                    modifier = Modifier.size(36.dp),
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .size(36.dp),
+                                    contentDescription = "移除该密钥",
                                 ) {
                                     RuntimeIcon(
                                         name = RuntimeIconName.Close,
@@ -629,15 +676,32 @@ private fun ModelEditorContent(
                         }
                     }
 
-                    // 添加备用 Key 按钮
-                    RuntimeOutlinedButton(
-                        onClick = { keyList = keyList + "" },
-                        modifier = Modifier.fillMaxWidth().height(38.dp),
-                        shape = RoundedCornerShape(10.dp),
+                    // 添加备用 Key / 批量导入
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            RuntimeIcon(RuntimeIconName.Plus, Modifier.size(14.dp), MaterialTheme.colorScheme.primary)
-                            Text("+ 添加备用 Key（自动轮询与故障转移）", style = MaterialTheme.typography.labelMedium)
+                        RuntimeOutlinedButton(
+                            onClick = { keyList = keyList + "" },
+                            modifier = Modifier.weight(1f).height(38.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                RuntimeIcon(RuntimeIconName.Plus, Modifier.size(14.dp), MaterialTheme.colorScheme.primary)
+                                Text("+ 备用 Key", style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                        RuntimeOutlinedButton(
+                            onClick = { showBatchImportKeysDialog = true },
+                            modifier = Modifier.weight(1f).height(38.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                RuntimeIcon(RuntimeIconName.Download, Modifier.size(14.dp), MaterialTheme.colorScheme.primary)
+                                Text("批量导入", style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
                         }
                     }
 
@@ -1025,15 +1089,14 @@ private fun ModelEditorContent(
         item {
             val testModelTarget = (if (existing != null) customModelInput.trim() else (selectedModels.firstOrNull() ?: customModelInput.trim())).ifBlank { provider.recommendedModels.firstOrNull().orEmpty() }
 
-            Row(
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 RuntimeOutlinedButton(
                     onClick = { test(url, testModelTarget, combinedKey) },
                     enabled = !testing && testModelTarget.isNotBlank() && url.isNotBlank(),
-                    modifier = Modifier.weight(1f).height(44.dp),
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
                     shape = RoundedCornerShape(12.dp),
                 ) {
                     if (testing) {
@@ -1053,16 +1116,22 @@ private fun ModelEditorContent(
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(
-                            text = it,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            RuntimeIcon(RuntimeIconName.Alert, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
+                            Text(
+                                text = it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                 }
 
@@ -1070,24 +1139,24 @@ private fun ModelEditorContent(
                     val isSuccess = resultMsg == "连接成功"
                     Surface(
                         shape = RoundedCornerShape(10.dp),
-                        color = if (isSuccess) Color(0xFF2E7D32).copy(alpha = 0.15f) else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
-                        modifier = Modifier.weight(1f),
+                        color = if (isSuccess) successStatusColor().copy(alpha = 0.15f) else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             RuntimeIcon(
                                 name = if (isSuccess) RuntimeIconName.Check else RuntimeIconName.Alert,
                                 modifier = Modifier.size(16.dp),
-                                tint = if (isSuccess) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error,
+                                tint = if (isSuccess) successStatusColor() else MaterialTheme.colorScheme.error,
                             )
                             Text(
                                 text = resultMsg,
                                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                color = if (isSuccess) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error,
-                                maxLines = 1,
+                                color = if (isSuccess) successStatusColor() else MaterialTheme.colorScheme.error,
+                                maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
@@ -1136,7 +1205,7 @@ private fun ModelEditorContent(
                 },
                 modifier = Modifier.fillMaxWidth().height(48.dp),
                 shape = RoundedCornerShape(12.dp),
-                enabled = effectiveModels.isNotEmpty() && url.isNotBlank(),
+                enabled = effectiveModels.isNotEmpty() && urlValid,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     RuntimeIcon(RuntimeIconName.Check, Modifier.size(18.dp), MaterialTheme.colorScheme.onPrimary)
@@ -1208,11 +1277,98 @@ private fun EditorToggleRow(
 }
 
 @Composable
+private fun BatchImportKeysDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var text by rememberSaveable { mutableStateOf("") }
+    val context = LocalContext.current
+    val parsedCount = remember(text) {
+        text.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.distinct().count()
+    }
+
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RuntimeIcon(RuntimeIconName.Key, Modifier.size(20.dp), MaterialTheme.colorScheme.primary)
+                Text("批量导入密钥", fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "粘贴多个 API 密钥，一行一个，遇到换行即为下一个 Key：",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier.fillMaxWidth().height(160.dp),
+                    placeholder = { Text("sk-xxxxxxxxxxxxxxxx\nsk-yyyyyyyyyyyyyyyy\nsk-zzzzzzzzzzzzzzzz") },
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    shape = RoundedCornerShape(10.dp),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RuntimeOutlinedButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                            val clipText = clipboard?.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+                            if (clipText.isNotBlank()) {
+                                text = clipText
+                            } else {
+                                Toast.makeText(context, "剪贴板为空", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.weight(1f).height(36.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                    ) {
+                        Text("从剪贴板粘贴", style = MaterialTheme.typography.labelMedium)
+                    }
+                    if (parsedCount > 0) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                        ) {
+                            Text(
+                                text = "已识别 $parsedCount 个",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            RuntimeButton(
+                onClick = { onConfirm(text) },
+                enabled = parsedCount > 0,
+            ) {
+                Text("导入")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        },
+    )
+}
+
+@Composable
 private fun QuickImportJsonDialog(
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
-    var text by remember { mutableStateOf("") }
+    var text by rememberSaveable { mutableStateOf("") }
     val context = LocalContext.current
 
     RuntimeAlertDialog(

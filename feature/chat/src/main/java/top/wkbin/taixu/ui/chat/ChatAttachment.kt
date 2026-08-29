@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -24,10 +25,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import top.wkbin.taixu.feature.chat.R
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import java.io.File
@@ -51,6 +56,8 @@ data class ChatAttachment(
 }
 
 object AttachmentHelper {
+    private const val TAG = "AttachmentHelper"
+
     fun processUri(context: Context, uri: Uri, isImage: Boolean): ChatAttachment? {
         val contentResolver = context.contentResolver
         var name = if (isImage) "image_${System.currentTimeMillis()}.jpg" else "file_${System.currentTimeMillis()}"
@@ -129,6 +136,8 @@ object AttachmentHelper {
                 base64DataUrl = base64,
             )
         } catch (e: Exception) {
+            // 失败不能静默：记录日志并由 ChatViewModel 统计后以 Toast 上抛给用户
+            android.util.Log.w(TAG, "附件处理失败 uri=$uri", e)
             null
         }
     }
@@ -203,19 +212,27 @@ fun AttachmentPreviewRow(
                         )
                     }
 
+                    val removeLabel = stringResource(R.string.chat_remove_attachment)
                     Box(
                         modifier = Modifier
-                            .size(18.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                            .clickable { onRemove(item) },
+                            .minimumInteractiveComponentSize()
+                            .clickable { onRemove(item) }
+                            .semantics { contentDescription = removeLabel },
                         contentAlignment = Alignment.Center,
                     ) {
-                        RuntimeIcon(
-                            name = RuntimeIconName.Close,
-                            modifier = Modifier.size(10.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(18.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            RuntimeIcon(
+                                name = RuntimeIconName.Close,
+                                modifier = Modifier.size(10.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }

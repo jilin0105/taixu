@@ -8,7 +8,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 enum class McpTransportType {
     STDIO,  // 在 Linux 沙箱内通过标准输入输出与进程交互
-    SSE,    // 通过 HTTP / SSE 连接本地或远程 MCP 服务器
+    SSE,    // 远程 HTTP 服务：连接时自动协商 Streamable HTTP 与 legacy HTTP+SSE 两种协议
 }
 
 /**
@@ -26,13 +26,35 @@ data class McpServerConfig(
     val args: List<String> = emptyList(),
     /** 环境变量 */
     val env: Map<String, String> = emptyMap(),
-    /** SSE 服务的 HTTP 端点 URL（例如 http://127.0.0.1:8000/sse） */
+    /** 远程 MCP 服务的 HTTP 端点 URL（例如 http://127.0.0.1:8000/mcp 或 .../sse） */
     val serverUrl: String = "",
     /** 是否启用 */
     val isEnabled: Boolean = true,
     /** 是否为内置预设服务 */
     val isBuiltin: Boolean = false,
-)
+) {
+    /** 导出为 mcpServers JSON 配置片段（键为服务 id）；配置格式约定归模型层，View 只读展示 */
+    fun toExportJsonConfig(): String = buildString {
+        appendLine("{")
+        appendLine("  \"$id\": {")
+        if (transportType == McpTransportType.STDIO) {
+            appendLine("    \"command\": \"$command\",")
+            appendLine("    \"args\": [${args.joinToString(", ") { "\"$it\"" }}]")
+            if (env.isNotEmpty()) {
+                appendLine("    \"env\": {")
+                env.entries.forEachIndexed { i, (k, v) ->
+                    val comma = if (i == env.size - 1) "" else ","
+                    appendLine("      \"$k\": \"$v\"$comma")
+                }
+                appendLine("    }")
+            }
+        } else {
+            appendLine("    \"url\": \"$serverUrl\"")
+        }
+        appendLine("  }")
+        append("}")
+    }
+}
 
 /**
  * MCP 服务连通性检测状态（运行时状态，不持久化）
@@ -118,13 +140,13 @@ object BuiltinMcpPresets {
         McpServerConfig(
             id = "mcp_websearch",
             name = "Web 搜索（Open-WebSearch）",
-            description = "免 API Key 的多引擎网络搜索与正文抓取：支持 bing / duckduckgo / baidu / exa / brave / sogou / startpage 等引擎，由沙箱内 npx 启动 open-websearch，无需任何密钥；网络受限时可自行在 env 中追加 USE_PROXY=true / PROXY_URL 或切换 DEFAULT_SEARCH_ENGINE",
+            description = "免 API Key 的多引擎网络搜索与正文抓取：默认使用国内可直连的 baidu 引擎，可在 env 中切换 bing / duckduckgo / sogou / startpage 等；npx 已加 --prefer-offline，首次安装后启动不再联网检查版本。需要代理时在 env 中追加 USE_PROXY=true / PROXY_URL",
             transportType = McpTransportType.STDIO,
             command = "npx",
-            args = listOf("-y", "open-websearch@latest"),
+            args = listOf("-y", "--prefer-offline", "open-websearch@latest"),
             env = mapOf(
                 "MODE" to "stdio",
-                "DEFAULT_SEARCH_ENGINE" to "duckduckgo",
+                "DEFAULT_SEARCH_ENGINE" to "baidu",
             ),
             isEnabled = false,
             isBuiltin = true,

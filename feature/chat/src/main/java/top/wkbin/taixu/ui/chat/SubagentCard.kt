@@ -7,6 +7,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -46,6 +48,7 @@ import top.wkbin.taixu.ui.components.RuntimeIconName
  * Subagent 子智能体任务派发卡片：
  * 可视化展示主智能体派发给子智能体的任务列表、各角色执行状态及输出结论。
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SubagentCard(
     call: ToolCall,
@@ -73,16 +76,16 @@ fun SubagentCard(
     }
 
     Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = androidx.compose.foundation.BorderStroke(1.dp, cardBorderColor),
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = 0.5f),
+        border = androidx.compose.foundation.BorderStroke(0.6.dp, cardBorderColor.copy(alpha = 0.35f)),
         modifier = modifier.fillMaxWidth(),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             // Header Row
             Row(
@@ -94,31 +97,31 @@ fun SubagentCard(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier.weight(1f),
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(28.dp)
+                            .size(20.dp)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
                         contentAlignment = Alignment.Center,
                     ) {
                         RuntimeIcon(
-                            name = RuntimeIconName.Terminal,
-                            modifier = Modifier.size(16.dp),
+                            name = RuntimeIconName.Brain,
+                            modifier = Modifier.size(12.dp),
                             tint = MaterialTheme.colorScheme.primary,
                         )
                     }
 
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
                         ) {
                             Text(
                                 stringResource(R.string.chat_subagent_delegation),
-                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 12.sp),
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
                             Surface(
@@ -153,17 +156,26 @@ fun SubagentCard(
                 )
             }
 
-            // Task Badges List
-            Row(
+            // Task Badges List：FlowRow 自动换行，任务多时不再溢出屏幕
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 tasks.forEach { (taskName, role, _) ->
-                    val (roleColor, roleIcon) = when (role.lowercase()) {
+                    val roleKey = role.lowercase()
+                    val (roleColor, roleIcon) = when (roleKey) {
                         "researcher" -> Color(0xFF3B82F6) to RuntimeIconName.File
                         "coder" -> Color(0xFF10B981) to RuntimeIconName.Terminal
                         "tester" -> Color(0xFFF59E0B) to RuntimeIconName.Code
                         else -> MaterialTheme.colorScheme.primary to RuntimeIconName.Logs
+                    }
+                    // 英文角色标识资源化为本地化标签；未识别角色保留原始值
+                    val roleLabel = when (roleKey) {
+                        "researcher" -> stringResource(R.string.chat_subagent_role_researcher)
+                        "coder" -> stringResource(R.string.chat_subagent_role_coder)
+                        "tester" -> stringResource(R.string.chat_subagent_role_tester)
+                        "assistant" -> stringResource(R.string.chat_subagent_role_assistant)
+                        else -> role
                     }
 
                     Surface(
@@ -178,7 +190,7 @@ fun SubagentCard(
                         ) {
                             RuntimeIcon(name = roleIcon, modifier = Modifier.size(12.dp), tint = roleColor)
                             Text(
-                                text = "$role: $taskName",
+                                text = "$roleLabel: $taskName",
                                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
                                 color = roleColor,
                                 maxLines = 1,

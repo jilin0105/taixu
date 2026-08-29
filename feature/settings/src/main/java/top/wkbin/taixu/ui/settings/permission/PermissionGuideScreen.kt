@@ -42,6 +42,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -53,6 +55,8 @@ import top.wkbin.taixu.ui.components.RuntimeButton
 import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
+import top.wkbin.taixu.ui.settings.successStatusColor
+import top.wkbin.taixu.ui.settings.warningStatusColor
 import top.wkbin.taixu.ui.components.RuntimeOutlinedButton
 import top.wkbin.taixu.ui.components.RuntimeTopBar
 
@@ -62,9 +66,10 @@ fun PermissionGuideScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    var selectedBrand by remember { mutableStateOf(OemBrand.detect()) }
-    var selectedTopic by remember { mutableStateOf(KeepaliveTopic.AUTOSTART) }
-    var brandMenuExpanded by remember { mutableStateOf(false) }
+    // 品牌/主题选择迁移 rememberSaveable，旋转后不重置
+    var selectedBrand by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(OemBrand.detect()) }
+    var selectedTopic by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(KeepaliveTopic.AUTOSTART) }
+    var brandMenuExpanded by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
 
     // 状态刷新
     var statusMap by remember { mutableStateOf(mapOf<KeepaliveTopic, Boolean>()) }
@@ -212,11 +217,15 @@ fun PermissionGuideScreen(
                                     color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
                                 )
                                 if (hasRealStatus) {
+                                    val granted = isGranted
                                     Box(
                                         modifier = Modifier
                                             .size(8.dp)
                                             .clip(CircleShape)
-                                            .background(if (isGranted) Color(0xFF4CAF50) else Color(0xFFFF9800)),
+                                            .background(if (granted) successStatusColor() else warningStatusColor())
+                                            .semantics {
+                                                contentDescription = if (granted) "权限已授权" else "权限未授权"
+                                            },
                                     )
                                 }
                             }

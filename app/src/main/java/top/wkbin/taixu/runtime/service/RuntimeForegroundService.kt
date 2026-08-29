@@ -19,7 +19,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
@@ -27,7 +27,8 @@ class RuntimeForegroundService : Service() {
     @Inject lateinit var processRegistry: ProcessRegistry
     @Inject lateinit var localServiceLauncher: LocalServiceLauncher
     @Inject lateinit var sshServiceManager: SshServiceManager
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** 停止后的沙箱进程清理作用域：独立于服务生命周期，服务销毁后也要跑完。 */
+    private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** CPU 唤醒锁：息屏后保持 CPU 运行，防止 Linux 后台进程/构建/安装被冻结。 */
     private var wakeLock: PowerManager.WakeLock? = null
@@ -43,23 +44,28 @@ class RuntimeForegroundService : Service() {
             getString(R.string.taixu_runtime_notification_channel),
             NotificationManager.IMPORTANCE_HIGH,
         ).apply {
-            description = "用于展示 Linux 沙箱后台运行状态的灵动岛/原子胶囊"
+            description = "用于展示 Linux 沙箱后台运行状态的常驻通知"
             enableVibration(false)
             setSound(null, null)
             setShowBadge(true)
             lockscreenVisibility = Notification.VISIBILITY_PUBLIC
         }
         manager.createNotificationChannel(channel)
+        // 清理历史版本遗留的灵动岛/胶囊渠道，避免系统设置里残留无效项
+        runCatching { manager.deleteNotificationChannel(LEGACY_CAPSULE_CHANNEL_ID) }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            serviceScope.launch {
+            // Android 15+ 要求收到停止请求后在数秒时限内退出前台态，超时直接抛
+            // ForegroundServiceDidNotStopInTimeException 杀进程。杀沙箱进程可能超过该
+            // 时限，因此必须先同步退出前台，进程清理放到独立作用域异步完成。
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelfResult(startId)
+            cleanupScope.launch {
                 runCatching { localServiceLauncher.stopAll() }
                 runCatching { processRegistry.stopAll() }
                 releaseLocks()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelfResult(startId)
             }
             return START_NOT_STICKY
         }
@@ -68,11 +74,21 @@ class RuntimeForegroundService : Service() {
         return START_STICKY
     }
 
+    override fun onTimeout(startId: Int) {
+        // dataSync 前台服务有系统级 6 小时硬超时（Android 15+），超时后必须立即退出
+        // 前台，否则系统抛 ForegroundServiceDidNotStopInTimeException 杀进程。
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelfResult(startId)
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        onTimeout(startId)
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
         releaseLocks()
-        serviceScope.cancel()
         super.onDestroy()
     }
 
@@ -116,20 +132,29 @@ class RuntimeForegroundService : Service() {
             Intent(this, RuntimeForegroundService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        return top.wkbin.taixu.service.LiveCapsuleHelper.buildRunningCapsuleNotification(
-            context = this,
-            channelId = CHANNEL_ID,
-            sessionId = "linux_runtime",
-            sessionTitle = "Linux 沙箱",
-            rawStatus = getString(R.string.taixu_runtime_running),
-            elapsedSeconds = 0L,
-            stopPendingIntent = stopPending,
-        )
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.taixu_notification)
+            .setContentTitle("Linux 沙箱")
+            .setContentText(getString(R.string.taixu_runtime_running))
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setAutoCancel(false)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setProgress(0, 0, true)
+            .addAction(
+                NotificationCompat.Action(
+                    R.drawable.taixu_notification,
+                    getString(R.string.taixu_notification_stop),
+                    stopPending,
+                ),
+            )
+            .build()
     }
 
     companion object {
         const val ACTION_STOP = "top.wkbin.taixu.action.STOP_RUNTIME_SERVICE"
-        private const val CHANNEL_ID = "taixu-runtime-capsule-v4"
+        private const val CHANNEL_ID = "taixu-runtime-v5"
+        private const val LEGACY_CAPSULE_CHANNEL_ID = "taixu-runtime-capsule-v4"
         private const val NOTIFICATION_ID = 1001
         private const val TAG = "RuntimeForegroundService"
         private const val WAKE_LOCK_TAG = "taixu:runtime-service"

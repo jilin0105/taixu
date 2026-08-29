@@ -15,8 +15,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -61,44 +63,23 @@ fun SshSettingsScreen(
     val serviceState by viewModel.serviceState.collectAsStateWithLifecycle()
     val operating by viewModel.operating.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
+    val messageIsError by viewModel.messageIsError.collectAsStateWithLifecycle()
     val logs by viewModel.logs.collectAsStateWithLifecycle()
     val vpnActive by viewModel.vpnActive.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
-    var portText by remember { mutableStateOf(settings.port.toString()) }
-    var authorizedKeysText by remember { mutableStateOf(settings.authorizedKeys) }
-    var showLanWarning by remember { mutableStateOf(false) }
-    var showPasswordDialog by remember { mutableStateOf(false) }
+    var portText by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(settings.port.toString()) }
+    var authorizedKeysText by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(settings.authorizedKeys) }
+    var showPasswordDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(settings.distroId, settings.port) { portText = settings.port.toString() }
     LaunchedEffect(settings.distroId, settings.authorizedKeys) { authorizedKeysText = settings.authorizedKeys }
 
     message?.let { current ->
         RuntimeAlertDialog(
             onDismissRequest = viewModel::consumeMessage,
-            title = { Text(if (current.contains("失败") || current.contains("无效") || current.contains("请先")) "SSH 操作未完成" else "SSH 远程访问") },
+            title = { Text(if (messageIsError) "SSH 操作未完成" else "SSH 远程访问") },
             text = { Text(current) },
             confirmButton = { RuntimeTextButton(onClick = viewModel::consumeMessage) { Text("知道了") } },
-        )
-    }
-
-    if (showLanWarning) {
-        RuntimeAlertDialog(
-            onDismissRequest = { showLanWarning = false },
-            title = { Text("允许局域网访问？") },
-            text = {
-                Text("SSH 将只监听当前手机的局域网 IP（例如 192.168.*.*），同一局域网内的设备都能尝试连接。请只在可信 Wi-Fi 下开启，并妥善保管对应私钥。")
-            },
-            confirmButton = {
-                RuntimeButton(
-                    onClick = {
-                        showLanWarning = false
-                        viewModel.setAllowLan(true)
-                    },
-                ) { Text("确认开启") }
-            },
-            dismissButton = {
-                RuntimeTextButton(onClick = { showLanWarning = false }) { Text("取消") }
-            },
         )
     }
 
@@ -246,11 +227,7 @@ fun SshSettingsScreen(
                             color = MaterialTheme.colorScheme.primary,
                         )
                         Text(
-                            text = if (settings.allowLan) {
-                                "首次连接输入 yes 确认服务器指纹，然后输入 root 登录密码"
-                            } else {
-                                "命令使用当前局域网地址；开启“允许局域网访问”后电脑才能连接"
-                            },
+                            text = "首次连接输入 yes 确认服务器指纹，然后输入 root 登录密码",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -266,10 +243,10 @@ fun SshSettingsScreen(
                 }
             }
 
-            if (settings.allowLan && vpnActive) {
+            if (vpnActive) {
                 item {
                     NoticeBanner(
-                        text = "检测到手机正处于 VPN 连接中，当前 VPN 会接管本应用流量。启用“允许局域网访问”后，请先关闭 VPN 或将本应用加入 VPN 直连/排除名单，否则同一局域网的电脑连接会超时。",
+                        text = "检测到手机正处于 VPN 连接中，当前 VPN 会接管本应用流量，同一局域网的电脑连接可能超时。请先关闭 VPN，或将本应用加入 VPN 直连/排除名单。",
                         isError = true,
                     )
                 }
@@ -284,32 +261,25 @@ fun SshSettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         RuntimeIcon(RuntimeIconName.Network, Modifier.size(20.dp), MaterialTheme.colorScheme.primary)
+                        val portValue = portText.toIntOrNull()
+                        val portValid = portValue != null && portValue in 1024..65535
                         OutlinedTextField(
                             value = portText,
                             onValueChange = { portText = it.filter(Char::isDigit).take(5) },
                             label = { Text("SSH 端口") },
-                            supportingText = { Text("允许范围：1024–65535") },
+                            isError = portText.isNotBlank() && !portValid,
+                            supportingText = {
+                                Text(
+                                    if (portText.isNotBlank() && !portValid) "端口需在 1024–65535 范围内"
+                                    else "允许范围：1024–65535",
+                                )
+                            },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.weight(1f),
                         )
-                        RuntimeOutlinedButton(onClick = { viewModel.savePort(portText) }, enabled = !busy) { Text("保存") }
+                        RuntimeOutlinedButton(onClick = { viewModel.savePort(portText) }, enabled = !busy && portValid) { Text("保存") }
                     }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    SettingsRow(
-                        icon = RuntimeIconName.Globe,
-                        title = "允许局域网访问",
-                        subtitle = if (settings.allowLan) "监听当前局域网 IP，请只在可信网络使用" else "仅监听 127.0.0.1（推荐）",
-                        trailing = {
-                            RuntimeSwitch(
-                                checked = settings.allowLan,
-                                onCheckedChange = { enabled ->
-                                    if (enabled) showLanWarning = true else viewModel.setAllowLan(false)
-                                },
-                                enabled = !busy,
-                            )
-                        },
-                    )
                 }
             }
 
@@ -393,14 +363,19 @@ private fun PasswordSettingsDialog(
     onSave: (String) -> Unit,
     onClear: () -> Unit,
 ) {
-    var password by remember { mutableStateOf("") }
-    var confirmation by remember { mutableStateOf("") }
+    var password by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    var confirmation by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     val matches = password == confirmation
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (passwordConfigured) "修改 SSH 登录密码" else "设置 SSH 登录密码") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 Text(
                     "密码将通过 Android Keystore 加密保存，并应用到当前 Linux 发行版的 root 账户。",
                     style = MaterialTheme.typography.bodySmall,

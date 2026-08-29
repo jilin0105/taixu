@@ -28,6 +28,7 @@
     <string name="taixu_update_available">New version available: v%1$s</string>
     <string name="taixu_update_versions">Current: v%1$s  ➔  Latest: v%2$s</string>
     <string name="taixu_update_downloading_package">Downloading update…</string>
+    <string name="taixu_update_download_failed">Failed to download the update package. Check your network and try again.</string>
     <string name="taixu_downloading">Downloading…</string>
     <string name="taixu_update_now">Update now</string>
     <string name="taixu_open_github">Open GitHub</string>

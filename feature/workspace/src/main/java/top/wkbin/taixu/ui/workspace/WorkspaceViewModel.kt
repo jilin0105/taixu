@@ -6,6 +6,7 @@ import top.wkbin.taixu.runtime.WorkspaceFileItem
 import top.wkbin.taixu.runtime.WorkspaceManager
 import top.wkbin.taixu.runtime.WorkspaceProject
 import top.wkbin.taixu.runtime.WorkspaceStorage
+import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.template.InstalledProjectTemplate
 import top.wkbin.taixu.template.ProjectTemplateStore
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -31,7 +32,16 @@ class WorkspaceViewModel @Inject constructor(
     private val linuxRuntime: top.wkbin.taixu.runtime.LinuxRuntime,
     private val workshopPreferences: top.wkbin.taixu.core.datastore.WorkshopPreferences,
     private val projectTemplateStore: ProjectTemplateStore,
+    private val settingsDataStore: top.wkbin.taixu.core.datastore.SettingsDataStore,
 ) : ViewModel() {
+
+    /** 首次使用引导登记（统一存于 SettingsDataStore，设置页可整体清空重看）。 */
+    val firstUseGuidesShown: StateFlow<Set<String>> = settingsDataStore.firstUseGuidesShown
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
+    fun markFirstUseGuideShown(id: String) {
+        viewModelScope.launch { settingsDataStore.markFirstUseGuideShown(id) }
+    }
 
     private val _projectTemplates = MutableStateFlow<List<InstalledProjectTemplate>>(emptyList())
     val projectTemplates: StateFlow<List<InstalledProjectTemplate>> = _projectTemplates.asStateFlow()
@@ -83,9 +93,9 @@ class WorkspaceViewModel @Inject constructor(
                 input.use(projectTemplateStore::importZip)
             }.onSuccess { template ->
                 refreshProjectTemplates()
-                _message.value = "模板已导入：${template.manifest.name}"
+                notify(context.getString(R.string.workspace_template_imported, template.manifest.name))
             }.onFailure { error ->
-                _message.value = error.message ?: "模板导入失败"
+                notify(error.message ?: context.getString(R.string.workspace_template_import_failed), isError = true)
             }
             _busy.value = false
         }
@@ -101,9 +111,9 @@ class WorkspaceViewModel @Inject constructor(
                 }
                 output.use { projectTemplateStore.exportZip(id, it) }
             }.onSuccess {
-                _message.value = "模板已导出"
+                notify(context.getString(R.string.workspace_template_exported))
             }.onFailure { error ->
-                _message.value = error.message ?: "模板导出失败"
+                notify(error.message ?: context.getString(R.string.workspace_template_export_failed), isError = true)
             }
             _busy.value = false
         }
@@ -116,9 +126,9 @@ class WorkspaceViewModel @Inject constructor(
             runCatching { projectTemplateStore.delete(id) }
                 .onSuccess {
                     refreshProjectTemplates()
-                    _message.value = "模板已删除"
+                    notify(context.getString(R.string.workspace_template_deleted))
                 }
-                .onFailure { error -> _message.value = error.message ?: "模板删除失败" }
+                .onFailure { error -> notify(error.message ?: context.getString(R.string.workspace_template_delete_failed), isError = true) }
             _busy.value = false
         }
     }
@@ -193,10 +203,10 @@ class WorkspaceViewModel @Inject constructor(
                     }
                 }
                 refreshInstalledStatus()
-                _message.value = context.getString(R.string.workspace_suite_installed)
+                notify(context.getString(R.string.workspace_suite_installed))
                 _activeBundleForSetup.value = null
             } catch (e: Exception) {
-                _message.value = context.getString(R.string.workspace_deploy_failed, e.message.orEmpty())
+                notify(context.getString(R.string.workspace_deploy_failed, e.message.orEmpty()), isError = true)
             } finally {
                 _isInstallingComponents.value = false
                 _suiteInstallProgress.value = null
@@ -220,6 +230,15 @@ class WorkspaceViewModel @Inject constructor(
 
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
+
+    /** 与 [message] 平行的错误标记：UI 依据它决定横幅样式，避免用文案关键字判错。 */
+    private val _messageIsError = MutableStateFlow(false)
+    val messageIsError: StateFlow<Boolean> = _messageIsError.asStateFlow()
+
+    private fun notify(text: String, isError: Boolean = false) {
+        _message.value = text
+        _messageIsError.value = isError
+    }
 
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
@@ -285,6 +304,7 @@ class WorkspaceViewModel @Inject constructor(
 
     fun clearMessage() {
         _message.value = null
+        _messageIsError.value = false
     }
 
     fun showBuildDialog() {
@@ -310,8 +330,8 @@ class WorkspaceViewModel @Inject constructor(
 
     fun create(
         name: String,
-        storage: WorkspaceStorage,
-        directoryPath: String,
+        storage: WorkspaceStorage = WorkspaceStorage.INTERNAL,
+        directoryPath: String = "",
         template: top.wkbin.taixu.runtime.ProjectTemplate = top.wkbin.taixu.runtime.ProjectTemplate.EMPTY,
         packageName: String = "",
         apkSource: top.wkbin.taixu.runtime.ApkImportSource? = null,
@@ -322,8 +342,9 @@ class WorkspaceViewModel @Inject constructor(
         trustTemplateScripts: Boolean = false,
     ) {
         if (_busy.value) return
+        // 同步置 busy：UI 依据它把创建弹窗保持在"进行中"状态（模板实例化可能耗时 60 秒）
+        _busy.value = true
         viewModelScope.launch {
-            _busy.value = true
             val result = workspaceManager.createProject(
                 name,
                 storage,
@@ -338,6 +359,7 @@ class WorkspaceViewModel @Inject constructor(
                 trustTemplateScripts,
             )
             _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_project_created)
+            _messageIsError.value = result.isFailure
             if (result.isSuccess) workspaceManager.listProjects()
             _busy.value = false
         }
@@ -354,6 +376,7 @@ class WorkspaceViewModel @Inject constructor(
             _busy.value = true
             val result = workspaceManager.importProjectArchive(name, directoryPath, projectType, source)
             _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_project_imported)
+            _messageIsError.value = result.isFailure
             if (result.isSuccess) workspaceManager.listProjects()
             _busy.value = false
         }
@@ -371,6 +394,7 @@ class WorkspaceViewModel @Inject constructor(
             _busy.value = true
             val result = workspaceManager.importGithubProject(name, directoryPath, projectType, gitUrl, transport)
             _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_project_imported)
+            _messageIsError.value = result.isFailure
             if (result.isSuccess) workspaceManager.listProjects()
             _busy.value = false
         }
@@ -383,6 +407,7 @@ class WorkspaceViewModel @Inject constructor(
             val result = workspaceManager.exportProject(project.name, targetTreeUri)
             _message.value = result.errorOrNull()?.message
                 ?: context.getString(R.string.workspace_project_exported, result.getOrNull().orEmpty())
+            _messageIsError.value = result.isFailure
             _busy.value = false
         }
     }
@@ -415,6 +440,7 @@ class WorkspaceViewModel @Inject constructor(
             _busy.value = true
             val result = workspaceManager.deleteProject(name)
             _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_project_deleted)
+            _messageIsError.value = result.isFailure
             if (result.isSuccess) workspaceManager.listProjects()
             _busy.value = false
         }
@@ -451,7 +477,7 @@ class WorkspaceViewModel @Inject constructor(
             if (result.isSuccess) {
                 _fileItems.value = result.getOrNull().orEmpty()
             } else {
-                _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_read_directory_failed)
+                notify(result.errorOrNull()?.message ?: context.getString(R.string.workspace_read_directory_failed), isError = true)
             }
             _loadingFiles.value = false
         }
@@ -481,72 +507,76 @@ class WorkspaceViewModel @Inject constructor(
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         }
 
+    /** 文件增删改的统一模板：取项目 → 执行 → 成功刷新目录/失败写消息 → 复位 busy */
+    private fun runFileOp(
+        successMessage: suspend () -> String,
+        fallbackError: Int,
+        op: suspend () -> AppResult<Unit>,
+    ) {
+        val proj = _selectedProject.value ?: return
+        viewModelScope.launch {
+            _busy.value = true
+            val result = op()
+            if (result.isSuccess) {
+                notify(successMessage())
+                refreshDirectory()
+            } else {
+                notify(result.errorOrNull()?.message ?: context.getString(fallbackError), isError = true)
+            }
+            _busy.value = false
+        }
+    }
+
     fun createFile(name: String) {
         val proj = _selectedProject.value ?: return
         val trimmed = name.trim()
         if (trimmed.isBlank()) return
-        val fullRelative = if (_currentPath.value.isBlank()) trimmed else "${_currentPath.value}/$trimmed"
-        viewModelScope.launch {
-            _busy.value = true
-            val result = workspaceManager.createFile(proj, fullRelative)
-            if (result.isSuccess) {
-                _message.value = context.getString(R.string.workspace_file_created, trimmed)
-                refreshDirectory()
-            } else {
-                _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_create_file_failed)
-            }
-            _busy.value = false
+        if (!isValidWorkspaceEntryName(trimmed)) {
+            notify(context.getString(R.string.workspace_invalid_name), isError = true)
+            return
         }
+        val fullRelative = if (_currentPath.value.isBlank()) trimmed else "${_currentPath.value}/$trimmed"
+        runFileOp(
+            successMessage = { context.getString(R.string.workspace_file_created, trimmed) },
+            fallbackError = R.string.workspace_create_file_failed,
+        ) { workspaceManager.createFile(proj, fullRelative) }
     }
 
     fun createDirectory(name: String) {
         val proj = _selectedProject.value ?: return
         val trimmed = name.trim()
         if (trimmed.isBlank()) return
-        val fullRelative = if (_currentPath.value.isBlank()) trimmed else "${_currentPath.value}/$trimmed"
-        viewModelScope.launch {
-            _busy.value = true
-            val result = workspaceManager.createDirectory(proj, fullRelative)
-            if (result.isSuccess) {
-                _message.value = context.getString(R.string.workspace_directory_created, trimmed)
-                refreshDirectory()
-            } else {
-                _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_create_directory_failed)
-            }
-            _busy.value = false
+        if (!isValidWorkspaceEntryName(trimmed)) {
+            notify(context.getString(R.string.workspace_invalid_name), isError = true)
+            return
         }
+        val fullRelative = if (_currentPath.value.isBlank()) trimmed else "${_currentPath.value}/$trimmed"
+        runFileOp(
+            successMessage = { context.getString(R.string.workspace_directory_created, trimmed) },
+            fallbackError = R.string.workspace_create_directory_failed,
+        ) { workspaceManager.createDirectory(proj, fullRelative) }
     }
 
     fun renameItem(oldRelativePath: String, newName: String) {
         val proj = _selectedProject.value ?: return
         val trimmed = newName.trim()
         if (trimmed.isBlank()) return
-        viewModelScope.launch {
-            _busy.value = true
-            val result = workspaceManager.renameItem(proj, oldRelativePath, trimmed)
-            if (result.isSuccess) {
-                _message.value = context.getString(R.string.workspace_renamed, trimmed)
-                refreshDirectory()
-            } else {
-                _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_rename_failed)
-            }
-            _busy.value = false
+        if (!isValidWorkspaceEntryName(trimmed)) {
+            notify(context.getString(R.string.workspace_invalid_name), isError = true)
+            return
         }
+        runFileOp(
+            successMessage = { context.getString(R.string.workspace_renamed, trimmed) },
+            fallbackError = R.string.workspace_rename_failed,
+        ) { workspaceManager.renameItem(proj, oldRelativePath, trimmed) }
     }
 
     fun deleteItem(relativePath: String) {
         val proj = _selectedProject.value ?: return
-        viewModelScope.launch {
-            _busy.value = true
-            val result = workspaceManager.deleteItem(proj, relativePath)
-            if (result.isSuccess) {
-                _message.value = context.getString(R.string.workspace_deleted)
-                refreshDirectory()
-            } else {
-                _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_delete_failed)
-            }
-            _busy.value = false
-        }
+        runFileOp(
+            successMessage = { context.getString(R.string.workspace_deleted) },
+            fallbackError = R.string.workspace_delete_failed,
+        ) { workspaceManager.deleteItem(proj, relativePath) }
     }
 
     // ==================== 编辑器操作 ====================
@@ -565,7 +595,7 @@ class WorkspaceViewModel @Inject constructor(
                 _fileContent.value = content
                 _isDirty.value = false
             } else {
-                _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_open_file_failed)
+                notify(result.errorOrNull()?.message ?: context.getString(R.string.workspace_open_file_failed), isError = true)
             }
             _loadingFiles.value = false
         }
@@ -591,10 +621,10 @@ class WorkspaceViewModel @Inject constructor(
             if (result.isSuccess) {
                 originalContent = text
                 _isDirty.value = false
-                _message.value = context.getString(R.string.workspace_file_saved)
+                notify(context.getString(R.string.workspace_file_saved))
                 onSuccess?.invoke()
             } else {
-                _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_save_failed)
+                notify(result.errorOrNull()?.message ?: context.getString(R.string.workspace_save_failed), isError = true)
             }
             _isSaving.value = false
         }
@@ -606,4 +636,17 @@ class WorkspaceViewModel @Inject constructor(
         originalContent = ""
         _isDirty.value = false
     }
+}
+
+/**
+ * 文件/文件夹名称合法性校验（UI 与 VM 共用同一规则）：
+ * 不允许路径分隔符（/ 与 \\）、首尾空格、以 `.` 开头（隐藏文件）以及 `.` / `..` 等特殊名称。
+ */
+internal fun isValidWorkspaceEntryName(name: String): Boolean {
+    if (name.isEmpty()) return false
+    if (name.trim() != name) return false
+    if (name.startsWith(".")) return false
+    if (name == "." || name == "..") return false
+    if (name.contains('/') || name.contains('\\')) return false
+    return true
 }

@@ -7,9 +7,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import top.wkbin.taixu.core.common.logging.AppLogger
+import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.core.database.InstallLogEntity
 import top.wkbin.taixu.core.database.ToolEntity
 import top.wkbin.taixu.core.tools.ToolInstallProgress
@@ -23,6 +26,7 @@ import android.net.Uri
 class ToolCenterViewModel @Inject constructor(
     private val toolManager: ToolManager,
     private val linuxRuntime: LinuxRuntime,
+    private val settingsDataStore: SettingsDataStore,
     private val logger: AppLogger,
 ) : ViewModel() {
 
@@ -41,14 +45,42 @@ class ToolCenterViewModel @Inject constructor(
     private val _toolLogs = MutableStateFlow<List<InstallLogEntity>>(emptyList())
     val toolLogs: StateFlow<List<InstallLogEntity>> = _toolLogs.asStateFlow()
 
+    /** 刷新插件目录进行中标记（顶栏刷新按钮显示进度并防重复点击）。 */
+    private val _isSyncing = MutableStateFlow(false)
+    val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
+
+    /** 操作失败的可观察错误（卸载失败 / 插件目录同步失败），UI 以横幅展示。 */
+    private val _operationError = MutableStateFlow<String?>(null)
+    val operationError: StateFlow<String?> = _operationError.asStateFlow()
+
+    fun consumeOperationError() {
+        _operationError.value = null
+    }
+
     val localPluginImport: StateFlow<top.wkbin.taixu.core.tools.LocalPluginImportState> = toolManager.localPluginImportState
 
-    fun syncRegistry() {
+    /** 首次进入插件中心的离线包导入引导：false 表示尚未看过，需要展示遮罩引导。 */
+    val importGuideShown: StateFlow<Boolean> = settingsDataStore.firstUseGuidesShown
+        .map { it.contains(GUIDE_IMPORT_OFFLINE) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun markImportGuideShown() {
         viewModelScope.launch {
+            settingsDataStore.markFirstUseGuideShown(GUIDE_IMPORT_OFFLINE)
+        }
+    }
+
+    fun syncRegistry() {
+        if (_isSyncing.value) return
+        viewModelScope.launch {
+            _isSyncing.value = true
             try {
                 toolManager.syncRegistry()
             } catch (e: Exception) {
                 logger.w("Failed to sync tool registry: ${e.message}", e)
+                _operationError.value = "刷新插件目录失败，请检查网络后重试"
+            } finally {
+                _isSyncing.value = false
             }
         }
     }
@@ -94,7 +126,21 @@ class ToolCenterViewModel @Inject constructor(
                 toolManager.uninstall(toolId)
             } catch (e: Exception) {
                 logger.w("Tool uninstall failed: $toolId, ${e.message}", e)
+                _operationError.value = "卸载「$toolId」失败，请稍后重试；可查看日志了解详情"
             }
+        }
+    }
+
+    /** 读取指定工具的全部安装日志（供「AI 自愈」入口与日志弹窗使用同一份全量数据）。 */
+    fun fullToolLogs(toolId: String, onReady: (List<String>) -> Unit) {
+        viewModelScope.launch {
+            val logs = try {
+                toolManager.observeInstallLogs(toolId).first().map { "[${it.event}] ${it.message}" }
+            } catch (e: Exception) {
+                logger.w("Failed to read tool logs for $toolId: ${e.message}", e)
+                emptyList()
+            }
+            onReady(logs)
         }
     }
 
@@ -208,4 +254,9 @@ class ToolCenterViewModel @Inject constructor(
     fun closeSuiteDialog() = closeBundleSetup()
     fun toggleSuite(id: String) {}
     fun installSelectedSuites() {}
+
+    companion object {
+        /** 首次引导登记 ID：插件中心「导入离线插件包」入口。 */
+        const val GUIDE_IMPORT_OFFLINE = "tool_center_import_offline"
+    }
 }

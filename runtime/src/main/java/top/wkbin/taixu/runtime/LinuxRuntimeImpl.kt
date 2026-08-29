@@ -11,10 +11,12 @@ import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.core.model.StorageMountBinding
 import top.wkbin.taixu.runtime.proot.ProotCommandBuilder
 import top.wkbin.taixu.runtime.proot.QemuCompatibilityLayout
+import top.wkbin.taixu.runtime.proot.syncGuestGroups
 import top.wkbin.taixu.runtime.bridge.HostBridge
 import top.wkbin.taixu.runtime.pty.PtyManager
 import top.wkbin.taixu.runtime.proot.ProotInstaller
 import top.wkbin.taixu.runtime.rootfs.RootfsInstaller
+import top.wkbin.taixu.runtime.terminal.terminalBanner
 import top.wkbin.taixu.runtime.shell.CommandResult
 import top.wkbin.taixu.runtime.shell.LinuxSession
 import top.wkbin.taixu.runtime.shell.ManagedProcess
@@ -535,6 +537,21 @@ class LinuxRuntimeImpl @Inject constructor(
         val optDir: File,
     )
 
+    /**
+     * App 进程在宿主上携带的补充组列表（含 inet/everybody/OEM 组等）。
+     * android.system.Os 未暴露 getgroups，改从 /proc/self/status 的 Groups 行解析。
+     */
+    private fun hostSupplementaryGroupIds(): List<Int> =
+        runCatching {
+            File("/proc/self/status").useLines { lines ->
+                lines.firstOrNull { it.startsWith("Groups:") }
+                    ?.removePrefix("Groups:")
+                    ?.split(' ', '\t')
+                    ?.mapNotNullTo(mutableListOf()) { it.trim().toIntOrNull() }
+                    .orEmpty()
+            }
+        }.getOrElse { emptyList() }
+
     override suspend fun startSession(config: SessionConfig, distroId: String?): LinuxSession {
         ensureReady()
         val safeDistro = distroId?.lowercase()?.trim()?.takeIf { it.isNotBlank() } ?: _activeDistroId.value
@@ -542,6 +559,22 @@ class LinuxRuntimeImpl @Inject constructor(
         val markerFile = File(pathManager.taixuRootDir(safeDistro), ".pty-$markerId")
         val markerPath = "/opt/taixu/.pty-$markerId"
         val mounts = storageMounts()
+        // 宿主补充 GID 不在 guest /etc/group 里会导致登录 shell 打 groups 警告，会话启动前幂等补齐。
+        runCatching {
+            syncGuestGroups(
+                rootfsDir = pathManager.rootfsDir(safeDistro),
+                hostGroupIds = hostSupplementaryGroupIds(),
+            )
+        }.onFailure {
+            logger.w("同步宿主补充组到 /etc/group 失败，登录时可能出现 groups 警告", it)
+        }
+        if (config.showBanner) {
+            runCatching {
+                File(pathManager.taixuRootDir(safeDistro), "motd").writeText(terminalBanner())
+            }.onFailure {
+                logger.w("写入终端横幅失败，本次会话将无横幅", it)
+            }
+        }
         return try {
             val session = if (ptyManager.nativeAvailable) {
                 ptyManager.openNative(

@@ -1424,6 +1424,43 @@ button.conversation-section-header:hover {
   opacity: .5;
 }
 
+/* 快捷短语：与 Android 端 QuickPhrase 同源，点击填入输入框 */
+.phrase-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--surface-elevated);
+  margin-bottom: 8px;
+}
+
+.phrase-chip {
+  max-width: 180px;
+  padding: 4px 10px;
+  border: 1px solid var(--surface-elevated);
+  border-radius: 999px;
+  background: var(--surface-secondary);
+  color: var(--subtle);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.phrase-chip:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.phrase-chip:active {
+  transform: scale(.96);
+}
+
 .composer-actions {
   min-height: 28px;
   display: flex;

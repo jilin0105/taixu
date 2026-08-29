@@ -357,6 +357,25 @@ class SettingsDataStore @Inject constructor(
 
     val onboardingCompleted: Flow<Boolean> = context.settingsDataStore.data.map { it[onboardingCompletedKey] ?: false }
     suspend fun setOnboardingCompleted(value: Boolean) { context.settingsDataStore.edit { it[onboardingCompletedKey] = value } }
+
+    /** 首次使用引导统一登记：已展示过的引导 ID 集合（设置页「重看引导」可整体清空）。 */
+    private val firstUseGuidesShownKey = stringSetPreferencesKey("first_use_guides_shown")
+
+    val firstUseGuidesShown: Flow<Set<String>> = context.settingsDataStore.data.map {
+        it[firstUseGuidesShownKey] ?: emptySet()
+    }
+
+    suspend fun markFirstUseGuideShown(id: String) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[firstUseGuidesShownKey] = (prefs[firstUseGuidesShownKey] ?: emptySet()) + id
+        }
+    }
+
+    suspend fun clearFirstUseGuides() {
+        context.settingsDataStore.edit { prefs ->
+            prefs.remove(firstUseGuidesShownKey)
+        }
+    }
     val selectedDistribution: Flow<String> = context.settingsDataStore.data.map { it[selectedDistributionKey] ?: "ubuntu" }
     suspend fun setSelectedDistribution(value: String) { context.settingsDataStore.edit { it[selectedDistributionKey] = value } }
 
@@ -594,16 +613,6 @@ class SettingsDataStore @Inject constructor(
         require(port in 1024..65535) { "SSH 端口必须在 1024..65535 之间" }
         context.settingsDataStore.edit {
             it[intPreferencesKey("ssh_${normalizedDistroId(distroId)}_port")] = port
-        }
-    }
-
-    fun sshAllowLan(distroId: String): Flow<Boolean> = context.settingsDataStore.data.map {
-        it[booleanPreferencesKey("ssh_${normalizedDistroId(distroId)}_allow_lan")] ?: false
-    }
-
-    suspend fun setSshAllowLan(distroId: String, enabled: Boolean) {
-        context.settingsDataStore.edit {
-            it[booleanPreferencesKey("ssh_${normalizedDistroId(distroId)}_allow_lan")] = enabled
         }
     }
 

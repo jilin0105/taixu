@@ -62,13 +62,15 @@ class AgentForegroundService : Service() {
                 getString(R.string.taixu_agent_notification_channel),
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply {
-                description = "用于展示 AI 深度思考与任务进度的灵动岛/原子胶囊"
+                description = "用于展示 AI 深度思考与任务进度的常驻通知"
                 enableVibration(false)
                 setSound(null, null)
                 setShowBadge(true)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
             manager.createNotificationChannel(channel)
+            // 清理历史版本遗留的灵动岛/胶囊渠道，避免系统设置里残留无效项
+            runCatching { manager.deleteNotificationChannel(LEGACY_CAPSULE_CHANNEL_ID) }
         }.onFailure { Log.w(TAG, "创建通知渠道失败", it) }
     }
 
@@ -120,6 +122,9 @@ class AgentForegroundService : Service() {
                                 activeNotifSessionIds.clear()
                                 sessionStartTimes.clear()
                                 previouslyRunning.forEach { sessionId ->
+                                    // 等待审批不是完成：批准后立即续跑，不发完成通知弹窗，
+                                    // 常驻通知保持最后一次状态（通常是"等待用户批准"）直到恢复运行。
+                                    if (runStates[sessionId] == SessionRunState.WAITING_APPROVAL) return@forEach
                                     val notifId = sessionNotificationId(sessionId)
                                     val sessionTitle = sessionDao.findById(sessionId)?.title ?: getString(R.string.taixu_agent_default_title)
                                     safeNotify(notifId, completedNotification(sessionId, sessionTitle))
@@ -214,13 +219,9 @@ class AgentForegroundService : Service() {
                 .setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        return LiveCapsuleHelper.buildRunningCapsuleNotification(
-            context = this,
-            channelId = CHANNEL_ID,
-            sessionId = "taixu_primary_session",
-            sessionTitle = getString(R.string.taixu_agent_default_title),
-            rawStatus = status,
-            elapsedSeconds = 0L,
+        return runningNotification(
+            title = getString(R.string.taixu_agent_default_title),
+            contentText = status,
             stopPendingIntent = stopPending,
         )
     }
@@ -240,16 +241,41 @@ class AgentForegroundService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        return LiveCapsuleHelper.buildRunningCapsuleNotification(
-            context = this,
-            channelId = CHANNEL_ID,
-            sessionId = sessionId,
-            sessionTitle = title,
-            rawStatus = status,
-            elapsedSeconds = elapsedSeconds,
+        val contentText = if (elapsedSeconds > 0) {
+            "${formatElapsed(elapsedSeconds)} · $status"
+        } else {
+            status
+        }
+        return runningNotification(
+            title = "太墟 · $title",
+            contentText = contentText,
             stopPendingIntent = stopPending,
         )
     }
+
+    private fun runningNotification(
+        title: String,
+        contentText: String,
+        stopPendingIntent: PendingIntent,
+    ): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
+        .setSmallIcon(R.drawable.taixu_notification)
+        .setContentTitle(title)
+        .setContentText(contentText)
+        .setOngoing(true)
+        .setOnlyAlertOnce(true)
+        .setAutoCancel(false)
+        .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+        .setPriority(NotificationCompat.PRIORITY_MAX)
+        .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+        .setProgress(0, 0, true)
+        .addAction(
+            NotificationCompat.Action(
+                R.drawable.taixu_notification,
+                getString(R.string.taixu_notification_stop),
+                stopPendingIntent,
+            ),
+        )
+        .build()
 
     private fun completedNotification(sessionId: String, title: String): Notification {
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -271,13 +297,26 @@ class AgentForegroundService : Service() {
             replyPending,
         ).addRemoteInput(remoteInput).build()
 
-        return LiveCapsuleHelper.buildCompletedCapsuleNotification(
-            context = this,
-            channelId = CHANNEL_ID,
-            sessionId = sessionId,
-            sessionTitle = title,
-            replyAction = replyAction,
-        )
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.taixu_notification)
+            .setContentTitle(getString(R.string.taixu_agent_task_completed, title))
+            .setContentText(getString(R.string.taixu_agent_next_task_hint))
+            .setStyle(
+                NotificationCompat.BigTextStyle()
+                    .bigText(getString(R.string.taixu_agent_next_task_hint)),
+            )
+            .setAutoCancel(true)
+            .setOngoing(false)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .addAction(replyAction)
+            .build()
+    }
+
+    private fun formatElapsed(seconds: Long): String = when {
+        seconds < 60 -> "${seconds}秒"
+        seconds < 3600 -> "${seconds / 60}分${seconds % 60}秒"
+        else -> "${seconds / 3600}小时${(seconds % 3600) / 60}分"
     }
 
     private fun safeStartForeground(id: Int, notification: Notification) {
@@ -301,12 +340,13 @@ class AgentForegroundService : Service() {
         const val ACTION_STOP = "top.wkbin.taixu.action.AGENT_STOP"
         const val EXTRA_SESSION_ID = "extra_session_id"
         const val KEY_REPLY = "agent_reply"
-        private const val CHANNEL_ID = "taixu-agent-capsule-v4"
+        private const val CHANNEL_ID = "taixu-agent-v5"
+        private const val LEGACY_CAPSULE_CHANNEL_ID = "taixu-agent-capsule-v4"
         private const val PRIMARY_NOTIFICATION_ID = 2001
         private const val TAG = "AgentForegroundService"
         private const val WAKE_LOCK_TAG = "taixu:agent-execution"
         private const val LOCK_TIMEOUT_MS = 4 * 60 * 60 * 1000L
-        /** 灵动岛 / 实时胶囊定时刷新间隔：2 秒。运行期间高频平滑更新状态与运行时长。 */
+        /** 运行期间通知刷新间隔：2 秒，平滑更新状态与运行时长。 */
         private const val NOTIFICATION_REFRESH_INTERVAL_MS = 2_000L
 
         fun start(context: Context, sessionId: String? = null) {

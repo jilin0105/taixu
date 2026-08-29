@@ -112,6 +112,11 @@ class ToolExecutor @Inject constructor(
             false to "工具执行异常：${throwable.message ?: throwable::class.simpleName}"
         }
         val (success, rawOutput) = outcome
+        val finalOutput = if (!success && !rawOutput.contains("【太墟") && !rawOutput.contains("【已强制拦截")) {
+            rawOutput + "\n\n【太墟 Harness 调试提示】：本次工具调用未成功。请仔细阅读上方错误信息，分析具体原因并在下一步中调整策略，严禁使用相同参数盲目重试。"
+        } else {
+            rawOutput
+        }
         linuxEnvironmentManager?.refreshIfNeeded()
         return ToolResult(
             id = UUID.randomUUID().toString(),
@@ -119,7 +124,7 @@ class ToolExecutor @Inject constructor(
             toolCallId = toolCall.id,
             success = success,
             output = secretRedactor.redact(
-                value = truncateOutput(rawOutput),
+                value = truncateOutput(finalOutput),
                 secretValues = linuxEnvironmentManager?.values?.value?.values.orEmpty(),
                 privacyMode = if (::settingsDataStore.isInitialized) runCatching { settingsDataStore.environmentPrivacyMode.first() }.getOrDefault(true) else true,
             ),
@@ -150,31 +155,32 @@ class ToolExecutor @Inject constructor(
 
     private suspend fun executeTool(
         tool: HarnessTool,
-        args: JsonObject,
+        rawArgs: JsonObject,
         rawToolName: String?,
         sessionId: String,
         workspace: String,
         progressReporter: (suspend (String) -> Unit)?,
         operationId: String?,
     ): Pair<Boolean, String> {
+        val args = top.wkbin.taixu.harness.validation.ToolSchemaValidator.normalizeArgs(rawArgs)
         val activeFileAccess = if (workspace.isNotBlank()) fileAccess.withBase(workspace) else fileAccess
         return when (tool) {
             HarnessTool.READ -> {
                 val path = requireString(args, "path")
                 val offset = args["offset"]?.jsonPrimitive?.content?.trim()?.toIntOrNull()
                 val limit = args["limit"]?.jsonPrimitive?.content?.trim()?.toIntOrNull()
-                activeFileAccess.read(path, offset, limit).toToolOutput()
+                activeFileAccess.read(path, offset, limit).toToolOutput(actionName = "read")
             }
             HarnessTool.WRITE -> {
                 val path = requireString(args, "path")
                 val content = requireString(args, "content")
-                activeFileAccess.write(path, content).toToolOutput("已写入 $path")
+                activeFileAccess.write(path, content).toToolOutput("已写入 $path", actionName = "write")
             }
             HarnessTool.EDIT -> {
                 val path = requireString(args, "path")
                 val oldText = requireString(args, "oldText")
                 val newText = requireString(args, "newText")
-                activeFileAccess.edit(path, oldText, newText).toToolOutput("已修改 $path")
+                activeFileAccess.edit(path, oldText, newText).toToolOutput("已修改 $path", actionName = "edit")
             }
             HarnessTool.BASE -> executeBase(args, workspace)
             HarnessTool.PROCESS -> executeProcess(args, workspace)
@@ -536,12 +542,20 @@ class ToolExecutor @Inject constructor(
         )
         val stdout = result.stdout.trim()
         val stderr = result.stderr.trim()
+        val isSuccess = result.isSuccess
         val body = buildString {
             append("exit ${result.exitCode} · ${result.durationMs} ms")
             if (stdout.isNotEmpty()) append("\n$stdout")
             if (stderr.isNotEmpty()) append("\n$stderr")
+            if (!isSuccess && result.exitCode != 0) {
+                append("\n\n【执行失败反思与纠错要求】")
+                append("\n命令返回非零退出码 (${result.exitCode})。请仔细阅读上述错误信息：")
+                append("\n1. 严禁原样重复执行失败命令；")
+                append("\n2. 分析是参数拼写错误、路径不存在、沙箱缺少系统依赖还是语法错误；")
+                append("\n3. 修正命令、使用包管理器安装依赖或改用其他工具后再继续。")
+            }
         }
-        return result.isSuccess to body
+        return isSuccess to body
     }
 
     private suspend fun executeProcess(args: JsonObject, workspace: String): Pair<Boolean, String> {
@@ -709,9 +723,17 @@ class ToolExecutor @Inject constructor(
     }
 
 
-    private fun AppResult<Any>.toToolOutput(successMessage: String = ""): Pair<Boolean, String> = when (this) {
+    private fun AppResult<Any>.toToolOutput(successMessage: String = "", actionName: String = ""): Pair<Boolean, String> = when (this) {
         is AppResult.Success -> true to successMessage.ifBlank { data.toString() }
-        is AppResult.Failure -> false to error.message
+        is AppResult.Failure -> {
+            val baseError = error.message
+            val reflectionHint = when (actionName) {
+                "edit" -> "\n\n【文本替换失败反思与纠错要求】\n未在目标文件中找到唯一匹配的 oldText。请立即调用 read 查看该文件的最新真实内容与行号，获取精确匹配的内容后再发起 edit，严禁盲目猜测或重复相同内容！"
+                "read" -> "\n\n【文件读取失败反思与纠错要求】\n无法读取指定路径文件。请调用 base 执行 ls 或 find 确定文件的真实存在路径，切勿盲目重复错误路径！"
+                else -> ""
+            }
+            false to (baseError + reflectionHint)
+        }
     }
 
     private fun requireString(args: JsonObject, key: String): String {

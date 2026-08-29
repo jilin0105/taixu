@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.ui.components
+package top.wkbin.taixu.ui.components
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
@@ -9,13 +9,35 @@ import androidx.compose.ui.text.font.FontWeight
 
 object SyntaxHighlighter {
 
-    private val ColorDefault = Color(0xFFDCE6F5)
-    private val ColorKeyword = Color(0xFFFF7B72)
-    private val ColorType = Color(0xFFFFA657)
-    private val ColorString = Color(0xFFA5D6FF)
-    private val ColorNumber = Color(0xFF79C0FF)
-    private val ColorComment = Color(0xFF8B949E)
-    private val ColorFunction = Color(0xFFD2A8FF)
+    data class SyntaxPalette(
+        val default: Color,
+        val keyword: Color,
+        val type: Color,
+        val string: Color,
+        val number: Color,
+        val comment: Color,
+        val function: Color,
+    )
+
+    private val DarkPalette = SyntaxPalette(
+        default = Color(0xFFDCE6F5),
+        keyword = Color(0xFFFF7B72),
+        type = Color(0xFFFFA657),
+        string = Color(0xFFA5D6FF),
+        number = Color(0xFF79C0FF),
+        comment = Color(0xFF8B949E),
+        function = Color(0xFFD2A8FF),
+    )
+
+    private val LightPalette = SyntaxPalette(
+        default = Color(0xFF24292F),
+        keyword = Color(0xFFCF222E),
+        type = Color(0xFF953800),
+        string = Color(0xFF0A3069),
+        number = Color(0xFF0550AE),
+        comment = Color(0xFF6E7781),
+        function = Color(0xFF8250DF),
+    )
 
     private val KeywordsCommon = setOf(
         "if", "else", "for", "while", "do", "break", "continue", "return", "try",
@@ -40,32 +62,33 @@ object SyntaxHighlighter {
 
     /**
      * 将代码字符串转换为带有语法着色的 AnnotatedString。
-     * 当文本超过限制（如 500 KB）时降级为纯文本，保证超大文件渲染性能。
+     * 支持自适应暗黑 / 明亮主题配色。当文本超过限制时降级为纯文本，保证超大文件渲染性能。
      */
-    fun highlight(text: String, extension: String): AnnotatedString {
+    fun highlight(text: String, extension: String, isDark: Boolean = true): AnnotatedString {
+        val palette = if (isDark) DarkPalette else LightPalette
         if (text.isEmpty()) return AnnotatedString("")
         if (text.length > MAX_HIGHLIGHT_LENGTH) {
             return buildAnnotatedString {
                 append(text)
-                addStyle(SpanStyle(color = ColorDefault), 0, text.length)
+                addStyle(SpanStyle(color = palette.default), 0, text.length)
             }
         }
 
         return buildAnnotatedString {
             append(text)
             // 默认颜色底色
-            addStyle(SpanStyle(color = ColorDefault), 0, text.length)
+            addStyle(SpanStyle(color = palette.default), 0, text.length)
 
             val ext = extension.lowercase()
             when (ext) {
-                "json" -> highlightJson(text, this)
-                "md", "markdown" -> highlightMarkdown(text, this)
-                else -> highlightGeneral(text, this, ext)
+                "json" -> highlightJson(text, this, palette)
+                "md", "markdown" -> highlightMarkdown(text, this, palette)
+                else -> highlightGeneral(text, this, ext, palette)
             }
         }
     }
 
-    private fun highlightGeneral(text: String, builder: AnnotatedString.Builder, ext: String) {
+    private fun highlightGeneral(text: String, builder: AnnotatedString.Builder, ext: String, palette: SyntaxPalette) {
         val len = text.length
         var i = 0
 
@@ -79,7 +102,7 @@ object SyntaxHighlighter {
             ) {
                 val start = i
                 while (i < len && text[i] != '\n') i++
-                builder.addStyle(SpanStyle(color = ColorComment, fontStyle = FontStyle.Italic), start, i)
+                builder.addStyle(SpanStyle(color = palette.comment, fontStyle = FontStyle.Italic), start, i)
                 continue
             }
 
@@ -89,7 +112,7 @@ object SyntaxHighlighter {
                 i += 2
                 while (i < len && !(text[i - 1] == '*' && text[i] == '/')) i++
                 if (i < len) i++ // 包含最后的 /
-                builder.addStyle(SpanStyle(color = ColorComment, fontStyle = FontStyle.Italic), start, i)
+                builder.addStyle(SpanStyle(color = palette.comment, fontStyle = FontStyle.Italic), start, i)
                 continue
             }
 
@@ -110,7 +133,7 @@ object SyntaxHighlighter {
                     if (text[i] == '\n' && quote != '`') break // 单行字符串不能跨行
                     i++
                 }
-                builder.addStyle(SpanStyle(color = ColorString), start, i)
+                builder.addStyle(SpanStyle(color = palette.string), start, i)
                 continue
             }
 
@@ -118,7 +141,7 @@ object SyntaxHighlighter {
             if (c.isDigit()) {
                 val start = i
                 while (i < len && (text[i].isDigit() || text[i] == '.' || text[i] in "xXbBaAfFL_")) i++
-                builder.addStyle(SpanStyle(color = ColorNumber), start, i)
+                builder.addStyle(SpanStyle(color = palette.number), start, i)
                 continue
             }
 
@@ -129,13 +152,13 @@ object SyntaxHighlighter {
                 val word = text.substring(start, i)
                 when {
                     word in KeywordsCommon -> {
-                        builder.addStyle(SpanStyle(color = ColorKeyword, fontWeight = FontWeight.Bold), start, i)
+                        builder.addStyle(SpanStyle(color = palette.keyword, fontWeight = FontWeight.Bold), start, i)
                     }
                     word in TypesCommon || (word.first().isUpperCase() && word.length > 1) -> {
-                        builder.addStyle(SpanStyle(color = ColorType), start, i)
+                        builder.addStyle(SpanStyle(color = palette.type), start, i)
                     }
                     i < len && text[i] == '(' -> {
-                        builder.addStyle(SpanStyle(color = ColorFunction), start, i)
+                        builder.addStyle(SpanStyle(color = palette.function), start, i)
                     }
                 }
                 continue
@@ -145,7 +168,7 @@ object SyntaxHighlighter {
         }
     }
 
-    private fun highlightJson(text: String, builder: AnnotatedString.Builder) {
+    private fun highlightJson(text: String, builder: AnnotatedString.Builder, palette: SyntaxPalette) {
         val len = text.length
         var i = 0
         while (i < len) {
@@ -162,9 +185,9 @@ object SyntaxHighlighter {
                 var lookAhead = i
                 while (lookAhead < len && text[lookAhead].isWhitespace()) lookAhead++
                 if (lookAhead < len && text[lookAhead] == ':') {
-                    builder.addStyle(SpanStyle(color = ColorType, fontWeight = FontWeight.Medium), start, i)
+                    builder.addStyle(SpanStyle(color = palette.type, fontWeight = FontWeight.Medium), start, i)
                 } else {
-                    builder.addStyle(SpanStyle(color = ColorString), start, i)
+                    builder.addStyle(SpanStyle(color = palette.string), start, i)
                 }
                 continue
             }
@@ -172,7 +195,7 @@ object SyntaxHighlighter {
                 val start = i
                 i++
                 while (i < len && (text[i].isDigit() || text[i] in ".eE+-")) i++
-                builder.addStyle(SpanStyle(color = ColorNumber), start, i)
+                builder.addStyle(SpanStyle(color = palette.number), start, i)
                 continue
             }
             if (c.isLetter()) {
@@ -180,7 +203,7 @@ object SyntaxHighlighter {
                 while (i < len && text[i].isLetter()) i++
                 val word = text.substring(start, i)
                 if (word in setOf("true", "false", "null")) {
-                    builder.addStyle(SpanStyle(color = ColorKeyword, fontWeight = FontWeight.Bold), start, i)
+                    builder.addStyle(SpanStyle(color = palette.keyword, fontWeight = FontWeight.Bold), start, i)
                 }
                 continue
             }
@@ -188,7 +211,7 @@ object SyntaxHighlighter {
         }
     }
 
-    private fun highlightMarkdown(text: String, builder: AnnotatedString.Builder) {
+    private fun highlightMarkdown(text: String, builder: AnnotatedString.Builder, palette: SyntaxPalette) {
         val lines = text.split('\n')
         var offset = 0
         for (line in lines) {
@@ -196,21 +219,21 @@ object SyntaxHighlighter {
             when {
                 trimmed.startsWith("#") -> {
                     builder.addStyle(
-                        SpanStyle(color = ColorKeyword, fontWeight = FontWeight.Bold),
+                        SpanStyle(color = palette.keyword, fontWeight = FontWeight.Bold),
                         offset,
                         offset + line.length,
                     )
                 }
                 trimmed.startsWith("```") -> {
                     builder.addStyle(
-                        SpanStyle(color = ColorComment, fontStyle = FontStyle.Italic),
+                        SpanStyle(color = palette.comment, fontStyle = FontStyle.Italic),
                         offset,
                         offset + line.length,
                     )
                 }
                 trimmed.startsWith(">") -> {
                     builder.addStyle(
-                        SpanStyle(color = ColorType),
+                        SpanStyle(color = palette.type),
                         offset,
                         offset + line.length,
                     )
@@ -219,7 +242,7 @@ object SyntaxHighlighter {
                     val bulletLen = line.indexOfFirst { it == '-' || it == '*' || it == '+' } + 2
                     if (bulletLen <= line.length) {
                         builder.addStyle(
-                            SpanStyle(color = ColorKeyword, fontWeight = FontWeight.Bold),
+                            SpanStyle(color = palette.keyword, fontWeight = FontWeight.Bold),
                             offset,
                             offset + bulletLen,
                         )

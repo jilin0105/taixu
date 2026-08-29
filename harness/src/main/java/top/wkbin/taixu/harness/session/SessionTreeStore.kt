@@ -89,7 +89,7 @@ class SessionTreeStore @Inject constructor(
         return repository.branch(sessionId, lane.leafId)
     }
 
-    private fun decode(entity: HarnessEntryEntity): HarnessMessage? {
+    internal fun decode(entity: HarnessEntryEntity): HarnessMessage? {
         if (entity.entryType != "message") return null
         return runCatching { json.decodeFromString(HarnessMessage.serializer(), entity.payloadJson) }
             .onFailure { logger.w("Skipping invalid harness entry ${entity.id}: ${it.message}") }

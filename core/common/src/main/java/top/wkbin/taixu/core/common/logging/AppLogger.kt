@@ -2,6 +2,7 @@ package top.wkbin.taixu.core.common.logging
 
 import android.util.Log
 import android.content.Context
+import android.os.Environment
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
@@ -11,6 +12,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
+/**
+ * 应用日志：普通运行日志与智能体调试日志统一写入公共 Download/TaiXu 目录（自动创建），
+ * 便于用户直接从文件管理器取走日志。未授予"所有文件访问"或公共目录写入失败时，
+ * 回退到应用私有 files/logs 目录，保证日志永不静默丢失。
+ */
 @Singleton
 class AppLogger @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -18,6 +24,7 @@ class AppLogger @Inject constructor(
 ) {
 
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val writeLock = Any()
 
     fun d(message: String, throwable: Throwable? = null) = log("D", message, throwable) { text, error ->
         Log.d(TAG, text, error)
@@ -47,15 +54,13 @@ class AppLogger @Inject constructor(
         val stack = throwable?.let { secretRedactor.redact(it.stackTraceToString()) }.orEmpty()
         ioScope.launch {
             runCatching {
-                val file = File(context.filesDir, LOG_PATH)
-                file.parentFile?.mkdirs()
-                synchronized(file) {
-                    if (file.length() > MAX_LOG_BYTES) file.writeText("")
-                    file.appendText(
-                        "${System.currentTimeMillis()} [$level] $safeMessage" +
-                            if (stack.isBlank()) "\n" else "\n$stack\n",
-                    )
-                }
+                append(
+                    fileName = GENERAL_LOG_FILE,
+                    content = "${System.currentTimeMillis()} [$level] $safeMessage" +
+                        if (stack.isBlank()) "\n" else "\n$stack\n",
+                    maxBytes = MAX_LOG_BYTES,
+                    rotateMarker = "",
+                )
             }
         }
     }
@@ -68,40 +73,90 @@ class AppLogger @Inject constructor(
         Log.d(TAG, "[$safeTag][$safeSessionId] $safeMessage", throwable)
         ioScope.launch {
             runCatching {
-                val file = getAgentLogFile()
-                file.parentFile?.mkdirs()
-                synchronized(file) {
-                    if (file.length() > MAX_AGENT_LOG_BYTES) {
-                        file.writeText("[LOG ROTATED at ${System.currentTimeMillis()}]\n")
-                    }
-                    val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.US)
-                        .format(java.util.Date())
-                    file.appendText(
-                        "[$timestamp][$safeTag][session:$safeSessionId] $safeMessage" +
-                            if (stack.isBlank()) "\n" else "\n$stack\n",
-                    )
+                val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.US)
+                    .format(java.util.Date())
+                append(
+                    fileName = AGENT_LOG_FILE,
+                    content = "[$timestamp][$safeTag][session:$safeSessionId] $safeMessage" +
+                        if (stack.isBlank()) "\n" else "\n$stack\n",
+                    maxBytes = MAX_AGENT_LOG_BYTES,
+                    rotateMarker = "[LOG ROTATED at ${System.currentTimeMillis()}]\n",
+                )
+            }
+        }
+    }
+
+    /** 当前智能体日志的实际落盘位置描述（含回退目录），供开发者界面展示。 */
+    fun getAgentLogLocation(): String {
+        val publicFile = publicLogFile(AGENT_LOG_FILE)
+        return if (publicFile != null && publicFile.exists()) {
+            publicFile.absolutePath
+        } else if (Environment.isExternalStorageManager()) {
+            "${publicFile?.absolutePath}（尚未创建）"
+        } else {
+            fallbackLogFile(AGENT_LOG_FILE).absolutePath + "（未授予所有文件访问）"
+        }
+    }
+
+    fun readAgentLogs(maxChars: Int = 100_000): String = runCatching {
+        val file = existingLogFile(AGENT_LOG_FILE)
+            ?: return@runCatching "暂无智能体本地日志"
+        val text = file.readText(Charsets.UTF_8)
+        when {
+            text.isEmpty() -> "暂无智能体本地日志"
+            text.length > maxChars -> text.takeLast(maxChars)
+            else -> text
+        }
+    }.getOrDefault("读取日志失败")
+
+    fun getAgentLogSizeBytes(): Long = runCatching {
+        existingLogFile(AGENT_LOG_FILE)?.length() ?: 0L
+    }.getOrDefault(0L)
+
+    fun clearAgentLogs(): Boolean = runCatching {
+        var ok = true
+        publicLogFile(AGENT_LOG_FILE)?.takeIf { it.exists() }?.let { ok = it.delete() && ok }
+        fallbackLogFile(AGENT_LOG_FILE).takeIf { it.exists() }?.let { ok = it.delete() && ok }
+        ok
+    }.getOrDefault(false)
+
+    /** 追加一行日志：优先公共目录，失败时回退私有目录。 */
+    private fun append(fileName: String, content: String, maxBytes: Long, rotateMarker: String) {
+        synchronized(writeLock) {
+            val target = publicLogFile(fileName) ?: fallbackLogFile(fileName)
+            try {
+                writeTo(target, content, maxBytes, rotateMarker)
+            } catch (t: Throwable) {
+                if (target != fallbackLogFile(fileName)) {
+                    writeTo(fallbackLogFile(fileName), content, maxBytes, rotateMarker)
+                } else {
+                    throw t
                 }
             }
         }
     }
 
-    fun getAgentLogFile(): File = File(context.filesDir, AGENT_LOG_PATH)
+    private fun writeTo(file: File, content: String, maxBytes: Long, rotateMarker: String) {
+        file.parentFile?.mkdirs()
+        if (file.length() > maxBytes) file.writeText(rotateMarker)
+        file.appendText(content)
+    }
 
-    fun readAgentLogs(maxChars: Int = 100_000): String = runCatching {
-        val file = getAgentLogFile()
-        if (!file.exists() || file.length() == 0L) return "暂无智能体本地日志"
-        val text = file.readText(Charsets.UTF_8)
-        if (text.length > maxChars) text.takeLast(maxChars) else text
-    }.getOrDefault("读取日志失败")
+    /** 公共 Download/TaiXu 目录下的日志文件；未授予所有文件访问时返回 null。 */
+    private fun publicLogFile(fileName: String): File? {
+        if (!Environment.isExternalStorageManager()) return null
+        return runCatching {
+            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), PUBLIC_LOG_DIR)
+                .let { File(it, fileName) }
+        }.getOrNull()
+    }
 
-    fun getAgentLogSizeBytes(): Long = runCatching {
-        getAgentLogFile().takeIf { it.exists() }?.length() ?: 0L
-    }.getOrDefault(0L)
+    private fun fallbackLogFile(fileName: String): File = File(File(context.filesDir, INTERNAL_LOG_DIR), fileName)
 
-    fun clearAgentLogs(): Boolean = runCatching {
-        val file = getAgentLogFile()
-        if (file.exists()) file.delete() else true
-    }.getOrDefault(false)
+    /** 读取/统计时优先取公共目录中已存在的文件，其次私有目录。 */
+    private fun existingLogFile(fileName: String): File? =
+        publicLogFile(fileName)?.takeIf { it.exists() }
+            ?: fallbackLogFile(fileName).takeIf { it.exists() }
 
     private fun safe(value: String): String = secretRedactor.redact(value)
 
@@ -112,8 +167,10 @@ class AppLogger @Inject constructor(
 
     private companion object {
         const val TAG = "TaiXu"
-        const val LOG_PATH = "logs/runtime.log"
-        const val AGENT_LOG_PATH = "logs/agent_debug.log"
+        const val PUBLIC_LOG_DIR = "TaiXu"
+        const val INTERNAL_LOG_DIR = "logs"
+        const val GENERAL_LOG_FILE = "runtime.log"
+        const val AGENT_LOG_FILE = "agent_debug.log"
         const val MAX_LOG_BYTES = 1024L * 1024L
         const val MAX_AGENT_LOG_BYTES = 5 * 1024L * 1024L
     }

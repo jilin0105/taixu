@@ -5,6 +5,7 @@ import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.Build
 import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -36,6 +38,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import top.wkbin.taixu.ui.components.RuntimeIconButton as IconButton
@@ -94,21 +97,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import top.wkbin.taixu.ui.components.NoticeBanner
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
+import top.wkbin.taixu.ui.components.SpotlightGuideOverlay
+import top.wkbin.taixu.ui.components.rememberSpotlightAnchor
+import top.wkbin.taixu.ui.components.spotlightAnchor
 import top.wkbin.taixu.runtime.terminal.TerminalLine
 import top.wkbin.taixu.runtime.terminal.TerminalSessionHandle
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private val TermBg = Color(0xFF0F1117)
-private val TermHeaderBg = Color(0xFF181A22)
-private val TermTextDefault = Color(0xFFE2E2E9)
-private val TermDimText = Color(0xFF8E9099)
-private val TermBorder = Color(0xFF282A36)
+
 private const val MIN_TERMINAL_FONT_SIZE_SP = 10f
 private const val MAX_TERMINAL_FONT_SIZE_SP = 24f
 
@@ -120,6 +121,7 @@ private const val MAX_TERMINAL_FONT_SIZE_SP = 24f
 fun TerminalScreen(
     onBack: () -> Unit,
     project: String = "",
+    showBackButton: Boolean = true,
     viewModel: TerminalViewModel = hiltViewModel(),
 ) {
     val screen by viewModel.screen.collectAsStateWithLifecycle()
@@ -141,13 +143,18 @@ fun TerminalScreen(
     var fontSizeSp by remember { mutableFloatStateOf(configuredFontSize.toFloat()) }
     var terminalPxWidth by remember { mutableFloatStateOf(0f) }
     var terminalPxHeight by remember { mutableFloatStateOf(0f) }
+    var sessionToClose by remember { mutableStateOf<String?>(null) }
 
-    val (termBg, termHeaderBg, termTextDefault, termBorder) = remember(colorScheme) {
+    val sysSurfaceLowest = MaterialTheme.colorScheme.surfaceContainerLowest
+    val sysSurfaceHigh = MaterialTheme.colorScheme.surfaceContainerHigh
+    val sysOnSurface = MaterialTheme.colorScheme.onSurface
+    val sysOutline = MaterialTheme.colorScheme.outlineVariant
+    val (termBg, termHeaderBg, termTextDefault, termBorder) = remember(colorScheme, sysSurfaceLowest, sysSurfaceHigh, sysOnSurface, sysOutline) {
         when (colorScheme) {
             "matrix" -> listOf(Color(0xFF0A0F0D), Color(0xFF101B14), Color(0xFF10B981), Color(0xFF1A3324))
             "amber" -> listOf(Color(0xFF140F0A), Color(0xFF1F170F), Color(0xFFF59E0B), Color(0xFF3B2B1B))
             "aurora" -> listOf(Color(0xFF0D1424), Color(0xFF141F36), Color(0xFF38BDF8), Color(0xFF1E3A5F))
-            else -> listOf(Color(0xFF0F1117), Color(0xFF181A22), Color(0xFFE2E2E9), Color(0xFF282A36))
+            else -> listOf(sysSurfaceLowest, sysSurfaceHigh, sysOnSurface, sysOutline)
         }
     }
 
@@ -191,6 +198,10 @@ fun TerminalScreen(
     var isLeaving by remember { mutableStateOf(false) }
     var followOutput by remember { mutableStateOf(true) }
     var showSessions by remember { mutableStateOf(false) }
+
+    // 首次进入引导：高亮顶栏「会话列表」按钮
+    val firstUseGuidesShown by viewModel.firstUseGuidesShown.collectAsStateWithLifecycle()
+    val sessionsAnchor = rememberSpotlightAnchor()
     var showCreateSession by remember { mutableStateOf(false) }
 
     LaunchedEffect(project) {
@@ -273,15 +284,22 @@ fun TerminalScreen(
         terminalFocusRequester.requestFocus()
     }
 
+    // 首次引导遮罩与 Scaffold 放在同一 Box 下（同层兄弟节点），保证聚光灯坐标与按钮 boundsInRoot 同一参照系
+    Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             RuntimeTopBar(
                 title = if (project.isNotBlank()) stringResource(R.string.terminal_project_title, project) else stringResource(R.string.terminal_console_title),
-                onBack = navigateBack,
-                statusText = "$distributionName · PRoot",
+                // Agent 内嵌终端面板不属于导航栈节点，隐藏返回箭头避免「点了没反应」
+                onBack = if (showBackButton) navigateBack else null,
+                statusText = stringResource(R.string.terminal_engine_status, distributionName),
             ) {
-                IconButton(onClick = { showSessions = true }) {
+                IconButton(
+                    onClick = { showSessions = true },
+                    modifier = Modifier.spotlightAnchor(sessionsAnchor),
+                    contentDescription = stringResource(R.string.terminal_sessions_desc),
+                ) {
                     RuntimeIcon(RuntimeIconName.List, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                 }
             }
@@ -319,7 +337,11 @@ fun TerminalScreen(
                             TerminalDot(Color(0xFF00E676))
                         }
                         Text(
-                            "PTY ${distributionName.substringBefore(" (").uppercase()} AARCH64",
+                            stringResource(
+                                R.string.terminal_pty_header,
+                                distributionName.substringBefore(" (").uppercase(),
+                                Build.SUPPORTED_ABIS.firstOrNull()?.uppercase() ?: "UNKNOWN",
+                            ),
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontFamily = FontFamily.Monospace,
@@ -333,6 +355,7 @@ fun TerminalScreen(
                             Text(
                                 stringResource(R.string.terminal_copy),
                                 modifier = Modifier
+                                    .minimumInteractiveComponentSize()
                                     .clip(RoundedCornerShape(4.dp))
                                     .clickable(onClick = copyScreen)
                                     .padding(horizontal = 6.dp, vertical = 2.dp),
@@ -342,6 +365,7 @@ fun TerminalScreen(
                             Text(
                                 stringResource(R.string.terminal_paste),
                                 modifier = Modifier
+                                    .minimumInteractiveComponentSize()
                                     .clip(RoundedCornerShape(4.dp))
                                     .clickable(onClick = pasteToTerminal)
                                     .padding(horizontal = 6.dp, vertical = 2.dp),
@@ -387,16 +411,30 @@ fun TerminalScreen(
                             },
                     ) {
                         when {
-                            error != null -> Text(
-                                error.orEmpty(),
-                                color = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.padding(12.dp),
-                                fontFamily = FontFamily.Monospace,
-                            )
+                            error != null -> Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Text(
+                                    error.orEmpty(),
+                                    color = MaterialTheme.colorScheme.error,
+                                    fontFamily = FontFamily.Monospace,
+                                )
+                                Button(
+                                    onClick = { viewModel.retryInitialize(project) },
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                ) {
+                                    RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(14.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(stringResource(R.string.terminal_retry))
+                                }
+                            }
                             screen.isEmpty() || screen.all { it.cells.isEmpty() } -> Text(
                                 stringResource(R.string.terminal_starting),
                                 Modifier.padding(12.dp),
-                                color = TermDimText,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                                 fontFamily = FontFamily.Monospace,
                             )
                             else -> LazyColumn(
@@ -412,7 +450,7 @@ fun TerminalScreen(
                             ) {
                                 itemsIndexed(
                                     screen,
-                                    key = { index, _ -> index },
+                                    key = { index, line -> "$index-${line.cells.hashCode()}" },
                                 ) { index, line ->
                                     TerminalLineRow(
                                         line = line,
@@ -421,6 +459,7 @@ fun TerminalScreen(
                                         fontSizeSp = fontSizeSp,
                                         termBg = termBg,
                                         termTextDefault = termTextDefault,
+                                        termCursor = MaterialTheme.colorScheme.primary,
                                     )
                                 }
                             }
@@ -508,10 +547,19 @@ fun TerminalScreen(
                 ExtraKey("cd ..", hapticsEnabled = hapticsEnabled) { viewModel.sendText("cd ..\r") }
                 ExtraKey("Clear", hapticsEnabled = hapticsEnabled) { viewModel.sendText("clear\r") }
             }
-
-            error?.let { NoticeBanner(it, isError = true) }
         }
     }
+
+    // 首次进入引导：高亮顶栏「会话列表」按钮
+    if ("terminal_sessions" !in firstUseGuidesShown) {
+        SpotlightGuideOverlay(
+            anchor = sessionsAnchor,
+            title = stringResource(R.string.terminal_guide_title),
+            message = stringResource(R.string.terminal_guide_message),
+            onDismiss = { viewModel.markFirstUseGuideShown("terminal_sessions") },
+        )
+    }
+    } // Box
 
     if (showSessions) {
         SessionListDialog(
@@ -523,12 +571,23 @@ fun TerminalScreen(
                 showSessions = false
                 showCreateSession = true
             },
-            onClose = { id ->
-                viewModel.closeSession(id)
-                if (handles.size == 1) {
-                    Toast.makeText(context, context.getString(R.string.terminal_reset_complete), Toast.LENGTH_SHORT).show()
+            onClose = { id -> showSessions = false; sessionToClose = id },
+        )
+    }
+
+    // 关闭会话二次确认：会话关闭会杀死其中运行的所有进程
+    sessionToClose?.let { closingId ->
+        CloseSessionConfirmDialog(
+            onConfirm = {
+                sessionToClose = null
+                val wasOnlySession = handles.size == 1
+                viewModel.closeSession(closingId) { success ->
+                    if (success && wasOnlySession) {
+                        Toast.makeText(context, context.getString(R.string.terminal_reset_complete), Toast.LENGTH_SHORT).show()
+                    }
                 }
             },
+            onDismiss = { sessionToClose = null },
         )
     }
 
@@ -578,7 +637,7 @@ private fun CreateTerminalDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 420.dp),
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 if (installedDistros.size > 1) {
@@ -800,10 +859,10 @@ private fun SessionListDialog(
                         }.getOrDefault(handle.distributionId)
                         Surface(
                             shape = RoundedCornerShape(10.dp),
-                            color = if (active) Color(0xFF13243B) else Color(0xFF0F1626),
+                            color = if (active) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainerLowest,
                             border = BorderStroke(
                                 1.dp,
-                                if (active) Color(0xFF00F0FF) else Color(0xFF1E2D48),
+                                if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
                             ),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
@@ -817,7 +876,7 @@ private fun SessionListDialog(
                             ) {
                                 Box(
                                     Modifier.size(8.dp).clip(CircleShape).background(
-                                        if (active) Color(0xFF00F0FF) else Color(0xFF53637D),
+                                        if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                     ),
                                 )
                                 Column(Modifier.weight(1f)) {
@@ -839,13 +898,13 @@ private fun SessionListDialog(
                                         }
                                         if (active) {
                                             Surface(
-                                                color = Color(0xFF00F0FF).copy(alpha = 0.15f),
+                                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
                                                 shape = RoundedCornerShape(4.dp),
                                             ) {
                                                 Text(
                                                     stringResource(R.string.terminal_current),
                                                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                                                    color = Color(0xFF00F0FF),
+                                                    color = MaterialTheme.colorScheme.primary,
                                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
                                                 )
                                             }
@@ -860,16 +919,16 @@ private fun SessionListDialog(
                                 if (handles.size == 1) {
                                     IconButton(
                                         onClick = { onClose(handle.id) },
-                                        modifier = Modifier.size(28.dp),
+                                        contentDescription = stringResource(R.string.terminal_reset_session_desc),
                                     ) {
-                                        RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(16.dp), MaterialTheme.colorScheme.primary)
+                                        RuntimeIcon(RuntimeIconName.PowerSettingsNew, Modifier.size(18.dp), MaterialTheme.colorScheme.primary)
                                     }
                                 } else {
                                     IconButton(
                                         onClick = { onClose(handle.id) },
-                                        modifier = Modifier.size(28.dp),
+                                        contentDescription = stringResource(R.string.terminal_close_session_desc),
                                     ) {
-                                        RuntimeIcon(RuntimeIconName.Close, Modifier.size(14.dp), MaterialTheme.colorScheme.error)
+                                        RuntimeIcon(RuntimeIconName.Close, Modifier.size(16.dp), MaterialTheme.colorScheme.error)
                                     }
                                 }
                             }
@@ -888,6 +947,61 @@ private fun SessionListDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.terminal_close)) }
+        },
+    )
+}
+
+/**
+ * 关闭终端会话二次确认弹窗（样式对齐 DistroManagementScreen 的倒计时确认弹窗）：
+ * 关闭会杀死会话中运行的所有进程，属破坏性操作。
+ */
+@Composable
+private fun CloseSessionConfirmDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var countdown by remember { mutableStateOf(3) }
+
+    LaunchedEffect(Unit) {
+        while (countdown > 0) {
+            delay(1000)
+            countdown--
+        }
+    }
+
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = stringResource(R.string.terminal_close_confirm_title),
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            )
+        },
+        text = {
+            Text(
+                text = stringResource(R.string.terminal_close_confirm_message),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                enabled = countdown == 0,
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    disabledContainerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.3f),
+                ),
+            ) {
+                Text(
+                    text = if (countdown > 0) stringResource(R.string.terminal_close_confirm_countdown, countdown)
+                    else stringResource(R.string.terminal_close_confirm),
+                    color = if (countdown == 0) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onError.copy(alpha = 0.6f),
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.terminal_cancel)) }
         },
     )
 }
@@ -919,6 +1033,7 @@ private fun ExtraKey(
 
     Surface(
         modifier = Modifier
+            .minimumInteractiveComponentSize()
             .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = {
                 if (hapticsEnabled) {
@@ -954,17 +1069,18 @@ private fun TerminalLineRow(
     showCursor: Boolean,
     cursorColumn: Int,
     fontSizeSp: Float = 13.5f,
-    termBg: Color = TermBg,
-    termTextDefault: Color = TermTextDefault,
+    termBg: Color,
+    termTextDefault: Color,
+    termCursor: Color,
 ) {
-    val annotatedLine = remember(line, showCursor, cursorColumn, fontSizeSp, termBg, termTextDefault) {
+    val annotatedLine = remember(line, showCursor, cursorColumn, fontSizeSp, termBg, termTextDefault, termCursor) {
         buildAnnotatedString {
             line.cells.forEachIndexed { cellIndex, cell ->
                 val isCursor = showCursor && cellIndex == cursorColumn
                 withStyle(
                     SpanStyle(
                         color = if (isCursor) termBg else (cell.foreground?.let(::Color) ?: termTextDefault),
-                        background = if (isCursor) Color(0xFF00F0FF) else (cell.background?.let(::Color) ?: Color.Unspecified),
+                        background = if (isCursor) termCursor else (cell.background?.let(::Color) ?: Color.Unspecified),
                         fontWeight = if (cell.bold) FontWeight.Bold else FontWeight.Normal,
                         fontStyle = if (cell.italic) FontStyle.Italic else FontStyle.Normal,
                         textDecoration = when {
@@ -978,7 +1094,7 @@ private fun TerminalLineRow(
             }
             if (showCursor && cursorColumn >= line.cells.size) {
                 repeat(cursorColumn - line.cells.size) { append(" ") }
-                withStyle(SpanStyle(color = termBg, background = Color(0xFF00F0FF))) { append(" ") }
+                withStyle(SpanStyle(color = termBg, background = termCursor)) { append(" ") }
             }
         }
     }
@@ -997,3 +1113,5 @@ private fun doShowKeyboard(view: View, context: Context) {
     val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager ?: return
     imm.showSoftInput(view, 0)
 }
+
+

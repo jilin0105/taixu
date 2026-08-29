@@ -42,24 +42,34 @@ class WorkspaceFileAccess(
 
     /**
      * 读取文件内容。支持行级分页（pi 的 read 工具设计）：
-     * [offset] 为 1 起始的行号，[limit] 为最多读取的行数；分页时在内容前加范围头，
-     * 让模型知道文件总行数与当前窗口，便于继续翻页或精确定位。
+     * [offset] 为 1 起始的行号，[limit] 为最多读取的行数（上限 [DEFAULT_READ_LINES]）；
+     * 分页时在内容前加范围头，让模型知道文件总行数与当前窗口，便于继续翻页或精确定位。
+     * 无参调用对小文件返回全文；超过 [DEFAULT_READ_LINES] 行的大文件自动限窗，
+     * 并在范围头里给出续读偏移，避免模型在不知道截断的情况下基于半份内容做分析。
      */
     suspend fun read(path: String, offset: Int? = null, limit: Int? = null): AppResult<String> = withContext(Dispatchers.IO) {
         try {
             val file = resolveRequired(path)
             check(file.isFile) { "不是文件：${display(path)}" }
-            check(file.length() <= MAX_READ_BYTES) { "文件过大（${file.length()} 字节，上限 ${MAX_READ_BYTES}）" }
+            check(file.length() <= MAX_READ_BYTES) {
+                "文件过大（${file.length()} 字节，上限 ${MAX_READ_BYTES}）。" +
+                    "请用 base 执行 grep -n 定位关键行号，再用 read(path, offset, limit) 分段精读。"
+            }
             val content = file.readText(Charsets.UTF_8)
-            if (offset == null && limit == null) {
+            val lines = content.split('\n')
+            val totalLines = if (content.endsWith("\n")) lines.size - 1 else lines.size
+            if (offset == null && limit == null && totalLines <= DEFAULT_READ_LINES) {
                 AppResult.Success(content)
             } else {
-                val lines = content.split('\n')
-                val totalLines = if (content.endsWith("\n")) lines.size - 1 else lines.size
+                val effectiveLimit = (limit ?: DEFAULT_READ_LINES).coerceIn(1, DEFAULT_READ_LINES)
                 val start = ((offset ?: 1) - 1).coerceIn(0, totalLines)
-                val end = if (limit != null) minOf(start + limit, totalLines) else totalLines
+                val end = minOf(start + effectiveLimit, totalLines)
                 val selected = lines.subList(start, end)
-                val header = "[文件 ${display(path)} 共 $totalLines 行，当前显示第 ${start + 1}-$end 行]\n"
+                val header = buildString {
+                    append("[文件 ${display(path)} 共 $totalLines 行，当前显示第 ${start + 1}-$end 行")
+                    if (end < totalLines) append("；内容未完，继续读取请用 offset=${end + 1}")
+                    append("]\n")
+                }
                 AppResult.Success(header + selected.joinToString("\n"))
             }
         } catch (throwable: Throwable) {
@@ -135,15 +145,14 @@ class WorkspaceFileAccess(
     }
 
     private fun resolve(path: String): File? {
-        val trimmed = path.trim()
+        val trimmed = path.trim().replace('\\', '/')
         val segments = trimmed.split('/').filter { it.isNotEmpty() && it != "." }
         if (segments.any { it == ".." }) return null
-        if (trimmed.startsWith("/") && segments.first() != "workspace") return null
-        
-        // 如果是 /workspace/xxx 绝对路径，从全局工作区顶层根目录 globalRootCanonical 开始解析
-        val isAbsoluteWorkspace = trimmed.startsWith("/workspace")
-        val baseRoot = if (isAbsoluteWorkspace) (globalRootCanonical ?: rootCanonical) else root
-        val relative = if (isAbsoluteWorkspace) segments.drop(1) else segments
+        if (trimmed.startsWith("/") && segments.isNotEmpty() && segments.first() != "workspace") return null
+
+        val isWorkspacePrefixed = segments.isNotEmpty() && segments.first() == "workspace"
+        val baseRoot = if (isWorkspacePrefixed) (globalRootCanonical ?: rootCanonical) else root
+        val relative = if (isWorkspacePrefixed) segments.drop(1) else segments
         var candidate = baseRoot
         for (segment in relative) {
             candidate = File(candidate, segment)
@@ -167,5 +176,8 @@ class WorkspaceFileAccess(
     companion object {
         const val MAX_READ_BYTES = 1 * 1024 * 1024L
         const val MAX_WRITE_BYTES = 1 * 1024 * 1024
+
+        /** 无参 read 的默认行窗口；单次 limit 也以此为上限，避免单次读取灌爆工具输出。 */
+        const val DEFAULT_READ_LINES = 2000
     }
 }

@@ -95,10 +95,25 @@ if [ -e "$JAVA_GUARD" ]; then
     fi
 fi
 
-# 2. 自愈软链接
+# 2. 自愈软链接与原生 gen_snapshot 映射
 if [ -d "$FLUTTER_HOME/bin" ] && [ ! -f /usr/local/bin/flutter ]; then
     ln -sf "$FLUTTER_HOME/bin/flutter" /usr/local/bin/flutter 2>/dev/null || true
     ln -sf "$FLUTTER_HOME/bin/dart" /usr/local/bin/dart 2>/dev/null || true
+fi
+
+# Flutter 引擎在 Linux ARM64 主机上构建 Android release/profile APK 时，
+# 按 artifacts.dart 寻址 android-arm64-{release,profile}/linux-arm64/gen_snapshot。
+# 若缺失，将原生 linux-arm64/gen_snapshot (AArch64 ELF) 自愈链接至对应目录。
+ENGINE_DIR="$FLUTTER_HOME/bin/cache/artifacts/engine"
+if [ -x "$ENGINE_DIR/linux-arm64/gen_snapshot" ]; then
+    for mode in release profile; do
+        target_dir="$ENGINE_DIR/android-arm64-$mode/linux-arm64"
+        mkdir -p "$target_dir" 2>/dev/null || true
+        if [ ! -e "$target_dir/gen_snapshot" ]; then
+            ln -sf "$ENGINE_DIR/linux-arm64/gen_snapshot" "$target_dir/gen_snapshot" 2>/dev/null || true
+            echo "==> [TaiXu Build] 已自愈链接 ARM64 gen_snapshot -> $target_dir/gen_snapshot"
+        fi
+    done
 fi
 
 cd "$PROJECT_PATH"

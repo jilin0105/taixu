@@ -26,7 +26,7 @@ class SshCommandFactoryTest {
     @Test
     fun `generated configuration keeps raw public key out of shell source`() {
         val command = SshCommandFactory.configureCommand(
-            SshRuntimeConfig(port = 9022, allowLan = true, authorizedKeys = key),
+            SshRuntimeConfig(port = 9022, authorizedKeys = key),
         )
 
         assertTrue(command.contains("base64 -d"))

@@ -34,12 +34,14 @@ data class ProviderVisual(
     val color: Color,
 )
 
-/** provider id / 厂商名 → 视觉标识；未知厂商回退中性色 + 首字符。 */
+/** provider id / 厂商名 → 视觉标识；未知厂商回退中性色 + 首字符，空值回退通用模型图标。 */
 fun providerVisual(providerIdOrName: String): ProviderVisual {
-    val key = providerIdOrName.trim().lowercase()
+    val trimmed = providerIdOrName.trim()
+    if (trimmed.isEmpty()) return ProviderVisual(null, "", Color(0xFF64748B))
+    val key = trimmed.lowercase()
     val known = PROVIDER_VISUALS.firstOrNull { (id, _) -> key == id || key.contains(id) }?.second
     if (known != null) return known
-    val fallbackChar = providerIdOrName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+    val fallbackChar = trimmed.firstOrNull()?.uppercaseChar()?.toString() ?: ""
     return ProviderVisual(null, fallbackChar, Color(0xFF64748B))
 }
 
@@ -102,7 +104,7 @@ fun ProviderBadge(
                     .padding(size / 5),
                 contentScale = ContentScale.Fit,
             )
-        } else {
+        } else if (visual.label.isNotEmpty()) {
             val fontSize = when {
                 visual.label.length >= 3 -> 9.sp
                 visual.label.length == 2 -> 11.sp
@@ -114,6 +116,13 @@ fun ProviderBadge(
                 fontSize = fontSize,
                 fontWeight = FontWeight.Bold,
                 style = MaterialTheme.typography.labelSmall,
+            )
+        } else {
+            // 空 provider：渲染通用模型图标，避免无意义的 "?" 占位
+            RuntimeIcon(
+                name = RuntimeIconName.Model,
+                modifier = Modifier.size(size / 2),
+                tint = Color.White,
             )
         }
     }

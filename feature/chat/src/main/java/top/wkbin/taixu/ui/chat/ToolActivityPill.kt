@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -48,12 +49,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import top.wkbin.taixu.feature.chat.R
 import top.wkbin.taixu.harness.HarnessMessage
@@ -63,6 +68,7 @@ import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.harness.UserMessage
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
+import top.wkbin.taixu.ui.components.RuntimeTextButton
 import top.wkbin.taixu.ui.components.StatusBadge
 
 /**
@@ -82,25 +88,29 @@ fun ToolActivityPill(
 ) {
     var showDetailSheet by remember { mutableStateOf(false) }
 
-    val activeToolCall = remember(messages, running) {
+    val activeToolCall = remember(messages, running, toolResults) {
         if (!running) null
         else messages.filterIsInstance<ToolCall>().lastOrNull { call ->
             !toolResults.containsKey(call.id)
-        } ?: messages.filterIsInstance<ToolCall>().lastOrNull()
+        }
     }
 
-    // 运行耗时秒数计算
     val roundStart = remember(messages.size, running) {
         if (!running) 0L
         else messages.lastOrNull { it is UserMessage }?.createdAt ?: System.currentTimeMillis()
     }
+
+    // 运行耗时秒数计算（若有活跃工具则计算该工具耗时，否则计算本轮耗时）
+    val timingStart = remember(activeToolCall?.id, roundStart, running) {
+        activeToolCall?.createdAt ?: roundStart
+    }
     var elapsedMillis by remember { mutableLongStateOf(0L) }
 
-    LaunchedEffect(running, roundStart) {
-        if (running) {
+    LaunchedEffect(running, timingStart) {
+        if (running && timingStart > 0L) {
             while (true) {
-                elapsedMillis = System.currentTimeMillis() - roundStart
-                delay(200)
+                elapsedMillis = (System.currentTimeMillis() - timingStart).coerceAtLeast(0L)
+                delay(500)
             }
         } else {
             elapsedMillis = 0L
@@ -144,40 +154,42 @@ fun ToolActivityPill(
 
         Surface(
             onClick = { showDetailSheet = true },
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.85f),
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.6f),
             border = androidx.compose.foundation.BorderStroke(
                 0.5.dp,
-                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
             ),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 2.dp),
+                .padding(horizontal = 4.dp, vertical = 1.5.dp),
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                     modifier = Modifier.weight(1f),
                 ) {
-                    // 运行状态微光指示点
+                    // 运行状态微光指示点（纯颜色补文本语义，TalkBack 可读）
+                    val runningDotLabel = stringResource(R.string.chat_tool_state_running)
                     Box(
                         modifier = Modifier
-                            .size(7.dp)
+                            .size(5.dp)
                             .clip(CircleShape)
-                            .background(pillAccent.copy(alpha = pulseAlpha)),
+                            .background(pillAccent.copy(alpha = pulseAlpha))
+                            .semantics { contentDescription = runningDotLabel },
                     )
 
                     // 图标
                     RuntimeIcon(
                         name = toolIcon,
-                        modifier = Modifier.size(13.dp),
+                        modifier = Modifier.size(12.dp),
                         tint = pillAccent,
                     )
 
@@ -210,26 +222,34 @@ fun ToolActivityPill(
 
                 Spacer(Modifier.width(4.dp))
 
-                // 一键终止微型按钮
-                Surface(
-                    onClick = onStop,
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
-                    modifier = Modifier.size(20.dp),
+                // 一键终止极简微型按钮
+                val stopLabel = stringResource(R.string.chat_stop_generation)
+                Box(
+                    modifier = Modifier
+                        .size(16.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.75f))
+                        .clickable(onClick = onStop)
+                        .semantics { contentDescription = stopLabel },
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        RuntimeIcon(
-                            name = RuntimeIconName.Close,
-                            modifier = Modifier.size(11.dp),
-                            tint = MaterialTheme.colorScheme.onErrorContainer,
-                        )
-                    }
+                    RuntimeIcon(
+                        name = RuntimeIconName.Close,
+                        modifier = Modifier.size(9.dp),
+                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                    )
                 }
             }
         }
     }
 
     if (showDetailSheet && activeToolCall != null) {
+        // 参数默认折叠截断，避免原始 JSON 直出刷屏；点击"查看原始参数"展开全文
+        var showRawArgs by remember(activeToolCall.id) { mutableStateOf(false) }
+        val runningStatusText = stringResource(R.string.chat_tool_detail_running, formatDuration(elapsedMillis))
+        val readyStatusText = stringResource(R.string.chat_tool_detail_ready)
+        val typeText = stringResource(R.string.chat_tool_detail_type, activeToolCall.tool.name)
+        val argsText = remember(activeToolCall.id) { prettyArgs(activeToolCall.args) }
         ModalBottomSheet(
             onDismissRequest = { showDetailSheet = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -248,11 +268,11 @@ fun ToolActivityPill(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "活动工具执行状态",
+                        text = stringResource(R.string.chat_tool_detail_title),
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                     )
                     StatusBadge(
-                        text = if (running) "执行中 · ${formatDuration(elapsedMillis)}" else "已就绪",
+                        text = if (running) runningStatusText else readyStatusText,
                         color = if (running) Color(0xFF00E5FF) else MaterialTheme.colorScheme.primary,
                     )
                 }
@@ -267,23 +287,37 @@ fun ToolActivityPill(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(
-                            text = "工具类型: ${activeToolCall.tool.name}",
+                            text = typeText,
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary,
                         )
                         Text(
-                            text = "参数内容:",
+                            text = stringResource(R.string.chat_tool_detail_args),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
-                            text = activeToolCall.args.toString(),
+                            text = if (showRawArgs) argsText else argsText.take(ARG_PREVIEW_LENGTH) +
+                                if (argsText.length > ARG_PREVIEW_LENGTH) stringResource(R.string.chat_tool_detail_args_truncated) else "",
                             style = MaterialTheme.typography.bodySmall.copy(
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 12.sp,
                             ),
                             color = MaterialTheme.colorScheme.onSurface,
                         )
+                        if (argsText.length > ARG_PREVIEW_LENGTH) {
+                            RuntimeTextButton(
+                                onClick = { showRawArgs = !showRawArgs },
+                                modifier = Modifier.align(Alignment.End),
+                            ) {
+                                Text(
+                                    stringResource(
+                                        if (showRawArgs) R.string.chat_tool_detail_hide_raw else R.string.chat_tool_detail_view_raw,
+                                    ),
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -292,6 +326,14 @@ fun ToolActivityPill(
         }
     }
 }
+
+private const val ARG_PREVIEW_LENGTH = 400
+private val PRETTY_JSON = Json { prettyPrint = true; ignoreUnknownKeys = true }
+
+private fun prettyArgs(args: JsonObject): String =
+    runCatching {
+        PRETTY_JSON.encodeToString(JsonObject.serializer(), args)
+    }.getOrDefault(args.toString())
 
 private fun formatDuration(ms: Long): String {
     return String.format(java.util.Locale.getDefault(), "%.1fs", ms / 1000f)

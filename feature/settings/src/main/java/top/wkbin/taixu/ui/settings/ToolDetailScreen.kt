@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -38,6 +39,7 @@ import top.wkbin.taixu.ui.components.RuntimeSwitch as Switch
 import top.wkbin.taixu.ui.settings.LocalizedText as Text
 import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,6 +63,7 @@ import top.wkbin.taixu.core.model.ToolState
 import top.wkbin.taixu.ui.components.CodeBlockRow
 import top.wkbin.taixu.ui.components.InfoRow
 import top.wkbin.taixu.ui.components.NoticeBanner
+import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
@@ -96,6 +99,25 @@ fun ToolDetailScreen(
     val tool = state.tool
     val manifest = state.manifest
 
+    // 加载中与「工具未找到」区分：首次数据未就绪时显示进度圈，超时仍未找到才判定为不存在
+    var hasLoadedOnce by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
+    LaunchedEffect(tool) {
+        if (tool != null) hasLoadedOnce = true
+    }
+    // 卸载工具属于破坏性操作，需二次确认
+    var showUninstallConfirm by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
+
+    if (showUninstallConfirm && tool != null) {
+        UninstallToolConfirmDialog(
+            toolName = tool.name,
+            onConfirm = {
+                showUninstallConfirm = false
+                viewModel.uninstallTool()
+            },
+            onDismiss = { showUninstallConfirm = false },
+        )
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -113,7 +135,15 @@ fun ToolDetailScreen(
                     .padding(innerPadding),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("工具未找到", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (!hasLoadedOnce) {
+                    // 工具列表尚未加载完成：显示加载中而非「未找到」
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        CircularProgressIndicator(modifier = Modifier.size(32.dp), strokeWidth = 3.dp)
+                        Text("正在加载工具信息…", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    }
+                } else {
+                    Text("工具未找到", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
             return@Scaffold
         }
@@ -255,7 +285,7 @@ fun ToolDetailScreen(
             ToolActionsCard(
                 isInstalled = tool.state == ToolState.INSTALLED.name || tool.state == ToolState.UPDATE_AVAILABLE.name,
                 onLaunchTerminal = { onLaunchTerminal(toolId) },
-                onUninstall = viewModel::uninstallTool,
+                onUninstall = { showUninstallConfirm = true },
             )
 
             Spacer(Modifier.height(16.dp))
@@ -436,9 +466,9 @@ private fun ToolOverviewCard(
                     else -> "未安装"
                 },
                 color = when {
-                    gatewayOperating -> Color(0xFFFB8C00)
-                    gatewayRunning -> Color(0xFF2E7D32)
-                    isInstalled -> Color(0xFF2E7D32)
+                    gatewayOperating -> warningStatusColor()
+                    gatewayRunning -> successStatusColor()
+                    isInstalled -> successStatusColor()
                     tool.state == ToolState.FAILED.name -> MaterialTheme.colorScheme.error
                     else -> MaterialTheme.colorScheme.outline
                 },
@@ -478,7 +508,7 @@ private fun GatewayManagementCard(
                     RuntimeIcon(
                         name = RuntimeIconName.Globe,
                         modifier = Modifier.size(18.dp),
-                        tint = if (running) Color(0xFF2E7D32) else MaterialTheme.colorScheme.outline,
+                        tint = if (running) successStatusColor() else MaterialTheme.colorScheme.outline,
                     )
                     Text(
                         text = "网关服务",
@@ -490,8 +520,8 @@ private fun GatewayManagementCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     val statusColor = when {
-                        running -> Color(0xFF4CAF50)
-                        operating -> Color(0xFFFB8C00)
+                        running -> successStatusColor()
+                        operating -> warningStatusColor()
                         else -> MaterialTheme.colorScheme.outline
                     }
                     val statusText = when {
@@ -509,8 +539,8 @@ private fun GatewayManagementCard(
                         text = statusText,
                         style = MaterialTheme.typography.bodySmall,
                         color = when {
-                            running -> Color(0xFF2E7D32)
-                            operating -> Color(0xFFFB8C00)
+                            running -> successStatusColor()
+                            operating -> warningStatusColor()
                             else -> MaterialTheme.colorScheme.onSurfaceVariant
                         },
                     )
@@ -581,7 +611,7 @@ private fun ServiceLogsCard(
                 RuntimeIcon(
                     name = RuntimeIconName.Terminal,
                     modifier = Modifier.size(18.dp),
-                    tint = if (running) Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary,
+                    tint = if (running) successStatusColor() else MaterialTheme.colorScheme.primary,
                 )
                 Text(
                     text = "服务实时控制台日志",
@@ -596,7 +626,10 @@ private fun ServiceLogsCard(
                 if (logs.isNotEmpty()) {
                     IconButton(
                         onClick = { onCopy(logs.joinToString("\n")) },
-                        modifier = Modifier.size(30.dp),
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .size(30.dp),
+                        contentDescription = "复制服务日志",
                     ) {
                         RuntimeIcon(
                             name = RuntimeIconName.Copy,
@@ -606,7 +639,10 @@ private fun ServiceLogsCard(
                     }
                     IconButton(
                         onClick = onClear,
-                        modifier = Modifier.size(30.dp),
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .size(30.dp),
+                        contentDescription = "清空服务日志",
                     ) {
                         RuntimeIcon(
                             name = RuntimeIconName.Trash,
@@ -782,13 +818,13 @@ private fun ModelApplyCard(
                                     }
                                     if (isApplied) {
                                         Surface(
-                                            color = Color(0xFF2E7D32).copy(alpha = 0.12f),
+                                            color = successStatusColor().copy(alpha = 0.12f),
                                             shape = RoundedCornerShape(4.dp),
                                         ) {
                                             Text(
                                                 text = "已应用",
                                                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                                                color = Color(0xFF2E7D32),
+                                                color = successStatusColor(),
                                                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
                                             )
                                         }
@@ -820,7 +856,7 @@ private fun ModelApplyCard(
                                 RuntimeIcon(
                                     name = RuntimeIconName.Check,
                                     modifier = Modifier.size(20.dp),
-                                    tint = Color(0xFF2E7D32),
+                                    tint = successStatusColor(),
                                 )
                             }
                         }
@@ -873,7 +909,7 @@ private fun AccessLinkCard(
     onClear: () -> Unit,
     onCopy: (String) -> Unit,
 ) {
-    var selectedMode by remember { mutableStateOf("LAN") } // "LAN", "0.0.0.0", "127.0.0.1"
+    var selectedMode by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("LAN") } // "LAN", "0.0.0.0", "127.0.0.1"
 
     val currentUrl = when (selectedMode) {
         "LAN" -> state.lanAccessUrl ?: state.allInterfacesAccessUrl ?: state.loopbackAccessUrl
@@ -903,13 +939,13 @@ private fun AccessLinkCard(
             }
 
             Surface(
-                color = if (running) Color(0xFF2E7D32).copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceContainerHighest,
+                color = if (running) successStatusColor().copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceContainerHighest,
                 shape = RoundedCornerShape(6.dp),
             ) {
                 Text(
                     text = if (running) "已绑定 0.0.0.0" else "服务未启动",
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
-                    color = if (running) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (running) successStatusColor() else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                 )
             }
@@ -1001,7 +1037,10 @@ private fun AccessLinkCard(
                     )
                     IconButton(
                         onClick = { onCopy(currentUrl) },
-                        modifier = Modifier.size(32.dp),
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .size(32.dp),
+                        contentDescription = "复制访问链接",
                     ) {
                         RuntimeIcon(
                             name = RuntimeIconName.Copy,
@@ -1273,3 +1312,65 @@ private fun ToolActionsCard(
         }
     }
 }
+
+/** 卸载工具二次确认弹窗（与 DistroManagementScreen 删除确认同款倒计时锁样式） */
+@Composable
+internal fun UninstallToolConfirmDialog(
+    toolName: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var countdown by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(3) }
+
+    LaunchedEffect(toolName) {
+        while (countdown > 0) {
+            kotlinx.coroutines.delay(1000)
+            countdown--
+        }
+    }
+
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "卸载 $toolName？",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "• 将移除该工具及其在沙箱内的数据目录",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "• 卸载后可随时在工具中心重新安装",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                enabled = countdown == 0,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    disabledContainerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.3f),
+                ),
+            ) {
+                Text(
+                    text = if (countdown > 0) "确认卸载 (${countdown}s)" else "确认卸载",
+                    color = if (countdown == 0) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onError.copy(alpha = 0.6f),
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = "取消")
+            }
+        },
+    )
+}
+

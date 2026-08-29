@@ -39,6 +39,7 @@ import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.database.AiModelRepository
 import top.wkbin.taixu.core.database.HarnessSessionEntity
 import top.wkbin.taixu.core.database.HarnessSessionRepository
+import top.wkbin.taixu.core.database.QuickPhraseRepository
 import top.wkbin.taixu.core.database.WorkspaceRepository
 import top.wkbin.taixu.runtime.WorkspaceFileService
 import top.wkbin.taixu.runtime.WorkspaceManager
@@ -61,6 +62,7 @@ class WebChatBridgeServer @Inject constructor(
     @ApplicationContext private val context: Context,
     private val sessions: HarnessSessionRepository,
     private val models: AiModelRepository,
+    private val quickPhrases: QuickPhraseRepository,
     private val workspaces: WorkspaceRepository,
     private val workspaceManager: WorkspaceManager,
     private val workspaceFiles: WorkspaceFileService,
@@ -179,6 +181,13 @@ class WebChatBridgeServer @Inject constructor(
             if (handlePreflight(exchange)) return@launch
             if (!requireAuthenticated(exchange)) return@launch
             val configuredModels = models.observeAll().firstValue()
+            // 与 ChatViewModel 一致先播种内置短语，避免聊天页从未打开时列表为空
+            runCatching { quickPhrases.ensureInitialized() }
+            val enabledPhrases = runCatching {
+                quickPhrases.getAll()
+                    .filter { it.isEnabled }
+                    .sortedBy { it.sortOrder }
+            }.getOrDefault(emptyList())
             sendJson(exchange, 200, buildJsonObject {
                 put("authenticated", true)
                 put("appName", "太墟智枢")
@@ -190,6 +199,16 @@ class WebChatBridgeServer @Inject constructor(
                             put("name", model.name)
                             put("model", model.model)
                             put("active", model.isActive)
+                        })
+                    }
+                }
+                putJsonArray("quickPhrases") {
+                    enabledPhrases.forEach { phrase ->
+                        add(buildJsonObject {
+                            put("id", phrase.id)
+                            put("title", phrase.title)
+                            put("content", phrase.content)
+                            if (phrase.description.isNotBlank()) put("description", phrase.description)
                         })
                     }
                 }

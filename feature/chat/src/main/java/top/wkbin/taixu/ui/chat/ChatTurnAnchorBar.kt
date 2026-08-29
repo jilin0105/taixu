@@ -19,9 +19,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import top.wkbin.taixu.feature.chat.R
 import top.wkbin.taixu.harness.HarnessMessage
 import top.wkbin.taixu.harness.UserMessage
 import top.wkbin.taixu.ui.components.RuntimeIcon
@@ -44,13 +46,15 @@ fun ChatTurnAnchorBar(
     onScrollToTurn: (messageIndex: Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val anchors = remember(messages) {
+    val turnFallbackTemplate = stringResource(R.string.chat_turn_fallback)
+    val anchors = remember(messages, turnFallbackTemplate) {
         val userIndices = messages.mapIndexedNotNull { index, msg ->
             if (msg is UserMessage) index else null
         }
         userIndices.mapIndexed { turnIdx, msgIdx ->
             val userMsg = messages[msgIdx] as UserMessage
-            val promptPreview = userMsg.text.lines().firstOrNull { it.isNotBlank() }?.take(16) ?: "Turn ${turnIdx + 1}"
+            val promptPreview = userMsg.text.lines().firstOrNull { it.isNotBlank() }?.take(16)
+                ?: String.format(java.util.Locale.getDefault(), turnFallbackTemplate, turnIdx + 1)
             TurnAnchor(
                 turnIndex = turnIdx + 1,
                 label = "${turnIdx + 1}. $promptPreview",

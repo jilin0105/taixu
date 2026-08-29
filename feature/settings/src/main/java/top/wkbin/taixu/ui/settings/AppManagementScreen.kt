@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -49,6 +50,7 @@ fun AppManagementScreen(
     val apps by viewModel.apps.collectAsStateWithLifecycle()
     val syncing by viewModel.syncing.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
+    val messageIsError by viewModel.messageIsError.collectAsStateWithLifecycle()
     var showSystemApps by remember { mutableStateOf(false) }
 
     // Every entry reconciles the live PackageManager inventory with Room: missing packages are
@@ -83,14 +85,22 @@ fun AppManagementScreen(
                             Text("共 ${apps.size} 个", style = MaterialTheme.typography.labelLarge)
                         }
                         message?.let {
-                            Text(it, color = if (it.startsWith("权限不足")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+                            Text(it, color = if (messageIsError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
             }
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = true, onClick = {}, label = { Text("用户应用 (${userApps.size})") })
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    // 纯计数标签：不可交互，避免伪装成可点击的 FilterChip
+                    Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f)) {
+                        Text(
+                            "用户应用 (${userApps.size})",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        )
+                    }
                     FilterChip(
                         selected = showSystemApps,
                         onClick = { showSystemApps = !showSystemApps },
@@ -124,8 +134,20 @@ private fun AndroidAppRow(app: AndroidAppEntity) {
         Row(horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.CenterVertically) {
             AndroidAppIcon(app.packageName)
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(app.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Text(app.packageName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    app.label,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+                Text(
+                    app.packageName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
             }
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
@@ -133,12 +155,10 @@ private fun AndroidAppRow(app: AndroidAppEntity) {
                     style = MaterialTheme.typography.labelSmall,
                     color = if (app.isEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                 )
-                if (app.isSuspended || app.isNetworkRestricted) {
+                if (app.isNetworkRestricted) {
+                    // 「已冻结」已由上方状态文案表达，此处只补充联网受限信息，避免重复
                     Text(
-                        listOfNotNull(
-                            "已冻结".takeIf { app.isSuspended },
-                            "联网受限".takeIf { app.isNetworkRestricted },
-                        ).joinToString(" · "),
+                        "联网受限",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error,
                     )

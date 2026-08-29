@@ -90,6 +90,9 @@ fun McpSettingsScreen(
     val connectionStates by viewModel.mcpConnectionStates.collectAsStateWithLifecycle()
     var showAddDialog by remember { mutableStateOf(false) }
     var viewingDetailServer by remember { mutableStateOf<McpServerConfig?>(null) }
+    // 待确认删除的服务 id（破坏性操作二次确认）；McpServerConfig 非 Parcelable，仅保存 id
+    var pendingDeleteServerId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    val pendingDeleteServer = pendingDeleteServerId?.let { id -> servers.firstOrNull { it.id == id } }
 
     // 进入设置页时自动探测一次所有已启用 MCP 服务的连通性
     LaunchedEffect(Unit) { viewModel.refreshMcpConnections() }
@@ -232,12 +235,38 @@ fun McpSettingsScreen(
         )
     }
 
+    pendingDeleteServer?.let { server ->
+        RuntimeAlertDialog(
+            onDismissRequest = { pendingDeleteServerId = null },
+            title = { Text("删除 MCP 服务", fontWeight = FontWeight.Bold) },
+            text = {
+                Text("确定要删除「${server.name}」吗？删除后将停止向智枢 Agent 注入该服务的工具能力；系统核心 MCP 重新开启即可恢复。")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteMcpServer(server.id)
+                        pendingDeleteServerId = null
+                    },
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) {
+                    Text("确认删除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteServerId = null }) { Text("取消") }
+            },
+        )
+    }
+
     viewingDetailServer?.let { server ->
         McpServerDetailDialog(
             server = server,
             onDismiss = { viewingDetailServer = null },
             onDelete = {
-                viewModel.deleteMcpServer(server.id)
+                pendingDeleteServerId = server.id
                 viewingDetailServer = null
             },
             onTest = {
@@ -347,7 +376,7 @@ private fun McpConnectionDot(state: McpConnectionState, enabled: Boolean) {
     val (color, label) = when {
         !enabled -> MaterialTheme.colorScheme.outlineVariant to "未启用"
         state == McpConnectionState.CHECKING -> MaterialTheme.colorScheme.tertiary to "检测中"
-        state == McpConnectionState.ONLINE -> Color(0xFF2E7D32) to "已连通"
+        state == McpConnectionState.ONLINE -> successStatusColor() to "已连通"
         state == McpConnectionState.OFFLINE -> MaterialTheme.colorScheme.error to "离线"
         else -> MaterialTheme.colorScheme.outline to "未检测"
     }
@@ -376,28 +405,7 @@ private fun McpServerDetailDialog(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    val jsonConfig = remember(server) {
-        buildString {
-            appendLine("{")
-            appendLine("  \"${server.id}\": {")
-            if (server.transportType == McpTransportType.STDIO) {
-                appendLine("    \"command\": \"${server.command}\",")
-                appendLine("    \"args\": [${server.args.joinToString(", ") { "\"$it\"" }}]")
-                if (server.env.isNotEmpty()) {
-                    appendLine("    \"env\": {")
-                    server.env.entries.forEachIndexed { i, (k, v) ->
-                        val comma = if (i == server.env.size - 1) "" else ","
-                        appendLine("      \"$k\": \"$v\"$comma")
-                    }
-                    appendLine("    }")
-                }
-            } else {
-                appendLine("    \"url\": \"${server.serverUrl}\"")
-            }
-            appendLine("  }")
-            append("}")
-        }
-    }
+    val jsonConfig = remember(server) { server.toExportJsonConfig() }
 
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
@@ -682,7 +690,9 @@ private fun AddMcpServerDialog(
         },
         text = {
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 if (selectedTab == 0) {
@@ -911,7 +921,7 @@ private fun parseMcpJson(rawJson: String): Result<List<McpServerConfig>> = runCa
                 McpServerConfig(
                     id = "custom_${serverName.lowercase().replace(Regex("[^a-z0-9_]"), "_")}_${System.currentTimeMillis()}",
                     name = serverName,
-                    description = desc.ifBlank { if (isSse) "SSE 远程服务: $url" else "本地 Stdio: $command ${args.joinToString(" ")}" },
+                    description = desc.ifBlank { if (isSse) "远程 HTTP 服务: $url" else "本地 Stdio: $command ${args.joinToString(" ")}" },
                     transportType = if (isSse) McpTransportType.SSE else McpTransportType.STDIO,
                     command = command,
                     args = args,
@@ -937,7 +947,7 @@ private fun parseMcpJson(rawJson: String): Result<List<McpServerConfig>> = runCa
             McpServerConfig(
                 id = "custom_${name.lowercase().replace(Regex("[^a-z0-9_]"), "_")}_${System.currentTimeMillis()}",
                 name = name,
-                description = desc.ifBlank { if (isSse) "SSE 远程服务: $url" else "本地 Stdio: $command ${args.joinToString(" ")}" },
+                description = desc.ifBlank { if (isSse) "远程 HTTP 服务: $url" else "本地 Stdio: $command ${args.joinToString(" ")}" },
                 transportType = if (isSse) McpTransportType.SSE else McpTransportType.STDIO,
                 command = command,
                 args = args,

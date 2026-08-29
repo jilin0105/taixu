@@ -19,11 +19,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import top.wkbin.taixu.ui.components.RuntimeButton as Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator as CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import top.wkbin.taixu.ui.components.RuntimeIconButton as IconButton
@@ -85,16 +85,23 @@ fun DistroManagementScreen(
     val restoringDistroId by viewModel.restoringDistroId.collectAsStateWithLifecycle()
     val deletingDistroId by viewModel.deletingDistroId.collectAsStateWithLifecycle()
 
-    var showInstallDialog by remember { mutableStateOf(false) }
+    // 安装进度保存在 VM（StateFlow），旋转后进度界面可恢复，安装在后台继续进行
+    val installState by viewModel.distroInstallState.collectAsStateWithLifecycle()
+    var showInstallDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var distroToReset by remember { mutableStateOf<InstalledDistro?>(null) }
     var distroToUninstall by remember { mutableStateOf<InstalledDistro?>(null) }
-    var installProgress by remember { mutableStateOf<String?>(null) }
-    var installProgressFraction by remember { mutableStateOf(0f) }
-    var isInstalling by remember { mutableStateOf(false) }
-    var installError by remember { mutableStateOf<String?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     val scope = rememberCoroutineScope()
+
+    // 安装成功（isInstalling 从 true -> false 且无错误）后自动关闭弹窗
+    var wasInstalling by remember { mutableStateOf(false) }
+    LaunchedEffect(installState.isInstalling) {
+        if (wasInstalling && !installState.isInstalling && installState.errorMessage == null) {
+            showInstallDialog = false
+        }
+        wasInstalling = installState.isInstalling
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -174,51 +181,27 @@ fun DistroManagementScreen(
         }
     }
 
-    // 安装新系统对话框
-    if (showInstallDialog) {
+    // 安装新系统对话框（旋转后只要安装仍在进行就会重新显示进度）
+    if (showInstallDialog || installState.isInstalling) {
         InstallDistroDialog(
             installedIds = installedDistros.map { it.id }.toSet(),
-            isInstalling = isInstalling,
-            progressText = installProgress,
-            progressFraction = installProgressFraction,
-            errorMessage = installError,
+            isInstalling = installState.isInstalling,
+            progressText = installState.progressText,
+            progressFraction = installState.progressFraction,
+            errorMessage = installState.errorMessage,
             onDismiss = {
-                if (!isInstalling) {
+                if (!installState.isInstalling) {
                     showInstallDialog = false
-                    installError = null
+                    viewModel.clearDistroInstallError()
                 }
             },
             onConfirmInstall = { spec, route ->
-                isInstalling = true
-                installError = null
-                installProgress = "准备拉取镜像..."
-                installProgressFraction = 0.05f
-                scope.launch {
-                    viewModel.installDistro(
-                        request = RuntimeInstallRequest(
-                            distributionId = spec.id,
-                            registryRoute = route,
-                        ),
-                        onProgress = { p ->
-                            installProgress = if (p.totalMegabytes != null) {
-                                "下载中：${p.downloadedMegabytes} / ${p.totalMegabytes} MB"
-                            } else {
-                                "已下载：${p.downloadedMegabytes} MB"
-                            }
-                            installProgressFraction = (p.fraction ?: 0f) * 0.8f + 0.1f
-                        },
-                        onResult = { success, msg ->
-                            isInstalling = false
-                            if (success) {
-                                showInstallDialog = false
-                                installProgress = null
-                                installError = null
-                            } else {
-                                installError = msg
-                            }
-                        },
-                    )
-                }
+                viewModel.installDistro(
+                    request = RuntimeInstallRequest(
+                        distributionId = spec.id,
+                        registryRoute = route,
+                    ),
+                )
             },
         )
     }
@@ -440,7 +423,7 @@ private fun DistroItemCard(
                 }
 
                 if (isActive) {
-                    StatusBadge(text = "主系统", color = androidx.compose.ui.graphics.Color(0xFF2E7D32))
+                    StatusBadge(text = "主系统", color = successStatusColor())
                 }
             }
 
@@ -523,6 +506,15 @@ private fun DistroItemCard(
                     }
                 }
             }
+
+            // 单系统时「设为主系统」按钮会置灰，补充解释避免用户困惑
+            if (!isActive && !canOperateMulti) {
+                Text(
+                    text = "当前仅有一套系统，无需切换主系统",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -555,7 +547,9 @@ private fun InstallDistroDialog(
         },
         text = {
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 if (isInstalling) {

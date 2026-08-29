@@ -83,8 +83,8 @@ fun AppearanceSettingsScreen(
     LocalConfiguration.current // Recompose after AppCompat applies a locale change.
     val requestedLocales = AppCompatDelegate.getApplicationLocales()
     val appLanguage = if (requestedLocales.isEmpty) "system" else requestedLocales[0]?.language.orEmpty()
-    var terminalFontSizeSlider by remember { mutableFloatStateOf(terminalFontSize.toFloat()) }
-    var pageScaleSlider by remember { mutableFloatStateOf(appFontScale) }
+    var terminalFontSizeSlider by androidx.compose.runtime.saveable.rememberSaveable { mutableFloatStateOf(terminalFontSize.toFloat()) }
+    var pageScaleSlider by androidx.compose.runtime.saveable.rememberSaveable { mutableFloatStateOf(appFontScale) }
     LaunchedEffect(terminalFontSize) {
         terminalFontSizeSlider = terminalFontSize.toFloat()
     }
@@ -560,8 +560,10 @@ private fun TerminalThemeChip(
             }
             Text(
                 text = title,
-                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal),
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal),
                 color = text,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             )
         }
     }

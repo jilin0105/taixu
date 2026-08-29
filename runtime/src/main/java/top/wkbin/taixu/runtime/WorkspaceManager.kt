@@ -329,6 +329,7 @@ class WorkspaceManager @Inject constructor(
                 if (created == null) {
                     AppResult.Failure(AppError(ErrorCode.IO, "项目数据转换失败", null))
                 } else {
+                    autoBindBuiltinRunScript(created)
                     AppResult.Success(created)
                 }
             }
@@ -500,6 +501,24 @@ class WorkspaceManager @Inject constructor(
         )
     }
 
+    /**
+     * 新建的 Android/Flutter 项目自动挂载内置运行模板（标准 Android / 标准 Flutter），
+     * 无需再到工坊设置手动绑定即可直接运行；已有绑定的项目不覆盖。
+     */
+    private suspend fun autoBindBuiltinRunScript(project: WorkspaceProject) {
+        val builtinId = when (project.projectType) {
+            ProjectType.ANDROID -> "builtin-android"
+            ProjectType.FLUTTER -> "builtin-flutter"
+            else -> return
+        }
+        val repository = buildScriptRepository?.get() ?: return
+        runCatching {
+            if (repository.findBinding(project.name) == null) {
+                repository.bind(project.name, builtinId)
+            }
+        }
+    }
+
     private fun detectProjectType(directory: File): ProjectType {
         readProjectTypeMetadata(directory)?.let { return it }
         return when {
@@ -611,6 +630,7 @@ class WorkspaceManager @Inject constructor(
                 if (created == null) {
                     AppResult.Failure(AppError(ErrorCode.IO, "项目数据转换失败", null))
                 } else {
+                    autoBindBuiltinRunScript(created)
                     AppResult.Success(created)
                 }
             }

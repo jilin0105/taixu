@@ -24,8 +24,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -48,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -59,6 +58,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.model.QuickPhrase
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 import top.wkbin.taixu.ui.components.RuntimeButton as Button
+import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconButton as IconButton
 import top.wkbin.taixu.ui.components.RuntimeIconName
@@ -71,10 +71,15 @@ fun QuickPhrasesScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val phrases by viewModel.quickPhrases.collectAsStateWithLifecycle()
-    var editingPhrase by remember { mutableStateOf<QuickPhrase?>(null) }
-    var isCreating by remember { mutableStateOf(false) }
-    var showResetDialog by remember { mutableStateOf(false) }
-    var selectedFilter by remember { mutableStateOf<String?>("ALL") }
+    // QuickPhrase 非 Parcelable：仅保存 id，旋转后从列表按 id 恢复编辑对象
+    var editingPhraseId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    val editingPhrase = editingPhraseId?.let { id -> phrases.firstOrNull { it.id == id } }
+    var isCreating by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var showResetDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var selectedFilter by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>("ALL") }
+    // 待确认删除的短语 id（破坏性操作二次确认）
+    var pendingDeletePhraseId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    val pendingDeletePhrase = pendingDeletePhraseId?.let { id -> phrases.firstOrNull { it.id == id } }
 
     val filterOptions = listOf(
         "ALL" to "全部 (${phrases.size})",
@@ -123,7 +128,7 @@ fun QuickPhrasesScreen(
             phrase = editingPhrase,
             onDismiss = {
                 isCreating = false
-                editingPhrase = null
+                editingPhraseId = null
             },
             onSave = { id, title, content, description, iconName, targetProjectType, isEnabled ->
                 viewModel.saveQuickPhrase(
@@ -136,7 +141,30 @@ fun QuickPhrasesScreen(
                     isEnabled = isEnabled,
                 )
                 isCreating = false
-                editingPhrase = null
+                editingPhraseId = null
+            },
+        )
+    }
+
+    pendingDeletePhrase?.let { phrase ->
+        RuntimeAlertDialog(
+            onDismissRequest = { pendingDeletePhraseId = null },
+            title = { Text("删除快捷短语", fontWeight = FontWeight.Bold) },
+            text = { Text("确定要删除「${phrase.title}」吗？删除后不可恢复。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteQuickPhrase(phrase.id)
+                        pendingDeletePhraseId = null
+                    },
+                ) {
+                    Text("确认删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeletePhraseId = null }) {
+                    Text("取消")
+                }
             },
         )
     }
@@ -148,14 +176,20 @@ fun QuickPhrasesScreen(
                 title = "快捷短语与常用指令",
                 onBack = onBack,
                 actions = {
-                    IconButton(onClick = { showResetDialog = true }) {
+                    IconButton(
+                        onClick = { showResetDialog = true },
+                        contentDescription = "重置快捷短语预设",
+                    ) {
                         RuntimeIcon(
                             name = RuntimeIconName.Refresh,
                             modifier = Modifier.size(20.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    IconButton(onClick = { isCreating = true }) {
+                    IconButton(
+                        onClick = { isCreating = true },
+                        contentDescription = "新增快捷短语",
+                    ) {
                         RuntimeIcon(
                             name = RuntimeIconName.Plus,
                             modifier = Modifier.size(22.dp),
@@ -247,8 +281,8 @@ fun QuickPhrasesScreen(
                         QuickPhraseCard(
                             phrase = phrase,
                             onToggle = { enabled -> viewModel.toggleQuickPhrase(phrase.id, enabled) },
-                            onEdit = { editingPhrase = phrase },
-                            onDelete = { viewModel.deleteQuickPhrase(phrase.id) },
+                            onEdit = { editingPhraseId = phrase.id },
+                            onDelete = { pendingDeletePhraseId = phrase.id },
                         )
                     }
                 }
@@ -264,16 +298,14 @@ private fun QuickPhraseCard(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onEdit() },
+    RuntimeCard(
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+        onClick = onEdit,
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(14.dp),
     ) {
         Column(
-            modifier = Modifier.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(
@@ -363,27 +395,16 @@ private fun QuickPhraseCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // 1. 状态切换按钮 (1/3 宽)
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (phrase.isEnabled) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                            else MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.5f),
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable { onToggle(!phrase.isEnabled) },
+                // 1. 状态切换开关 (1/3 宽，与 MCP/插件/Agent 设置页一致使用 Switch)
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Row(
-                        modifier = Modifier.padding(vertical = 7.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = if (phrase.isEnabled) "● 已启用" else "○ 已停用",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                            color = if (phrase.isEnabled) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    Switch(
+                        checked = phrase.isEnabled,
+                        onCheckedChange = onToggle,
+                    )
                 }
 
                 // 2. 编辑按钮 (1/3 宽)
@@ -392,6 +413,7 @@ private fun QuickPhraseCard(
                     color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.4f),
                     modifier = Modifier
                         .weight(1f)
+                        .minimumInteractiveComponentSize()
                         .clickable { onEdit() },
                 ) {
                     Row(
@@ -413,6 +435,7 @@ private fun QuickPhraseCard(
                     color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f),
                     modifier = Modifier
                         .weight(1f)
+                        .minimumInteractiveComponentSize()
                         .clickable { onDelete() },
                 ) {
                     Row(
@@ -480,10 +503,6 @@ private fun QuickPhraseEditorDialog(
 
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 520.dp, max = 720.dp)
-            .offset(y = 100.dp),
         title = {
             Text(
                 text = if (phrase == null) "新增快捷短语" else "编辑快捷短语",
@@ -494,7 +513,6 @@ private fun QuickPhraseEditorDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 360.dp)
                     .verticalScroll(rememberScrollState())
                     .padding(vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -571,6 +589,7 @@ private fun QuickPhraseEditorDialog(
                         Box(
                             modifier = Modifier
                                 .size(38.dp)
+                                .minimumInteractiveComponentSize()
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(
                                     if (isSelected) MaterialTheme.colorScheme.primaryContainer

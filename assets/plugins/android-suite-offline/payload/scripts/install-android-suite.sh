@@ -279,6 +279,18 @@ if [ -s "$ARCHIVES/flutter-linux-arm64-android-only-slim.tar.gz" ]; then
     rm -rf /tmp/taixu-flutter
     ln -sfn /opt/flutter/bin/flutter "$TOOL_DIR/bin/flutter"
     ln -sfn /opt/flutter/bin/dart "$TOOL_DIR/bin/dart"
+
+    # 补齐 Flutter Engine Android ARM64 原生 gen_snapshot 路径
+    ENGINE_DIR="/opt/flutter/bin/cache/artifacts/engine"
+    if [ -x "$ENGINE_DIR/linux-arm64/gen_snapshot" ]; then
+        for mode in release profile; do
+            target_dir="$ENGINE_DIR/android-arm64-$mode/linux-arm64"
+            mkdir -p "$target_dir" 2>/dev/null || true
+            if [ ! -e "$target_dir/gen_snapshot" ]; then
+                ln -sf "$ENGINE_DIR/linux-arm64/gen_snapshot" "$target_dir/gen_snapshot" 2>/dev/null || true
+            fi
+        done
+    fi
 fi
 progress 85 "[COMMAND] Flutter Android ARM64 SDK 安装完成"
 

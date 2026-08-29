@@ -52,7 +52,7 @@
     <string name="chat_quick_start">Quick start:</string>
     <string name="chat_capability_mount">🧠 Attach skills and MCP tools</string>
     <string name="chat_enabled_for_request">Enabled for this request</string>
-    <string name="chat_skill_badge">⚡ Skill</string>
+    <string name="chat_skill_badge">Skill</string>
     <string name="chat_user_request_clipboard">User request</string>
     <string name="chat_request_copied">Request copied</string>
     <string name="chat_edit_resend">Edit and resend</string>
@@ -73,6 +73,7 @@
     <string name="chat_approve_continue">Approve &amp; continue</string>
     <string name="chat_resend_description">Resending removes all later messages and generates a new response from this request.</string>
     <string name="chat_send">Send</string>
+    <string name="chat_stop_generation">Stop generating</string>
     <string name="chat_cancel">Cancel</string>
     <string name="chat_session_manager">Session manager</string>
     <string name="chat_session_count">%1$d sessions</string>
@@ -133,10 +134,14 @@
     <string name="chat_reasoning_medium_description">Balanced reasoning for speed and depth</string>
     <string name="chat_reasoning_high">High reasoning effort</string>
     <string name="chat_reasoning_high_description">Maximum depth for complex architecture and reverse engineering</string>
+    <string name="chat_reasoning_extreme">Extreme reasoning</string>
+    <string name="chat_reasoning_extreme_description">Maximum reasoning depth for ultimate complex tasks</string>
+    <string name="chat_reasoning_model_support_notice">Reasoning effort only takes effect when the active model natively supports reasoning/thinking capabilities (e.g. OpenAI o-series, Claude 3.7 Thinking, DeepSeek-R1, Gemini Thinking).</string>
     <string name="chat_depth_off">Off</string>
     <string name="chat_depth_light">Light</string>
     <string name="chat_depth_medium">Medium</string>
     <string name="chat_depth_deep">Deep</string>
+    <string name="chat_depth_extreme">Extreme</string>
     <string name="chat_android_check">Inspect Android project</string>
     <string name="chat_android_check_description">Check Gradle, manifest, package name, and build environment</string>
     <string name="chat_android_check_prompt">Inspect the current Android project structure, Gradle configuration, manifest, package name, and build environment. Fix issues directly and verify the result.</string>
@@ -187,10 +192,22 @@
     <!-- Branch & runtime workbench -->
     <string name="chat_main_line">Main</string>
     <string name="chat_branch_count">%1$d paths</string>
+    <string name="chat_branch_pill_title">Branch</string>
     <string name="chat_runtime_running">Running</string>
-    <string name="chat_runtime_details">Runtime details</string>
+    <string name="chat_runtime_details">Runtime</string>
     <string name="chat_round_number">Round %1$d</string>
     <string name="chat_event_count">%1$d events</string>
+    <string name="chat_workbench_collapse">Collapse workbench</string>
+    <string name="chat_workbench_expand">Expand workbench</string>
+    <string name="chat_action_convert_to_steer">Convert to steer</string>
+    <string name="chat_step_chain_summary_fmt">Executed %1$d steps (%2$s)%3$s</string>
+    <string name="chat_step_chain_running_fmt">Executing step %1$d: %2$s%3$s</string>
+    <string name="chat_step_chain_title">Execution Steps (%1$d steps)</string>
+    <string name="chat_step_chain_collapse">Collapse steps</string>
+    <string name="chat_step_chain_expand">Expand steps</string>
+    <string name="chat_deep_thinking_title">Deep Thinking</string>
+    <string name="chat_menu_capabilities_short">Skills &amp; MCP</string>
+    <string name="chat_menu_reasoning_effort">Reasoning effort</string>
     <string name="chat_branches_title">Conversation branches</string>
     <string name="chat_branches_description">Edits, regenerations, and rewinds keep the old path. Switching never deletes messages.</string>
     <string name="chat_no_branches">No branches to switch to yet</string>
@@ -245,4 +262,125 @@
     <string name="chat_retry_from_tool">Retry from this tool</string>
     <string name="chat_regenerate">Regenerate</string>
     <string name="chat_branch_from_here">Branch from this message</string>
+    <!-- Top bar menu & permission snackbar -->
+    <string name="chat_snackbar_grant">Grant</string>
+    <string name="chat_snackbar_got_it">Got it</string>
+    <string name="chat_workbench_menu">Agent workbench menu</string>
+    <string name="chat_menu_branches">Branches</string>
+    <string name="chat_menu_main_branch">Main branch</string>
+    <string name="chat_menu_runtime">Runtime events &amp; timeline</string>
+    <string name="chat_menu_runtime_subtitle">%1$d events</string>
+    <string name="chat_menu_memory">Workspace long-term memory</string>
+    <string name="chat_menu_memory_subtitle">%1$d memory facts</string>
+    <string name="chat_menu_capabilities">Skills &amp; MCP</string>
+    <string name="chat_menu_capabilities_subtitle">%1$d activated</string>
+    <string name="chat_menu_approval_mode">Approval mode</string>
+    <string name="chat_open_session_list">Session list</string>
+    <string name="chat_new_session_button">New session</string>
+    <string name="chat_add_attachment">Add attachment</string>
+    <string name="chat_mount_capabilities">Mount capabilities</string>
+    <string name="chat_reasoning_effort">Reasoning effort</string>
+    <string name="chat_copy_reasoning">Copy reasoning</string>
+    <!-- Approval mode picker -->
+    <string name="chat_approval_mode_hint">Control how Agent commands, file writes and system operations are gated:</string>
+    <string name="chat_approval_request_title">Ask mode (safe)</string>
+    <string name="chat_approval_assisted_title">Assisted mode (semi-auto)</string>
+    <string name="chat_approval_full_access_title">Full access (fastest)</string>
+    <!-- Capability chips & badges -->
+    <string name="chat_pinned_badge">Pinned</string>
+    <string name="chat_attach_button">Mount</string>
+    <string name="chat_pinned_on">📌 Pinned</string>
+    <string name="chat_pinned_off">📌 Pin</string>
+    <string name="chat_mcp_badge">MCP</string>
+    <string name="chat_capability_skill_fmt">Skill: %1$s</string>
+    <string name="chat_capability_mcp_fmt">MCP: %1$s</string>
+    <string name="chat_collapse">Collapse</string>
+    <string name="chat_expand_more">Show %1$d more steps (of %2$d)%3$s</string>
+    <!-- Attachment menu & processing -->
+    <string name="chat_send_image">Send images</string>
+    <string name="chat_send_file">Send files / artifacts</string>
+    <string name="chat_remove_attachment">Remove attachment</string>
+    <string name="chat_attachment_processing">Processing attachments…</string>
+    <string name="chat_attachment_process_failed">%1$d attachment(s) failed to process, please retry</string>
+    <!-- Model form validation -->
+    <string name="chat_provider_label">Provider</string>
+    <string name="chat_base_url_invalid">Base URL must start with http:// or https://</string>
+    <string name="chat_title_required">Title cannot be empty</string>
+    <string name="chat_model_profile_exists">A profile with the same id already exists; skipped</string>
+    <string name="chat_new_session_created">New session created</string>
+    <!-- Destructive action confirmations -->
+    <string name="chat_confirm_delete">Delete</string>
+    <string name="chat_confirm_clear">Clear</string>
+    <string name="chat_delete_session">Delete session</string>
+    <string name="chat_delete_model_profile">Delete model profile</string>
+    <string name="chat_rename_session_button">Rename session</string>
+    <string name="chat_delete_session_title">Delete this session?</string>
+    <string name="chat_delete_session_message">• All messages in this session will be removed. This cannot be undone.</string>
+    <string name="chat_delete_message_title">Delete this message?</string>
+    <string name="chat_delete_message_message">• This message and everything after it will be removed. This cannot be undone.</string>
+    <string name="chat_delete_model_title">Delete this model profile?</string>
+    <string name="chat_delete_model_message">• The provider profile and its configuration will be removed. This cannot be undone.</string>
+    <string name="chat_clear_scratchpad_title">Clear all scratchpads?</string>
+    <string name="chat_clear_scratchpad_message">• All task scratchpads in this session will be cleared. This cannot be undone.</string>
+    <string name="chat_delete_memory_title">Delete this memory?</string>
+    <string name="chat_delete_memory_message">• The model will no longer remember this fact. This cannot be undone.</string>
+    <!-- Tool & MCP state semantics -->
+    <string name="chat_tool_state_running">Tool running</string>
+    <string name="chat_tool_state_success">Tool succeeded</string>
+    <string name="chat_tool_state_failed">Tool failed</string>
+    <string name="chat_tool_expand_details">Expand tool details</string>
+    <string name="chat_mcp_state_online">MCP online</string>
+    <string name="chat_mcp_state_offline">MCP offline</string>
+    <string name="chat_mcp_state_checking">MCP checking</string>
+    <string name="chat_mcp_state_disabled">MCP disabled</string>
+    <string name="chat_mcp_state_unknown">MCP state unknown</string>
+    <!-- Tool activity pill detail sheet -->
+    <string name="chat_tool_detail_title">Active tool status</string>
+    <string name="chat_tool_detail_running">Running · %1$s</string>
+    <string name="chat_tool_detail_ready">Ready</string>
+    <string name="chat_tool_detail_type">Tool type: %1$s</string>
+    <string name="chat_tool_detail_args">Arguments</string>
+    <string name="chat_tool_detail_args_truncated">… (truncated)</string>
+    <string name="chat_tool_detail_view_raw">View raw arguments</string>
+    <string name="chat_tool_detail_hide_raw">Hide raw arguments</string>
+    <!-- Code block & artifact -->
+    <string name="chat_code_badge">CODE</string>
+    <string name="chat_artifact_preview">Preview</string>
+    <string name="chat_artifact_mode_preview">Preview</string>
+    <string name="chat_artifact_mode_code">Source</string>
+    <string name="chat_artifact_mode_edit">Edit</string>
+    <string name="chat_artifact_copy">Copy</string>
+    <string name="chat_artifact_share">Share</string>
+    <string name="chat_artifact_save">Save changes</string>
+    <string name="chat_artifact_copied">Full artifact copied to clipboard</string>
+    <string name="chat_artifact_saved">Changes saved</string>
+    <string name="chat_artifact_share_chooser">Share artifact: %1$s</string>
+    <!-- Runtime details fallback copy -->
+    <string name="chat_result_pending">Result in progress, no output yet</string>
+    <string name="chat_result_empty">(no output)</string>
+    <!-- Branch switching -->
+    <string name="chat_branch_busy_hint">Busy — switching is unavailable while running</string>
+    <!-- Subagent role labels -->
+    <string name="chat_subagent_role_researcher">Researcher</string>
+    <string name="chat_subagent_role_coder">Coder</string>
+    <string name="chat_subagent_role_tester">Tester</string>
+    <string name="chat_subagent_role_assistant">Assistant</string>
+    <!-- Turn anchor bar fallback -->
+    <string name="chat_turn_fallback">Turn %1$d</string>
+
+    <!-- Smart Agent Floating Window -->
+    <string name="chat_floating_collapse">Collapse to Float</string>
+    <string name="chat_floating_window">Smart Agent Float</string>
+    <string name="chat_floating_permission_title">Enable Floating Window Permission</string>
+    <string name="chat_floating_permission_message">Smart Agent Floating Window needs permission to display over other apps so you can converse with the AI, inspect reasoning, and monitor execution while using other apps or the home screen.</string>
+    <string name="chat_floating_permission_grant">Go to Settings</string>
+    <string name="chat_floating_permission_cancel">Not Now</string>
+    <string name="chat_floating_restore_app">Return to Chat</string>
+    <string name="chat_floating_input_hint">Send command to Agent…</string>
+    <string name="chat_floating_send">Send</string>
+    <string name="chat_floating_stop">Stop</string>
+    <string name="chat_floating_close">Close Float</string>
+    <string name="chat_floating_idle">Ready</string>
+    <string name="chat_floating_thinking">🧠 Thinking…</string>
+    <string name="chat_floating_running">⚡ Executing…</string>
 </resources>

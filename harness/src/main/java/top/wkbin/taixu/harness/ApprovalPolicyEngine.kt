@@ -17,15 +17,15 @@ data class ApprovalDecision(
 class ApprovalPolicyEngine {
     fun decide(mode: ApprovalMode, tool: HarnessTool, args: JsonObject, workspace: String): ApprovalDecision {
         // 宿主特权命令作用于真实 Android 系统。只读操作始终放行；
-        // 全访问模式下可恢复的低危操作（settings_put / package_enable / package_disable / app_freeze）
-        // 自动放行；exec（任意 shell）和 package_uninstall_user（可能丢数据）始终要求确认。
+        // 完全访问 = 用户显式授权一切宿主操作（含 exec / 卸载应用），全部自动放行；
+        // 仅 REQUEST（每次审批）与 ASSISTED 模式对可变宿主操作要求确认。
         if (tool == HarnessTool.HOST) {
             val action = args["action"]?.jsonPrimitive?.content.orEmpty().trim().lowercase()
             if (action in HOST_READ_ONLY_ACTIONS) {
                 return ApprovalDecision(false)
             }
-            if (mode == ApprovalMode.FULL_ACCESS && action in HOST_FULL_ACCESS_AUTO_APPROVE) {
-                return ApprovalDecision(false, riskLevel = "high")
+            if (mode == ApprovalMode.FULL_ACCESS) {
+                return ApprovalDecision(false)
             }
             val critical = action == "exec" || action == "package_uninstall_user"
             return ApprovalDecision(
@@ -120,9 +120,6 @@ class ApprovalPolicyEngine {
         /** 审批有效期：超时未决的请求自动失效，恢复执行前也会复核。 */
         const val APPROVAL_TTL_MS: Long = 10 * 60 * 1000L
         private val HOST_READ_ONLY_ACTIONS = setOf("status", "settings_get", "package_list", "app_list", "logcat", "device_status")
-
-        /** 全访问模式下自动放行的可恢复低危宿主操作；exec / package_uninstall_user 不在此列。 */
-        private val HOST_FULL_ACCESS_AUTO_APPROVE = setOf("settings_put", "package_enable", "package_disable", "app_freeze", "app_unfreeze")
 
         /** argumentsJson 的 SHA-256 十六进制摘要；创建时写入，执行前复核。 */
         fun argsHash(argumentsJson: String): String {

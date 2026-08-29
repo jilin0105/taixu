@@ -3,6 +3,7 @@ package top.wkbin.taixu.harness
 import java.util.UUID
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -25,10 +26,17 @@ object JsonTextToolCallCodec {
                 val obj = json.parseToJsonElement(payload) as? JsonObject ?: return@runCatching null
                 val name = obj["name"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
                 if (name.isBlank()) return@runCatching null
+                // arguments 可能为空、缺失，或被模型写成字符串（如 "" / "{\"url\":..}"），统一归一化
+                val argumentsJson = when (val raw = obj["arguments"]) {
+                    null -> "{}"
+                    is JsonObject -> raw.toString()
+                    is JsonPrimitive -> raw.content.ifBlank { "{}" }
+                    else -> "{}"
+                }
                 ApiToolCallSpec(
                     id = "json-" + UUID.randomUUID().toString(),
                     name = name,
-                    argumentsJson = obj["arguments"]?.toString() ?: "{}",
+                    argumentsJson = argumentsJson,
                 )
             }.getOrNull()
         }.toList()

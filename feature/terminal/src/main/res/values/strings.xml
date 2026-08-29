@@ -32,4 +32,17 @@
     <string name="terminal_current">当前</string>
     <string name="terminal_new">新建终端</string>
     <string name="terminal_close">关闭</string>
+    <string name="terminal_loading">加载中…</string>
+    <string name="terminal_engine_status">%1$s · PRoot 运行时</string>
+    <string name="terminal_pty_header">PTY %1$s %2$s</string>
+    <string name="terminal_retry">重试</string>
+    <string name="terminal_sessions_desc">会话列表</string>
+    <string name="terminal_reset_session_desc">关闭并重置终端会话</string>
+    <string name="terminal_close_session_desc">关闭会话</string>
+    <string name="terminal_close_confirm_title">关闭此终端会话？</string>
+    <string name="terminal_close_confirm_message">关闭将终止该会话中正在运行的所有进程，且无法恢复。</string>
+    <string name="terminal_close_confirm">确认关闭</string>
+    <string name="terminal_close_confirm_countdown">确认关闭 (%1$d 秒)</string>
+    <string name="terminal_guide_title">多会话并行终端</string>
+    <string name="terminal_guide_message">点击顶栏的列表按钮即可管理多个终端会话：一边编译一边继续敲命令，或同时操作多个项目，互不干扰。</string>
 </resources>

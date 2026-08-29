@@ -129,9 +129,25 @@ class ToolSchemaValidatorTest {
     }
 
     @Test
-    fun `extra unknown arguments are tolerated`() {
-        // schema 未声明的额外参数不报错（宽容策略）
-        val problems = ToolSchemaValidator.problemsFor("read", args("path" to "a.kt", "extra" to "whatever"))
-        assertTrue(problems.isEmpty())
+    fun `extra unknown arguments are reported with valid parameter list`() {
+        // schema 未声明的额外参数会被点名并列出可用参数，让模型一次修正到位
+        val problems = ToolSchemaValidator.problemsFor("read", args("path" to "a.kt", "url" to "https://x"))
+        assertTrue(problems.any { it.contains("不接受参数 url") && it.contains("可用参数") })
+    }
+
+    @Test
+    fun `unknown arguments are tolerated when additionalProperties is true`() {
+        val schema = schema("""{"type":"object","properties":{"a":{"type":"string"}},"additionalProperties":true}""")
+        assertTrue(ToolSchemaValidator.validate(schema, args("a" to "x", "extra" to "y")).isEmpty())
+    }
+
+    @Test
+    fun `string encoded numbers and booleans pass type validation smoothly`() {
+        val schema = schema("""{"type":"object","properties":{"count":{"type":"integer","minimum":1,"maximum":100},"flag":{"type":"boolean"}}}""")
+        val validArgs = buildJsonObject {
+            put("count", kotlinx.serialization.json.JsonPrimitive("50"))
+            put("flag", kotlinx.serialization.json.JsonPrimitive("true"))
+        }
+        assertTrue(ToolSchemaValidator.validate(schema, validArgs).isEmpty())
     }
 }

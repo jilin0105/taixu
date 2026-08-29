@@ -84,6 +84,44 @@ class ProotCommandBuilderTest {
     }
 
     @Test
+    fun interactiveBuildKeepsQuotedCommandLineIntactOnNativePty() {
+        val commandLine = "stty raw -echo; exec 'python3' -u '/opt/taixu/scripts/codegraph_mcp_server.py' --repository '/workspace'"
+        val args = ProotCommandBuilder(EnvironmentResolver()).buildInteractive(
+            prootBinary = File("/p"),
+            rootfsDir = File("/r"),
+            workspaceDir = File("/w"),
+            config = SessionConfig(
+                commandLine = commandLine,
+                allowSttyResize = false,
+            ),
+            nativePty = true,
+        )
+
+        // 原生 PTY 路径下命令串直接交给 bash -lc，单层解析，禁止任何引号二次转义
+        assert(args.last().contains("exec 'python3' -u '/opt/taixu/scripts/codegraph_mcp_server.py'"))
+        assert(!args.last().contains("\\\""))
+    }
+
+    @Test
+    fun interactiveBuildEscapesQuotesForScriptFallback() {
+        val commandLine = "exec 'python3' -u '/opt/x.py'"
+        val args = ProotCommandBuilder(EnvironmentResolver()).buildInteractive(
+            prootBinary = File("/p"),
+            rootfsDir = File("/r"),
+            workspaceDir = File("/w"),
+            config = SessionConfig(
+                commandLine = commandLine,
+                allowSttyResize = false,
+            ),
+            ptyMarker = "/opt/taixu/.pty-12345678",
+        )
+
+        // fallback 路径命令嵌入 script -qfec '...' 单引号内，必须用 '\'' 转义内层单引号
+        assert(args.last().contains("exec 'python3' -u '/opt/x.py'"))
+        assert(args.last().contains("'\\''"))
+    }
+
+    @Test
     fun interactiveBuildUsesAdapterCommandAndEnvironment() {
         val args = ProotCommandBuilder(EnvironmentResolver()).buildInteractive(
             prootBinary = File("/p"),

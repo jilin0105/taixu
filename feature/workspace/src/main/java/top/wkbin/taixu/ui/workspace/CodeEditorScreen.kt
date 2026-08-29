@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -47,6 +48,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -103,11 +105,13 @@ fun CodeEditorScreen(
     val isSaving by viewModel.isSaving.collectAsStateWithLifecycle()
     val loading by viewModel.loadingFiles.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
+    val messageIsError by viewModel.messageIsError.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var showUnsavedDialog by remember { mutableStateOf(false) }
-    var wordWrap by remember { mutableStateOf(false) }
-    var editorFontSizeSp by remember { mutableStateOf(13f) }
+    var showDiscardDialog by remember { mutableStateOf(false) }
+    var wordWrap by rememberSaveable { mutableStateOf(false) }
+    var editorFontSizeSp by rememberSaveable { mutableStateOf(13f) }
     val editorState = remember { TextFieldState() }
 
     val fileName = relativePath.substringAfterLast('/')
@@ -165,15 +169,22 @@ fun CodeEditorScreen(
                 onBack = attemptBack,
                 statusText = "/workspace/$projectName/$relativePath",
                 actions = {
-                    IconButton(onClick = copyAll) {
+                    IconButton(onClick = copyAll, contentDescription = stringResource(R.string.workspace_cd_copy)) {
                         RuntimeIcon(RuntimeIconName.Copy, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     if (isDirty) {
-                        IconButton(onClick = { viewModel.resetContent() }) {
+                        IconButton(
+                            onClick = { showDiscardDialog = true },
+                            contentDescription = stringResource(R.string.workspace_cd_discard),
+                        ) {
                             RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.error)
                         }
                     }
-                    IconButton(onClick = { viewModel.saveFile() }, enabled = isDirty && !isSaving) {
+                    IconButton(
+                        onClick = { viewModel.saveFile() },
+                        enabled = isDirty && !isSaving,
+                        contentDescription = stringResource(R.string.workspace_cd_save),
+                    ) {
                         if (isSaving) CircularProgressIndicator(Modifier.size(18.dp), color = MaterialTheme.colorScheme.primary, strokeWidth = 2.dp)
                         else RuntimeIcon(RuntimeIconName.Save, Modifier.size(20.dp), tint = if (isDirty) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
                     }
@@ -190,7 +201,7 @@ fun CodeEditorScreen(
             // 提示信息
             message?.let { notice ->
                 Box(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                    NoticeBanner(text = notice, isError = notice.contains("失败") || notice.contains("错误"))
+                    NoticeBanner(text = notice, isError = messageIsError)
                 }
             }
 
@@ -365,6 +376,28 @@ fun CodeEditorScreen(
             },
         )
     }
+
+    // 顶栏「放弃修改」二次确认：撤销全部未保存编辑属于破坏性操作
+    if (showDiscardDialog) {
+        RuntimeAlertDialog(
+            onDismissRequest = { showDiscardDialog = false },
+            title = { Text(stringResource(R.string.workspace_discard_edits_title)) },
+            text = { Text(stringResource(R.string.workspace_discard_edits_message)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDiscardDialog = false
+                        viewModel.resetContent()
+                    },
+                ) { Text(stringResource(R.string.workspace_discard_edits_confirm), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDiscardDialog = false }) {
+                    Text(stringResource(R.string.workspace_keep_editing))
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -415,7 +448,9 @@ private fun EditorStatusBar(
             Surface(
                 shape = RoundedCornerShape(4.dp),
                 color = if (wordWrap) EditorAccent.copy(alpha = 0.2f) else Color.Transparent,
-                modifier = Modifier.clickable(onClick = onToggleWrap),
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .clickable(onClick = onToggleWrap),
             ) {
                 Text(
                     text = stringResource(if (wordWrap) R.string.workspace_word_wrap_on else R.string.workspace_word_wrap_off),

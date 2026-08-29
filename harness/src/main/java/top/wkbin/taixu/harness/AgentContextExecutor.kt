@@ -112,7 +112,7 @@ class AgentContextExecutor @Inject constructor(
                         updatedAt = System.currentTimeMillis(),
                     )
                 )
-                true to "已成功创建/更新任务执行规划：\n目标：$goal\n步骤：$stepsJson"
+                true to "已成功创建/更新任务执行规划：\n目标：$goal\n步骤：$stepsJson\n\n提示：请按规划推进执行。每个步骤完成时调用 plan(action=\"advance\", ...) 更新步骤状态；遇到阻碍时调用 replace_active 调整方案；全部完成时调用 clear_active。"
             }
             "get_active", "get" -> {
                 val plan = agentContextDao.getActivePlan(sessionId)
@@ -135,7 +135,7 @@ class AgentContextExecutor @Inject constructor(
                         updatedAt = System.currentTimeMillis(),
                     )
                 )
-                true to "计划已更新：状态=$newStatus, 步骤=$newStepsJson"
+                true to "【规划进度已同步更新】\n状态：$newStatus\n当前步骤：$newStepsJson\n请继续推进后续任务。"
             }
             "clear_active", "clear" -> {
                 agentContextDao.deletePlanBySession(sessionId)

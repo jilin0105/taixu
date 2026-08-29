@@ -60,7 +60,7 @@
     <string name="chat_quick_start">快捷开始：</string>
     <string name="chat_capability_mount">🧠 快捷挂载专精技能与 MCP 插件</string>
     <string name="chat_enabled_for_request">本轮定向调用</string>
-    <string name="chat_skill_badge">⚡ 技能</string>
+    <string name="chat_skill_badge">技能</string>
     <string name="chat_user_request_clipboard">用户指令</string>
     <string name="chat_request_copied">已复制指令</string>
     <string name="chat_edit_resend">编辑并重发</string>
@@ -81,6 +81,7 @@
     <string name="chat_approve_continue">批准并继续</string>
     <string name="chat_resend_description">重发将移除该消息之后的所有会话记录，并以此指令重新生成回答。</string>
     <string name="chat_send">确认发送</string>
+    <string name="chat_stop_generation">停止生成</string>
     <string name="chat_cancel">取消</string>
     <string name="chat_session_manager">智枢会话管理</string>
     <string name="chat_session_count">%1$d 个会话</string>
@@ -141,10 +142,14 @@
     <string name="chat_reasoning_medium_description">均衡推理，兼顾速度与深度</string>
     <string name="chat_reasoning_high">高推理强度</string>
     <string name="chat_reasoning_high_description">极致深度，复杂架构与逆向分析</string>
+    <string name="chat_reasoning_extreme">极高推理强度</string>
+    <string name="chat_reasoning_extreme_description">极限深度思考，处理终极复杂推理与代码任务</string>
+    <string name="chat_reasoning_model_support_notice">思考强度设置仅在所选模型原生支持思考/推理能力时生效（如 OpenAI o 系列、Claude 3.7 Thinking、DeepSeek-R1、Gemini Thinking 等）。</string>
     <string name="chat_depth_off">关闭</string>
     <string name="chat_depth_light">轻度</string>
     <string name="chat_depth_medium">中度</string>
     <string name="chat_depth_deep">深度</string>
+    <string name="chat_depth_extreme">极度</string>
     <string name="chat_android_check">检查 Android 工程</string>
     <string name="chat_android_check_description">检查 Gradle、Manifest、包名和当前构建环境</string>
     <string name="chat_android_check_prompt">请检查当前 Android 工程结构、Gradle 配置、Manifest、包名和构建环境；发现问题直接编辑文件修复并验证。</string>
@@ -199,6 +204,17 @@
     <string name="chat_runtime_details">运行</string>
     <string name="chat_round_number">第 %1$d 轮</string>
     <string name="chat_event_count">%1$d 条事件</string>
+    <string name="chat_workbench_collapse">收起工作台</string>
+    <string name="chat_workbench_expand">展开工作台</string>
+    <string name="chat_action_convert_to_steer">转为修正</string>
+    <string name="chat_step_chain_summary_fmt">已执行 %1$d 步操作 (%2$s)%3$s</string>
+    <string name="chat_step_chain_running_fmt">正在执行第 %1$d 步：%2$s%3$s</string>
+    <string name="chat_step_chain_title">执行步骤 (%1$d 步)</string>
+    <string name="chat_step_chain_collapse">收起步骤</string>
+    <string name="chat_step_chain_expand">展开步骤</string>
+    <string name="chat_deep_thinking_title">深度思考</string>
+    <string name="chat_menu_capabilities_short">技能与 MCP</string>
+    <string name="chat_menu_reasoning_effort">思考强度</string>
     <string name="chat_branches_title">会话分支</string>
     <string name="chat_branches_description">所有修改、重生成与回退都会保留旧路径。切换不会删除任何消息。</string>
     <string name="chat_no_branches">当前还没有可切换的历史分支</string>
@@ -279,4 +295,125 @@
     <string name="chat_tl_response">响应文本</string>
     <string name="chat_tl_reasoning">思考过程</string>
     <string name="chat_tl_running">执行中…</string>
+    <!-- 顶栏菜单与权限 Snackbar -->
+    <string name="chat_snackbar_grant">去授权</string>
+    <string name="chat_snackbar_got_it">知道了</string>
+    <string name="chat_workbench_menu">智枢工作台菜单</string>
+    <string name="chat_menu_branches">分支调度</string>
+    <string name="chat_menu_main_branch">主线分支</string>
+    <string name="chat_menu_runtime">运行事件与时间线</string>
+    <string name="chat_menu_runtime_subtitle">%1$d 个事件</string>
+    <string name="chat_menu_memory">工作区长期记忆</string>
+    <string name="chat_menu_memory_subtitle">%1$d 条记忆事实</string>
+    <string name="chat_menu_capabilities">专精技能与 MCP</string>
+    <string name="chat_menu_capabilities_subtitle">%1$d 项已激活</string>
+    <string name="chat_menu_approval_mode">审批权限模式</string>
+    <string name="chat_open_session_list">会话列表</string>
+    <string name="chat_new_session_button">新建会话</string>
+    <string name="chat_add_attachment">添加附件</string>
+    <string name="chat_mount_capabilities">挂载能力</string>
+    <string name="chat_reasoning_effort">推理强度</string>
+    <string name="chat_copy_reasoning">复制思考内容</string>
+    <!-- 审批模式选择 -->
+    <string name="chat_approval_mode_hint">控制 Agent 执行 Bash 命令、文件读写及系统操作时的拦截与确认策略：</string>
+    <string name="chat_approval_request_title">询问模式 (安全严谨)</string>
+    <string name="chat_approval_assisted_title">辅助模式 (半自动)</string>
+    <string name="chat_approval_full_access_title">全自动模式 (极速通行)</string>
+    <!-- 能力胶囊与徽章 -->
+    <string name="chat_pinned_badge">常驻</string>
+    <string name="chat_attach_button">挂载</string>
+    <string name="chat_pinned_on">📌 已常驻</string>
+    <string name="chat_pinned_off">📌 设为常驻</string>
+    <string name="chat_mcp_badge">MCP</string>
+    <string name="chat_capability_skill_fmt">Skill: %1$s</string>
+    <string name="chat_capability_mcp_fmt">MCP: %1$s</string>
+    <string name="chat_collapse">收起</string>
+    <string name="chat_expand_more">展开更多 %1$d 步（共 %2$d 步）%3$s</string>
+    <!-- 附件菜单与处理 -->
+    <string name="chat_send_image">发送图片</string>
+    <string name="chat_send_file">发送文件 / 产物</string>
+    <string name="chat_remove_attachment">移除附件</string>
+    <string name="chat_attachment_processing">正在处理附件…</string>
+    <string name="chat_attachment_process_failed">%1$d 个附件处理失败，请重试</string>
+    <!-- 模型表单校验 -->
+    <string name="chat_provider_label">Provider</string>
+    <string name="chat_base_url_invalid">Base URL 需以 http:// 或 https:// 开头</string>
+    <string name="chat_title_required">标题不能为空</string>
+    <string name="chat_model_profile_exists">同名模型档案已存在，已跳过创建</string>
+    <string name="chat_new_session_created">已创建新会话</string>
+    <!-- 破坏性操作二次确认 -->
+    <string name="chat_confirm_delete">确认删除</string>
+    <string name="chat_confirm_clear">确认清空</string>
+    <string name="chat_delete_session">删除会话</string>
+    <string name="chat_delete_model_profile">删除模型档案</string>
+    <string name="chat_rename_session_button">重命名会话</string>
+    <string name="chat_delete_session_title">删除该会话？</string>
+    <string name="chat_delete_session_message">• 将删除该会话的全部消息记录，操作不可恢复</string>
+    <string name="chat_delete_message_title">删除该消息？</string>
+    <string name="chat_delete_message_message">• 将删除该条消息及其之后的会话记录，操作不可恢复</string>
+    <string name="chat_delete_model_title">删除该模型档案？</string>
+    <string name="chat_delete_model_message">• 将删除该供应商档案及其配置，操作不可恢复</string>
+    <string name="chat_clear_scratchpad_title">清空全部草稿？</string>
+    <string name="chat_clear_scratchpad_message">• 将清空当前会话的全部任务草稿，操作不可恢复</string>
+    <string name="chat_delete_memory_title">删除该条记忆？</string>
+    <string name="chat_delete_memory_message">• 模型将不再记住该条记忆事实，操作不可恢复</string>
+    <!-- 工具与 MCP 状态语义 -->
+    <string name="chat_tool_state_running">工具执行中</string>
+    <string name="chat_tool_state_success">工具执行成功</string>
+    <string name="chat_tool_state_failed">工具执行失败</string>
+    <string name="chat_tool_expand_details">展开工具详情</string>
+    <string name="chat_mcp_state_online">MCP 在线</string>
+    <string name="chat_mcp_state_offline">MCP 离线</string>
+    <string name="chat_mcp_state_checking">MCP 检测中</string>
+    <string name="chat_mcp_state_disabled">MCP 已停用</string>
+    <string name="chat_mcp_state_unknown">MCP 状态未知</string>
+    <!-- 工具活动胶囊详情抽屉 -->
+    <string name="chat_tool_detail_title">活动工具执行状态</string>
+    <string name="chat_tool_detail_running">执行中 · %1$s</string>
+    <string name="chat_tool_detail_ready">已就绪</string>
+    <string name="chat_tool_detail_type">工具类型：%1$s</string>
+    <string name="chat_tool_detail_args">参数内容</string>
+    <string name="chat_tool_detail_args_truncated">……（参数过长已截断）</string>
+    <string name="chat_tool_detail_view_raw">查看原始参数</string>
+    <string name="chat_tool_detail_hide_raw">收起原始参数</string>
+    <!-- 代码块与产物 -->
+    <string name="chat_code_badge">代码</string>
+    <string name="chat_artifact_preview">产物预览</string>
+    <string name="chat_artifact_mode_preview">预览</string>
+    <string name="chat_artifact_mode_code">源码</string>
+    <string name="chat_artifact_mode_edit">编辑</string>
+    <string name="chat_artifact_copy">复制</string>
+    <string name="chat_artifact_share">分享</string>
+    <string name="chat_artifact_save">保存修改</string>
+    <string name="chat_artifact_copied">已复制产物全文到剪贴板</string>
+    <string name="chat_artifact_saved">已保存修改</string>
+    <string name="chat_artifact_share_chooser">分享产物：%1$s</string>
+    <!-- 运行详情兜底文案 -->
+    <string name="chat_result_pending">结果生成中，暂无输出</string>
+    <string name="chat_result_empty">（无输出）</string>
+    <!-- 分支切换 -->
+    <string name="chat_branch_busy_hint">执行中，暂不可切换</string>
+    <!-- 子智能体角色标签 -->
+    <string name="chat_subagent_role_researcher">调研</string>
+    <string name="chat_subagent_role_coder">开发</string>
+    <string name="chat_subagent_role_tester">测试</string>
+    <string name="chat_subagent_role_assistant">助手</string>
+    <!-- 轮次锚点栏兜底 -->
+    <string name="chat_turn_fallback">第 %1$d 轮</string>
+
+    <!-- 智枢 AI 悬浮小窗 -->
+    <string name="chat_floating_collapse">小窗收起</string>
+    <string name="chat_floating_window">智枢 AI 悬浮小窗</string>
+    <string name="chat_floating_permission_title">开启悬浮窗权限</string>
+    <string name="chat_floating_permission_message">智枢小窗模式需要在其他应用上层显示，以便您在切换至桌面或其他应用时，仍可随时与 AI 智能体对话、查看实时思考过程与执行结果。</string>
+    <string name="chat_floating_permission_grant">前往开启</string>
+    <string name="chat_floating_permission_cancel">暂不开启</string>
+    <string name="chat_floating_restore_app">回到智枢</string>
+    <string name="chat_floating_input_hint">向智枢发送指令…</string>
+    <string name="chat_floating_send">发送</string>
+    <string name="chat_floating_stop">停止</string>
+    <string name="chat_floating_close">关闭小窗</string>
+    <string name="chat_floating_idle">就绪</string>
+    <string name="chat_floating_thinking">🧠 思考中…</string>
+    <string name="chat_floating_running">⚡ 执行中…</string>
 </resources>

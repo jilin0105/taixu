@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -20,15 +21,16 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
+import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -56,9 +58,14 @@ import top.wkbin.taixu.harness.session.ConversationBranchKind
 import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
+import androidx.compose.animation.animateContentSize
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.BorderStroke
 
 @Composable
-internal fun ChatWorkbenchStrip(
+internal fun CollapsibleChatWorkbenchStrip(
     currentBranch: ConversationBranch?,
     runtimeEvents: List<HarnessEvent>,
     running: Boolean,
@@ -67,44 +74,137 @@ internal fun ChatWorkbenchStrip(
     onOpenBranches: () -> Unit,
     onOpenRuntime: () -> Unit,
     onOpenMemory: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
+    var expanded by rememberSaveable { mutableStateOf(true) }
     val activeRound = runtimeEvents.filterIsInstance<HarnessEvent.ProviderRoundStarted>().lastOrNull()?.round
+
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-        shape = RoundedCornerShape(14.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(bottom = 2.dp)
+            .animateContentSize(),
+        shape = RoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            WorkspacePill(
-                icon = RuntimeIconName.Hub,
-                title = stringResource(R.string.chat_branch_pill_title),
-                subtitle = currentBranch?.name ?: stringResource(R.string.chat_main_line),
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.weight(1f),
-                onClick = onOpenBranches,
-            )
-            WorkspacePill(
-                icon = RuntimeIconName.Logs,
-                title = stringResource(R.string.chat_runtime_details),
-                subtitle = activeRound?.let { stringResource(R.string.chat_round_number, it + 1) }
-                    ?: stringResource(R.string.chat_event_count, runtimeEvents.size),
-                tint = if (running) Color(0xFF7C4DFF) else MaterialTheme.colorScheme.tertiary,
-                highlight = running,
-                modifier = Modifier.weight(1f),
-                onClick = onOpenRuntime,
-            )
-            WorkspacePill(
-                icon = RuntimeIconName.Brain,
-                title = stringResource(R.string.chat_memory_pill_title),
-                subtitle = stringResource(R.string.chat_memory_pill_subtitle, memoryCount, scratchpadCount),
-                tint = MaterialTheme.colorScheme.secondary,
-                modifier = Modifier.weight(1f),
-                onClick = onOpenMemory,
-            )
+        if (expanded) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    WorkspacePill(
+                        icon = RuntimeIconName.Hub,
+                        title = stringResource(R.string.chat_branch_pill_title),
+                        subtitle = currentBranch?.name ?: stringResource(R.string.chat_main_line),
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f),
+                        onClick = onOpenBranches,
+                    )
+                    WorkspacePill(
+                        icon = RuntimeIconName.Logs,
+                        title = stringResource(R.string.chat_runtime_details),
+                        subtitle = activeRound?.let { stringResource(R.string.chat_round_number, it + 1) }
+                            ?: stringResource(R.string.chat_event_count, runtimeEvents.size),
+                        tint = if (running) Color(0xFF7C4DFF) else MaterialTheme.colorScheme.tertiary,
+                        highlight = running,
+                        modifier = Modifier.weight(1f),
+                        onClick = onOpenRuntime,
+                    )
+                    WorkspacePill(
+                        icon = RuntimeIconName.Brain,
+                        title = stringResource(R.string.chat_memory_pill_title),
+                        subtitle = stringResource(R.string.chat_memory_pill_subtitle, memoryCount, scratchpadCount),
+                        tint = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.weight(1f),
+                        onClick = onOpenMemory,
+                    )
+                }
+                // 向顶部收起把手
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 1.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .clickable { expanded = false },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    RuntimeIcon(
+                        name = RuntimeIconName.ChevronUp,
+                        modifier = Modifier.size(10.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                    )
+                }
+            }
+        } else {
+            // 收起态：极简状态栏，点击展开
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { expanded = true }
+                    .padding(horizontal = 8.dp, vertical = 2.5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        RuntimeIcon(RuntimeIconName.Hub, Modifier.size(11.dp), MaterialTheme.colorScheme.primary)
+                        Text(
+                            currentBranch?.name ?: stringResource(R.string.chat_main_line),
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Text("·", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outlineVariant)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        RuntimeIcon(RuntimeIconName.Logs, Modifier.size(11.dp), if (running) Color(0xFF7C4DFF) else MaterialTheme.colorScheme.tertiary)
+                        Text(
+                            activeRound?.let { stringResource(R.string.chat_round_number, it + 1) }
+                                ?: stringResource(R.string.chat_event_count, runtimeEvents.size),
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
+                    Text("·", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outlineVariant)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        RuntimeIcon(RuntimeIconName.Brain, Modifier.size(11.dp), MaterialTheme.colorScheme.secondary)
+                        Text(
+                            stringResource(R.string.chat_memory_pill_subtitle, memoryCount, scratchpadCount),
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
+                }
+                RuntimeIcon(
+                    name = RuntimeIconName.ChevronDown,
+                    modifier = Modifier.size(11.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -122,29 +222,27 @@ private fun WorkspacePill(
     Surface(
         modifier = modifier.clickable(onClick = onClick),
         color = tint.copy(alpha = if (highlight) 0.16f else 0.09f),
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(8.dp),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            RuntimeIcon(icon, Modifier.size(15.dp), tint)
+            RuntimeIcon(icon, Modifier.size(13.dp), tint)
             Column(Modifier.weight(1f)) {
                 Text(
                     title,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     subtitle,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
             }
             RuntimeIcon(RuntimeIconName.ChevronRight, Modifier.size(13.dp), MaterialTheme.colorScheme.onSurfaceVariant)
@@ -160,7 +258,10 @@ internal fun BranchBrowserSheet(
     onDismiss: () -> Unit,
     onSwitch: (ConversationBranch) -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
             Text(stringResource(R.string.chat_branches_title), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Text(
@@ -235,6 +336,14 @@ private fun BranchCard(branch: ConversationBranch, enabled: Boolean, onClick: ()
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (branch.isBusy) {
+                    // 低优先级修复：running 禁用需给出解释，否则用户不知道为何点不动
+                    Text(
+                        stringResource(R.string.chat_branch_busy_hint),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tint,
+                    )
+                }
                 Text(
                     stringResource(R.string.chat_branch_records, branch.depth) + " · " + stringResource(R.string.chat_branch_tool_calls, branch.toolCallCount),
                     style = MaterialTheme.typography.labelSmall,
@@ -260,7 +369,10 @@ internal fun RuntimeTimelineSheet(
     messages: List<top.wkbin.taixu.harness.HarnessMessage>,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
             Text(stringResource(R.string.chat_runtime_title), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Text(
@@ -568,7 +680,8 @@ private fun ToolExpandContent(entry: TimelineEntry.Tool) {
         val result = entry.result
         PayloadBox(
             stringResource(R.string.chat_tl_result),
-            result?.output?.ifBlank { "（无输出）" } ?: "结果尚未写入投影",
+            result?.output?.ifBlank { stringResource(R.string.chat_result_empty) }
+                ?: stringResource(R.string.chat_result_pending),
         )
     }
 }
@@ -767,7 +880,7 @@ private fun ComposerModeChip(
     val active = target == selected
     Surface(
         onClick = { onModeChange(target) },
-        modifier = modifier,
+        modifier = modifier.minimumInteractiveComponentSize(),
         shape = RoundedCornerShape(8.dp),
         color = if (active) tint.copy(alpha = 0.16f) else Color.Transparent,
     ) {
@@ -794,7 +907,12 @@ private fun ComposerModeChip(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun QueuedPromptStack(prompts: List<QueuedPrompt>, onRemove: (QueuedPrompt) -> Unit) {
+internal fun QueuedPromptStack(
+    prompts: List<QueuedPrompt>,
+    onEdit: (QueuedPrompt) -> Unit,
+    onRemove: (QueuedPrompt) -> Unit,
+    onConvertToSteer: ((QueuedPrompt) -> Unit)? = null,
+) {
     if (prompts.isEmpty()) return
     Column(Modifier.fillMaxWidth().padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
         prompts.forEach { prompt ->
@@ -819,7 +937,42 @@ internal fun QueuedPromptStack(prompts: List<QueuedPrompt>, onRemove: (QueuedPro
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
-                    Surface(onClick = { onRemove(prompt) }, color = Color.Transparent, shape = CircleShape) {
+                    // 若当前消息处于排队状态，支持一键转为修正指令
+                    if (prompt.queue == PromptQueue.NEXT_RUN && onConvertToSteer != null) {
+                        Surface(
+                            onClick = { onConvertToSteer(prompt) },
+                            color = Color(0xFF7C4DFF).copy(alpha = 0.14f),
+                            shape = RoundedCornerShape(6.dp),
+                            border = BorderStroke(0.8.dp, Color(0xFF7C4DFF).copy(alpha = 0.4f)),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                            ) {
+                                RuntimeIcon(RuntimeIconName.Tune, Modifier.size(11.dp), Color(0xFF7C4DFF))
+                                Text(
+                                    stringResource(R.string.chat_label_steer),
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
+                                    color = Color(0xFF7C4DFF),
+                                )
+                            }
+                        }
+                    }
+                    Surface(
+                        onClick = { onEdit(prompt) },
+                        color = Color.Transparent,
+                        shape = CircleShape,
+                        modifier = Modifier.minimumInteractiveComponentSize(),
+                    ) {
+                        RuntimeIcon(RuntimeIconName.Edit, Modifier.padding(3.dp).size(14.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Surface(
+                        onClick = { onRemove(prompt) },
+                        color = Color.Transparent,
+                        shape = CircleShape,
+                        modifier = Modifier.minimumInteractiveComponentSize(),
+                    ) {
                         RuntimeIcon(RuntimeIconName.Close, Modifier.padding(3.dp).size(14.dp), MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -832,12 +985,16 @@ internal fun QueuedPromptStack(prompts: List<QueuedPrompt>, onRemove: (QueuedPro
 internal fun CreateBranchDialog(messageId: String, onDismiss: () -> Unit, onCreate: (String, String) -> Unit) {
     var name by remember { mutableStateOf("") }
     val defaultName = stringResource(R.string.chat_branch_default_name)
-    AlertDialog(
+    RuntimeAlertDialog(
         onDismissRequest = onDismiss,
-        icon = { RuntimeIcon(RuntimeIconName.Hub, Modifier.size(24.dp), MaterialTheme.colorScheme.primary) },
         title = { Text(stringResource(R.string.chat_create_branch)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Text(stringResource(R.string.chat_create_branch_description), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(
                     value = name,
@@ -845,6 +1002,7 @@ internal fun CreateBranchDialog(messageId: String, onDismiss: () -> Unit, onCrea
                     label = { Text(stringResource(R.string.chat_branch_name)) },
                     placeholder = { Text(stringResource(R.string.chat_branch_name_placeholder)) },
                     singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         },

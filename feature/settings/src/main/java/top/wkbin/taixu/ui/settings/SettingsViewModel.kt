@@ -12,6 +12,8 @@ import top.wkbin.taixu.core.database.McpServerRepository
 import top.wkbin.taixu.core.database.StorageMountBindingRepository
 import top.wkbin.taixu.core.tools.ProviderRepository
 import top.wkbin.taixu.core.tools.ToolManager
+import top.wkbin.taixu.core.tools.AiProfileWriter
+import top.wkbin.taixu.core.tools.AiProfileBackupCodec
 import top.wkbin.taixu.core.tools.AgentModelDiscovery
 import top.wkbin.taixu.core.tools.AgentProviderCatalog
 import top.wkbin.taixu.core.tools.AgentModelConnectionTester
@@ -27,7 +29,6 @@ import top.wkbin.taixu.runtime.privilege.PrivilegeManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -43,15 +44,12 @@ import java.util.UUID
 import java.util.zip.ZipInputStream
 import java.io.BufferedOutputStream
 import top.wkbin.taixu.core.model.AiModelProfileExport
-import top.wkbin.taixu.core.model.AiModelProfileBundle
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
 
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val application: Application,
+    private val logger: top.wkbin.taixu.core.common.logging.AppLogger,
     private val settingsDataStore: SettingsDataStore,
     private val providerRepository: ProviderRepository,
     private val aiModelDao: AiModelRepository,
@@ -69,8 +67,11 @@ class SettingsViewModel @Inject constructor(
     private val mcpServerRepository: McpServerRepository,
     private val storageMountBindingRepository: StorageMountBindingRepository,
     private val approvalRepository: top.wkbin.taixu.core.database.AgentApprovalRepository,
+    private val sessionDao: top.wkbin.taixu.core.database.HarnessSessionRepository,
     private val toolManager: ToolManager,
     private val quickPhraseRepository: top.wkbin.taixu.core.database.QuickPhraseRepository,
+    private val profileWriter: AiProfileWriter,
+    private val profileBackupCodec: AiProfileBackupCodec,
     private val webChatBridgeServer: top.wkbin.taixu.runtime.webchat.WebChatBridgeServer? = null,
 ) : ViewModel() {
     val installedDistros = linuxRuntime.installedDistros
@@ -231,6 +232,11 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settingsDataStore.setAutoCheckUpdates(enabled) }
     }
 
+    /** 清空全部首次使用引导标记，下次进入相应页面会重新展示引导遮罩。 */
+    fun replayFirstUseGuides() {
+        viewModelScope.launch { settingsDataStore.clearFirstUseGuides() }
+    }
+
     fun checkForUpdates(currentVersion: String) {
         viewModelScope.launch {
             _updateCheckState.value = top.wkbin.taixu.core.model.UpdateCheckState.Checking
@@ -277,17 +283,48 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun installDistro(
-        request: top.wkbin.taixu.runtime.RuntimeInstallRequest,
-        onProgress: suspend (top.wkbin.taixu.runtime.DownloadProgress) -> Unit,
-        onResult: (Boolean, String) -> Unit,
-    ) {
+    /** 发行版安装进度（保存在 VM 内，旋转后进度界面可恢复；安装在后台继续进行）。 */
+    data class DistroInstallUiState(
+        val isInstalling: Boolean = false,
+        val progressText: String? = null,
+        val progressFraction: Float = 0f,
+        val errorMessage: String? = null,
+    )
+
+    private val _distroInstallState = MutableStateFlow(DistroInstallUiState())
+    val distroInstallState: StateFlow<DistroInstallUiState> = _distroInstallState.asStateFlow()
+
+    fun clearDistroInstallError() {
+        _distroInstallState.value = _distroInstallState.value.copy(errorMessage = null)
+    }
+
+    fun installDistro(request: top.wkbin.taixu.runtime.RuntimeInstallRequest) {
+        if (_distroInstallState.value.isInstalling) return
         viewModelScope.launch {
-            val res = linuxRuntime.installDistro(request, onProgress)
+            _distroInstallState.value = DistroInstallUiState(
+                isInstalling = true,
+                progressText = "准备拉取镜像...",
+                progressFraction = 0.05f,
+            )
+            val res = linuxRuntime.installDistro(request) { p ->
+                _distroInstallState.value = _distroInstallState.value.copy(
+                    progressText = if (p.totalMegabytes != null) {
+                        "下载中：${p.downloadedMegabytes} / ${p.totalMegabytes} MB"
+                    } else {
+                        "已下载：${p.downloadedMegabytes} MB"
+                    },
+                    progressFraction = (p.fraction ?: 0f) * 0.8f + 0.1f,
+                )
+            }
             if (res is top.wkbin.taixu.core.common.result.AppResult.Success) {
-                onResult(true, "安装成功")
+                // 安装成功：重置进度状态，UI 据此关闭安装弹窗
+                _distroInstallState.value = DistroInstallUiState()
             } else {
-                onResult(false, res.errorOrNull()?.message ?: "安装失败")
+                res.errorOrNull()?.let { logger.e("Distro install failed: ${it.message}", it.cause) }
+                _distroInstallState.value = _distroInstallState.value.copy(
+                    isInstalling = false,
+                    errorMessage = "安装失败，请检查网络与存储空间后重试",
+                )
             }
         }
     }
@@ -307,7 +344,8 @@ class SettingsViewModel @Inject constructor(
             if (res is top.wkbin.taixu.core.common.result.AppResult.Success) {
                 onResult?.invoke(true, "已恢复初始状态")
             } else {
-                onResult?.invoke(false, res.errorOrNull()?.message ?: "重置失败")
+                res.errorOrNull()?.let { logger.e("Distro reset failed: ${it.message}", it.cause) }
+                onResult?.invoke(false, "重置沙箱失败，请稍后重试")
             }
         }
     }
@@ -324,7 +362,8 @@ class SettingsViewModel @Inject constructor(
             if (res is top.wkbin.taixu.core.common.result.AppResult.Success) {
                 onResult?.invoke(true, "系统已成功删除")
             } else {
-                onResult?.invoke(false, res.errorOrNull()?.message ?: "删除失败")
+                res.errorOrNull()?.let { logger.e("Distro uninstall failed: ${it.message}", it.cause) }
+                onResult?.invoke(false, "删除系统失败，请稍后重试")
             }
         }
     }
@@ -534,6 +573,10 @@ class SettingsViewModel @Inject constructor(
     private val _skillArchiveMessage = MutableStateFlow<String?>(null)
     val skillArchiveMessage: StateFlow<String?> = _skillArchiveMessage.asStateFlow()
 
+    /** Skill 归档导入结果是否失败（类型化标记，避免 UI 用字符串匹配判断样式）。 */
+    private val _skillArchiveMessageIsError = MutableStateFlow(false)
+    val skillArchiveMessageIsError: StateFlow<Boolean> = _skillArchiveMessageIsError.asStateFlow()
+
     val autoSubagentDelegationEnabled: StateFlow<Boolean> = subagentRepository.autoDelegationEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
@@ -572,7 +615,12 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun setApprovalMode(mode: top.wkbin.taixu.core.model.ApprovalMode) {
-        viewModelScope.launch { approvalRepository.setMode(mode) }
+        viewModelScope.launch {
+            approvalRepository.setMode(mode)
+            // 会话创建时快照了当时的全局模式；全局改动必须传导到已有会话，
+            // 否则执行层（ToolExecutor 优先读会话模式）仍按旧模式要求审批。
+            sessionDao.setApprovalModeForAll(mode.id, System.currentTimeMillis())
+        }
     }
 
     fun setContextBudgetTokens(value: Int) {
@@ -675,9 +723,11 @@ class SettingsViewModel @Inject constructor(
                 val guestPath = "/attachments/skills/$id"
                 val prompt = markdown + "\n\n【Skill 资源目录】$guestPath\n如需执行该 Skill 附带的脚本，请先检查脚本内容与参数，再从此目录调用。"
                 agentSkillRepository.addCustom(top.wkbin.taixu.core.model.AgentSkill(id, skillName, description, prompt, isBuiltin = false, category = "自定义", resourcePath = target.absolutePath))
+                _skillArchiveMessageIsError.value = false
                 _skillArchiveMessage.value = "Skill“$skillName”导入成功，脚本资源位于 $guestPath"
             }.onFailure { error ->
                 target?.let(::deleteOwnedSkillDirectory)
+                _skillArchiveMessageIsError.value = true
                 _skillArchiveMessage.value = error.message ?: "Skill 压缩包导入失败"
             }
         }
@@ -685,6 +735,7 @@ class SettingsViewModel @Inject constructor(
 
     fun clearSkillArchiveMessage() {
         _skillArchiveMessage.value = null
+        _skillArchiveMessageIsError.value = false
     }
 
     private fun deleteOwnedSkillDirectory(directory: File) {
@@ -815,7 +866,7 @@ class SettingsViewModel @Inject constructor(
         _modelDiscoveryError.value = null
         _discoveredModels.value = emptyList()
         viewModelScope.launch {
-            val discoveryKey = parseApiKeys(apiKey).firstOrNull() ?: providerRepository.readApiKey()
+            val discoveryKey = profileWriter.parseApiKeys(apiKey).firstOrNull() ?: providerRepository.readApiKey()
             // 对于要求 API Key 的服务商，空 key 不发请求，直接给出友好提示
             if (!provider.apiKeyOptional && discoveryKey.isNullOrBlank()) {
                 _modelDiscoveryError.value = "该服务商需要 API Key 才能获取模型列表，请先填写 API Key 后再刷新"
@@ -827,7 +878,10 @@ class SettingsViewModel @Inject constructor(
                     _discoveredModels.value = models
                     if (models.isEmpty()) _modelDiscoveryError.value = "端点未返回可用的 Agent 模型"
                 }
-                .onFailure { _modelDiscoveryError.value = it.message ?: "模型发现失败" }
+                .onFailure {
+                    logger.w("Model discovery failed: ${it.message}", it)
+                    _modelDiscoveryError.value = "获取模型列表失败，请检查 Base URL、API Key 与网络后重试"
+                }
             _discoveringModels.value = false
         }
     }
@@ -841,9 +895,12 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             _testingConnection.value = true
             _connectionResult.value = null
-            runCatching { connectionTester.test(baseUrl, model, parseApiKeys(apiKey).firstOrNull()) }
+            runCatching { connectionTester.test(baseUrl, model, profileWriter.parseApiKeys(apiKey).firstOrNull()) }
                 .onSuccess { _connectionResult.value = "连接成功" }
-                .onFailure { _connectionResult.value = it.message ?: "连接失败" }
+                .onFailure {
+                    logger.w("Connection test failed: ${it.message}", it)
+                    _connectionResult.value = "连接失败，请检查接口地址、密钥与网络后重试"
+                }
             _testingConnection.value = false
         }
     }
@@ -883,39 +940,28 @@ class SettingsViewModel @Inject constructor(
         responseApiEnabled: Boolean = false,
     ) {
         viewModelScope.launch {
-            val existing = aiModelDao.observeAll().first()
-            val old: AiModelEntity? = if (id == null) null else aiModelDao.findById(id)
-            val modelId = id ?: java.util.UUID.randomUUID().toString()
-            val secretRef = old?.secretRef?.takeIf { it.isNotBlank() } ?: "model_${modelId.replace("-", "")}"
-            val submittedKeys = parseApiKeys(apiKey)
-            val existingKeys = old?.let { providerRepository.readModelApiKeys(secretRef) }.orEmpty()
-            if (existing.none { it.isActive } || old?.isActive == true) aiModelDao.clearActive()
-            aiModelDao.upsert(
-                AiModelEntity(
-                    id = modelId,
-                    name = name.trim(),
-                    provider = provider.trim(),
-                    model = model.trim(),
-                    baseUrl = baseUrl.trim(),
-                    secretRef = secretRef,
-                    isActive = old?.isActive ?: existing.none { it.isActive },
-                    createdAt = old?.createdAt ?: System.currentTimeMillis(),
+            profileWriter.upsertProfile(
+                AiProfileWriter.UpsertRequest(
+                    id = id,
+                    name = name,
+                    provider = provider,
+                    model = model,
+                    baseUrl = baseUrl,
+                    apiKey = apiKey,
+                    requestsPerMinutePerKey = requestsPerMinutePerKey,
                     temperature = temperature,
                     maxTokens = maxTokens,
                     topP = topP,
-                    reasoningMode = reasoningMode?.ifBlank { null },
-                    reasoningEffort = reasoningEffort?.ifBlank { null },
-                    toolCallMode = toolCallMode?.ifBlank { null },
+                    reasoningMode = reasoningMode,
+                    reasoningEffort = reasoningEffort,
+                    toolCallMode = toolCallMode,
                     contextTokens = contextTokens,
-                    customHeaders = customHeaders.trim(),
+                    customHeaders = customHeaders,
                     pureChatMode = pureChatMode,
                     visionEnabled = visionEnabled,
                     responseApiEnabled = responseApiEnabled,
-                    apiKeyCount = submittedKeys.ifEmpty { existingKeys }.size,
-                    requestsPerMinutePerKey = requestsPerMinutePerKey.coerceAtLeast(0),
                 ),
             )
-            if (submittedKeys.isNotEmpty()) providerRepository.setModelApiKeys(secretRef, submittedKeys)
         }
     }
 
@@ -940,59 +986,38 @@ class SettingsViewModel @Inject constructor(
         responseApiEnabled: Boolean = false,
     ) {
         viewModelScope.launch {
-            val existing = aiModelDao.observeAll().first()
-            val old: AiModelEntity? = if (id == null) null else aiModelDao.findById(id)
-            val modelId = id ?: java.util.UUID.randomUUID().toString()
-            val secretRef = old?.secretRef?.takeIf { it.isNotBlank() } ?: "model_${modelId.replace("-", "")}"
-            val submittedKeys = parseApiKeys(apiKey)
-            val existingKeys = old?.let { providerRepository.readModelApiKeys(secretRef) }.orEmpty()
-            if (existing.none { it.isActive } || old?.isActive == true) aiModelDao.clearActive()
-
             val cleanModels = models.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
-            val modelString = cleanModels.joinToString(", ")
             val profileName = name.trim().ifBlank {
                 if (cleanModels.size == 1) cleanModels.first() else provider.trim()
             }
-
-            aiModelDao.upsert(
-                AiModelEntity(
-                    id = modelId,
+            profileWriter.upsertProfile(
+                AiProfileWriter.UpsertRequest(
+                    id = id,
                     name = profileName,
-                    provider = provider.trim(),
-                    model = modelString,
-                    baseUrl = baseUrl.trim(),
-                    secretRef = secretRef,
-                    isActive = old?.isActive ?: existing.none { it.isActive },
-                    createdAt = old?.createdAt ?: System.currentTimeMillis(),
+                    provider = provider,
+                    model = cleanModels.joinToString(", "),
+                    baseUrl = baseUrl,
+                    apiKey = apiKey,
+                    requestsPerMinutePerKey = requestsPerMinutePerKey,
                     temperature = temperature,
                     maxTokens = maxTokens,
                     topP = topP,
-                    reasoningMode = reasoningMode?.ifBlank { null },
-                    reasoningEffort = reasoningEffort?.ifBlank { null },
-                    toolCallMode = toolCallMode?.ifBlank { null },
+                    reasoningMode = reasoningMode,
+                    reasoningEffort = reasoningEffort,
+                    toolCallMode = toolCallMode,
                     contextTokens = contextTokens,
-                    customHeaders = customHeaders.trim(),
+                    customHeaders = customHeaders,
                     pureChatMode = pureChatMode,
                     visionEnabled = visionEnabled,
                     responseApiEnabled = responseApiEnabled,
-                    apiKeyCount = submittedKeys.ifEmpty { existingKeys }.size,
-                    requestsPerMinutePerKey = requestsPerMinutePerKey.coerceAtLeast(0),
                 ),
             )
-            if (submittedKeys.isNotEmpty()) providerRepository.setModelApiKeys(secretRef, submittedKeys)
         }
     }
 
     suspend fun readModelApiKey(secretRef: String): String {
         return providerRepository.readModelApiKeys(secretRef).joinToString("\n")
     }
-
-    private fun parseApiKeys(raw: String): List<String> = raw
-        .lineSequence()
-        .map(String::trim)
-        .filter(String::isNotEmpty)
-        .distinct()
-        .toList()
 
     fun setActiveModel(id: String) {
         viewModelScope.launch {
@@ -1003,173 +1028,21 @@ class SettingsViewModel @Inject constructor(
 
     fun deleteModel(id: String) {
         viewModelScope.launch {
-            aiModelDao.findById(id)?.secretRef?.takeIf { it.isNotBlank() }?.let { providerRepository.removeModelApiKey(it) }
-            aiModelDao.delete(id)
+            profileWriter.deleteProfile(id)
         }
     }
 
-    private val modelProfileJson = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-        isLenient = true
-        coerceInputValues = true
-    }
+    suspend fun exportAllProfilesJson(includeApiKeys: Boolean): String =
+        profileBackupCodec.exportAll(includeApiKeys)
 
-    suspend fun exportAllProfilesJson(includeApiKeys: Boolean): String {
-        val models = aiModelDao.observeAll().first()
-        val exports = models.map { entity ->
-            val keys = if (includeApiKeys && entity.secretRef.isNotBlank()) {
-                providerRepository.readModelApiKeys(entity.secretRef)
-            } else {
-                emptyList()
-            }
-            AiModelProfileExport(
-                id = entity.id,
-                name = entity.name,
-                provider = entity.provider,
-                model = entity.model,
-                baseUrl = entity.baseUrl,
-                apiKeys = keys,
-                apiKey = keys.firstOrNull(),
-                requestsPerMinutePerKey = entity.requestsPerMinutePerKey,
-                temperature = entity.temperature,
-                maxTokens = entity.maxTokens,
-                topP = entity.topP,
-                reasoningMode = entity.reasoningMode,
-                reasoningEffort = entity.reasoningEffort,
-                toolCallMode = entity.toolCallMode,
-                contextTokens = entity.contextTokens,
-                customHeaders = entity.customHeaders,
-                pureChatMode = entity.pureChatMode,
-                visionEnabled = entity.visionEnabled,
-                responseApiEnabled = entity.responseApiEnabled,
-            )
-        }
-        val bundle = AiModelProfileBundle(
-            schemaVersion = 1,
-            exportedAt = System.currentTimeMillis(),
-            source = "TaiXu",
-            profiles = exports,
-        )
-        return modelProfileJson.encodeToString(bundle)
-    }
+    suspend fun exportSingleProfileJson(modelId: String, includeApiKeys: Boolean): String? =
+        profileBackupCodec.exportSingle(modelId, includeApiKeys)
 
-    suspend fun exportSingleProfileJson(modelId: String, includeApiKeys: Boolean): String? {
-        val entity = aiModelDao.findById(modelId) ?: return null
-        val keys = if (includeApiKeys && entity.secretRef.isNotBlank()) {
-            providerRepository.readModelApiKeys(entity.secretRef)
-        } else {
-            emptyList()
-        }
-        val export = AiModelProfileExport(
-            id = entity.id,
-            name = entity.name,
-            provider = entity.provider,
-            model = entity.model,
-            baseUrl = entity.baseUrl,
-            apiKeys = keys,
-            apiKey = keys.firstOrNull(),
-            requestsPerMinutePerKey = entity.requestsPerMinutePerKey,
-            temperature = entity.temperature,
-            maxTokens = entity.maxTokens,
-            topP = entity.topP,
-            reasoningMode = entity.reasoningMode,
-            reasoningEffort = entity.reasoningEffort,
-            toolCallMode = entity.toolCallMode,
-            contextTokens = entity.contextTokens,
-            customHeaders = entity.customHeaders,
-            pureChatMode = entity.pureChatMode,
-            visionEnabled = entity.visionEnabled,
-            responseApiEnabled = entity.responseApiEnabled,
-        )
-        return modelProfileJson.encodeToString(export)
-    }
+    fun parseProfilesFromJson(rawJson: String): Result<List<AiModelProfileExport>> =
+        profileBackupCodec.parseProfiles(rawJson)
 
-    fun parseProfilesFromJson(rawJson: String): Result<List<AiModelProfileExport>> {
-        val trimmed = rawJson.trim()
-        if (trimmed.isBlank()) return Result.failure(IllegalArgumentException("导入内容为空"))
-        return runCatching {
-            when {
-                trimmed.startsWith("{") -> {
-                    val bundleResult = runCatching { modelProfileJson.decodeFromString<AiModelProfileBundle>(trimmed) }
-                    if (bundleResult.isSuccess && bundleResult.getOrThrow().profiles.isNotEmpty()) {
-                        bundleResult.getOrThrow().profiles
-                    } else {
-                        val single = modelProfileJson.decodeFromString<AiModelProfileExport>(trimmed)
-                        listOf(single)
-                    }
-                }
-                trimmed.startsWith("[") -> {
-                    modelProfileJson.decodeFromString<List<AiModelProfileExport>>(trimmed)
-                }
-                else -> throw IllegalArgumentException("JSON 格式无效，内容必须以 { 或 [ 开头")
-            }
-        }
-    }
-
-    suspend fun importProfilesFromJson(rawJson: String): Result<Int> {
-        val parseResult = parseProfilesFromJson(rawJson)
-        if (parseResult.isFailure) return Result.failure(parseResult.exceptionOrNull() ?: RuntimeException("JSON 解析失败"))
-        val profiles = parseResult.getOrThrow()
-        if (profiles.isEmpty()) return Result.failure(IllegalArgumentException("未检测到有效的模型档案配置"))
-
-        val existing = aiModelDao.observeAll().first()
-        var importedCount = 0
-
-        for (profile in profiles) {
-            val modelStr = profile.model.trim()
-            val providerStr = profile.provider.trim().ifBlank { "Custom" }
-            if (modelStr.isBlank() && profile.name.isBlank()) continue
-
-            val modelId = profile.id?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
-            val secretRef = "model_${modelId.replace("-", "")}"
-            val keys = (profile.apiKeys + listOfNotNull(profile.apiKey))
-                .flatMap { it.lineSequence() }
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-                .distinct()
-
-            val nameStr = profile.name.trim().ifBlank {
-                val firstModel = modelStr.split(",").firstOrNull()?.trim().orEmpty()
-                firstModel.ifBlank { providerStr }
-            }
-
-            aiModelDao.upsert(
-                AiModelEntity(
-                    id = modelId,
-                    name = nameStr,
-                    provider = providerStr,
-                    model = modelStr.ifBlank { nameStr },
-                    baseUrl = profile.baseUrl.trim(),
-                    secretRef = secretRef,
-                    isActive = existing.none { it.isActive } && importedCount == 0,
-                    createdAt = System.currentTimeMillis() + importedCount,
-                    temperature = profile.temperature,
-                    maxTokens = profile.maxTokens,
-                    topP = profile.topP,
-                    reasoningMode = profile.reasoningMode?.ifBlank { null },
-                    reasoningEffort = profile.reasoningEffort?.ifBlank { null },
-                    toolCallMode = profile.toolCallMode?.ifBlank { null },
-                    contextTokens = profile.contextTokens,
-                    customHeaders = profile.customHeaders.trim(),
-                    pureChatMode = profile.pureChatMode,
-                    visionEnabled = profile.visionEnabled,
-                    responseApiEnabled = profile.responseApiEnabled,
-                    apiKeyCount = keys.size,
-                    requestsPerMinutePerKey = profile.requestsPerMinutePerKey.coerceAtLeast(0),
-                )
-            )
-
-            if (keys.isNotEmpty()) {
-                providerRepository.setModelApiKeys(secretRef, keys)
-            }
-            importedCount++
-        }
-
-        return if (importedCount > 0) Result.success(importedCount)
-        else Result.failure(IllegalArgumentException("未解析到任何有效模型"))
-    }
+    suspend fun importProfilesFromJson(rawJson: String): Result<Int> =
+        profileBackupCodec.importProfiles(rawJson)
 
 
     // ---- 宿主与沙箱存储挂载配置 (PRoot -b) ----

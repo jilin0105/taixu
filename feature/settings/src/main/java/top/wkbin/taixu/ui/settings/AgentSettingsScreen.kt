@@ -24,8 +24,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import top.wkbin.taixu.ui.components.RuntimeButton as Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.material3.FilterChip
@@ -52,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -96,12 +95,14 @@ fun AgentSettingsScreen(
     val autoSubagentDelegation by viewModel.autoSubagentDelegationEnabled.collectAsStateWithLifecycle()
     val plugins by viewModel.allPlugins.collectAsStateWithLifecycle()
     val skillArchiveMessage by viewModel.skillArchiveMessage.collectAsStateWithLifecycle()
+    val skillArchiveMessageIsError by viewModel.skillArchiveMessageIsError.collectAsStateWithLifecycle()
 
     var showAddSkillDialog by remember { mutableStateOf(false) }
     var viewingSkillPrompt by remember { mutableStateOf<AgentSkill?>(null) }
     var editingSubagent by remember { mutableStateOf<AgentSubagent?>(null) }
     var showSubagentDialog by remember { mutableStateOf(false) }
     var deletingSubagent by remember { mutableStateOf<AgentSubagent?>(null) }
+    var deletingSkill by remember { mutableStateOf<AgentSkill?>(null) }
     val skillArchivePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(viewModel::importSkillArchive) }
 
     Scaffold(
@@ -356,7 +357,7 @@ fun AgentSettingsScreen(
                     skill = skill,
                     onToggle = { enabled -> viewModel.toggleSkill(skill.id, enabled) },
                     onViewPrompt = { viewingSkillPrompt = skill },
-                    onDelete = if (!skill.isBuiltin) { { viewModel.deleteCustomSkill(skill.id) } } else null,
+                    onDelete = if (!skill.isBuiltin) { { deletingSkill = skill } } else null,
                 )
             }
 
@@ -386,7 +387,7 @@ fun AgentSettingsScreen(
     skillArchiveMessage?.let { message ->
         RuntimeAlertDialog(
             onDismissRequest = viewModel::clearSkillArchiveMessage,
-            title = { Text(if (message.contains("成功")) "Skill 导入完成" else "Skill 导入失败", fontWeight = FontWeight.Bold) },
+            title = { Text(if (!skillArchiveMessageIsError) "Skill 导入完成" else "Skill 导入失败", fontWeight = FontWeight.Bold) },
             text = { Text(message) },
             confirmButton = { TextButton(onClick = viewModel::clearSkillArchiveMessage) { Text("知道了") } },
         )
@@ -456,6 +457,27 @@ fun AgentSettingsScreen(
                 viewModel.saveSubagent(editingSubagent, roleId, name, description, prompt)
                 showSubagentDialog = false
                 editingSubagent = null
+            },
+        )
+    }
+
+    deletingSkill?.let { skill ->
+        RuntimeAlertDialog(
+            onDismissRequest = { deletingSkill = null },
+            title = { Text("删除 Skill", fontWeight = FontWeight.Bold) },
+            text = { Text("确定删除“${skill.name}”吗？其脚本资源目录将一并清理，删除后不可恢复。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteCustomSkill(skill.id)
+                        deletingSkill = null
+                    },
+                ) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletingSkill = null }) { Text("取消") }
             },
         )
     }
@@ -681,10 +703,22 @@ private fun SubagentProfileCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.End,
             ) {
-                IconButton(onClick = onEdit, modifier = Modifier.size(36.dp)) {
+                IconButton(
+                    onClick = onEdit,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .size(36.dp),
+                    contentDescription = "编辑角色",
+                ) {
                     RuntimeIcon(RuntimeIconName.Edit, Modifier.size(17.dp), MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .size(36.dp),
+                    contentDescription = "删除角色",
+                ) {
                     RuntimeIcon(RuntimeIconName.Trash, Modifier.size(17.dp), MaterialTheme.colorScheme.error)
                 }
                 Spacer(Modifier.width(6.dp))
@@ -973,7 +1007,13 @@ private fun SkillCard(
                     }
                 } else {
                     if (onDelete != null) {
-                        IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                        IconButton(
+                            onClick = onDelete,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .size(32.dp),
+                            contentDescription = "删除 Skill",
+                        ) {
                             RuntimeIcon(RuntimeIconName.Trash, Modifier.size(16.dp), MaterialTheme.colorScheme.error)
                         }
                     }
@@ -1057,7 +1097,12 @@ private fun AddSkillDialog(
         onDismissRequest = onDismiss,
         title = { Text("新增自定义 Skill 技能", fontWeight = FontWeight.Bold) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -1128,7 +1173,12 @@ private fun SubagentEditorDialog(
             Text(if (profile == null) "新增子智能体角色" else "编辑子智能体角色", fontWeight = FontWeight.Bold)
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 OutlinedTextField(
                     value = roleId,
                     onValueChange = { roleId = it },
@@ -1238,7 +1288,15 @@ private fun SystemPromptCustomCard(
     prompt: String,
     onPromptChange: (String) -> Unit,
 ) {
-    var textBuffer by remember(prompt) { mutableStateOf(prompt) }
+    // 仅在首次进入时以持久化值初始化缓冲，避免 remember(prompt) 键在每次 Datastore 回写时重置输入；
+    // 输入经 400ms 防抖后再写入 Datastore，避免每次按键都落盘
+    var textBuffer by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(prompt) }
+    androidx.compose.runtime.LaunchedEffect(textBuffer) {
+        if (textBuffer != prompt) {
+            kotlinx.coroutines.delay(400)
+            onPromptChange(textBuffer)
+        }
+    }
 
     val defaultPromptTemplate = """
 You are a helpful and expert AI assistant called {{char}}, based on model {{model_name}}.
@@ -1327,10 +1385,7 @@ You are a helpful and expert AI assistant called {{char}}, based on model {{mode
 
                 OutlinedTextField(
                     value = textBuffer,
-                    onValueChange = {
-                        textBuffer = it
-                        onPromptChange(it)
-                    },
+                    onValueChange = { textBuffer = it },
                     placeholder = { Text("在此输入自定义系统提示词，支持 {{cur_datetime}} 等宏变量...") },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 5,

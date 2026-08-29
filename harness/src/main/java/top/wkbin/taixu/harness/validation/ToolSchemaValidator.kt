@@ -25,19 +25,51 @@ import top.wkbin.taixu.harness.mcp.McpToolApiName
 object ToolSchemaValidator {
     private val json = Json { ignoreUnknownKeys = true }
 
+    /** 智能参数解包与别名规整（自动展开单层 params/arguments，映射下划线/驼峰命名别名） */
+    fun normalizeArgs(raw: JsonObject): JsonObject {
+        val base = if (raw.size == 1 && (raw.containsKey("params") || raw.containsKey("arguments") || raw.containsKey("input"))) {
+            (raw["params"] as? JsonObject) ?: (raw["arguments"] as? JsonObject) ?: (raw["input"] as? JsonObject) ?: raw
+        } else raw
+
+        return kotlinx.serialization.json.buildJsonObject {
+            base.forEach { (k, v) -> put(k, v) }
+            if (!base.containsKey("path")) {
+                val alias = base["file_path"] ?: base["filePath"] ?: base["file"] ?: base["target"]
+                alias?.let { put("path", it) }
+            }
+            if (!base.containsKey("command")) {
+                val alias = base["cmd"] ?: base["script"]
+                alias?.let { put("command", it) }
+            }
+            if (!base.containsKey("oldText")) {
+                val alias = base["old_text"] ?: base["original_text"]
+                alias?.let { put("oldText", it) }
+            }
+            if (!base.containsKey("newText")) {
+                val alias = base["new_text"] ?: base["replacement"]
+                alias?.let { put("newText", it) }
+            }
+            if (!base.containsKey("timeout_seconds")) {
+                val alias = base["timeout"] ?: base["timeoutSeconds"] ?: base["timeout_sec"]
+                alias?.let { put("timeout_seconds", it) }
+            }
+        }
+    }
+
     /** 校验工具参数；空列表 = 通过。 */
     fun problemsFor(
         toolName: String,
         args: JsonObject,
         mcpTools: List<McpToolInfo> = emptyList(),
     ): List<String> {
+        val normalized = normalizeArgs(args)
         val schema = resolveSchema(toolName, mcpTools) ?: return emptyList()
-        return validateObject(schema, args, prefix = "")
+        return validateObject(schema, normalized, prefix = "")
     }
 
     /** 直接对给定 schema 校验（供自定义 schema 场景与测试使用）。 */
     fun validate(schema: JsonObject, args: JsonObject): List<String> =
-        validateObject(schema, args, prefix = "")
+        validateObject(schema, normalizeArgs(args), prefix = "")
 
     private fun resolveSchema(toolName: String, mcpTools: List<McpToolInfo>): JsonObject? {
         if (toolName.startsWith("mcp__")) {
@@ -89,6 +121,18 @@ object ToolSchemaValidator {
             val value = obj[name] ?: return@forEach
             val propertySchema = definition as? JsonObject ?: return@forEach
             problems += validateValue(propertySchema, value, label = "${prefix}${name}", prefix = "$prefix$name.")
+        }
+
+        // 多传/错传参数检测：模型把其他工具的参数（如 url/query）带进来时，明确指出
+        // 本工具接受哪些参数，让模型一次修正到位，而不是反复以错误参数重试。
+        val allowExtra = (schema["additionalProperties"] as? JsonPrimitive)?.contentOrNull == "true"
+        (schema["properties"] as? JsonObject)?.let { properties ->
+            val unknown = obj.keys.filter { it !in properties.keys }
+            if (unknown.isNotEmpty() && !allowExtra) {
+                val at = if (prefix.isEmpty()) "" else "（位于 $prefix 层）"
+                problems += "不接受参数 ${unknown.joinToString("、")}$at" +
+                    "（该工具可用参数: ${properties.keys.joinToString("、").ifEmpty { "无" }}）"
+            }
         }
         return problems
     }
@@ -154,10 +198,13 @@ object ToolSchemaValidator {
         "object" -> value is JsonObject
         "array" -> value is JsonArray
         "string" -> value is JsonPrimitive && value.isString
-        "boolean" -> value is JsonPrimitive && !value.isString && (value.content == "true" || value.content == "false")
-        "integer" -> value is JsonPrimitive && !value.isString &&
+        "boolean" -> value is JsonPrimitive && (
+            (!value.isString && (value.content == "true" || value.content == "false")) ||
+                (value.isString && (value.content.equals("true", ignoreCase = true) || value.content.equals("false", ignoreCase = true)))
+            )
+        "integer" -> value is JsonPrimitive &&
             value.contentOrNull?.toDoubleOrNull()?.let { it % 1.0 == 0.0 } == true
-        "number" -> value is JsonPrimitive && !value.isString && value.contentOrNull?.toDoubleOrNull() != null
+        "number" -> value is JsonPrimitive && value.contentOrNull?.toDoubleOrNull() != null
         "null" -> value is JsonNull
         else -> true // 未知类型声明宽容放行
     }

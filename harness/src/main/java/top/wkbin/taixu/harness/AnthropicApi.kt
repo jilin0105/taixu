@@ -121,7 +121,9 @@ internal class AnthropicApi(
                                 }
                                 "thinking_delta" -> delta["thinking"]?.jsonPrimitive?.contentOrNull?.let { chunk ->
                                     if (chunk.isNotEmpty()) {
-                                        reasoningText.append(chunk)
+                                        if (reasoningText.length < ProviderClient.MAX_STREAM_REASONING_CHARS) {
+                                            reasoningText.append(chunk.take(ProviderClient.MAX_STREAM_REASONING_CHARS - reasoningText.length))
+                                        }
                                         onReasoning(chunk)
                                     }
                                 }
@@ -136,7 +138,10 @@ internal class AnthropicApi(
                 }
                 ChatResult(
                     content = text.toString().ifEmpty { null },
-                    toolCalls = toolCalls.values.map { ApiToolCallSpec(it.id, it.name, it.arguments.toString()) },
+                    // 无参数的工具调用（input={}）不会下发 input_json_delta，累积结果为空串，须兜底为 "{}"
+                    toolCalls = toolCalls.values.map {
+                        ApiToolCallSpec(it.id, it.name, it.arguments.toString().ifBlank { "{}" })
+                    },
                     reasoningContent = reasoningText.toString().ifEmpty { null },
                     usage = usage,
                 )

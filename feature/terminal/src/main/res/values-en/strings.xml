@@ -32,4 +32,17 @@
     <string name="terminal_current">Current</string>
     <string name="terminal_new">New terminal</string>
     <string name="terminal_close">Close</string>
+    <string name="terminal_loading">Loading…</string>
+    <string name="terminal_engine_status">%1$s · PRoot runtime</string>
+    <string name="terminal_pty_header">PTY %1$s %2$s</string>
+    <string name="terminal_retry">Retry</string>
+    <string name="terminal_sessions_desc">Session list</string>
+    <string name="terminal_reset_session_desc">Close and reset terminal session</string>
+    <string name="terminal_close_session_desc">Close session</string>
+    <string name="terminal_close_confirm_title">Close this terminal session?</string>
+    <string name="terminal_close_confirm_message">Closing will terminate all running processes in this session. This cannot be undone.</string>
+    <string name="terminal_close_confirm">Confirm close</string>
+    <string name="terminal_close_confirm_countdown">Confirm close (%1$d s)</string>
+    <string name="terminal_guide_title">Multi-session parallel terminal</string>
+    <string name="terminal_guide_message">Tap the list button in the top bar to manage multiple terminal sessions: keep building while running commands, or work on several projects at once without interference.</string>
 </resources>

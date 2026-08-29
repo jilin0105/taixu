@@ -2,22 +2,31 @@ package top.wkbin.taixu.ui.chat
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import top.wkbin.taixu.core.database.AgentMemoryEntity
 import top.wkbin.taixu.core.database.AgentScratchpadEntity
 import top.wkbin.taixu.feature.chat.R
+import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 
@@ -51,7 +61,13 @@ internal fun SessionMemorySheet(
 ) {
     val haptic = LocalHapticFeedback.current
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    // 破坏性操作待确认目标：非 null 时弹出二次确认
+    var confirmTarget by rememberSaveable { mutableStateOf<String?>(null) } // "clear" / "memory:<id>"
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -89,7 +105,7 @@ internal fun SessionMemorySheet(
                             value = memory.value,
                             onDelete = {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onDeleteMemory(memory.id)
+                                confirmTarget = "memory:${memory.id}"
                             },
                         )
                     }
@@ -110,7 +126,7 @@ internal fun SessionMemorySheet(
                         if (scratchpads.isNotEmpty()) {
                             TextButton(onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onClearScratchpads()
+                                confirmTarget = "clear"
                             }) {
                                 Text(
                                     stringResource(R.string.chat_scratchpad_clear),
@@ -146,6 +162,56 @@ internal fun SessionMemorySheet(
                 }
             }
         }
+    }
+
+    // 破坏性操作二次确认（清空草稿 / 删除单条记忆），样式对齐 DistroManagementScreen 的确认弹窗
+    confirmTarget?.let { target ->
+        val isClear = target == "clear"
+        RuntimeAlertDialog(
+            onDismissRequest = { confirmTarget = null },
+            title = {
+                Text(
+                    text = stringResource(
+                        if (isClear) R.string.chat_clear_scratchpad_title else R.string.chat_delete_memory_title,
+                    ),
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                )
+            },
+            text = {
+                Text(
+                    text = stringResource(
+                        if (isClear) R.string.chat_clear_scratchpad_message else R.string.chat_delete_memory_message,
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (isClear) {
+                            onClearScratchpads()
+                        } else {
+                            onDeleteMemory(target.removePrefix("memory:"))
+                        }
+                        confirmTarget = null
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) {
+                    Text(
+                        text = stringResource(if (isClear) R.string.chat_confirm_clear else R.string.chat_confirm_delete),
+                        color = MaterialTheme.colorScheme.onError,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmTarget = null }) {
+                    Text(text = stringResource(R.string.chat_cancel))
+                }
+            },
+        )
     }
 }
 
@@ -231,13 +297,26 @@ private fun MemoryRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            RuntimeIcon(
-                RuntimeIconName.Close,
-                Modifier
-                    .size(18.dp)
+            Box(
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .clip(androidx.compose.foundation.shape.CircleShape)
                     .clickable(onClick = onDelete),
-                MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    RuntimeIcon(
+                        RuntimeIconName.Close,
+                        Modifier.size(16.dp),
+                        MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
     }
 }

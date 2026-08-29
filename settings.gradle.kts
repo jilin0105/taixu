@@ -1,39 +1,54 @@
 pluginManagement {
+    // CI（GitHub Actions 自动注入 CI=true）在海外，阿里云镜像同步滞后且访问慢，
+    // 直接走官方源；本地开发保持阿里云镜像优先以加速下载。
+    val onCi = System.getenv("CI") == "true"
     repositories {
-        maven {
-            url = uri("https://maven.aliyun.com/repository/google")
-            isAllowInsecureProtocol = false
+        if (onCi) {
+            google()
+            mavenCentral()
+            gradlePluginPortal()
+        } else {
+            maven {
+                url = uri("https://maven.aliyun.com/repository/google")
+                isAllowInsecureProtocol = false
+            }
+            maven {
+                url = uri("https://maven.aliyun.com/repository/central")
+            }
+            maven {
+                url = uri("https://maven.aliyun.com/repository/gradle-plugin")
+            }
+            maven {
+                url = uri("https://maven.aliyun.com/repository/public")
+            }
+            google()
+            mavenCentral()
+            gradlePluginPortal()
         }
-        maven {
-            url = uri("https://maven.aliyun.com/repository/central")
-        }
-        maven {
-            url = uri("https://maven.aliyun.com/repository/gradle-plugin")
-        }
-        maven {
-            url = uri("https://maven.aliyun.com/repository/public")
-        }
-        google()
-        mavenCentral()
-        gradlePluginPortal()
     }
 }
 
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    val onCi = System.getenv("CI") == "true"
     repositories {
-        maven {
-            url = uri("https://maven.aliyun.com/repository/google")
-            isAllowInsecureProtocol = false
+        if (onCi) {
+            google()
+            mavenCentral()
+        } else {
+            maven {
+                url = uri("https://maven.aliyun.com/repository/google")
+                isAllowInsecureProtocol = false
+            }
+            maven {
+                url = uri("https://maven.aliyun.com/repository/central")
+            }
+            maven {
+                url = uri("https://maven.aliyun.com/repository/public")
+            }
+            google()
+            mavenCentral()
         }
-        maven {
-            url = uri("https://maven.aliyun.com/repository/central")
-        }
-        maven {
-            url = uri("https://maven.aliyun.com/repository/public")
-        }
-        google()
-        mavenCentral()
     }
 }
 

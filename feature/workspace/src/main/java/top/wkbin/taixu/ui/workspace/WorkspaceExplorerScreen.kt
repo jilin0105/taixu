@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -45,6 +46,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -88,6 +90,7 @@ fun WorkspaceExplorerScreen(
     val currentPath by viewModel.currentPath.collectAsStateWithLifecycle()
     val loading by viewModel.loadingFiles.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
+    val messageIsError by viewModel.messageIsError.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
     val sharedStorageAccessLimited by viewModel.sharedStorageAccessLimited.collectAsStateWithLifecycle()
 
@@ -104,15 +107,25 @@ fun WorkspaceExplorerScreen(
         viewModel.refreshAfterPermissionReturn()
     }
 
-    var showCreateMenu by remember { mutableStateOf(false) }
-    var showCreateFileDialog by remember { mutableStateOf(false) }
-    var showCreateFolderDialog by remember { mutableStateOf(false) }
+    // 对话框开关与输入状态用 rememberSaveable，旋转后不丢失（复杂对象目标仍为 remember）
+    var showCreateMenu by rememberSaveable { mutableStateOf(false) }
+    var showCreateFileDialog by rememberSaveable { mutableStateOf(false) }
+    var showCreateFolderDialog by rememberSaveable { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<WorkspaceFileItem?>(null) }
     var deleteTarget by remember { mutableStateOf<WorkspaceFileItem?>(null) }
 
-    var newFileName by remember { mutableStateOf("") }
-    var newFolderName by remember { mutableStateOf("") }
-    var renameInput by remember { mutableStateOf("") }
+    var newFileName by rememberSaveable { mutableStateOf("") }
+    var newFolderName by rememberSaveable { mutableStateOf("") }
+    var renameInput by rememberSaveable { mutableStateOf("") }
+
+    // 名称合法性 inline 校验（与 WorkspaceViewModel 前置校验共用同一规则）
+    val invalidNameText = stringResource(R.string.workspace_invalid_name)
+    fun entryNameError(name: String): String? =
+        if (name.isEmpty() || isValidWorkspaceEntryName(name)) null
+        else invalidNameText
+    val newFileNameError = entryNameError(newFileName)
+    val newFolderNameError = entryNameError(newFolderName)
+    val renameNameError = renameTarget?.let { entryNameError(renameInput) }
 
     LaunchedEffect(projectName, initialPath) {
         viewModel.loadExplorer(projectName, initialPath)
@@ -134,7 +147,11 @@ fun WorkspaceExplorerScreen(
                 actions = {
                     // 新建按钮菜单
                     Box {
-                        IconButton(onClick = { showCreateMenu = true }, enabled = !busy) {
+                        IconButton(
+                            onClick = { showCreateMenu = true },
+                            enabled = !busy,
+                            contentDescription = stringResource(R.string.workspace_cd_new),
+                        ) {
                             RuntimeIcon(RuntimeIconName.Plus, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                         }
                         DropdownMenu(
@@ -165,12 +182,17 @@ fun WorkspaceExplorerScreen(
                     // 终端入口
                     IconButton(
                         onClick = { onOpenTerminal(projectName) },
+                        contentDescription = stringResource(R.string.workspace_cd_terminal),
                     ) {
                         RuntimeIcon(RuntimeIconName.Terminal, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                     }
 
                     // 刷新
-                    IconButton(onClick = { viewModel.refreshDirectory() }, enabled = !loading) {
+                    IconButton(
+                        onClick = { viewModel.refreshDirectory() },
+                        enabled = !loading,
+                        contentDescription = stringResource(R.string.workspace_cd_refresh),
+                    ) {
                         RuntimeIcon(RuntimeIconName.Refresh, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
@@ -212,16 +234,13 @@ fun WorkspaceExplorerScreen(
             // 消息提示
             message?.let { notice ->
                 Box(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
-                    NoticeBanner(
-                        text = notice,
-                        isError = notice.contains("失败") || notice.contains("错误") || notice.contains("存在"),
-                    )
+                    NoticeBanner(text = notice, isError = messageIsError)
                 }
             }
 
             if (loading && fileItems.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(Modifier.size(36.dp), color = Color(0xFF00F0FF))
+                    CircularProgressIndicator(Modifier.size(36.dp), color = MaterialTheme.colorScheme.primary)
                 }
             } else if (fileItems.isEmpty()) {
                 EmptyPanel(
@@ -231,36 +250,49 @@ fun WorkspaceExplorerScreen(
                     modifier = Modifier.padding(24.dp),
                 )
             } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    // 如果在子目录，显示返回上一级项
-                    if (currentPath.isNotBlank()) {
-                        item {
-                            ParentDirectoryRow(onClick = { viewModel.navigateUp() })
-                            HorizontalDivider(color = Color(0xFF172338))
+                Box(Modifier.fillMaxSize()) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        // 如果在子目录，显示返回上一级项
+                        if (currentPath.isNotBlank()) {
+                            item {
+                                ParentDirectoryRow(onClick = { viewModel.navigateUp() })
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            }
+                        }
+
+                        items(fileItems, key = { it.relativePath }) { item ->
+                            FileItemRow(
+                                item = item,
+                                onClick = {
+                                    if (item.isDirectory) {
+                                        viewModel.navigateToDirectory(item.relativePath)
+                                    } else {
+                                        onOpenFile(item.relativePath)
+                                    }
+                                },
+                                onRename = {
+                                    renameTarget = item
+                                    renameInput = item.name
+                                },
+                                onDelete = {
+                                    deleteTarget = item
+                                },
+                            )
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
                         }
                     }
-
-                    items(fileItems, key = { it.relativePath }) { item ->
-                        FileItemRow(
-                            item = item,
-                            onClick = {
-                                if (item.isDirectory) {
-                                    viewModel.navigateToDirectory(item.relativePath)
-                                } else {
-                                    onOpenFile(item.relativePath)
-                                }
-                            },
-                            onRename = {
-                                renameTarget = item
-                                renameInput = item.name
-                            },
-                            onDelete = {
-                                deleteTarget = item
-                            },
-                        )
-                        HorizontalDivider(color = Color(0xFF141F33))
+                    // 进入子目录时的覆盖式加载指示：列表非空但正在刷新
+                    if (loading) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator(Modifier.size(30.dp), color = MaterialTheme.colorScheme.primary)
+                        }
                     }
                 }
             }
@@ -279,6 +311,8 @@ fun WorkspaceExplorerScreen(
                         onValueChange = { newFileName = it },
                         label = { Text(stringResource(R.string.workspace_file_name)) },
                         placeholder = { Text("main.py / app.js / config.json") },
+                        isError = newFileNameError != null,
+                        supportingText = newFileNameError?.let { error -> { Text(error) } },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -290,8 +324,14 @@ fun WorkspaceExplorerScreen(
                         viewModel.createFile(newFileName)
                         showCreateFileDialog = false
                     },
-                    enabled = newFileName.isNotBlank() && !busy,
-                ) { Text(stringResource(R.string.workspace_create), color = MaterialTheme.colorScheme.primary) }
+                    enabled = newFileName.isNotBlank() && newFileNameError == null && !busy,
+                ) {
+                    if (busy) {
+                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text(stringResource(R.string.workspace_create), color = MaterialTheme.colorScheme.primary)
+                    }
+                }
             },
             dismissButton = { TextButton(onClick = { showCreateFileDialog = false }) { Text(stringResource(R.string.workspace_cancel)) } },
         )
@@ -308,6 +348,8 @@ fun WorkspaceExplorerScreen(
                     onValueChange = { newFolderName = it },
                     label = { Text(stringResource(R.string.workspace_folder_name)) },
                     placeholder = { Text("src / models / tests") },
+                    isError = newFolderNameError != null,
+                    supportingText = newFolderNameError?.let { error -> { Text(error) } },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -318,8 +360,14 @@ fun WorkspaceExplorerScreen(
                         viewModel.createDirectory(newFolderName)
                         showCreateFolderDialog = false
                     },
-                    enabled = newFolderName.isNotBlank() && !busy,
-                ) { Text(stringResource(R.string.workspace_create), color = MaterialTheme.colorScheme.primary) }
+                    enabled = newFolderName.isNotBlank() && newFolderNameError == null && !busy,
+                ) {
+                    if (busy) {
+                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text(stringResource(R.string.workspace_create), color = MaterialTheme.colorScheme.primary)
+                    }
+                }
             },
             dismissButton = { TextButton(onClick = { showCreateFolderDialog = false }) { Text(stringResource(R.string.workspace_cancel)) } },
         )
@@ -335,6 +383,8 @@ fun WorkspaceExplorerScreen(
                     value = renameInput,
                     onValueChange = { renameInput = it },
                     label = { Text(stringResource(R.string.workspace_new_name)) },
+                    isError = renameNameError != null,
+                    supportingText = renameNameError?.let { error -> { Text(error) } },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -345,8 +395,14 @@ fun WorkspaceExplorerScreen(
                         viewModel.renameItem(target.relativePath, renameInput)
                         renameTarget = null
                     },
-                    enabled = renameInput.isNotBlank() && renameInput != target.name && !busy,
-                ) { Text(stringResource(R.string.workspace_save), color = MaterialTheme.colorScheme.primary) }
+                    enabled = renameInput.isNotBlank() && renameInput != target.name && renameNameError == null && !busy,
+                ) {
+                    if (busy) {
+                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text(stringResource(R.string.workspace_save), color = MaterialTheme.colorScheme.primary)
+                    }
+                }
             },
             dismissButton = { TextButton(onClick = { renameTarget = null }) { Text(stringResource(R.string.workspace_cancel)) } },
         )
@@ -369,7 +425,13 @@ fun WorkspaceExplorerScreen(
                         deleteTarget = null
                     },
                     enabled = !busy,
-                ) { Text(stringResource(R.string.workspace_confirm_delete), color = MaterialTheme.colorScheme.error) }
+                ) {
+                    if (busy) {
+                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text(stringResource(R.string.workspace_confirm_delete), color = MaterialTheme.colorScheme.error)
+                    }
+                }
             },
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text(stringResource(R.string.workspace_cancel)) } },
         )
@@ -637,7 +699,10 @@ private fun FileItemRow(
                     haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                     showMenu = true
                 },
-                modifier = Modifier.size(32.dp),
+                modifier = Modifier
+                    .size(32.dp)
+                    .minimumInteractiveComponentSize(),
+                contentDescription = stringResource(R.string.workspace_cd_more),
             ) {
                 RuntimeIcon(
                     RuntimeIconName.More,

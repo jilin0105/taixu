@@ -14,7 +14,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -57,6 +59,7 @@ fun LocalLlmScreen(
     val serviceState by viewModel.serviceState.collectAsStateWithLifecycle()
     val transfer by viewModel.transfer.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
+    val messageIsError by viewModel.messageIsError.collectAsStateWithLifecycle()
     val engineInstalled by viewModel.engineInstalled.collectAsStateWithLifecycle()
     val deviceRamBytes = viewModel.deviceRamBytes
     val mobileModelPresets = viewModel.mobileModelPresets
@@ -67,20 +70,19 @@ fun LocalLlmScreen(
         is LocalLlmServiceState.Failed -> "启动失败"
     }
 
-    var showDownloadDialog by remember { mutableStateOf(false) }
-    var showPathDialog by remember { mutableStateOf(false) }
+    var showDownloadDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var showPathDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    // 待确认删除的模型文件名（破坏性操作二次确认）
+    var pendingDeleteModel by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(viewModel::importUri)
     }
 
     message?.let { currentMessage ->
-        LaunchedEffect(currentMessage) {
-            // Keep the message visible until the user dismisses it; this effect only keys dialogs correctly.
-        }
         RuntimeAlertDialog(
             onDismissRequest = viewModel::consumeMessage,
-            title = { Text(if (currentMessage.contains("失败") || currentMessage.contains("错误")) "操作未完成" else "本地 LLM") },
+            title = { Text(if (messageIsError) "操作未完成" else "本地 LLM") },
             text = { Text(currentMessage) },
             confirmButton = {
                 RuntimeTextButton(onClick = viewModel::consumeMessage) { Text("知道了") }
@@ -105,6 +107,17 @@ fun LocalLlmScreen(
                 showPathDialog = false
                 viewModel.importPath(path)
             },
+        )
+    }
+
+    pendingDeleteModel?.let { fileName ->
+        DeleteModelConfirmDialog(
+            fileName = fileName,
+            onConfirm = {
+                pendingDeleteModel = null
+                viewModel.delete(fileName)
+            },
+            onDismiss = { pendingDeleteModel = null },
         )
     }
 
@@ -302,7 +315,7 @@ fun LocalLlmScreen(
                         engineInstalled = engineInstalled,
                         start = { viewModel.start(model.fileName) },
                         stop = viewModel::stop,
-                        delete = { viewModel.delete(model.fileName) },
+                        delete = { pendingDeleteModel = model.fileName },
                     )
                 }
             }
@@ -414,7 +427,7 @@ private fun ServiceStatusCard(
     val color = when (serviceState) {
         LocalLlmServiceState.Stopped -> MaterialTheme.colorScheme.onSurfaceVariant
         is LocalLlmServiceState.Starting -> MaterialTheme.colorScheme.tertiary
-        is LocalLlmServiceState.Running -> Color(0xFF16A34A)
+        is LocalLlmServiceState.Running -> successStatusColor()
         is LocalLlmServiceState.Failed -> MaterialTheme.colorScheme.error
     }
     RuntimeCard(
@@ -514,19 +527,33 @@ private fun DownloadModelDialog(
     onDismiss: () -> Unit,
     onDownload: (String, String?) -> Unit,
 ) {
-    var url by remember { mutableStateOf("") }
-    var sha256 by remember { mutableStateOf("") }
+    var url by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    var sha256 by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    // URL 校验：必须是 http(s) 直链且指向 .gguf 文件（允许携带 ?download=true 之类查询参数）
+    val urlValid = (url.startsWith("http://") || url.startsWith("https://")) &&
+        url.substringBefore('?').lowercase().endsWith(".gguf")
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("网络下载 GGUF") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 Text("粘贴以 .gguf 结尾的 HTTPS 直链。Hugging Face 文件页请复制 Download 链接。")
                 OutlinedTextField(
                     value = url,
                     onValueChange = { url = it },
                     label = { Text("GGUF 下载地址") },
                     placeholder = { Text("https://.../model.gguf") },
+                    isError = url.isNotBlank() && !urlValid,
+                    supportingText = {
+                        if (url.isNotBlank() && !urlValid) {
+                            Text("请输入以 http(s):// 开头且指向 .gguf 文件的直链")
+                        }
+                    },
                     singleLine = false,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -540,7 +567,7 @@ private fun DownloadModelDialog(
             }
         },
         confirmButton = {
-            RuntimeButton(onClick = { onDownload(url, sha256.ifBlank { null }) }, enabled = url.isNotBlank()) { Text("开始下载") }
+            RuntimeButton(onClick = { onDownload(url, sha256.ifBlank { null }) }, enabled = urlValid) { Text("开始下载") }
         },
         dismissButton = { RuntimeTextButton(onClick = onDismiss) { Text("取消") } },
     )
@@ -551,24 +578,93 @@ private fun ImportPathDialog(
     onDismiss: () -> Unit,
     onImport: (String) -> Unit,
 ) {
-    var path by remember { mutableStateOf("") }
+    var path by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    val pathValid = path.substringBefore('?').lowercase().endsWith(".gguf")
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("从路径导入") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 Text("输入应用可读取的绝对路径，例如 /storage/emulated/0/Download/model.gguf。受 Android 存储权限限制时请改用“选择文件”。")
                 OutlinedTextField(
                     value = path,
                     onValueChange = { path = it },
                     label = { Text("GGUF 文件路径") },
+                    isError = path.isNotBlank() && !pathValid,
+                    supportingText = {
+                        if (path.isNotBlank() && !pathValid) {
+                            Text("路径需指向 .gguf 模型文件")
+                        }
+                    },
                     singleLine = false,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
         },
         confirmButton = {
-            RuntimeButton(onClick = { onImport(path) }, enabled = path.isNotBlank()) { Text("导入") }
+            RuntimeButton(onClick = { onImport(path) }, enabled = pathValid) { Text("导入") }
+        },
+        dismissButton = { RuntimeTextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+/** 删除 GGUF 模型二次确认弹窗（与 DistroManagementScreen 删除确认同款倒计时锁样式） */
+@Composable
+private fun DeleteModelConfirmDialog(
+    fileName: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var countdown by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(3) }
+
+    LaunchedEffect(fileName) {
+        while (countdown > 0) {
+            kotlinx.coroutines.delay(1000)
+            countdown--
+        }
+    }
+
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "删除模型 $fileName？",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "• 将从沙箱中删除该 GGUF 模型文件，释放对应存储空间",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "• 删除后需要重新下载或导入才能再次使用",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        },
+        confirmButton = {
+            RuntimeButton(
+                onClick = onConfirm,
+                enabled = countdown == 0,
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    disabledContainerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.3f),
+                ),
+            ) {
+                Text(
+                    text = if (countdown > 0) "确认删除 (" + countdown + "s)" else "确认删除",
+                    color = if (countdown == 0) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onError.copy(alpha = 0.6f),
+                )
+            }
         },
         dismissButton = { RuntimeTextButton(onClick = onDismiss) { Text("取消") } },
     )

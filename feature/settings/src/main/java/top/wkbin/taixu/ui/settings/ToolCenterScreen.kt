@@ -31,10 +31,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import top.wkbin.taixu.ui.components.SpotlightGuideOverlay
+import top.wkbin.taixu.ui.components.rememberSpotlightAnchor
+import top.wkbin.taixu.ui.components.spotlightAnchor
 import top.wkbin.taixu.ui.components.RuntimeButton as Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import top.wkbin.taixu.ui.components.RuntimeFilledTonalButton as FilledTonalButton
@@ -54,6 +55,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -73,6 +75,7 @@ import top.wkbin.taixu.core.tools.ToolInstallProgress
 import top.wkbin.taixu.core.tools.ToolVerification
 import top.wkbin.taixu.ui.components.NoticeBanner
 import top.wkbin.taixu.ui.components.InfoRow
+import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeTopBar
@@ -103,10 +106,18 @@ fun ToolCenterScreen(
     val componentInstallProgress by viewModel.componentInstallProgress.collectAsStateWithLifecycle()
     val componentInstallLog by viewModel.componentInstallLog.collectAsStateWithLifecycle()
     val localPluginImport by viewModel.localPluginImport.collectAsStateWithLifecycle()
+    val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
+    val operationError by viewModel.operationError.collectAsStateWithLifecycle()
     var showBundleInstallLog by remember { mutableStateOf(false) }
+    var pendingUninstallId by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingUninstallName by rememberSaveable { mutableStateOf<String?>(null) }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(viewModel::importLocalPlugin)
     }
+
+    // 首次进入引导：高亮顶栏「导入离线插件包」文件夹按钮
+    val importGuideShown by viewModel.importGuideShown.collectAsStateWithLifecycle()
+    val importAnchor = rememberSpotlightAnchor()
 
     val categories = listOf(
         "ALL" to "全部生态",
@@ -129,6 +140,8 @@ fun ToolCenterScreen(
         }
     }
 
+    // 遮罩与 Scaffold 放在同一 Box 下（同层兄弟节点），保证遮罩坐标与按钮 boundsInRoot 同一参照系
+    Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -137,22 +150,37 @@ fun ToolCenterScreen(
                 statusText = "已集成 ${tools.count { it.state == ToolState.INSTALLED.name }} 个已就绪工具",
                 onBack = onBack,
                 actions = {
-                    IconButton(onClick = { importLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) }) {
+                    IconButton(
+                        onClick = { importLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
+                        modifier = Modifier.spotlightAnchor(importAnchor),
+                        contentDescription = "导入离线插件包",
+                    ) {
                         RuntimeIcon(
                             name = RuntimeIconName.FolderOpen,
                             modifier = Modifier.size(20.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    IconButton(onClick = {
-                        viewModel.syncRegistry()
-                        viewModel.refreshInstalledStatus()
-                    }) {
-                        RuntimeIcon(
-                            name = RuntimeIconName.Refresh,
-                            modifier = Modifier.size(20.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    IconButton(
+                        onClick = {
+                            viewModel.syncRegistry()
+                            viewModel.refreshInstalledStatus()
+                        },
+                        enabled = !isSyncing,
+                        contentDescription = if (isSyncing) "正在刷新插件目录" else "刷新插件目录",
+                    ) {
+                        if (isSyncing) {
+                            RuntimeCircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            RuntimeIcon(
+                                name = RuntimeIconName.Refresh,
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 },
             )
@@ -189,6 +217,16 @@ fun ToolCenterScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
+                if (operationError != null) {
+                    item(key = "tool_center_operation_error") {
+                        NoticeBanner(
+                            text = operationError.orEmpty(),
+                            isError = true,
+                            onDismiss = viewModel::consumeOperationError,
+                        )
+                    }
+                }
+
                 if (localPluginImport !is top.wkbin.taixu.core.tools.LocalPluginImportState.Idle) {
                     item {
                         val state = localPluginImport
@@ -206,13 +244,12 @@ fun ToolCenterScreen(
                             isImporting -> MaterialTheme.colorScheme.onPrimaryContainer
                             else -> MaterialTheme.colorScheme.onTertiaryContainer
                         }
-                        Card(
+                        RuntimeCard(
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = containerColor),
+                            containerColor = containerColor,
+                            contentPadding = PaddingValues(14.dp),
                         ) {
                             Column(
-                                modifier = Modifier.padding(14.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 Row(
@@ -292,13 +329,13 @@ fun ToolCenterScreen(
                 // 🚀 后台装配进行中提示卡片 (Background Installing Banner)
                 if (isInstallingComponents || componentInstallLog.isNotEmpty()) {
                     item {
-                        Card(
+                        RuntimeCard(
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                            borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+                            contentPadding = PaddingValues(14.dp),
                         ) {
-                            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -354,21 +391,15 @@ fun ToolCenterScreen(
                         val installedCount = bundle.components.count { it.id in installedComponentIds }
                         val isCoreReady = bundle.components.filter { it.isRequired }.all { it.id in installedComponentIds }
 
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .clickable { viewModel.openBundleSetup(bundle) },
-                            shape = RoundedCornerShape(14.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                if (isCoreReady) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
-                                else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                            ),
+                        RuntimeCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { viewModel.openBundleSetup(bundle) },
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                            borderColor = if (isCoreReady) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                            contentPadding = PaddingValues(14.dp),
                         ) {
                             Column(
-                                modifier = Modifier.padding(14.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
                                 Row(
@@ -520,13 +551,57 @@ fun ToolCenterScreen(
                             verification = verifications[tool.id],
                             onInstall = { viewModel.installTool(tool.id) },
                             onUpdate = { viewModel.updateTool(tool.id) },
-                            onUninstall = { viewModel.uninstallTool(tool.id) },
+                            onUninstall = {
+                                pendingUninstallId = tool.id
+                                pendingUninstallName = tool.name
+                            },
                             onVerify = { viewModel.verifyTool(tool.id) },
                             onLaunch = { onLaunchPty(tool.id) },
                             onViewLogs = { viewModel.viewLogs(tool.id) },
                             onOpenDetail = { onOpenToolDetail(tool.id) },
-                            onStartAiHealing = { onStartAiHealing(tool.id, tool.name, installProgress[tool.id]?.message?.let { listOf(it) } ?: emptyList()) },
+                            onStartAiHealing = {
+                                // 与日志弹窗「AI 自愈」入口一致：始终传入该工具的全量日志
+                                viewModel.fullToolLogs(tool.id) { logs ->
+                                    onStartAiHealing(tool.id, tool.name, logs)
+                                }
+                            },
                         )
+                    }
+                }
+
+                // 分类下无任何工具时给出空态提示，避免列表区完全空白
+                if (showTools && filteredTools.isEmpty()) {
+                    item(key = "tool_center_empty_category") {
+                        val emptyTitle = androidx.compose.ui.res.stringResource(top.wkbin.taixu.feature.settings.R.string.settings_tool_center_empty_category_title)
+                        val emptySubtitle = androidx.compose.ui.res.stringResource(top.wkbin.taixu.feature.settings.R.string.settings_tool_center_empty_category_subtitle)
+                        RuntimeCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                            borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                            contentPadding = PaddingValues(24.dp),
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                RuntimeIcon(
+                                    name = RuntimeIconName.Package,
+                                    modifier = Modifier.size(40.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                )
+                                Text(
+                                    text = emptyTitle,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    text = emptySubtitle,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -578,11 +653,12 @@ fun ToolCenterScreen(
                 onDismissRequest = { viewModel.viewLogs(null) },
                 title = { Text("工具执行日志 ($toolName)") },
                 text = {
-                    Card(
+                    Surface(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 200.dp, max = 360.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLowest,
                     ) {
                         Column(
                             modifier = Modifier
@@ -671,9 +747,10 @@ fun ToolCenterScreen(
                 onDismissRequest = { showBundleInstallLog = false },
                 title = { Text("开发套件安装日志") },
                 text = {
-                    Card(
+                    Surface(
                         modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp, max = 420.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLowest,
                     ) {
                         Column(
                             modifier = Modifier.fillMaxSize().padding(10.dp).verticalScroll(rememberScrollState()),
@@ -704,11 +781,29 @@ fun ToolCenterScreen(
                             onClick = {
                                 val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
                                 clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("TaiXu Bundle Install Log", componentInstallLog.joinToString("\n")))
+                                // 与工具日志复制行为保持一致，复制后给出反馈
+                                android.widget.Toast.makeText(context, "日志已复制到剪贴板", android.widget.Toast.LENGTH_SHORT).show()
                             },
                             enabled = componentInstallLog.isNotEmpty(),
                         ) { Text("复制") }
                         TextButton(onClick = { showBundleInstallLog = false }) { Text("关闭") }
                     }
+                },
+            )
+        }
+
+        // 卡片级卸载二次确认（与工具详情页同一弹窗组件）
+        pendingUninstallId?.let { uninstallId ->
+            UninstallToolConfirmDialog(
+                toolName = pendingUninstallName.orEmpty(),
+                onConfirm = {
+                    viewModel.uninstallTool(uninstallId)
+                    pendingUninstallId = null
+                    pendingUninstallName = null
+                },
+                onDismiss = {
+                    pendingUninstallId = null
+                    pendingUninstallName = null
                 },
             )
         }
@@ -753,10 +848,10 @@ fun ToolCenterScreen(
                         )
 
                         if (isInstallingComponents) {
-                            Card(
+                            Surface(
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(10.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
+                                color = MaterialTheme.colorScheme.surfaceContainerHighest,
                             ) {
                                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -784,7 +879,7 @@ fun ToolCenterScreen(
                                 val isUninstalledRequired = comp.isRequired
                                 val isChecked = isUninstalledRequired || comp.id in selectedComponents
 
-                                Card(
+                                Surface(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(10.dp))
@@ -796,10 +891,8 @@ fun ToolCenterScreen(
                                         1.dp,
                                         if (isChecked) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                                     ),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = if (isChecked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
-                                        else MaterialTheme.colorScheme.surfaceContainerLow,
-                                    ),
+                                    color = if (isChecked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
+                                    else MaterialTheme.colorScheme.surfaceContainerLow,
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(10.dp),
@@ -841,16 +934,16 @@ fun ToolCenterScreen(
                             Text(
                                 "已装配就绪 (${installedComponentsList.size})：",
                                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                color = Color(0xFF2E7D32),
+                                color = successStatusColor(),
                                 modifier = Modifier.padding(top = 6.dp),
                             )
 
                             installedComponentsList.forEach { comp ->
-                                Card(
+                                Surface(
                                     modifier = Modifier.fillMaxWidth(),
                                     shape = RoundedCornerShape(10.dp),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2E7D32).copy(alpha = 0.25f)),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.45f)),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, successStatusColor().copy(alpha = 0.25f)),
+                                    color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.45f),
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(10.dp),
@@ -861,13 +954,13 @@ fun ToolCenterScreen(
                                             modifier = Modifier
                                                 .size(20.dp)
                                                 .clip(CircleShape)
-                                                .background(Color(0xFF2E7D32).copy(alpha = 0.15f)),
+                                                .background(successStatusColor().copy(alpha = 0.15f)),
                                             contentAlignment = Alignment.Center,
                                         ) {
                                             RuntimeIcon(
                                                 name = RuntimeIconName.Check,
                                                 modifier = Modifier.size(12.dp),
-                                                tint = Color(0xFF2E7D32),
+                                                tint = successStatusColor(),
                                             )
                                         }
 
@@ -876,12 +969,12 @@ fun ToolCenterScreen(
                                                 Text(comp.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
                                                 Surface(
                                                     shape = RoundedCornerShape(4.dp),
-                                                    color = Color(0xFF2E7D32).copy(alpha = 0.15f),
+                                                    color = successStatusColor().copy(alpha = 0.15f),
                                                 ) {
                                                     Text(
                                                         "✓ 已就绪",
                                                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                                                        color = Color(0xFF2E7D32),
+                                                        color = successStatusColor(),
                                                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
                                                     )
                                                 }
@@ -917,6 +1010,19 @@ fun ToolCenterScreen(
             )
         }
     }
+
+    // 首次进入引导遮罩：高亮顶栏「导入离线插件包」入口（组件内部等待按钮完成布局测量后才绘制）
+    if (!importGuideShown) {
+        SpotlightGuideOverlay(
+            anchor = importAnchor,
+            title = "导入离线插件包",
+            message = "已从 QQ 群下载好全量离线插件包？点击右上角的文件夹图标，选择 zip 文件即可导入，" +
+                "一次装齐 Android、Flutter、反编译环境，全程无需联网。",
+            icon = RuntimeIconName.FolderOpen,
+            onDismiss = viewModel::markImportGuideShown,
+        )
+    }
+    } // Box
 }
 
 private fun formatBytes(bytes: Long): String = when {
@@ -925,6 +1031,8 @@ private fun formatBytes(bytes: Long): String = when {
     bytes >= 1024L -> "%.1f KB".format(bytes / 1024.0)
     else -> "$bytes B"
 }
+
+
 
 /**
  * 工具品牌专属视觉 Avatar
@@ -1026,14 +1134,13 @@ private fun ToolCard(
     val isUpdateAvailable = tool.state == ToolState.UPDATE_AVAILABLE.name
     val isFailed = tool.state == ToolState.FAILED.name
 
-    Card(
-        onClick = onOpenDetail,
+    RuntimeCard(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        onClick = onOpenDetail,
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        contentPadding = PaddingValues(16.dp),
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             // Header: Avatar + Title/Publisher + Status Badge
@@ -1139,7 +1246,7 @@ private fun ToolCard(
                     },
                     color = when {
                         isUpdateAvailable -> MaterialTheme.colorScheme.primary
-                        isInstalled -> Color(0xFF2E7D32)
+                        isInstalled -> successStatusColor()
                         isInstalling -> MaterialTheme.colorScheme.tertiary
                         isFailed -> MaterialTheme.colorScheme.error
                         else -> MaterialTheme.colorScheme.outline
