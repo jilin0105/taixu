@@ -330,8 +330,8 @@ class WorkspaceViewModel @Inject constructor(
 
     fun create(
         name: String,
-        storage: WorkspaceStorage,
-        directoryPath: String,
+        storage: WorkspaceStorage = WorkspaceStorage.INTERNAL,
+        directoryPath: String = "",
         template: top.wkbin.taixu.runtime.ProjectTemplate = top.wkbin.taixu.runtime.ProjectTemplate.EMPTY,
         packageName: String = "",
         apkSource: top.wkbin.taixu.runtime.ApkImportSource? = null,

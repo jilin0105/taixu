@@ -8,11 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.net.Uri
-import android.os.Build
-import android.os.Environment
-import android.provider.DocumentsContract
 import android.provider.OpenableColumns
-import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -82,13 +78,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.core.content.ContextCompat
 import top.wkbin.taixu.runtime.ApkImportSource
 import top.wkbin.taixu.runtime.GitTransport
 import top.wkbin.taixu.runtime.ProjectArchiveSource
 import top.wkbin.taixu.runtime.ProjectType
 import top.wkbin.taixu.runtime.WorkspaceProject
-import top.wkbin.taixu.runtime.WorkspaceStorage
 import top.wkbin.taixu.ui.components.EmptyPanel
 import top.wkbin.taixu.ui.components.IconTile
 import top.wkbin.taixu.ui.components.MainDestination
@@ -123,7 +117,7 @@ import top.wkbin.taixu.template.TemplateProjectType
 import top.wkbin.taixu.template.InstalledProjectTemplate
 
 private enum class ProjectImportMode { LOCAL, GITHUB }
-private enum class CreateProjectStep { PROJECT_TYPE, TEMPLATE, DETAILS }
+private enum class CreateProjectStep { PROJECT_TYPE, EMPTY_DETAILS, TEMPLATE, DETAILS }
 
 @Composable
 private fun TemplatePreviewImage(file: java.io.File, modifier: Modifier = Modifier) {
@@ -290,10 +284,6 @@ fun WorkspaceScreen(
     )
     var templateVariableValues by rememberSaveable(stateSaver = templateVariableValuesSaver) { mutableStateOf<Map<String, String>>(emptyMap()) }
     var trustTemplateScripts by rememberSaveable { mutableStateOf(false) }
-    var projectStorage by rememberSaveable { mutableStateOf(WorkspaceStorage.INTERNAL) }
-    var directoryPath by rememberSaveable { mutableStateOf("") }
-    var internalDirectoryMenuExpanded by rememberSaveable { mutableStateOf(false) }
-    var permissionRefresh by rememberSaveable { mutableStateOf(0) }
     // 复杂对象（工程/模板/来源选择）旋转后需重新选择，保留 remember
     var deleteTarget by remember { mutableStateOf<WorkspaceProject?>(null) }
     var apkSource by remember { mutableStateOf<ApkImportSource?>(null) }
@@ -313,12 +303,6 @@ fun WorkspaceScreen(
     var pendingExportTemplateId by remember { mutableStateOf<String?>(null) }
     var deleteTemplateTarget by remember { mutableStateOf<InstalledProjectTemplate?>(null) }
 
-    val legacyStoragePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
-        permissionRefresh++
-    }
-    val allFilesPermission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        permissionRefresh++
-    }
     // APK 逆向模板：系统文件管理器选择 .apk
     val apkPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -373,25 +357,6 @@ fun WorkspaceScreen(
             }
             viewModel.exportProject(project, uri.toString())
         }
-    }
-    val directoryPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        if (uri != null) {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-                )
-                val documentId = DocumentsContract.getTreeDocumentId(uri)
-                if (documentId.startsWith("primary:")) {
-                    directoryPath = documentId.substringAfter(':')
-                }
-            }
-        }
-    }
-    val sharedAccessGranted = permissionRefresh.let {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Environment.isExternalStorageManager()
-        else ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
-            android.content.pm.PackageManager.PERMISSION_GRANTED
     }
 
     val glassBackdrop = LocalLiquidGlassBackdrop.current
@@ -1085,8 +1050,6 @@ fun WorkspaceScreen(
                 projectName = ""
                 packageName = ""
                 templateVariableValues = emptyMap()
-                directoryPath = ""
-                projectStorage = WorkspaceStorage.INTERNAL
                 apkSource = null
                 exportApkToDownload = false
                 createProjectStep = CreateProjectStep.PROJECT_TYPE
@@ -1101,8 +1064,6 @@ fun WorkspaceScreen(
                     showCreate = false
                     projectName = ""
                     packageName = ""
-                    directoryPath = ""
-                    projectStorage = WorkspaceStorage.INTERNAL
                     apkSource = null
                     exportApkToDownload = false
                     createProjectStep = CreateProjectStep.PROJECT_TYPE
@@ -1125,6 +1086,36 @@ fun WorkspaceScreen(
                             Text("先选择要创建的项目平台", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             val projectTypes = projectTemplates.map { it.manifest.projectType }.distinct()
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                // 空项目：跳过平台与模板选择，直接输入名称创建空文件夹
+                                RuntimeCard(
+                                    onClick = {
+                                        selectedProjectType = null
+                                        selectedTemplateId = null
+                                        selectedTemplate = top.wkbin.taixu.runtime.ProjectTemplate.EMPTY
+                                        templateVariableValues = emptyMap()
+                                        trustTemplateScripts = false
+                                        packageName = ""
+                                        createProjectStep = CreateProjectStep.EMPTY_DETAILS
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
+                                    ) {
+                                        RuntimeIcon(RuntimeIconName.Folder, Modifier.size(36.dp), MaterialTheme.colorScheme.primary)
+                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text("空项目", fontWeight = FontWeight.SemiBold)
+                                            Text(
+                                                "只创建一个空文件夹，随时手动添加内容",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    }
+                                }
                                 projectTypes.chunked(2).forEach { rowTypes ->
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -1164,6 +1155,26 @@ fun WorkspaceScreen(
                                     }
                                 }
                             }
+                        }
+
+                        CreateProjectStep.EMPTY_DETAILS -> {
+                            Text("新建空项目", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text("输入名称即创建一个空文件夹", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            OutlinedTextField(
+                                value = projectName,
+                                onValueChange = { projectName = it },
+                                label = { Text(stringResource(R.string.workspace_project_name)) },
+                                placeholder = { Text("my-sandbox") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            val emptyPath = projectName.trim()
+                            if (emptyPath.isNotBlank()) Text(
+                                stringResource(R.string.workspace_sandbox_path, "/workspace", emptyPath),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
                         }
 
                         CreateProjectStep.TEMPLATE -> {
@@ -1451,104 +1462,9 @@ fun WorkspaceScreen(
                         }
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = projectStorage == WorkspaceStorage.INTERNAL,
-                            onClick = { projectStorage = WorkspaceStorage.INTERNAL; directoryPath = "" },
-                            label = { Text(stringResource(R.string.workspace_internal_storage)) },
-                            modifier = Modifier.weight(1f),
-                        )
-                        FilterChip(
-                            selected = projectStorage == WorkspaceStorage.SHARED,
-                            onClick = { projectStorage = WorkspaceStorage.SHARED; directoryPath = "" },
-                            label = { Text(stringResource(R.string.workspace_shared_space)) },
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                    if (projectStorage == WorkspaceStorage.INTERNAL) {
-                        val nameForPath = projectName.trim().ifBlank { "my-app" }
-                        val commonDirectories = listOf(
-                            "" to stringResource(R.string.workspace_location_project, nameForPath),
-                            "projects/$nameForPath" to stringResource(R.string.workspace_location_projects, nameForPath),
-                            "repos/$nameForPath" to stringResource(R.string.workspace_location_repos, nameForPath),
-                            "work/$nameForPath" to stringResource(R.string.workspace_location_work, nameForPath),
-                        )
-                        ExposedDropdownMenuBox(
-                            expanded = internalDirectoryMenuExpanded,
-                            onExpandedChange = { internalDirectoryMenuExpanded = it },
-                        ) {
-                            OutlinedTextField(
-                                value = directoryPath,
-                                onValueChange = {
-                                    directoryPath = it
-                                    internalDirectoryMenuExpanded = true
-                                },
-                                label = { Text(stringResource(R.string.workspace_linked_directory)) },
-                                placeholder = { Text(stringResource(R.string.workspace_directory_default)) },
-                                supportingText = { Text(stringResource(R.string.workspace_directory_relative_hint)) },
-                                trailingIcon = {
-                                    ExposedDropdownMenuDefaults.TrailingIcon(internalDirectoryMenuExpanded)
-                                },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth().menuAnchor(
-                                    ExposedDropdownMenuAnchorType.PrimaryEditable,
-                                    true,
-                                ),
-                            )
-                            ExposedDropdownMenu(
-                                expanded = internalDirectoryMenuExpanded,
-                                onDismissRequest = { internalDirectoryMenuExpanded = false },
-                            ) {
-                                commonDirectories.forEach { (path, label) ->
-                                    DropdownMenuItem(
-                                        text = { Text(label) },
-                                        onClick = {
-                                            directoryPath = path
-                                            internalDirectoryMenuExpanded = false
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                    } else {
-                        OutlinedTextField(
-                            value = directoryPath,
-                            onValueChange = { directoryPath = it },
-                            label = { Text(stringResource(R.string.workspace_link_directory)) },
-                            placeholder = { Text("Download/my-app") },
-                            supportingText = { Text(stringResource(R.string.workspace_link_directory_description)) },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                    if (projectStorage == WorkspaceStorage.SHARED) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            TextButton(onClick = { directoryPicker.launch(null) }) { Text(stringResource(R.string.workspace_choose_shared_directory)) }
-                            if (!sharedAccessGranted) {
-                                TextButton(
-                                    onClick = {
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                                            allFilesPermission.launch(
-                                                Intent(
-                                                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                                                    android.net.Uri.parse("package:${context.packageName}"),
-                                                ),
-                                            )
-                                        } else {
-                                            legacyStoragePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                                        }
-                                    },
-                                ) { Text(stringResource(R.string.workspace_authorize_shared_space)) }
-                            }
-                        }
-                    }
-                    val path = directoryPath.trim().ifBlank { projectName.trim() }
+                    val path = projectName.trim()
                     if (path.isNotBlank()) Text(
-                        stringResource(R.string.workspace_sandbox_path, if (projectStorage == WorkspaceStorage.INTERNAL) "/workspace" else "/sdcard", path.trimStart('/')),
+                        stringResource(R.string.workspace_sandbox_path, "/workspace", path),
                         style = MaterialTheme.typography.labelSmall,
                         fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.primary,
@@ -1606,13 +1522,18 @@ fun WorkspaceScreen(
                     onClick = {
                         when (createProjectStep) {
                             CreateProjectStep.PROJECT_TYPE -> createProjectStep = CreateProjectStep.TEMPLATE
+                            CreateProjectStep.EMPTY_DETAILS -> {
+                                createInProgress = true
+                                viewModel.create(
+                                    name = projectName,
+                                    template = top.wkbin.taixu.runtime.ProjectTemplate.EMPTY,
+                                )
+                            }
                             CreateProjectStep.TEMPLATE -> createProjectStep = CreateProjectStep.DETAILS
                             CreateProjectStep.DETAILS -> {
                                 createInProgress = true
                                 viewModel.create(
                                     name = projectName,
-                                    storage = projectStorage,
-                                    directoryPath = directoryPath,
                                     template = selectedTemplate,
                                     packageName = packageName,
                                     apkSource = apkSource,
@@ -1626,9 +1547,9 @@ fun WorkspaceScreen(
                     },
                     enabled = !createInProgress && when (createProjectStep) {
                         CreateProjectStep.PROJECT_TYPE -> selectedProjectType != null
+                        CreateProjectStep.EMPTY_DETAILS -> projectName.isNotBlank() && !busy
                         CreateProjectStep.TEMPLATE -> selectedTemplateId != null
                         CreateProjectStep.DETAILS -> projectName.isNotBlank() && !busy &&
-                            (projectStorage != WorkspaceStorage.SHARED || sharedAccessGranted) &&
                             run {
                                 val variables = projectTemplates.firstOrNull { it.manifest.id == selectedTemplateId }
                                     ?.manifest?.variables.orEmpty().filter { it.prompt }
@@ -1652,7 +1573,11 @@ fun WorkspaceScreen(
                         Text(stringResource(R.string.workspace_creating), color = MaterialTheme.colorScheme.primary)
                     } else {
                         Text(
-                            if (createProjectStep == CreateProjectStep.DETAILS) stringResource(R.string.workspace_create) else stringResource(R.string.workspace_action_next),
+                            if (createProjectStep == CreateProjectStep.DETAILS || createProjectStep == CreateProjectStep.EMPTY_DETAILS) {
+                                stringResource(R.string.workspace_create)
+                            } else {
+                                stringResource(R.string.workspace_action_next)
+                            },
                             color = MaterialTheme.colorScheme.primary,
                         )
                     }
@@ -1667,12 +1592,11 @@ fun WorkspaceScreen(
                                 projectName = ""
                                 packageName = ""
                                 templateVariableValues = emptyMap()
-                                directoryPath = ""
-                                projectStorage = WorkspaceStorage.INTERNAL
                                 selectedProjectType = null
                                 selectedTemplateId = null
                                 trustTemplateScripts = false
                             }
+                            CreateProjectStep.EMPTY_DETAILS -> createProjectStep = CreateProjectStep.PROJECT_TYPE
                             CreateProjectStep.TEMPLATE -> createProjectStep = CreateProjectStep.PROJECT_TYPE
                             CreateProjectStep.DETAILS -> createProjectStep = CreateProjectStep.TEMPLATE
                         }
