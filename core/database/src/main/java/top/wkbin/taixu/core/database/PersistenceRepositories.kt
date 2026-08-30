@@ -118,7 +118,7 @@ class RoomBuildScriptRepository @Inject constructor(
                 description = "太墟内置 Android 构建脚本，可复制后适配旧版或新版依赖。",
                 projectType = "ANDROID",
                 content = androidScript.ifBlank {
-                    "#!/bin/sh\nset -eu\nPROJECT_DIR=\"\${1:-.}\"\nTASK=\"\${2:-assembleDebug}\"\ncd \"\$PROJECT_DIR\"\n./gradlew \"\$TASK\" --no-daemon --max-workers=2\n"
+                    "#!/bin/sh\nset -eu\nPROJECT_DIR=\"\${1:-.}\"\nTASK=\"\${2:-assembleDebug}\"\ncd \"\$PROJECT_DIR\"\nif [ -f ./gradlew ]; then\n    chmod +x ./gradlew\n    ./gradlew \"\$TASK\" --no-daemon --max-workers=2\nelif command -v gradle >/dev/null 2>&1; then\n    gradle \"\$TASK\" --no-daemon --max-workers=2\nelif [ -x /opt/taixu/bin/gradle ]; then\n    /opt/taixu/bin/gradle \"\$TASK\" --no-daemon --max-workers=2\nelse\n    echo '未找到可用的 Gradle 环境，请检查是否已安装 Android 基础套件' >&2\n    exit 127\nfi\n"
                 },
                 isBuiltin = true,
                 createdAt = now,
