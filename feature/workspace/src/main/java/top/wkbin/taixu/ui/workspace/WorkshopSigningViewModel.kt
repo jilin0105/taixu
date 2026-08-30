@@ -49,7 +49,11 @@ class WorkshopSigningViewModel @Inject constructor(
         _message.value = null
     }
 
-    fun createKeystore(draft: WorkshopSigningCreationDraft, onDone: () -> Unit = {}) {
+    fun createKeystore(
+        draft: WorkshopSigningCreationDraft,
+        onError: (String) -> Unit = {},
+        onSuccess: () -> Unit = {},
+    ) {
         if (_busy.value) return
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             _busy.value = true
@@ -61,13 +65,22 @@ class WorkshopSigningViewModel @Inject constructor(
                 validityYears = draft.validityYears,
                 organization = draft.organization,
             )
-            _message.value = result.errorOrNull()?.message ?: "签名创建成功：${draft.name.trim()}"
+            val errMsg = result.errorOrNull()?.message
+            _message.value = errMsg ?: "签名创建成功：${draft.name.trim()}"
             _busy.value = false
-            if (result.isSuccess) onDone()
+            if (result.isSuccess) {
+                onSuccess()
+            } else if (errMsg != null) {
+                onError(errMsg)
+            }
         }
     }
 
-    fun importKeystore(draft: WorkshopSigningImportDraft, onDone: () -> Unit = {}) {
+    fun importKeystore(
+        draft: WorkshopSigningImportDraft,
+        onError: (String) -> Unit = {},
+        onSuccess: () -> Unit = {},
+    ) {
         if (_busy.value) return
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             _busy.value = true
@@ -78,9 +91,14 @@ class WorkshopSigningViewModel @Inject constructor(
                 storePassword = draft.storePassword,
                 keyPassword = draft.keyPassword,
             )
-            _message.value = result.errorOrNull()?.message ?: "签名导入成功：${draft.name.trim()}"
+            val errMsg = result.errorOrNull()?.message
+            _message.value = errMsg ?: "签名导入成功：${draft.name.trim()}"
             _busy.value = false
-            if (result.isSuccess) onDone()
+            if (result.isSuccess) {
+                onSuccess()
+            } else if (errMsg != null) {
+                onError(errMsg)
+            }
         }
     }
 

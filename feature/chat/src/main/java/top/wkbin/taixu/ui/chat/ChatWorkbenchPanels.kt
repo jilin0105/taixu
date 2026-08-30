@@ -87,7 +87,7 @@ internal fun CollapsibleChatWorkbenchStrip(
     onOpenRuntime: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val activeRound = runtimeEvents.filterIsInstance<HarnessEvent.ProviderRoundStarted>().lastOrNull()?.round
+    val roundCount = runtimeEvents.count { it is HarnessEvent.ProviderRoundStarted }
     val activeModelName = activeModel?.let { entity ->
         entity.model.split(",").firstOrNull()?.trim().takeUnless { it.isNullOrBlank() } ?: entity.name
     } ?: stringResource(R.string.chat_no_model_selected)
@@ -144,8 +144,11 @@ internal fun CollapsibleChatWorkbenchStrip(
             // 4. 运行时/轮次状态项
             WorkbenchStatusItem(
                 icon = RuntimeIconName.Logs,
-                label = activeRound?.let { stringResource(R.string.chat_round_number, it + 1) }
-                    ?: stringResource(R.string.chat_event_count, runtimeEvents.size),
+                label = if (roundCount > 0) {
+                    stringResource(R.string.chat_round_number, roundCount)
+                } else {
+                    stringResource(R.string.chat_event_count, runtimeEvents.size)
+                },
                 tint = if (running) Color(0xFF7C4DFF) else MaterialTheme.colorScheme.tertiary,
                 highlight = running,
                 onClick = onOpenRuntime,
@@ -336,6 +339,7 @@ internal fun RuntimeTimelineSheet(
     onDeleteMemory: (String) -> Unit = {},
     onDeleteScratchpad: (String) -> Unit = {},
     onClearScratchpads: () -> Unit = {},
+    onNavigateToMessage: (String) -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(
@@ -502,7 +506,7 @@ internal fun RuntimeTimelineSheet(
 
                 // 最新一轮在最上，组内按发生顺序链式展示；轮间以分隔线区隔。
                 rounds.asReversed().forEach { round ->
-                    RoundSection(round)
+                    RoundSection(round, onNavigateToMessage)
                     HorizontalDivider(
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
                         modifier = Modifier.padding(vertical = 4.dp),
@@ -587,17 +591,19 @@ private fun CollapsibleRuntimeSectionCard(
 }
 
 /** 某一轮的完整调用链：模型响应 + 工具执行 + 审批事件。 */
-private class RoundGroup(
+internal class RoundGroup(
     val key: Long,
     val roundNumber: Int,
+    var displayIndex: Int = 0,
     val modelId: String?,
     val startedAt: Long,
+    var userPromptMessage: top.wkbin.taixu.harness.UserMessage? = null,
 ) {
     val entries = mutableListOf<TimelineEntry>()
 }
 
 /** 轮内条目：展开详情时从 [messages] 回查 payload。 */
-private sealed interface TimelineEntry {
+internal sealed interface TimelineEntry {
     val timestamp: Long
 
     data class Assistant(
@@ -621,7 +627,7 @@ private sealed interface TimelineEntry {
 }
 
 /** 把扁平事件流切成（轮次组，会话级生命周期）两段；tool call 与 settled 结果就地配对。 */
-private fun buildRoundGroups(
+internal fun buildRoundGroups(
     events: List<HarnessEvent>,
     messages: List<top.wkbin.taixu.harness.HarnessMessage>,
 ): Pair<List<RoundGroup>, List<HarnessEvent>> {
@@ -629,6 +635,7 @@ private fun buildRoundGroups(
         .associateBy { it.toolCallId }
     val callsById = messages.filterIsInstance<top.wkbin.taixu.harness.ToolCall>().associateBy { it.id }
     val assistantsById = messages.filterIsInstance<top.wkbin.taixu.harness.AssistantText>().associateBy { it.id }
+    val userMessages = messages.filterIsInstance<top.wkbin.taixu.harness.UserMessage>()
 
     val rounds = mutableListOf<RoundGroup>()
     val lifecycle = mutableListOf<HarnessEvent>()
@@ -636,12 +643,29 @@ private fun buildRoundGroups(
     val toolIndexByCallId = mutableMapOf<String, Int>()
 
     fun newGroup(event: HarnessEvent.ProviderRoundStarted) {
-        current = RoundGroup(event.round.toLong() * 1_000_000_000L + event.timestamp, event.round, event.modelId, event.timestamp).also { rounds += it }
+        val userMsg = userMessages.filter { it.createdAt <= event.timestamp }.lastOrNull()
+            ?: userMessages.getOrNull(event.round)
+            ?: userMessages.lastOrNull()
+        current = RoundGroup(
+            key = event.round.toLong() * 1_000_000_000L + event.timestamp,
+            roundNumber = event.round,
+            displayIndex = rounds.size + 1,
+            modelId = event.modelId,
+            startedAt = event.timestamp,
+            userPromptMessage = userMsg,
+        ).also { rounds += it }
         toolIndexByCallId.clear()
     }
 
     fun getOrCreateGroup(): RoundGroup {
-        return current ?: RoundGroup(0L, 0, null, System.currentTimeMillis()).also {
+        return current ?: RoundGroup(
+            key = 0L,
+            roundNumber = 0,
+            displayIndex = rounds.size + 1,
+            modelId = null,
+            startedAt = System.currentTimeMillis(),
+            userPromptMessage = userMessages.lastOrNull(),
+        ).also {
             rounds += it
             current = it
         }
@@ -686,11 +710,17 @@ private fun buildRoundGroups(
             else -> lifecycle += event
         }
     }
+    rounds.forEachIndexed { idx, round ->
+        round.displayIndex = idx + 1
+    }
     return rounds to lifecycle
 }
 
 @Composable
-private fun RoundSection(group: RoundGroup) {
+private fun RoundSection(
+    group: RoundGroup,
+    onNavigateToMessage: ((String) -> Unit)? = null,
+) {
     val assistantEntries = group.entries.filterIsInstance<TimelineEntry.Assistant>()
     val totalIn = assistantEntries.sumOf { it.inputTokens }
     val totalOut = assistantEntries.sumOf { it.outputTokens }
@@ -701,7 +731,7 @@ private fun RoundSection(group: RoundGroup) {
             modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
         ) {
             Text(
-                stringResource(R.string.chat_tl_round, group.roundNumber + 1),
+                stringResource(R.string.chat_tl_round, if (group.displayIndex > 0) group.displayIndex else (group.roundNumber + 1)),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -715,6 +745,61 @@ private fun RoundSection(group: RoundGroup) {
                     style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        }
+        group.userPromptMessage?.let { userMsg ->
+            val cleanPrompt = userMsg.text
+                .substringBefore("\n\n[附件：")
+                .substringBefore("\n\n[Attachment:")
+                .trim()
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.65f),
+                shape = RoundedCornerShape(8.dp),
+                border = BorderStroke(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(enabled = onNavigateToMessage != null) {
+                        onNavigateToMessage?.invoke(userMsg.id)
+                    },
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    RuntimeIcon(
+                        RuntimeIconName.Prompt,
+                        Modifier.size(15.dp),
+                        MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        text = cleanPrompt.ifBlank { stringResource(R.string.chat_user_request_clipboard) },
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (onNavigateToMessage != null) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            Text(
+                                stringResource(R.string.chat_navigate_to_message),
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            RuntimeIcon(
+                                RuntimeIconName.ChevronRight,
+                                Modifier.size(13.dp),
+                                MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+                }
             }
         }
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {

@@ -170,11 +170,7 @@ class ChatViewModel @Inject constructor(
         messages,
     ) { sessionId, history, msgList ->
         val live = history[sessionId].orEmpty()
-        if (live.isNotEmpty()) {
-            live
-        } else {
-            synthesizeHistoricalEvents(sessionId, msgList)
-        }
+        mergeHistoricalAndLiveEvents(sessionId, msgList, live)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _branchRefresh = MutableStateFlow(0)
@@ -916,6 +912,36 @@ class ChatViewModel @Inject constructor(
             profileWriter.deleteProfile(id)
         }
     }
+}
+
+internal fun mergeHistoricalAndLiveEvents(
+    sessionId: String,
+    messages: List<HarnessMessage>,
+    live: List<HarnessEvent>,
+): List<HarnessEvent> {
+    if (sessionId.isBlank()) return emptyList()
+    if (live.isEmpty()) return synthesizeHistoricalEvents(sessionId, messages)
+    if (messages.isEmpty()) return live
+
+    val liveEntryIds = mutableSetOf<String>()
+    live.forEach { event ->
+        when (event) {
+            is HarnessEvent.ProviderRoundSettled -> event.entryId?.let { liveEntryIds.add(it) }
+            is HarnessEvent.ToolCallStarted -> liveEntryIds.add(event.toolCallId)
+            is HarnessEvent.ToolCallSettled -> liveEntryIds.add(event.toolCallId)
+            else -> Unit
+        }
+    }
+
+    val liveMinTimestamp = live.minOfOrNull { it.timestamp } ?: Long.MAX_VALUE
+    val priorMessages = messages.filter { msg ->
+        msg.createdAt < liveMinTimestamp && !liveEntryIds.contains(msg.id)
+    }
+
+    if (priorMessages.isEmpty()) return live
+
+    val priorEvents = synthesizeHistoricalEvents(sessionId, priorMessages)
+    return priorEvents + live
 }
 
 private fun synthesizeHistoricalEvents(sessionId: String, messages: List<HarnessMessage>): List<HarnessEvent> {

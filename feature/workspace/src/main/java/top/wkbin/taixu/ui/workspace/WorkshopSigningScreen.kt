@@ -101,8 +101,12 @@ fun WorkshopSigningScreen(onBack: () -> Unit, viewModel: WorkshopSigningViewMode
         CreateKeystoreDialog(
             busy = busy,
             onDismiss = { showCreate = false },
-            onConfirm = { draft ->
-                viewModel.createKeystore(draft) { showCreate = false }
+            onConfirm = { draft, onError ->
+                viewModel.createKeystore(
+                    draft = draft,
+                    onError = onError,
+                    onSuccess = { showCreate = false },
+                )
             },
         )
     }
@@ -110,8 +114,12 @@ fun WorkshopSigningScreen(onBack: () -> Unit, viewModel: WorkshopSigningViewMode
         ImportKeystoreDialog(
             busy = busy,
             onDismiss = { showImport = false },
-            onConfirm = { draft ->
-                viewModel.importKeystore(draft) { showImport = false }
+            onConfirm = { draft, onError ->
+                viewModel.importKeystore(
+                    draft = draft,
+                    onError = onError,
+                    onSuccess = { showImport = false },
+                )
             },
         )
     }
@@ -155,47 +163,157 @@ private fun KeystoreRow(keystore: WorkshopKeystore, onDelete: () -> Unit) {
 private fun CreateKeystoreDialog(
     busy: Boolean,
     onDismiss: () -> Unit,
-    onConfirm: (WorkshopSigningCreationDraft) -> Unit,
+    onConfirm: (WorkshopSigningCreationDraft, (String) -> Unit) -> Unit,
 ) {
     var draft by rememberSaveable(stateSaver = creationDraftSaver) { mutableStateOf(WorkshopSigningCreationDraft()) }
+    var createError by remember { mutableStateOf<String?>(null) }
+    var validityInput by rememberSaveable(draft.validityYears) { mutableStateOf(draft.validityYears.toString()) }
+
     // 密码不足 6 位时显式标错，而不是静默禁用按钮
     val storePasswordInvalid = draft.storePassword.isNotEmpty() && draft.storePassword.length < 6
-    val valid = draft.name.isNotBlank() && draft.storePassword.length >= 6
+    val keyPasswordInvalid = draft.keyPassword.isNotEmpty() && draft.keyPassword.length < 6
+    val valid = draft.name.isNotBlank() && draft.storePassword.length >= 6 && (draft.keyPassword.isEmpty() || draft.keyPassword.length >= 6)
+
     RuntimeAlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text(stringResource(R.string.workshop_signing_create)) },
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.workshop_signing_create))
+                if (!createError.isNullOrBlank()) {
+                    val displayReason = if (createError == "环境不完整" || createError?.contains("环境") == true) {
+                        "环境不完整"
+                    } else {
+                        createError?.replace(Regex("^(生成|创建)签名失败[：:]?\\s*"), "") ?: ""
+                    }
+                    Text(
+                        text = "（创建签名失败:$displayReason）",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.error,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        },
         text = {
             Column(
                 Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(stringResource(R.string.workshop_signing_create_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                SigningField(stringResource(R.string.workshop_signing_field_name), draft.name) { draft = draft.copy(name = it) }
-                SigningField(stringResource(R.string.workshop_signing_field_alias), draft.alias, optional = true) { draft = draft.copy(alias = it) }
+                SigningField(stringResource(R.string.workshop_signing_field_name), draft.name) {
+                    createError = null
+                    draft = draft.copy(name = it)
+                }
+                SigningField(stringResource(R.string.workshop_signing_field_alias), draft.alias, optional = true) {
+                    createError = null
+                    draft = draft.copy(alias = it)
+                }
                 SigningField(
                     stringResource(R.string.workshop_signing_field_store_password),
                     draft.storePassword,
                     password = true,
                     isError = storePasswordInvalid,
                     supportingText = stringResource(R.string.workshop_signing_password_hint),
-                ) { draft = draft.copy(storePassword = it) }
-                SigningField(stringResource(R.string.workshop_signing_field_key_password), draft.keyPassword, password = true, optional = true) { draft = draft.copy(keyPassword = it) }
+                ) {
+                    createError = null
+                    draft = draft.copy(storePassword = it)
+                }
+                SigningField(
+                    stringResource(R.string.workshop_signing_field_key_password),
+                    draft.keyPassword,
+                    password = true,
+                    optional = true,
+                    isError = keyPasswordInvalid,
+                    supportingText = if (keyPasswordInvalid) stringResource(R.string.workshop_signing_password_hint) else null,
+                ) {
+                    createError = null
+                    draft = draft.copy(keyPassword = it)
+                }
                 SigningField(
                     stringResource(R.string.workshop_signing_field_validity),
-                    draft.validityYears.toString(),
+                    validityInput,
                     supportingText = stringResource(R.string.workshop_signing_validity_hint, WorkshopKeystore.DEFAULT_VALIDITY_YEARS),
                 ) { text ->
-                    draft = draft.copy(validityYears = text.filter(Char::isDigit).take(3).toIntOrNull() ?: WorkshopKeystore.DEFAULT_VALIDITY_YEARS)
+                    createError = null
+                    val digits = text.filter(Char::isDigit).take(3)
+                    validityInput = digits
+                    val parsedYears = digits.toIntOrNull()
+                    draft = draft.copy(validityYears = parsedYears ?: WorkshopKeystore.DEFAULT_VALIDITY_YEARS)
                 }
-                SigningField(stringResource(R.string.workshop_signing_field_organization), draft.organization, optional = true) { draft = draft.copy(organization = it) }
+                SigningField(stringResource(R.string.workshop_signing_field_organization), draft.organization, optional = true) {
+                    createError = null
+                    draft = draft.copy(organization = it)
+                }
             }
         },
         confirmButton = {
-            RuntimeButton(onClick = { onConfirm(draft) }, enabled = valid && !busy) { Text(stringResource(R.string.workshop_signing_create)) }
+            RuntimeButton(
+                onClick = {
+                    createError = null
+                    onConfirm(draft) { errMsg ->
+                        createError = errMsg
+                    }
+                },
+                enabled = valid && !busy,
+            ) {
+                Text(stringResource(R.string.workshop_signing_create))
+            }
         },
         dismissButton = {
-            RuntimeOutlinedButton(onClick = onDismiss, enabled = !busy) { Text(stringResource(R.string.workspace_cancel)) }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RuntimeOutlinedButton(onClick = onDismiss, enabled = !busy) { Text(stringResource(R.string.workspace_cancel)) }
+                RuntimeOutlinedButton(
+                    onClick = {
+                        createError = null
+                        val newDraft = generateDefaultSigningDraft(draft.name)
+                        draft = newDraft
+                        validityInput = newDraft.validityYears.toString()
+                    },
+                    enabled = !busy,
+                ) {
+                    Text(stringResource(R.string.workshop_signing_default))
+                }
+            }
         },
+    )
+}
+
+internal fun generateDefaultSigningDraft(prefixInput: String): WorkshopSigningCreationDraft {
+    val cleanInput = prefixInput.trim()
+        .replace(Regex("-\\d{8}-[a-fA-F0-9]+$"), "")
+        .ifBlank { "taixu-release" }
+    val safePrefix = cleanInput.replace(Regex("[^a-zA-Z0-9]+"), "-").trim('-').ifBlank { "taixu-release" }
+    val dateStr = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
+    val hexSuffix = java.util.UUID.randomUUID().toString().replace("-", "").take(4).lowercase(Locale.getDefault())
+    val name = "$safePrefix-$dateStr-$hexSuffix"
+    val alias = "$safePrefix-key"
+    val yearStr = SimpleDateFormat("yyyy", Locale.getDefault()).format(Date())
+    val capPrefix = if (safePrefix == "taixu-release") {
+        "TaiXu"
+    } else {
+        safePrefix.split(Regex("[-_]"))
+            .filter { it.isNotBlank() }
+            .joinToString("") { it.replaceFirstChar { c -> c.uppercase(Locale.getDefault()) } }
+            .ifBlank { "TaiXu" }
+    }
+    val randomChars = (('a'..'z') + ('0'..'9')).shuffled().take(4).joinToString("")
+    val password = "${capPrefix}#${yearStr}_$randomChars"
+    val org = "$capPrefix Developer"
+    return WorkshopSigningCreationDraft(
+        name = name,
+        alias = alias,
+        storePassword = password,
+        keyPassword = password,
+        validityYears = WorkshopKeystore.DEFAULT_VALIDITY_YEARS,
+        organization = org,
     )
 }
 
@@ -203,9 +321,10 @@ private fun CreateKeystoreDialog(
 private fun ImportKeystoreDialog(
     busy: Boolean,
     onDismiss: () -> Unit,
-    onConfirm: (WorkshopSigningImportDraft) -> Unit,
+    onConfirm: (WorkshopSigningImportDraft, (String) -> Unit) -> Unit,
 ) {
     var draft by rememberSaveable(stateSaver = importDraftSaver) { mutableStateOf(WorkshopSigningImportDraft()) }
+    var importError by remember { mutableStateOf<String?>(null) }
     val context = androidx.compose.ui.platform.LocalContext.current
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -220,7 +339,24 @@ private fun ImportKeystoreDialog(
     val valid = draft.uri.isNotBlank() && draft.name.isNotBlank() && draft.storePassword.isNotBlank()
     RuntimeAlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text(stringResource(R.string.workshop_signing_import)) },
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.workshop_signing_import))
+                if (!importError.isNullOrBlank()) {
+                    Text(
+                        text = "（导入失败：$importError）",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.error,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        },
         text = {
             Column(
                 Modifier.verticalScroll(rememberScrollState()),
@@ -239,14 +375,36 @@ private fun ImportKeystoreDialog(
                         }
                     }
                 }
-                SigningField(stringResource(R.string.workshop_signing_field_name), draft.name) { draft = draft.copy(name = it) }
-                SigningField(stringResource(R.string.workshop_signing_field_alias), draft.alias, optional = true) { draft = draft.copy(alias = it) }
-                SigningField(stringResource(R.string.workshop_signing_field_store_password), draft.storePassword, password = true) { draft = draft.copy(storePassword = it) }
-                SigningField(stringResource(R.string.workshop_signing_field_key_password), draft.keyPassword, password = true, optional = true) { draft = draft.copy(keyPassword = it) }
+                SigningField(stringResource(R.string.workshop_signing_field_name), draft.name) {
+                    importError = null
+                    draft = draft.copy(name = it)
+                }
+                SigningField(stringResource(R.string.workshop_signing_field_alias), draft.alias, optional = true) {
+                    importError = null
+                    draft = draft.copy(alias = it)
+                }
+                SigningField(stringResource(R.string.workshop_signing_field_store_password), draft.storePassword, password = true) {
+                    importError = null
+                    draft = draft.copy(storePassword = it)
+                }
+                SigningField(stringResource(R.string.workshop_signing_field_key_password), draft.keyPassword, password = true, optional = true) {
+                    importError = null
+                    draft = draft.copy(keyPassword = it)
+                }
             }
         },
         confirmButton = {
-            RuntimeButton(onClick = { onConfirm(draft) }, enabled = valid && !busy) { Text(stringResource(R.string.workshop_signing_import)) }
+            RuntimeButton(
+                onClick = {
+                    importError = null
+                    onConfirm(draft) { errMsg ->
+                        importError = errMsg.replace(Regex("^签名导入失败[：:]?\\s*"), "")
+                    }
+                },
+                enabled = valid && !busy,
+            ) {
+                Text(stringResource(R.string.workshop_signing_import))
+            }
         },
         dismissButton = {
             RuntimeOutlinedButton(onClick = onDismiss, enabled = !busy) { Text(stringResource(R.string.workspace_cancel)) }
@@ -264,6 +422,7 @@ private fun SigningField(
     supportingText: String? = null,
     onValueChange: (String) -> Unit,
 ) {
+    var passwordVisible by remember { mutableStateOf(false) }
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
@@ -271,9 +430,20 @@ private fun SigningField(
         singleLine = true,
         isError = isError,
         supportingText = supportingText?.let { hint -> { Text(hint) } },
-        visualTransformation = if (password) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+        visualTransformation = if (password && !passwordVisible) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+        trailingIcon = if (password) {
+            {
+                androidx.compose.material3.IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                    RuntimeIcon(
+                        name = if (passwordVisible) RuntimeIconName.VisibilityOff else RuntimeIconName.Visibility,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        } else null,
         modifier = Modifier.fillMaxWidth(),
-        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = if (password) FontFamily.Default else FontFamily.Monospace),
+        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = if (password && !passwordVisible) FontFamily.Default else FontFamily.Monospace),
     )
 }
 

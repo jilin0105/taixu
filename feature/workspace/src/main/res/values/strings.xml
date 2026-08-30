@@ -163,6 +163,7 @@
     <string name="workshop_signing_section">签名文件 (Keystore)</string>
     <string name="workshop_signing_section_description">用于 Release 正式包签名，支持创建或导入</string>
     <string name="workshop_signing_create">创建签名</string>
+    <string name="workshop_signing_default">默认签名</string>
     <string name="workshop_signing_import">导入签名</string>
     <string name="workshop_signing_empty">暂无签名文件</string>
     <string name="workshop_signing_empty_hint">创建或导入签名文件后，构建 Release 包时可选用</string>

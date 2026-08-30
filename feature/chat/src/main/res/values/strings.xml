@@ -228,6 +228,7 @@
     <string name="chat_branch_tool_calls">%1$d 次工具调用</string>
     <string name="chat_runtime_title">Harness 运行详情</string>
     <string name="chat_runtime_description">模型轮次、工具耗时、审批和恢复动作按发生顺序汇总。</string>
+    <string name="chat_navigate_to_message">定位</string>
     <string name="chat_no_events">本次应用进程中还没有运行事件</string>
     <string name="chat_event_operation_started">任务开始</string>
     <string name="chat_event_operation_completed">任务完成</string>

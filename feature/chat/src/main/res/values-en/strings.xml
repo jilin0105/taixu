@@ -221,6 +221,7 @@
     <string name="chat_branch_tool_calls">%1$d tool calls</string>
     <string name="chat_runtime_title">Harness runtime details</string>
     <string name="chat_runtime_description">Model rounds, tool durations, approvals, and recoveries in chronological order.</string>
+    <string name="chat_navigate_to_message">Locate</string>
     <string name="chat_no_events">No runtime events in this app process yet</string>
     <string name="chat_event_operation_started">Operation started</string>
     <string name="chat_event_operation_completed">Operation completed</string>
