@@ -37,8 +37,24 @@ ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
 ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
 GRADLE_HOME="${GRADLE_HOME:-/opt/gradle-8.14.2}"
 FLUTTER_HOME="${FLUTTER_HOME:-/opt/flutter}"
-TAIXU_CMAKE_HOME="${TAIXU_CMAKE_HOME:-/opt/taixu/tools/android-suite-offline/cmake}"
-TAIXU_NINJA_HOME="${TAIXU_NINJA_HOME:-/opt/taixu/tools/android-suite-offline/bin}"
+if [ -z "${TAIXU_CMAKE_HOME:-}" ] || [ ! -x "$TAIXU_CMAKE_HOME/bin/cmake" ]; then
+    if [ -x /opt/taixu/tools/android-ndk/cmake/bin/cmake ]; then
+        TAIXU_CMAKE_HOME="/opt/taixu/tools/android-ndk/cmake"
+    elif [ -x /opt/taixu/tools/android-suite-offline/cmake/bin/cmake ]; then
+        TAIXU_CMAKE_HOME="/opt/taixu/tools/android-suite-offline/cmake"
+    else
+        TAIXU_CMAKE_HOME="${TAIXU_CMAKE_HOME:-/opt/taixu/tools/android-suite-offline/cmake}"
+    fi
+fi
+if [ -z "${TAIXU_NINJA_HOME:-}" ] || [ ! -x "$TAIXU_NINJA_HOME/ninja" ]; then
+    if [ -x /opt/taixu/tools/android-ndk/bin/ninja ]; then
+        TAIXU_NINJA_HOME="/opt/taixu/tools/android-ndk/bin"
+    elif [ -x /opt/taixu/tools/android-suite-offline/bin/ninja ]; then
+        TAIXU_NINJA_HOME="/opt/taixu/tools/android-suite-offline/bin"
+    else
+        TAIXU_NINJA_HOME="${TAIXU_NINJA_HOME:-/opt/taixu/tools/android-suite-offline/bin}"
+    fi
+fi
 GRADLE_USER_HOME="${GRADLE_USER_HOME:-/root/.gradle}"
 TAIXU_TOOL_DIR="${TAIXU_TOOL_DIR:-/opt/taixu/tools}"
 export ANDROID_HOME ANDROID_SDK_ROOT GRADLE_HOME JAVA_HOME FLUTTER_HOME TAIXU_CMAKE_HOME TAIXU_NINJA_HOME TAIXU_TOOL_DIR
@@ -147,9 +163,17 @@ doctor() {
     analyze_args=""
     test "${TAIXU_OFFLINE:-0}" = 1 && analyze_args="--offline"
     need_file "$ANDROID_HOME/platforms/android-34/android.jar" "Android Platform 34"
-    need_file "$ANDROID_HOME/build-tools/35.0.0/lib/d8.jar" "Android Build-Tools 35"
-    need_exec "$TAIXU_CMAKE_HOME/bin/cmake" "CMake"
-    need_exec "$TAIXU_NINJA_HOME/ninja" "Ninja"
+    has_native=0
+    if test -f "$project/CMakeLists.txt" || test -f "$project/app/CMakeLists.txt" || test -d "$project/app/src/main/cpp" || test -d "$project/app/src/main/jni"; then
+        has_native=1
+    elif grep -Eq 'externalNativeBuild|ndkBuild|cmake[[:space:]]*\{' "$project/build.gradle" "$project/app/build.gradle" "$project/build.gradle.kts" "$project/app/build.gradle.kts" 2>/dev/null; then
+        has_native=1
+    fi
+
+    if [ "$has_native" = 1 ]; then
+        need_exec "$TAIXU_CMAKE_HOME/bin/cmake" "CMake"
+        need_exec "$TAIXU_NINJA_HOME/ninja" "Ninja"
+    fi
     aapt2="${TAIXU_AAPT2_PATH:-$ANDROID_HOME/build-tools/35.0.0/aapt2}"
     need_exec "$aapt2" "ARM64 AAPT2"
     check_java_arch "$JAVA_HOME/bin/java" b700 "JDK 17"
@@ -157,21 +181,24 @@ doctor() {
     TAIXU_AAPT2_PATH="$aapt2"
     export TAIXU_AAPT2_PATH
     ndk="${TAIXU_NDK_PATH:-${ANDROID_NDK_HOME:-/opt/taixu/toolchains/android/ndk}}"
-    need_file "$ndk/source.properties" "固定 ARM64 NDK"
-    ndk_clang=$(find "$ndk/toolchains/llvm/prebuilt" \( -type f -o -type l \) -name clang -print -quit 2>/dev/null)
-    ndk_strip=$(find "$ndk/toolchains/llvm/prebuilt" \( -type f -o -type l \) -name llvm-strip -print -quit 2>/dev/null)
-    need_exec "$ndk_clang" "ARM64 NDK clang"
-    need_exec "$ndk_strip" "ARM64 NDK llvm-strip"
-    check_elf_machine "$ndk_clang" b700 "NDK clang"
-    check_elf_machine "$ndk_strip" b700 "NDK llvm-strip"
-    TAIXU_NDK_PATH="$ndk"
-    ANDROID_NDK_HOME="$ndk"
-    ANDROID_NDK_ROOT="$ndk"
-    export TAIXU_NDK_PATH ANDROID_NDK_HOME ANDROID_NDK_ROOT
-    managed_ndk_policy=/opt/taixu/scripts/taixu-android-ndk.gradle
-    need_file "$managed_ndk_policy" "太墟 NDK 构建策略"
-    mkdir -p "$GRADLE_USER_HOME/init.d"
-    cp "$managed_ndk_policy" "$GRADLE_USER_HOME/init.d/taixu-android-ndk.gradle"
+    if [ "$has_native" = 1 ] || [ -f "$ndk/source.properties" ]; then
+        need_file "$ndk/source.properties" "固定 ARM64 NDK"
+        ndk_clang=$(find "$ndk/toolchains/llvm/prebuilt" \( -type f -o -type l \) -name clang -print -quit 2>/dev/null)
+        ndk_strip=$(find "$ndk/toolchains/llvm/prebuilt" \( -type f -o -type l \) -name llvm-strip -print -quit 2>/dev/null)
+        need_exec "$ndk_clang" "ARM64 NDK clang"
+        need_exec "$ndk_strip" "ARM64 NDK llvm-strip"
+        check_elf_machine "$ndk_clang" b700 "NDK clang"
+        check_elf_machine "$ndk_strip" b700 "NDK llvm-strip"
+        TAIXU_NDK_PATH="$ndk"
+        ANDROID_NDK_HOME="$ndk"
+        ANDROID_NDK_ROOT="$ndk"
+        export TAIXU_NDK_PATH ANDROID_NDK_HOME ANDROID_NDK_ROOT
+        managed_ndk_policy=/opt/taixu/scripts/taixu-android-ndk.gradle
+        if test -f "$managed_ndk_policy"; then
+            mkdir -p "$GRADLE_USER_HOME/init.d"
+            cp "$managed_ndk_policy" "$GRADLE_USER_HOME/init.d/taixu-android-ndk.gradle"
+        fi
+    fi
     gradle_properties="$GRADLE_USER_HOME/gradle.properties"
     touch "$gradle_properties"
     grep -Fqx 'android.builder.sdkDownload=false' "$gradle_properties" 2>/dev/null ||

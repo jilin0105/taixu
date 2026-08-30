@@ -58,7 +58,7 @@ is_android_project() {
 is_information_only() {
     [ "$#" -eq 0 ] && return 0
     for argument in "$@"; do
-        case "$argument" in -v|--version|-h|--help|help|tasks|properties|projects|dependencies|dependencyInsight|components|model|-*) ;; *) return 1 ;; esac
+        case "$argument" in -v|--version|-h|--help|help|tasks|properties|projects|dependencies|dependencyInsight|components|model|wrapper|init|-*) ;; *) return 1 ;; esac
     done
     return 0
 }
