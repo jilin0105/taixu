@@ -54,7 +54,7 @@
 | :--- | :--- | :--- |
 | **设计系统与基础组件** | [`feature/components/.../RuntimeComponents.kt`](../feature/components/src/main/java/top/wkbin/taixu/ui/components/RuntimeComponents.kt) | `RuntimeCard`, `RuntimeTopBar`, `RuntimeAlertDialog`, `StatusBadge`, 图标 |
 | **仪表盘** | [`feature/home/.../HomeScreen.kt`](../feature/home/src/main/java/top/wkbin/taixu/ui/home/HomeScreen.kt) | Linux 沙箱监控仪表盘、RAM/磁盘/进程看板 |
-| **对讲界面与双栏** | [`feature/chat/.../ChatScreen.kt`](../feature/chat/src/main/java/top/wkbin/taixu/ui/chat/ChatScreen.kt) | M3 对话流、TaskPlanCard、双栏分屏联动 |
+| **对讲界面与双栏** | [`feature/chat/.../ChatScreen.kt`](../feature/chat/src/main/java/top/wkbin/taixu/ui/chat/ChatScreen.kt) | 入口状态装配与弹窗编排、ChatPaneContent 双栏/单栏分屏联动；UI 已模块化：`ChatTopBar`·`ChatMessageList`·`ChatComposer`·`ChatMessageBubbles`·`ChatToolCards`·`ChatDialogs`·`ChatSheets`·`ChatPopups`·`ChatMentionText`·`ChatUiHelpers` 同包拆分 |
 | **任务看板与压缩横幅** | [`feature/chat/.../PlanBoard.kt`](../feature/chat/src/main/java/top/wkbin/taixu/ui/chat/PlanBoard.kt)、[`CompactionBanner.kt`](../feature/chat/src/main/java/top/wkbin/taixu/ui/chat/CompactionBanner.kt) | plan 工具数据源的步骤看板；上下文折叠透明度横幅 |
 | **记忆与草稿抽屉** | [`feature/chat/.../SessionMemorySheet.kt`](../feature/chat/src/main/java/top/wkbin/taixu/ui/chat/SessionMemorySheet.kt) | AgentMemoryEntity 全量观察 + 当前会话 Scratchpad 的查看与删除入口 |
 | **产物交付预览浮层** | [`feature/chat/.../ArtifactPreviewSheet.kt`](../feature/chat/src/main/java/top/wkbin/taixu/ui/chat/artifact/ArtifactPreviewSheet.kt) | Markdown/代码高亮与就地编辑 |

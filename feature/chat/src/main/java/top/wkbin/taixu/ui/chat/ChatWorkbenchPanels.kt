@@ -1021,65 +1021,6 @@ private fun eventVisual(event: HarnessEvent): EventVisual = when (event) {
     )
 }
 
-@Composable
-internal fun ComposerModeSelector(mode: ComposerSendMode, onModeChange: (ComposerSendMode) -> Unit) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.72f),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(2.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ComposerModeChip(ComposerSendMode.STEER, mode, R.string.chat_label_steer, RuntimeIconName.Tune, Color(0xFF7C4DFF), onModeChange, Modifier.weight(1f))
-            ComposerModeChip(ComposerSendMode.NEXT_RUN, mode, R.string.chat_label_queued, RuntimeIconName.List, MaterialTheme.colorScheme.secondary, onModeChange, Modifier.weight(1f))
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ComposerModeChip(
-    target: ComposerSendMode,
-    selected: ComposerSendMode,
-    titleRes: Int,
-    icon: RuntimeIconName,
-    tint: Color,
-    onModeChange: (ComposerSendMode) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val active = target == selected
-    Surface(
-        onClick = { onModeChange(target) },
-        modifier = modifier.minimumInteractiveComponentSize(),
-        shape = RoundedCornerShape(8.dp),
-        color = if (active) tint.copy(alpha = 0.16f) else Color.Transparent,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 6.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-        ) {
-            RuntimeIcon(icon, Modifier.size(13.dp), if (active) tint else MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.width(4.dp))
-            Text(
-                stringResource(titleRes),
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                color = if (active) tint else MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun QueuedPromptStack(
@@ -1184,27 +1125,6 @@ internal fun CreateBranchDialog(messageId: String, onDismiss: () -> Unit, onCrea
         confirmButton = { TextButton(onClick = { onCreate(messageId, name.ifBlank { defaultName }) }) { Text(stringResource(R.string.chat_create_and_switch)) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.chat_cancel)) } },
     )
-}
-
-private fun eventOperationId(event: HarnessEvent): String? = when (event) {
-    is HarnessEvent.OperationStarted -> event.operationId
-    is HarnessEvent.OperationFinished -> event.operationId
-    is HarnessEvent.ProviderRoundStarted -> event.operationId
-    is HarnessEvent.ProviderRoundSettled -> event.operationId
-    is HarnessEvent.ToolCallStarted -> event.operationId
-    is HarnessEvent.ToolCallSettled -> event.operationId
-    is HarnessEvent.ApprovalRequested -> event.operationId
-    is HarnessEvent.RecoveryApplied -> event.operationId
-    is HarnessEvent.PermissionRequired -> null
-}
-
-/** 用时间戳 + 操作 ID + 事件类型 + 工具调用 ID 组合保证 key 唯一，避免同类事件碰撞。 */
-private fun eventKey(event: HarnessEvent): String = when (event) {
-    is HarnessEvent.ToolCallStarted -> event.operationId + event::class.simpleName + event.toolCallId
-    is HarnessEvent.ToolCallSettled -> event.operationId + event::class.simpleName + event.toolCallId
-    is HarnessEvent.ProviderRoundStarted -> event.operationId + event::class.simpleName + event.round
-    is HarnessEvent.ProviderRoundSettled -> event.operationId + event::class.simpleName + event.round
-    else -> eventOperationId(event).orEmpty() + event::class.simpleName
 }
 
 private fun formatEventTime(timestamp: Long): String = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestamp))

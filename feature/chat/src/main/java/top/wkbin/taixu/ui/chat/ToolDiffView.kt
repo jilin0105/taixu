@@ -48,7 +48,6 @@ private val DiffAddedBg = Color(0xFF0E2E1E)
 private val DiffAddedText = Color(0xFF7EE787)
 private val DiffRemovedBg = Color(0xFF38141B)
 private val DiffRemovedText = Color(0xFFFFA198)
-private val DiffHeaderBg = Color(0xFF0F1523)
 private val TerminalBoxBg = Color(0xFF070B12)
 
 @Composable

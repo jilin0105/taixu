@@ -400,7 +400,6 @@
     <string name="chat_subagent_role_tester">测试</string>
     <string name="chat_subagent_role_assistant">助手</string>
     <!-- 轮次锚点栏兜底 -->
-    <string name="chat_turn_fallback">第 %1$d 轮</string>
 
     <!-- 智枢 AI 悬浮小窗 -->
     <string name="chat_floating_collapse">小窗收起</string>
