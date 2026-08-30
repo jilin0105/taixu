@@ -214,6 +214,31 @@ class EnvironmentRepairer @Inject constructor(
                 mkdir -p ${'$'}HOME/.pip
                 printf '[global]\nindex-url = https://pypi.tuna.tsinghua.edu.cn/simple\n' > ${'$'}HOME/.pip/pip.conf 2>/dev/null || true
                 echo "运行时就绪状态: Node ${'$'}(node -v 2>/dev/null || echo '未就绪'), NPM ${'$'}(npm -v 2>/dev/null || echo '未就绪')"
+                if [ -d /opt/android-sdk ] || [ -d /opt/taixu/toolchains/android ]; then
+                    if [ ! -f /etc/profile.d/taixu-android.sh ]; then
+                        mkdir -p /etc/profile.d
+                        cat << 'EOF' > /etc/profile.d/taixu-android.sh
+# TaiXu Android development environment (self-healed by EnvironmentRepairer)
+export JAVA_HOME="${'$'}{JAVA_HOME:-/opt/taixu/toolchains/android/jdk}"
+export ANDROID_HOME="/opt/android-sdk"
+export ANDROID_SDK_ROOT="/opt/android-sdk"
+export GRADLE_HOME="/opt/gradle-8.14.2"
+export TAIXU_AAPT2_PATH="/opt/android-sdk/build-tools/35.0.0/aapt2"
+export TAIXU_NDK_PATH="/opt/taixu/toolchains/android/ndk"
+export TAIXU_NDK_VERSION="r29"
+export ANDROID_NDK_HOME="/opt/taixu/toolchains/android/ndk"
+export ANDROID_NDK_ROOT="/opt/taixu/toolchains/android/ndk"
+export TAIXU_CMAKE_HOME="/opt/taixu/tools/android-suite-offline/cmake"
+export TAIXU_NINJA_HOME="/opt/taixu/tools/android-suite-offline/bin"
+export PATH="/opt/taixu/bin:/opt/taixu/tools/android-suite-offline/bin:/opt/taixu/tools/android-suite-offline/cmake/bin:${'$'}JAVA_HOME/bin:${'$'}GRADLE_HOME/bin:/opt/flutter/bin:${'$'}PATH"
+export _JAVA_OPTIONS="-Djava.security.egd=file:/dev/urandom"
+EOF
+                        chmod 644 /etc/profile.d/taixu-android.sh 2>/dev/null || true
+                    fi
+                    if [ -f /root/.bashrc ] && ! grep -q "taixu-android" /root/.bashrc 2>/dev/null; then
+                        echo '. /etc/profile.d/taixu-android.sh 2>/dev/null || true' >> /root/.bashrc
+                    fi
+                fi
             """.trimIndent()
             executeCommand(setupNodeAndMirrors, logs, timeoutMs = 240_000L)
 

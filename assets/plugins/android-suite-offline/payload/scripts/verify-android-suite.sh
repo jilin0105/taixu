@@ -88,4 +88,22 @@ if [ -f /opt/taixu/bin/d2j-dex2jar ]; then
     require_executable /opt/taixu/bin/d2j-dex2jar
 fi
 
+if [ -f /opt/taixu/bin/rustc ]; then
+    require_executable /opt/taixu/bin/rustc
+    require_aarch64 /opt/taixu/bin/rustc
+    require_command /opt/taixu/bin/rustc --version
+    if [ -f /opt/taixu/bin/cargo ]; then
+        require_executable /opt/taixu/bin/cargo
+        require_command /opt/taixu/bin/cargo --version
+    fi
+fi
+
+if [ -f /opt/taixu/bin/apksigner ]; then
+    require_executable /opt/taixu/bin/apksigner
+fi
+if [ -f /opt/taixu/bin/zipalign ]; then
+    require_executable /opt/taixu/bin/zipalign
+    require_aarch64 /opt/taixu/bin/zipalign
+fi
+
 echo "TaiXu Android ARM64 offline suite is ready"

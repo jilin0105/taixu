@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.runtime.tools
+package top.wkbin.taixu.runtime.tools
 
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.shell.CommandResult
@@ -59,7 +59,7 @@ class ToolCommandLinker @Inject constructor(
     private fun shellQuote(value: String): String = "'${value.replace("'", "'\\\"'\\\"'")}'"
 
     private companion object {
-        val SAFE_NAME = Regex("[a-z0-9][a-z0-9._-]{0,63}")
+        val SAFE_NAME = Regex("[a-z0-9][a-z0-9._+-]{0,63}")
         val SAFE_TARGET = Regex("/[A-Za-z0-9._/@+:-]+")
     }
 }

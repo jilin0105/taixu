@@ -61,7 +61,7 @@ object BuiltinPluginBundles {
                     postInstallSteps = listOf(
                         "/bin/sh /opt/taixu/scripts/setup_android_core.sh",
                     ),
-                    checkCommand = ". /etc/profile.d/taixu-android.sh 2>/dev/null || true; test -x \"${'$'}JAVA_HOME/bin/java\" && test -s \"${'$'}JAVA_HOME/conf/security/java.security\" && test -f \"${'$'}JAVA_HOME/conf/security/policy/unlimited/default_local.policy\" && test -s \"${'$'}JAVA_HOME/lib/security/cacerts\" && test -f /opt/android-sdk/platforms/android-34/android.jar && test -s /opt/android-sdk/licenses/android-sdk-license && test -f /opt/android-sdk/build-tools/35.0.0/source.properties && test -f /opt/android-sdk/build-tools/35.0.0/lib/d8.jar && test -f /opt/gradle-8.14.2/lib/gradle-launcher-8.14.2.jar && test -x \"${'$'}TAIXU_AAPT2_PATH\" && \"${'$'}TAIXU_AAPT2_PATH\" version >/dev/null 2>&1 && test -f \"${'$'}TAIXU_NDK_PATH/source.properties\" && test -x \"${'$'}TAIXU_NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip\" && \"${'$'}TAIXU_NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip\" --version >/dev/null 2>&1 && grep -Fqx \"android.aapt2FromMavenOverride=${'$'}TAIXU_AAPT2_PATH\" /root/.gradle/gradle.properties && grep -Fqx \"android.builder.sdkDownload=false\" /root/.gradle/gradle.properties && grep -Fq \"${'$'}TAIXU_NDK_PATH\" /root/.gradle/init.d/taixu-android-ndk.gradle",
+                    checkCommand = ". /etc/profile.d/taixu-android.sh 2>/dev/null || true; JAVA_BIN=\"\${JAVA_HOME:-/opt/taixu/toolchains/android/jdk}/bin/java\"; (test -x \"\$JAVA_BIN\" || test -x /opt/taixu/bin/java || command -v java >/dev/null 2>&1) && test -f /opt/android-sdk/platforms/android-34/android.jar && test -f /opt/android-sdk/build-tools/35.0.0/lib/d8.jar && (test -f /opt/gradle-8.14.2/lib/gradle-launcher-8.14.2.jar || test -x /opt/taixu/bin/gradle || command -v gradle >/dev/null 2>&1) && (test -x \"\${TAIXU_AAPT2_PATH:-/opt/android-sdk/build-tools/35.0.0/aapt2}\" || test -x /opt/android-sdk/build-tools/35.0.0/aapt2 || test -x /opt/taixu/bin/aapt2) && (test -f \"\${TAIXU_NDK_PATH:-/opt/taixu/toolchains/android/ndk}/source.properties\" || test -f /opt/taixu/toolchains/android/ndk/source.properties)",
                 ),
                 PluginComponent(
                     id = "flutter",
@@ -75,7 +75,7 @@ object BuiltinPluginBundles {
                     postInstallSteps = listOf(
                         "/bin/sh /opt/taixu/scripts/setup_flutter.sh",
                     ),
-                    checkCommand = ". /etc/profile.d/taixu-android.sh 2>/dev/null || true; (command -v flutter || test -f /opt/flutter/bin/flutter) && test -f /opt/android-sdk/platforms/android-34/android.jar && test -f /opt/android-sdk/build-tools/35.0.0/lib/d8.jar && test -x \"${'$'}TAIXU_AAPT2_PATH\" && test -x \"${'$'}TAIXU_NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip\"",
+                    checkCommand = ". /etc/profile.d/taixu-android.sh 2>/dev/null || true; (test -x /opt/flutter/bin/flutter || test -x /opt/taixu/bin/flutter || command -v flutter >/dev/null 2>&1) && test -f /opt/android-sdk/platforms/android-34/android.jar && test -f /opt/android-sdk/build-tools/35.0.0/lib/d8.jar",
                 ),
                 PluginComponent(
                     id = "android-ndk",
@@ -86,7 +86,7 @@ object BuiltinPluginBundles {
                     postInstallSteps = listOf(
                         "/bin/sh /opt/taixu/scripts/setup_termux_ndk.sh",
                     ),
-                    checkCommand = ". /etc/profile.d/taixu-android.sh 2>/dev/null || . /opt/taixu/toolchains/android/ndk/taixu-ndk.env 2>/dev/null || true; command -v cmake && test -f \"${'$'}TAIXU_NDK_PATH/source.properties\" && test -x \"${'$'}TAIXU_NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/clang\" && test -x \"${'$'}TAIXU_NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip\" && \"${'$'}TAIXU_NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip\" --version >/dev/null 2>&1",
+                    checkCommand = ". /etc/profile.d/taixu-android.sh 2>/dev/null || . /opt/taixu/toolchains/android/ndk/taixu-ndk.env 2>/dev/null || true; (command -v cmake >/dev/null 2>&1 || test -x /opt/taixu/bin/cmake || test -x /opt/taixu/tools/android-suite-offline/cmake/bin/cmake || test -x /usr/bin/cmake) && (test -f \"\${TAIXU_NDK_PATH:-/opt/taixu/toolchains/android/ndk}/source.properties\" || test -f /opt/taixu/toolchains/android/ndk/source.properties)",
                 ),
                 PluginComponent(
                     id = "android-re",
@@ -97,7 +97,18 @@ object BuiltinPluginBundles {
                     postInstallSteps = listOf(
                         "/bin/sh /opt/taixu/scripts/setup_jadx.sh",
                     ),
-                    checkCommand = "command -v apktool || command -v jadx || test -x /opt/jadx/bin/jadx",
+                    checkCommand = ". /etc/profile.d/taixu-android.sh 2>/dev/null || true; (command -v apktool >/dev/null 2>&1 || test -x /opt/taixu/bin/apktool || test -f /opt/taixu/tools/android-suite-offline/lib/apktool.jar || command -v jadx >/dev/null 2>&1 || test -x /opt/taixu/bin/jadx || test -x /opt/jadx/bin/jadx || test -x /opt/taixu/tools/android-suite-offline/jadx/bin/jadx)",
+                ),
+                PluginComponent(
+                    id = "rust-dev",
+                    name = "Rust 系统与 Android JNI 交叉编译链",
+                    description = "Rust 1.85+ ARM64 独立开发工具链、Cargo 包管理、Android ARM64 原生架构交叉编译标准库及 NDK Clang 链接器绑定",
+                    isRequired = false,
+                    aptPackages = listOf("curl", "ca-certificates", "build-essential"),
+                    postInstallSteps = listOf(
+                        "/bin/sh /opt/taixu/scripts/setup_rust.sh",
+                    ),
+                    checkCommand = ". /etc/profile.d/taixu-android.sh 2>/dev/null || true; (command -v rustc >/dev/null 2>&1 || test -x /opt/taixu/bin/rustc || test -x /opt/taixu/toolchains/rust/bin/rustc) && (command -v cargo >/dev/null 2>&1 || test -x /opt/taixu/bin/cargo || test -x /opt/taixu/toolchains/rust/bin/cargo)",
                 ),
             ),
         ),
@@ -115,7 +126,7 @@ object BuiltinPluginBundles {
                     description = "高速全文检索、文件发现、交互式模糊筛选与带语法高亮的源码预览",
                     isRequired = true,
                     aptPackages = listOf("ripgrep", "fd-find", "fzf", "bat"),
-                    checkCommand = "command -v rg && command -v fd && command -v fzf && command -v bat",
+                    checkCommand = "(command -v rg >/dev/null 2>&1 || test -x /opt/taixu/bin/rg) && (command -v fd >/dev/null 2>&1 || command -v fdfind >/dev/null 2>&1 || test -x /usr/local/bin/fd) && (command -v fzf >/dev/null 2>&1 || test -x /usr/bin/fzf) && (command -v bat >/dev/null 2>&1 || command -v batcat >/dev/null 2>&1 || test -x /usr/local/bin/bat)",
                 ),
             ),
         ),

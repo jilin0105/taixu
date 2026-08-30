@@ -20,6 +20,11 @@
 | `apktool_2.10.0.jar` | https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar | Apktool APK 资源与 Smali 处理套件 |
 | `dex-tools-v2.4.zip` | https://github.com/pxb1988/dex2jar/releases/download/v2.4/dex-tools-v2.4.zip | pxb1988 dex2jar、smali/baksmali 转换工具集 |
 | `ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz` | https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz | BurntSushi Ripgrep (`rg`) Linux AArch64 静态单二进制毫秒级代码检索器 |
+| `rust-1.85.0-aarch64-unknown-linux-gnu.tar.gz` | https://static.rust-lang.org/dist/rust-1.85.0-aarch64-unknown-linux-gnu.tar.gz | Rust 1.85.0 ARM64 独立工具链（含 rustc、cargo、宿主标准库） |
+| `rust-std-1.85.0-aarch64-linux-android.tar.gz` | https://static.rust-lang.org/dist/rust-std-1.85.0-aarch64-linux-android.tar.gz | Rust aarch64-linux-android 交叉编译目标库 |
+| `uber-apk-signer-1.3.0.jar` | https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar | 独立一键 APK 对齐与 v1/v2/v3/v4 签名工具（可选） |
+| `baksmali-3.0.8.jar` | https://github.com/google/smali/releases/download/v3.0.8/baksmali-3.0.8.jar | Google 官方原版 baksmali 反汇编独立 JAR（可选备用） |
+| `smali-3.0.8.jar` | https://github.com/google/smali/releases/download/v3.0.8/smali-3.0.8.jar | Google 官方原版 smali 汇编独立 JAR（可选备用） |
 
 ## 放置位置
 
