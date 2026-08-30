@@ -8,7 +8,7 @@ Android 无 Root 下用 PRoot 跑 Linux 多发行版沙箱 + AI Agent Harness + 
 
 ## 模块
 
-`app`(壳/装配/JNI) · `core`(model·common·database·datastore·network·security) · `runtime`(PRoot/RootFS/PTY/工作区) · `tools`(Registry/安装事务/Provider安全) · `harness`(Agent循环/MCP/子智能体) · `feature`(components·theme·home·chat·terminal·workspace·settings·developer·welcome·navigation)
+`app`(壳/装配/JNI) · `core`(model·common·database·datastore·network·security) · `runtime`(PRoot/RootFS/PTY/工作区) · `tools`(Registry/安装事务/Provider安全) · `harness`(Agent循环/MCP/子智能体) · `feature`(components·theme·home·chat·terminal·workspace·settings·developer·onboarding·custom_iteration·navigation)
 
 ## 动手前先读
 

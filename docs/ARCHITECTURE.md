@@ -50,7 +50,8 @@ LinuxAIRuntime/
     ├── workspace/       # 工作区管理器：创建/ZIP/GitHub 导入、导出、代码浏览、后台构建
     ├── settings/        # 设置中心：模型档案、Agent 超时、工具/本地插件、存储挂载、外观与诊断
     ├── developer/       # 开发者原生沙箱与诊断面板
-    ├── welcome/         # 首次启动引导与 RootFS 解压就绪流程
+    ├── onboarding/      # 首次启动引导与 RootFS 解压就绪流程
+    ├── custom_iteration/ # 自定义迭代（AI 改应用）入口
     └── navigation/      # 顶层导航路由与 NavHost 调度
 ```
 

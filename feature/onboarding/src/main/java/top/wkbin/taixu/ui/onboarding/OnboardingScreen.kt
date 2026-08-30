@@ -1,4 +1,4 @@
-package top.wkbin.taixu
+package top.wkbin.taixu.ui.onboarding
 
 import android.content.ClipboardManager
 import android.content.Context
@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import top.wkbin.taixu.feature.onboarding.R
 import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.core.tools.AgentProviderDefinition
 import top.wkbin.taixu.runtime.DistributionCatalog
@@ -115,9 +116,9 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
         ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let(viewModel::importArchive) }
     val mirrorOptions = listOf(
-        SetupOption("auto", stringResource(R.string.taixu_onboarding_mirror_auto)),
-        SetupOption("official", stringResource(R.string.taixu_onboarding_mirror_official)),
-        SetupOption("china", stringResource(R.string.taixu_onboarding_mirror_china)),
+        SetupOption("auto", stringResource(R.string.onboarding_mirror_auto)),
+        SetupOption("official", stringResource(R.string.onboarding_mirror_official)),
+        SetupOption("china", stringResource(R.string.onboarding_mirror_china)),
     )
 
     LazyColumn(
@@ -127,13 +128,13 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
     ) {
         item {
             Intro(
-                title = stringResource(R.string.taixu_onboarding_title),
-                description = stringResource(R.string.taixu_onboarding_description),
+                title = stringResource(R.string.onboarding_title),
+                description = stringResource(R.string.onboarding_description),
             )
         }
         item {
             SetupDropdown(
-                label = stringResource(R.string.taixu_onboarding_distribution),
+                label = stringResource(R.string.onboarding_distribution),
                 selectedId = distribution,
                 options = distributionOptions,
                 enabled = !installing,
@@ -142,7 +143,7 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
         }
         item {
             SetupDropdown(
-                label = stringResource(R.string.taixu_onboarding_mirror),
+                label = stringResource(R.string.onboarding_mirror),
                 selectedId = mirror,
                 options = mirrorOptions,
                 enabled = !installing,
@@ -200,7 +201,7 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
         (state as? RuntimeState.Error)?.let { error ->
             item {
                 Text(
-                    error.throwable.message ?: stringResource(R.string.taixu_onboarding_initialization_failed),
+                    error.throwable.message ?: stringResource(R.string.onboarding_initialization_failed),
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodyMedium,
                 )
@@ -215,9 +216,9 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
             ) {
                 Text(
                     stringResource(
-                        if (state is RuntimeState.Error) R.string.taixu_onboarding_retry
-                        else if (installing) R.string.taixu_onboarding_preparing
-                        else R.string.taixu_onboarding_initialize,
+                        if (state is RuntimeState.Error) R.string.onboarding_retry
+                        else if (installing) R.string.onboarding_preparing
+                        else R.string.onboarding_initialize,
                     ),
                     fontWeight = FontWeight.Bold,
                 )
@@ -238,12 +239,12 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
                 enabled = !installing,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(stringResource(R.string.taixu_onboarding_import))
+                Text(stringResource(R.string.onboarding_import))
             }
         }
         item {
             Text(
-                stringResource(R.string.taixu_onboarding_import_hint),
+                stringResource(R.string.onboarding_import_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -254,7 +255,7 @@ private fun SystemSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) 
                     onClick = viewModel::retryReady,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(stringResource(R.string.taixu_onboarding_recheck), color = MaterialTheme.colorScheme.primary)
+                    Text(stringResource(R.string.onboarding_recheck), color = MaterialTheme.colorScheme.primary)
                 }
             }
         }
@@ -324,11 +325,11 @@ private fun ModelSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) {
                     }
                 }
                 Text(
-                    text = stringResource(R.string.taixu_onboarding_connect_model),
+                    text = stringResource(R.string.onboarding_connect_model),
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                 )
                 Text(
-                    text = stringResource(R.string.taixu_onboarding_connect_model_description),
+                    text = stringResource(R.string.onboarding_connect_model_description),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -592,7 +593,7 @@ private fun ModelSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) {
                     shape = RoundedCornerShape(12.dp),
                 ) {
                     Text(
-                        stringResource(R.string.taixu_onboarding_enter),
+                        stringResource(R.string.onboarding_enter),
                         fontWeight = FontWeight.Bold,
                     )
                 }
@@ -602,7 +603,7 @@ private fun ModelSetupPage(viewModel: OnboardingViewModel, modifier: Modifier) {
                     modifier = Modifier.fillMaxWidth().height(40.dp),
                 ) {
                     Text(
-                        stringResource(R.string.taixu_onboarding_later),
+                        stringResource(R.string.onboarding_later),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }

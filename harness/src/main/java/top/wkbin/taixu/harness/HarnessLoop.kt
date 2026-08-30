@@ -1,7 +1,6 @@
 package top.wkbin.taixu.harness
 
 import android.content.Context
-import android.content.Intent
 import dagger.hilt.android.qualifiers.ApplicationContext
 import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.database.HarnessSessionRepository
@@ -75,6 +74,7 @@ private sealed interface RunResult {
 @Singleton
 class HarnessLoop @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val foregroundLauncher: AgentForegroundLauncher,
     private val providerClient: ProviderClient,
     private val toolExecutor: ToolExecutor,
     private val messageStore: SessionTreeStore,
@@ -1305,11 +1305,7 @@ class HarnessLoop @Inject constructor(
     }
 
     private fun startForegroundServiceSafe() {
-        runCatching {
-            val intent = Intent(context, Class.forName("top.wkbin.taixu.service.AgentForegroundService"))
-                .setAction("top.wkbin.taixu.action.AGENT_START")
-            context.startForegroundService(intent)
-        }
+        foregroundLauncher.start()
     }
 
     private fun newId(): String = UUID.randomUUID().toString()

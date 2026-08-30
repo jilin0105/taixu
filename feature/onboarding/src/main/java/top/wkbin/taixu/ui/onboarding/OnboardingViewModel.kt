@@ -1,4 +1,4 @@
-package top.wkbin.taixu
+package top.wkbin.taixu.ui.onboarding
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope

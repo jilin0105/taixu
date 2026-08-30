@@ -1,6 +1,8 @@
 package top.wkbin.taixu
 
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
+import top.wkbin.taixu.ui.onboarding.OnboardingScreen
+import top.wkbin.taixu.ui.onboarding.OnboardingViewModel
 
 import android.Manifest
 import android.content.Intent
