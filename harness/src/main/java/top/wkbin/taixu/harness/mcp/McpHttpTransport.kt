@@ -261,7 +261,7 @@ class McpHttpTransport @Inject constructor(
         fastClient.newCall(request).execute().use { check(it.isSuccessful) { "MCP HTTP ${it.code}" } }
     }
 
-    private suspend fun postViaLegacy(channel: LegacySseChannel, method: String, params: JsonElement): JsonRpcResponse {
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        private suspend fun postViaLegacy(channel: LegacySseChannel, method: String, params: JsonElement): JsonRpcResponse {
         val id = UUID.randomUUID().toString()
         val payload = json.encodeToString(JsonRpcRequest.serializer(), JsonRpcRequest(id = id, method = method, params = params))
         val deferred = channel.register(id)
@@ -463,9 +463,9 @@ class McpHttpTransport @Inject constructor(
     companion object {
         private const val ACCEPT = "application/json, text/event-stream"
         private const val MAX_BYTES = 4 * 1024 * 1024
-        private const val FAST_TIMEOUT_MS = 30_000L
+        private const val FAST_TIMEOUT_MS = 5_000L
         private const val CALL_TIMEOUT_MS = 120_000L
-        private const val HANDSHAKE_TIMEOUT_MS = 20_000L
+        private const val HANDSHAKE_TIMEOUT_MS = 4_000L
 
         /** TCP 连接超时：本地地址端口无服务时快速失败，避免 30s 级别的空等。 */
         private const val FAST_CONNECT_TIMEOUT_MS = 3_000L

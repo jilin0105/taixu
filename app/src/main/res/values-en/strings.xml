@@ -1,30 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="taixu_app_name">TaiXu</string>
-    <string name="taixu_onboarding_title">TaiXu · Getting started</string>
-    <string name="taixu_onboarding_description">Preparing a rootless Linux PRoot sandbox and code workspace.</string>
-    <string name="taixu_onboarding_distribution">Linux distribution</string>
-    <string name="taixu_onboarding_mirror">Download mirror</string>
-    <string name="taixu_onboarding_mirror_auto">Automatic mirror selection (Recommended)</string>
-    <string name="taixu_onboarding_mirror_official">Official source (Global CDN)</string>
-    <string name="taixu_onboarding_mirror_china">China mirror acceleration</string>
-    <string name="taixu_onboarding_initialization_failed">Initialization failed. Check your connection and try again.</string>
-    <string name="taixu_onboarding_retry">Retry setup</string>
-    <string name="taixu_onboarding_preparing">Preparing environment…</string>
-    <string name="taixu_onboarding_initialize">Initialize sandbox</string>
-    <string name="taixu_onboarding_recheck">Already installed? Recheck without downloading again</string>
-    <string name="taixu_onboarding_import">Import a Linux distribution from a file</string>
-    <string name="taixu_onboarding_import_hint">Supports ARM64 RootFS archives: .tar, .tar.gz, .tgz, .tar.xz, and .tar.zst. Bash, /bin/sh, and os-release are required.</string>
-    <string name="taixu_onboarding_connect_model">Connect an AI model</string>
-    <string name="taixu_onboarding_connect_model_description">Configure your preferred model provider and API key to start AI pair programming.</string>
-    <string name="taixu_onboarding_base_url">Base URL</string>
-    <string name="taixu_onboarding_api_key">API key (optional)</string>
-    <string name="taixu_onboarding_model_selection">Model / recommended preset</string>
-    <string name="taixu_onboarding_model_empty">Refresh or enter a model manually</string>
-    <string name="taixu_onboarding_model_id">Model ID (manual input supported)</string>
-    <string name="taixu_onboarding_later">Configure later</string>
-    <string name="taixu_onboarding_enter">Enter TaiXu</string>
-    <string name="taixu_onboarding_provider_preset">Provider preset</string>
     <string name="taixu_update_available">New version available: v%1$s</string>
     <string name="taixu_update_versions">Current: v%1$s  ➔  Latest: v%2$s</string>
     <string name="taixu_update_downloading_package">Downloading update…</string>

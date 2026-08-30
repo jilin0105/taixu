@@ -35,8 +35,9 @@ class GuestGroupsTest {
         syncGuestGroups(rootfs, listOf(9997, 3003))
         syncGuestGroups(rootfs, listOf(9997, 3003, 51267))
         val lines = groupFile.readLines()
-        assertEquals(3, lines.size)
+        assertEquals(4, lines.size)
         assertTrue(lines.contains("host_g9997:x:9997:"))
+        assertTrue(lines.contains("host_g3003:x:3003:"))
         assertTrue(lines.contains("host_g51267:x:51267:"))
     }
 

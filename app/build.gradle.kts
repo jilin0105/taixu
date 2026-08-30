@@ -5,8 +5,8 @@ import java.util.Properties
 import org.gradle.kotlin.dsl.configure
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
-val appVersionName = "0.8.0"
-val appVersionCode = 11
+val appVersionName = "0.8.1"
+val appVersionCode = 12
 
 plugins {
     alias(libs.plugins.android.application)
@@ -73,7 +73,8 @@ extensions.configure<ApplicationExtension> {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            if (keystorePropertiesFile != null) {
+            val onCi = System.getenv("CI") == "true"
+            if (keystorePropertiesFile != null && !onCi) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
@@ -142,6 +143,7 @@ dependencies {
     implementation(project(":feature:workspace"))
     implementation(project(":feature:navigation"))
     implementation(project(":feature:custom_iteration"))
+    implementation(project(":feature:onboarding"))
     implementation(project(":feature:theme"))
 
     implementation(libs.androidx.core.ktx)

@@ -240,7 +240,7 @@ class McpStdioTransport @Inject constructor(
 
     companion object {
         /** 沙箱会话拉起超时：正常秒级完成，超时说明沙箱侧挂起。 */
-        internal const val STARTUP_TIMEOUT_MS = 10_000L
+        internal const val STARTUP_TIMEOUT_MS = 3_500L
 
         /** 启动失败冷却时间：期间快速失败，避免每轮对话重复空耗超时。 */
         private const val FAILURE_COOLDOWN_MS = 3 * 60 * 1000L

@@ -192,11 +192,27 @@ class GenericRecipeInstaller(
                 }
             }
 
+            // 6. 安装验证成功后自动清理沙箱内的重量级安装包暂存 (/opt/taixu/imports/<toolId>/archives)，即时释放 1~2GB 存储
+            if (manifest.source == "LOCAL") {
+                emit(InstallEvent.Progress(toolId, "正在清理安装包暂存...", 0.95f, InstallEvent.Phase.VERIFYING_INSTALLATION))
+                linuxRuntime.execute(ShellCommand("rm -rf /opt/taixu/imports/$toolId/archives 2>/dev/null || true", environment = baseEnvironment))
+            }
+
             val versionOutput = versionResult.stdout.trim().lineSequence().firstOrNull()?.takeIf { it.isNotBlank() } ?: manifest.version
             emit(InstallEvent.Completed(toolId, versionOutput))
         } catch (cancellation: CancellationException) {
+            if (manifest.source == "LOCAL") {
+                runCatching {
+                    linuxRuntime.execute(ShellCommand("rm -rf /opt/taixu/imports/$toolId 2>/dev/null || true"))
+                }
+            }
             throw cancellation
         } catch (throwable: Throwable) {
+            if (manifest.source == "LOCAL") {
+                runCatching {
+                    linuxRuntime.execute(ShellCommand("rm -rf /opt/taixu/imports/$toolId 2>/dev/null || true"))
+                }
+            }
             emit(InstallEvent.RolledBack(toolId))
             emit(InstallEvent.Failed(toolId, throwable.message ?: "安装失败"))
         }

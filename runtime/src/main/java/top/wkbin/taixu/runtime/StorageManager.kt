@@ -8,6 +8,13 @@ import top.wkbin.taixu.core.common.result.AppError
 import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.common.result.ErrorCode
 import java.io.File
+import java.io.IOException
+import java.nio.file.FileVisitResult
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -139,85 +146,114 @@ class StorageManager @Inject constructor(
 
         distroIds.forEach { distroId ->
             val rfs = pathManager.rootfsDir(distroId)
+            val taixuRoot = pathManager.taixuRootDir(distroId)
             if (rfs.exists()) {
-                // 1.1 Android SDK 套件
-                val androidSdkDir = File(rfs, "opt/android-sdk")
-                val androidToolchainsDir = File(rfs, "opt/taixu/toolchains/android")
-                val androidSdkBytes = sizeOf(androidSdkDir) + sizeOf(androidToolchainsDir)
+                // 1.1 Android SDK 套件（检测 rfs/opt/android-sdk 与 taixuRoot/toolchains/android）
+                val androidSdkDir = listOf(
+                    File(rfs, "opt/android-sdk"),
+                    File(taixuRoot, "toolchains/android/sdk"),
+                    File(rfs, "opt/taixu/toolchains/android/sdk"),
+                ).firstOrNull { it.exists() } ?: File(rfs, "opt/android-sdk")
+
+                val androidToolchainsDir = listOf(
+                    File(taixuRoot, "toolchains/android"),
+                    File(rfs, "opt/taixu/toolchains/android"),
+                ).firstOrNull { it.exists() } ?: File(taixuRoot, "toolchains/android")
+
+                val platformsDir = File(androidSdkDir, "platforms")
+                val buildToolsDir = File(androidSdkDir, "build-tools")
+                val platformToolsDir = File(androidSdkDir, "platform-tools")
+                val ndkDir = File(androidToolchainsDir, "ndk")
+                val jdkDir = File(androidToolchainsDir, "jdk")
+                val sdkToolsDir = File(androidToolchainsDir, "sdk-tools")
+
+                val subItems = mutableListOf<StorageEntry>()
+                if (platformsDir.exists()) {
+                    subItems.add(
+                        StorageEntry(
+                            id = "android_platforms_$distroId",
+                            name = "Platform SDK (android.jar)",
+                            detail = "Android API 平台组件",
+                            bytes = sizeOf(platformsDir),
+                            cleanable = false,
+                            riskLevel = StorageRiskLevel.READONLY,
+                            path = platformsDir.absolutePath,
+                        ),
+                    )
+                }
+                if (buildToolsDir.exists()) {
+                    subItems.add(
+                        StorageEntry(
+                            id = "android_build_tools_$distroId",
+                            name = "Build-Tools (aapt2, d8, zipalign)",
+                            detail = "Android 编译与打包工具",
+                            bytes = sizeOf(buildToolsDir),
+                            cleanable = false,
+                            riskLevel = StorageRiskLevel.READONLY,
+                            path = buildToolsDir.absolutePath,
+                        ),
+                    )
+                }
+                if (platformToolsDir.exists()) {
+                    subItems.add(
+                        StorageEntry(
+                            id = "android_platform_tools_$distroId",
+                            name = "Platform-Tools (adb)",
+                            detail = "Android 调试桥与辅助工具",
+                            bytes = sizeOf(platformToolsDir),
+                            cleanable = false,
+                            riskLevel = StorageRiskLevel.READONLY,
+                            path = platformToolsDir.absolutePath,
+                        ),
+                    )
+                }
+                if (ndkDir.exists()) {
+                    subItems.add(
+                        StorageEntry(
+                            id = "android_ndk_$distroId",
+                            name = "Android NDK C/C++ 工具链",
+                            detail = "本地交叉编译工具与 LLVM Clang",
+                            bytes = sizeOf(ndkDir),
+                            cleanable = false,
+                            riskLevel = StorageRiskLevel.READONLY,
+                            path = ndkDir.absolutePath,
+                        ),
+                    )
+                }
+                if (jdkDir.exists()) {
+                    subItems.add(
+                        StorageEntry(
+                            id = "android_jdk_$distroId",
+                            name = "Android 编译专用 OpenJDK",
+                            detail = "用于 Gradle 构建的 JDK 运行时",
+                            bytes = sizeOf(jdkDir),
+                            cleanable = false,
+                            riskLevel = StorageRiskLevel.READONLY,
+                            path = jdkDir.absolutePath,
+                        ),
+                    )
+                }
+                if (sdkToolsDir.exists()) {
+                    subItems.add(
+                        StorageEntry(
+                            id = "android_sdk_tools_$distroId",
+                            name = "Android SDK 适配与辅助工具",
+                            detail = "AArch64 定制打包与签名组件",
+                            bytes = sizeOf(sdkToolsDir),
+                            cleanable = false,
+                            riskLevel = StorageRiskLevel.READONLY,
+                            path = sdkToolsDir.absolutePath,
+                        ),
+                    )
+                }
+
+                val androidSdkBytes = if (subItems.isNotEmpty()) {
+                    subItems.sumOf { it.bytes }
+                } else {
+                    sizeOf(androidSdkDir) + sizeOf(androidToolchainsDir)
+                }
+
                 if (androidSdkBytes > 0) {
-                    val subItems = mutableListOf<StorageEntry>()
-                    val platformsDir = File(androidSdkDir, "platforms")
-                    val buildToolsDir = File(androidSdkDir, "build-tools")
-                    val platformToolsDir = File(androidSdkDir, "platform-tools")
-                    val ndkDir = File(androidToolchainsDir, "ndk")
-                    val jdkDir = File(androidToolchainsDir, "jdk")
-
-                    if (platformsDir.exists()) {
-                        subItems.add(
-                            StorageEntry(
-                                id = "android_platforms",
-                                name = "Platform SDK (android.jar)",
-                                detail = "Android API 平台组件",
-                                bytes = sizeOf(platformsDir),
-                                cleanable = false,
-                                riskLevel = StorageRiskLevel.READONLY,
-                                path = platformsDir.absolutePath,
-                            ),
-                        )
-                    }
-                    if (buildToolsDir.exists()) {
-                        subItems.add(
-                            StorageEntry(
-                                id = "android_build_tools",
-                                name = "Build-Tools (aapt2, d8, zipalign)",
-                                detail = "Android 编译与打包工具",
-                                bytes = sizeOf(buildToolsDir),
-                                cleanable = false,
-                                riskLevel = StorageRiskLevel.READONLY,
-                                path = buildToolsDir.absolutePath,
-                            ),
-                        )
-                    }
-                    if (platformToolsDir.exists()) {
-                        subItems.add(
-                            StorageEntry(
-                                id = "android_platform_tools",
-                                name = "Platform-Tools (adb)",
-                                detail = "Android 调试桥与辅助工具",
-                                bytes = sizeOf(platformToolsDir),
-                                cleanable = false,
-                                riskLevel = StorageRiskLevel.READONLY,
-                                path = platformToolsDir.absolutePath,
-                            ),
-                        )
-                    }
-                    if (ndkDir.exists()) {
-                        subItems.add(
-                            StorageEntry(
-                                id = "android_ndk",
-                                name = "Android NDK C/C++ 工具链",
-                                detail = "本地交叉编译工具",
-                                bytes = sizeOf(ndkDir),
-                                cleanable = false,
-                                riskLevel = StorageRiskLevel.READONLY,
-                                path = ndkDir.absolutePath,
-                            ),
-                        )
-                    }
-                    if (jdkDir.exists()) {
-                        subItems.add(
-                            StorageEntry(
-                                id = "android_jdk",
-                                name = "Android 编译专用 OpenJDK",
-                                detail = "用于 Gradle 构建的 JDK 环境",
-                                bytes = sizeOf(jdkDir),
-                                cleanable = false,
-                                riskLevel = StorageRiskLevel.READONLY,
-                                path = jdkDir.absolutePath,
-                            ),
-                        )
-                    }
-
                     sdkEntries.add(
                         StorageEntry(
                             id = "sdk_android_$distroId",
@@ -227,90 +263,104 @@ class StorageManager @Inject constructor(
                             cleanable = false,
                             riskLevel = StorageRiskLevel.READONLY,
                             cleanupHint = "Android 编译核心组件，由工坊开发套件管理",
-                            path = androidSdkDir.absolutePath,
+                            path = if (androidSdkDir.exists()) androidSdkDir.absolutePath else androidToolchainsDir.absolutePath,
                             subItems = subItems,
                         ),
                     )
                 }
 
                 // 1.2 Flutter SDK & Dart SDK
-                val flutterDir = File(rfs, "opt/flutter")
-                val flutterToolchainDir = File(rfs, "opt/taixu/toolchains/flutter")
-                val flutterBytes = sizeOf(flutterDir) + sizeOf(flutterToolchainDir)
-                if (flutterBytes > 0) {
-                    val dartSdkDir = File(flutterDir, "bin/cache/dart-sdk")
-                    val subItems = mutableListOf<StorageEntry>()
-                    if (dartSdkDir.exists()) {
-                        subItems.add(
+                val flutterDir = listOf(
+                    File(rfs, "opt/flutter"),
+                    File(taixuRoot, "runtimes/flutter"),
+                    File(taixuRoot, "toolchains/flutter"),
+                    File(rfs, "opt/taixu/toolchains/flutter"),
+                ).firstOrNull { it.exists() }
+
+                if (flutterDir != null) {
+                    val flutterBytes = sizeOf(flutterDir)
+                    if (flutterBytes > 0) {
+                        val dartSdkDir = File(flutterDir, "bin/cache/dart-sdk")
+                        val subItemsFlutter = mutableListOf<StorageEntry>()
+                        if (dartSdkDir.exists()) {
+                            val dartBytes = sizeOf(dartSdkDir)
+                            subItemsFlutter.add(
+                                StorageEntry(
+                                    id = "dart_sdk_$distroId",
+                                    name = "内置 Dart SDK 与运行时",
+                                    detail = "Dart 编译器与语言工具",
+                                    bytes = dartBytes,
+                                    cleanable = false,
+                                    riskLevel = StorageRiskLevel.READONLY,
+                                    path = dartSdkDir.absolutePath,
+                                ),
+                            )
+                            subItemsFlutter.add(
+                                StorageEntry(
+                                    id = "flutter_engine_$distroId",
+                                    name = "Flutter 跨平台框架与引擎",
+                                    detail = "Flutter 核心类库与编译工具",
+                                    bytes = (flutterBytes - dartBytes).coerceAtLeast(0L),
+                                    cleanable = false,
+                                    riskLevel = StorageRiskLevel.READONLY,
+                                    path = flutterDir.absolutePath,
+                                ),
+                            )
+                        }
+                        sdkEntries.add(
                             StorageEntry(
-                                id = "dart_sdk",
-                                name = "内置 Dart SDK 与运行时",
-                                detail = "Dart 编译器与语言工具",
-                                bytes = sizeOf(dartSdkDir),
+                                id = "sdk_flutter_$distroId",
+                                name = "Flutter SDK & Dart 运行时 ($distroId)",
+                                detail = "Linux ARM64 Flutter 框架、Dart 编译器与引擎",
+                                bytes = flutterBytes,
                                 cleanable = false,
                                 riskLevel = StorageRiskLevel.READONLY,
-                                path = dartSdkDir.absolutePath,
-                            ),
-                        )
-                        subItems.add(
-                            StorageEntry(
-                                id = "flutter_engine",
-                                name = "Flutter 跨平台框架与引擎",
-                                detail = "Flutter 核心类库与编译工具",
-                                bytes = (flutterBytes - sizeOf(dartSdkDir)).coerceAtLeast(0L),
-                                cleanable = false,
-                                riskLevel = StorageRiskLevel.READONLY,
+                                cleanupHint = "Flutter 跨平台开发核心 SDK",
                                 path = flutterDir.absolutePath,
+                                subItems = subItemsFlutter,
                             ),
                         )
                     }
-                    sdkEntries.add(
-                        StorageEntry(
-                            id = "sdk_flutter_$distroId",
-                            name = "Flutter SDK & Dart 运行时 ($distroId)",
-                            detail = "Linux ARM64 Flutter 框架、Dart 编译器与引擎",
-                            bytes = flutterBytes,
-                            cleanable = false,
-                            riskLevel = StorageRiskLevel.READONLY,
-                            cleanupHint = "Flutter 跨平台开发核心 SDK",
-                            path = flutterDir.absolutePath,
-                            subItems = subItems,
-                        ),
-                    )
                 }
 
                 // 1.3 x86_64 跨架构兼容环境
-                val compatDir = File(rfs, "opt/taixu/compat/x86_64")
-                val compatBytes = sizeOf(compatDir)
-                if (compatBytes > 0) {
-                    sdkEntries.add(
-                        StorageEntry(
-                            id = "sdk_compat_x64_$distroId",
-                            name = "x86_64 QEMU 兼容套件 ($distroId)",
-                            detail = "QEMU 仿真引擎、兼容层 RootFS 与 Adoptium JDK 17 (x64)",
-                            bytes = compatBytes,
-                            cleanable = false,
-                            riskLevel = StorageRiskLevel.READONLY,
-                            cleanupHint = "用于跨架构运行官方仅提供 x86_64 二进制的构建工具",
-                            path = compatDir.absolutePath,
-                        ),
-                    )
+                val compatDir = listOf(
+                    File(taixuRoot, "compat/x86_64"),
+                    File(rfs, "opt/taixu/compat/x86_64"),
+                ).firstOrNull { it.exists() }
+
+                if (compatDir != null) {
+                    val compatBytes = sizeOf(compatDir)
+                    if (compatBytes > 0) {
+                        sdkEntries.add(
+                            StorageEntry(
+                                id = "sdk_compat_x64_$distroId",
+                                name = "x86_64 QEMU 兼容套件 ($distroId)",
+                                detail = "QEMU 仿真引擎、兼容层 RootFS 与 Adoptium JDK 17 (x64)",
+                                bytes = compatBytes,
+                                cleanable = false,
+                                riskLevel = StorageRiskLevel.READONLY,
+                                cleanupHint = "用于跨架构运行官方仅提供 x86_64 二进制的构建工具",
+                                path = compatDir.absolutePath,
+                            ),
+                        )
+                    }
                 }
 
                 // 1.4 Gradle 独立分发版本 (/opt/gradle-* 与 /root/.gradle/wrapper/dists)
-                val optGradleDirs = File(rfs, "opt").listFiles().orEmpty()
-                    .filter { it.isDirectory && it.name.startsWith("gradle-") }
+                val optGradleDirs = (File(rfs, "opt").listFiles().orEmpty().toList().filter { it.isDirectory && it.name.startsWith("gradle-") } +
+                    File(taixuRoot, "toolchains").listFiles().orEmpty().toList().filter { it.isDirectory && it.name.startsWith("gradle-") }).distinctBy { it.absolutePath }
                 val wrapperDistsDir = File(rfs, "root/.gradle/wrapper/dists")
                 val optGradleBytes = optGradleDirs.sumOf { sizeOf(it) }
                 val wrapperDistsBytes = sizeOf(wrapperDistsDir)
                 val totalGradleSdkBytes = optGradleBytes + wrapperDistsBytes
 
                 if (totalGradleSdkBytes > 0) {
-                    val subItems = mutableListOf<StorageEntry>()
+                    val subItemsGradle = mutableListOf<StorageEntry>()
                     optGradleDirs.forEach { dir ->
-                        subItems.add(
+                        subItemsGradle.add(
                             StorageEntry(
-                                id = "gradle_opt_${dir.name}",
+                                id = "gradle_opt_${dir.name}_$distroId",
                                 name = "独立分发包 ${dir.name}",
                                 detail = "解压的 Gradle 运行时环境",
                                 bytes = sizeOf(dir),
@@ -321,7 +371,7 @@ class StorageManager @Inject constructor(
                         )
                     }
                     if (wrapperDistsBytes > 0) {
-                        subItems.add(
+                        subItemsGradle.add(
                             StorageEntry(
                                 id = "gradle_wrapper_dists_$distroId",
                                 name = "Gradle Wrapper 历史分发包 (wrapper/dists)",
@@ -344,7 +394,7 @@ class StorageManager @Inject constructor(
                             riskLevel = if (wrapperDistsBytes > 0) StorageRiskLevel.CAUTION else StorageRiskLevel.READONLY,
                             cleanupHint = if (wrapperDistsBytes > 0) "可清理 Wrapper 历史分发包" else null,
                             path = (optGradleDirs.firstOrNull() ?: wrapperDistsDir).absolutePath,
-                            subItems = subItems,
+                            subItems = subItemsGradle,
                         ),
                     )
                 }
@@ -386,7 +436,7 @@ class StorageManager @Inject constructor(
                 }
 
                 val llvmDirs = File(rfs, "usr/lib").listFiles().orEmpty()
-                    .filter { it.isDirectory && it.name.startsWith("llvm-") }
+                    .filter { it.isDirectory && (it.name.startsWith("llvm-") || it.name == "clang") }
                 val llvmBytes = llvmDirs.sumOf { sizeOf(it) }
                 if (llvmBytes > 0) {
                     sdkEntries.add(
@@ -421,8 +471,10 @@ class StorageManager @Inject constructor(
                 }
 
                 // 1.7 其他独立工具链 (/opt/taixu/toolchains/* 排除已计入的 android 与 flutter)
-                val extraToolchains = File(rfs, "opt/taixu/toolchains").listFiles().orEmpty()
+                val extraToolchains = (File(taixuRoot, "toolchains").listFiles().orEmpty().toList() +
+                    File(rfs, "opt/taixu/toolchains").listFiles().orEmpty().toList())
                     .filter { it.isDirectory && it.name != "android" && it.name != "flutter" }
+                    .distinctBy { it.name }
                 extraToolchains.forEach { tcDir ->
                     val tcBytes = sizeOf(tcDir)
                     if (tcBytes > 0) {
@@ -748,34 +800,42 @@ class StorageManager @Inject constructor(
         val userHomeBytes = userHomeEntries.sumOf { it.bytes }
 
         // =========================================================================
-        // 7. Linux 基础系统底模 (Pure RootFS: 扣除 SDK、包缓存、插件、运行时、家目录)
+        // 7. Linux 基础系统底模 (Pure RootFS: 真实 Linux 核心系统，扣除 SDK、包缓存、家目录与日志)
         // =========================================================================
         val rootfsEntries = distroIds.map { distroId ->
-            val distroDir = pathManager.distroDir(distroId)
             val rfs = pathManager.rootfsDir(distroId)
-            val totalDistro = sizeOf(distroDir)
+            val rfsTotalBytes = sizeOf(rfs)
 
-            // 属于该 distro 的 SDK 总量
-            val distroSdks = sdkEntries.filter { it.id.endsWith("_$distroId") }.sumOf { it.bytes }
-            // 属于该 distro 的缓存总量
-            val distroCaches = packageCacheEntries.filter { it.id.endsWith("_$distroId") }.sumOf { it.bytes }
-            // 属于该 distro 的插件程序与数据
-            val distroPlugins = pluginEntries.filter { it.detail.startsWith(distroId) }.sumOf { it.bytes }
-            // 属于该 distro 的共享运行时
-            val distroRuntimes = runtimeEntries.filter { it.detail.contains(distroId) }.sumOf { it.bytes }
-            // 属于该 distro 的纯个人家目录
-            val distroHome = userHomeEntries.find { it.id == "home_$distroId" }?.bytes ?: 0L
-            // 系统日志
-            val distroLogs = sizeOfDirectoryContents(File(rfs, "var/log"))
-            // 元数据标记
-            val distroMetadata = sizeOf(pathManager.metadataDir(distroId))
+            // 1. 位于 rfs 物理目录内的所有 SDK 占用
+            val rfsSdks = sdkEntries
+                .filter { it.id.endsWith("_$distroId") }
+                .flatMap { it.subItems.ifEmpty { listOf(it) } }
+                .filter { it.path?.startsWith(rfs.absolutePath) == true }
+                .sumOf { it.bytes }
 
-            val pureBaseRfsBytes = (totalDistro - distroSdks - distroCaches - distroPlugins - distroRuntimes - distroHome - distroLogs - distroMetadata)
+            // 2. 位于 rfs 物理目录内的所有依赖与包管理器缓存
+            val rfsCaches = packageCacheEntries
+                .filter { it.id.endsWith("_$distroId") }
+                .filter { it.path?.startsWith(rfs.absolutePath) == true }
+                .sumOf { it.bytes }
+
+            // 3. 位于 rfs/root 与 rfs/home 的个人数据
+            val rfsHome = userHomeEntries
+                .filter { it.id == "home_$distroId" }
+                .sumOf { it.bytes }
+
+            // 4. 位于 rfs 内的系统日志 (/var/log)
+            val rfsLogs = sizeOfDirectoryContents(File(rfs, "var/log"))
+
+            // 5. 位于 rfs/opt/taixu（若存在）
+            val rfsTaixuOpt = sizeOf(File(rfs, "opt/taixu"))
+
+            val pureBaseRfsBytes = (rfsTotalBytes - rfsSdks - rfsCaches - rfsHome - rfsLogs - rfsTaixuOpt)
                 .coerceAtLeast(0L)
 
             StorageEntry(
                 id = "rootfs_$distroId",
-                name = "$distroId 纯净系统镜像",
+                name = "$distroId 纯净系统底模",
                 detail = "Linux 核心系统、标准类库与系统工具 (/usr, /lib, /bin, /etc)",
                 bytes = pureBaseRfsBytes,
                 cleanable = false,
@@ -957,6 +1017,38 @@ class StorageManager @Inject constructor(
                     ),
                 )
             }
+
+            val importsDir = File(pathManager.taixuRootDir(distroId), "imports")
+            val importsBytes = sizeOf(importsDir)
+            if (importsBytes > 0) {
+                val subItemsImports = importsDir.listFiles().orEmpty()
+                    .filter { it.isDirectory }
+                    .map { toolDir ->
+                        StorageEntry(
+                            id = "plugin_import_staging_${distroId}_${toolDir.name}",
+                            name = "插件 ${toolDir.name} 沙箱安装暂存",
+                            detail = "已复制到 /opt/taixu/imports/${toolDir.name} 的解压副本",
+                            bytes = sizeOf(toolDir),
+                            cleanable = true,
+                            riskLevel = StorageRiskLevel.SAFE,
+                            cleanupHint = "插件已安装完成，该沙箱暂存副本可安全清理",
+                            path = toolDir.absolutePath,
+                        )
+                    }
+                downloadCacheEntries.add(
+                    StorageEntry(
+                        id = "plugin_import_staging_$distroId",
+                        name = "本地插件沙箱安装暂存 ($distroId)",
+                        detail = "导入插件向沙箱复制的 payload 副本 (/opt/taixu/imports)",
+                        bytes = importsBytes,
+                        cleanable = true,
+                        riskLevel = StorageRiskLevel.SAFE,
+                        cleanupHint = "插件安装完成后可安全清理，释放数 GB 空间",
+                        path = importsDir.absolutePath,
+                        subItems = subItemsImports,
+                    ),
+                )
+            }
         }
 
         // 10.5 全局暂存目录
@@ -1010,25 +1102,55 @@ class StorageManager @Inject constructor(
             .forEach { dirOrFile ->
                 val s = sizeOf(dirOrFile)
                 if (s > 0) {
-                    appDataEntries.add(
-                        StorageEntry(
-                            id = "app_data_${dirOrFile.name}",
-                            name = when (dirOrFile.name) {
-                                "templates" -> "工程初始化模板库"
-                                "registry" -> "插件注册表元数据"
-                                "adb" -> "嵌入式 ADB 密钥凭据"
-                                "reports" -> "运行与崩溃诊断报告"
-                                "plugins" -> "宿主级插件缓存"
-                                "skills" -> "宿主级 Skill 导入库"
-                                else -> "应用数据 (${dirOrFile.name})"
-                            },
-                            detail = dirOrFile.absolutePath,
-                            bytes = s,
-                            cleanable = dirOrFile.name in setOf("reports", "plugins"),
-                            riskLevel = if (dirOrFile.name in setOf("reports", "plugins")) StorageRiskLevel.SAFE else StorageRiskLevel.READONLY,
-                            path = dirOrFile.absolutePath,
-                        ),
-                    )
+                    if (dirOrFile.name == "plugins" && dirOrFile.isDirectory) {
+                        val subItemsPlugins = dirOrFile.listFiles().orEmpty()
+                            .filter { it.isDirectory }
+                            .map { toolDir ->
+                                val versions = toolDir.listFiles().orEmpty().filter { it.isDirectory }
+                                StorageEntry(
+                                    id = "host_plugin_${toolDir.name}",
+                                    name = "本地离线包: ${toolDir.name} (${versions.joinToString { it.name }})",
+                                    detail = "宿主存储中的原始离线解包资源 (payload/)",
+                                    bytes = sizeOf(toolDir),
+                                    cleanable = true,
+                                    riskLevel = StorageRiskLevel.CAUTION,
+                                    cleanupHint = "删除此插件离线包，已安装到沙箱的工具不受影响",
+                                    path = toolDir.absolutePath,
+                                )
+                            }
+                        appDataEntries.add(
+                            StorageEntry(
+                                id = "app_data_plugins",
+                                name = "宿主级本地插件包仓库 (plugins)",
+                                detail = "通过文件管理器导入的本地插件原始包与解压资源 (payload/)",
+                                bytes = s,
+                                cleanable = true,
+                                riskLevel = StorageRiskLevel.CAUTION,
+                                cleanupHint = "清理宿主已导入的离线插件源包，若已安装则不影响沙箱运行",
+                                path = dirOrFile.absolutePath,
+                                subItems = subItemsPlugins,
+                            ),
+                        )
+                    } else {
+                        appDataEntries.add(
+                            StorageEntry(
+                                id = "app_data_${dirOrFile.name}",
+                                name = when (dirOrFile.name) {
+                                    "templates" -> "工程初始化模板库"
+                                    "registry" -> "插件注册表元数据"
+                                    "adb" -> "嵌入式 ADB 密钥凭据"
+                                    "reports" -> "运行与崩溃诊断报告"
+                                    "skills" -> "宿主级 Skill 导入库"
+                                    else -> "应用数据 (${dirOrFile.name})"
+                                },
+                                detail = dirOrFile.absolutePath,
+                                bytes = s,
+                                cleanable = dirOrFile.name in setOf("reports", "plugins"),
+                                riskLevel = if (dirOrFile.name in setOf("reports", "plugins")) StorageRiskLevel.SAFE else StorageRiskLevel.READONLY,
+                                path = dirOrFile.absolutePath,
+                            ),
+                        )
+                    }
                 }
             }
         val appDataBytes = appDataEntries.sumOf { it.bytes }
@@ -1591,6 +1713,25 @@ class StorageManager @Inject constructor(
                     val flutterCache = File(pathManager.taixuRootDir(distroId), "flutter-cache-arm64")
                     if (flutterCache.exists()) SafeFileTree.delete(flutterCache)
                 }
+                entryId.startsWith("plugin_import_staging_") -> {
+                    val rest = entryId.removePrefix("plugin_import_staging_")
+                    val parts = rest.split("_")
+                    if (parts.size >= 2) {
+                        val distroId = parts[0]
+                        val toolId = parts.subList(1, parts.size).joinToString("_")
+                        val toolImportDir = File(pathManager.taixuRootDir(distroId), "imports/$toolId")
+                        if (toolImportDir.exists()) SafeFileTree.delete(toolImportDir)
+                    } else {
+                        val distroId = rest
+                        val importsDir = File(pathManager.taixuRootDir(distroId), "imports")
+                        if (importsDir.exists()) SafeFileTree.delete(importsDir)
+                    }
+                }
+                entryId.startsWith("host_plugin_") -> {
+                    val toolId = entryId.removePrefix("host_plugin_")
+                    val toolPluginDir = File(context.filesDir, "plugins/$toolId")
+                    if (toolPluginDir.exists()) SafeFileTree.delete(toolPluginDir)
+                }
                 entryId.startsWith("app_data_") -> {
                     val name = entryId.removePrefix("app_data_")
                     if (name in setOf("reports", "plugins")) {
@@ -1636,6 +1777,8 @@ class StorageManager @Inject constructor(
                 if (staging.exists()) SafeFileTree.delete(staging)
                 val flutterCache = File(pathManager.taixuRootDir(distroId), "flutter-cache-arm64")
                 if (flutterCache.exists()) SafeFileTree.delete(flutterCache)
+                val importsDir = File(pathManager.taixuRootDir(distroId), "imports")
+                if (importsDir.exists()) SafeFileTree.delete(importsDir)
             }
             AppResult.Success(Unit)
         } catch (throwable: Throwable) {
@@ -1663,8 +1806,39 @@ class StorageManager @Inject constructor(
 
     private fun sizeOf(file: File): Long {
         if (!file.exists()) return 0L
-        if (file.isFile) return file.length()
-        return file.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        return try {
+            val path = file.toPath()
+            if (Files.isSymbolicLink(path)) return 0L
+            if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+                return runCatching { Files.size(path) }.getOrDefault(file.length())
+            }
+            var total = 0L
+            Files.walkFileTree(path, object : SimpleFileVisitor<Path>() {
+                override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
+                    if (attrs.isSymbolicLink && dir != path) {
+                        return FileVisitResult.SKIP_SUBTREE
+                    }
+                    return FileVisitResult.CONTINUE
+                }
+
+                override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                    if (attrs.isRegularFile && !attrs.isSymbolicLink) {
+                        total += attrs.size()
+                    }
+                    return FileVisitResult.CONTINUE
+                }
+
+                override fun visitFileFailed(file: Path, exc: IOException?): FileVisitResult {
+                    return FileVisitResult.CONTINUE
+                }
+            })
+            total
+        } catch (_: Throwable) {
+            file.walkTopDown()
+                .onEnter { !Files.isSymbolicLink(it.toPath()) }
+                .filter { it.isFile && !Files.isSymbolicLink(it.toPath()) }
+                .sumOf { it.length() }
+        }
     }
 
     private fun sizeOfDirectoryContents(directory: File, ignoreFiles: Set<String> = emptySet()): Long {
@@ -1739,7 +1913,7 @@ class StorageManager @Inject constructor(
                     )
                 }
                 StorageEntry(
-                    id = "plugin_$id",
+                    id = "plugin_${id}_$distroId",
                     name = id,
                     detail = "$distroId · 程序 ${toolSize.readableSize()} · 数据 ${dataSize.readableSize()}",
                     bytes = total,
@@ -1761,7 +1935,7 @@ class StorageManager @Inject constructor(
             .map { dir ->
                 val size = sizeOf(dir)
                 StorageEntry(
-                    id = "runtime_${dir.name}",
+                    id = "runtime_${dir.name}_$distroId",
                     name = "${dir.name} ($distroId)",
                     detail = "共享语言或框架运行环境",
                     bytes = size,

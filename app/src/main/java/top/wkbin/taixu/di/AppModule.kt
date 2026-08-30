@@ -48,6 +48,8 @@ import top.wkbin.taixu.runtime.pty.PtyManager
 import top.wkbin.taixu.runtime.pty.NativePtyManager
 import top.wkbin.taixu.runtime.service.LocalServiceLauncher
 import top.wkbin.taixu.runtime.service.LocalServiceLauncherImpl
+import top.wkbin.taixu.service.AgentForegroundLauncherImpl
+import top.wkbin.taixu.harness.AgentForegroundLauncher
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -208,6 +210,10 @@ object AppModule {
     @Provides
     @Singleton
     fun provideLocalServiceLauncher(impl: LocalServiceLauncherImpl): LocalServiceLauncher = impl
+
+    @Provides
+    @Singleton
+    fun provideAgentForegroundLauncher(impl: AgentForegroundLauncherImpl): AgentForegroundLauncher = impl
 }
 
 

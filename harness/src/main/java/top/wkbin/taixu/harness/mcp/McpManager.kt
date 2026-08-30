@@ -3,6 +3,9 @@ package top.wkbin.taixu.harness.mcp
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -32,10 +35,18 @@ class McpManager @Inject constructor(
     private val logger: AppLogger,
     private val agentEventLogger: AgentEventLogger,
 ) {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val cache = ConcurrentHashMap<String, List<McpToolInfo>>()
     private val lastErrors = ConcurrentHashMap<String, String>()
     private val _connectionStates = MutableStateFlow<Map<String, McpConnectionState>>(emptyMap())
     val connectionStates: StateFlow<Map<String, McpConnectionState>> = _connectionStates.asStateFlow()
+
+    init {
+        // 启动时后台异步预热已启用的 MCP 服务，提前填充缓存，用户首次发消息直接 0ms 命中
+        scope.launch {
+            runCatching { getActiveMcpTools() }
+        }
+    }
 
     fun getLastError(serverId: String): String? = lastErrors[serverId]
 
@@ -122,7 +133,7 @@ class McpManager @Inject constructor(
 
     private companion object {
         /** 单服务器工具发现总超时：覆盖沙箱会话拉起 + initialize + tools/list，超时即本轮跳过注入。 */
-        const val DISCOVERY_TIMEOUT_MS = 12_000L
+        const val DISCOVERY_TIMEOUT_MS = 4_000L
 
         /** 工具发现无会话上下文，agent 事件日志用占位 sessionId。 */
         const val DISCOVERY_LOG_SESSION = "-"

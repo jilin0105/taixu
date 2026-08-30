@@ -366,7 +366,6 @@
     <string name="chat_subagent_role_tester">Tester</string>
     <string name="chat_subagent_role_assistant">Assistant</string>
     <!-- Turn anchor bar fallback -->
-    <string name="chat_turn_fallback">Turn %1$d</string>
 
     <!-- Smart Agent Floating Window -->
     <string name="chat_floating_collapse">Collapse to Float</string>
