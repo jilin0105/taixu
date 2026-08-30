@@ -73,7 +73,8 @@ extensions.configure<ApplicationExtension> {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            if (keystorePropertiesFile != null) {
+            val onCi = System.getenv("CI") == "true"
+            if (keystorePropertiesFile != null && !onCi) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }

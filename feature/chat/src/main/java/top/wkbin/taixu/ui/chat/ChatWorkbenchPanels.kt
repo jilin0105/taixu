@@ -1,7 +1,14 @@
 package top.wkbin.taixu.ui.chat
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -12,8 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,6 +27,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.minimumInteractiveComponentSize
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -35,20 +42,28 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import top.wkbin.taixu.core.database.AgentMemoryEntity
+import top.wkbin.taixu.core.database.AgentScratchpadEntity
+import top.wkbin.taixu.core.database.AiModelEntity
+import top.wkbin.taixu.core.model.ApprovalMode
 import top.wkbin.taixu.feature.chat.R
 import top.wkbin.taixu.harness.QueuedPrompt
 import top.wkbin.taixu.harness.events.HarnessEvent
@@ -58,194 +73,132 @@ import top.wkbin.taixu.harness.session.ConversationBranchKind
 import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
-import androidx.compose.animation.animateContentSize
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.BorderStroke
 
 @Composable
 internal fun CollapsibleChatWorkbenchStrip(
+    activeModel: AiModelEntity?,
+    approvalMode: ApprovalMode,
     currentBranch: ConversationBranch?,
     runtimeEvents: List<HarnessEvent>,
     running: Boolean,
-    memoryCount: Int,
-    scratchpadCount: Int,
+    onOpenModels: () -> Unit,
+    onOpenApprovalModes: () -> Unit,
     onOpenBranches: () -> Unit,
     onOpenRuntime: () -> Unit,
-    onOpenMemory: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var expanded by rememberSaveable { mutableStateOf(true) }
     val activeRound = runtimeEvents.filterIsInstance<HarnessEvent.ProviderRoundStarted>().lastOrNull()?.round
+    val activeModelName = activeModel?.let { entity ->
+        entity.model.split(",").firstOrNull()?.trim().takeUnless { it.isNullOrBlank() } ?: entity.name
+    } ?: stringResource(R.string.chat_no_model_selected)
+
+    val (modeLabelRes, modeColor) = when (approvalMode) {
+        ApprovalMode.FULL_ACCESS -> R.string.chat_approval_full_access to Color(0xFFE65100)
+        ApprovalMode.ASSISTED -> R.string.chat_approval_assisted to Color(0xFF1976D2)
+        ApprovalMode.REQUEST -> R.string.chat_approval_request to Color(0xFF388E3C)
+    }
 
     Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(bottom = 2.dp)
-            .animateContentSize(),
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.65f),
+        shape = RectangleShape,
+        modifier = modifier.fillMaxWidth(),
     ) {
-        if (expanded) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 3.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    WorkspacePill(
-                        icon = RuntimeIconName.Hub,
-                        title = stringResource(R.string.chat_branch_pill_title),
-                        subtitle = currentBranch?.name ?: stringResource(R.string.chat_main_line),
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.weight(1f),
-                        onClick = onOpenBranches,
-                    )
-                    WorkspacePill(
-                        icon = RuntimeIconName.Logs,
-                        title = stringResource(R.string.chat_runtime_details),
-                        subtitle = activeRound?.let { stringResource(R.string.chat_round_number, it + 1) }
-                            ?: stringResource(R.string.chat_event_count, runtimeEvents.size),
-                        tint = if (running) Color(0xFF7C4DFF) else MaterialTheme.colorScheme.tertiary,
-                        highlight = running,
-                        modifier = Modifier.weight(1f),
-                        onClick = onOpenRuntime,
-                    )
-                    WorkspacePill(
-                        icon = RuntimeIconName.Brain,
-                        title = stringResource(R.string.chat_memory_pill_title),
-                        subtitle = stringResource(R.string.chat_memory_pill_subtitle, memoryCount, scratchpadCount),
-                        tint = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.weight(1f),
-                        onClick = onOpenMemory,
-                    )
-                }
-                // 向顶部收起把手
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 1.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .clickable { expanded = false },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    RuntimeIcon(
-                        name = RuntimeIconName.ChevronUp,
-                        modifier = Modifier.size(10.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-                    )
-                }
-            }
-        } else {
-            // 收起态：极简状态栏，点击展开
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable { expanded = true }
-                    .padding(horizontal = 8.dp, vertical = 2.5.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp),
-                    ) {
-                        RuntimeIcon(RuntimeIconName.Hub, Modifier.size(11.dp), MaterialTheme.colorScheme.primary)
-                        Text(
-                            currentBranch?.name ?: stringResource(R.string.chat_main_line),
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    Text("·", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outlineVariant)
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp),
-                    ) {
-                        RuntimeIcon(RuntimeIconName.Logs, Modifier.size(11.dp), if (running) Color(0xFF7C4DFF) else MaterialTheme.colorScheme.tertiary)
-                        Text(
-                            activeRound?.let { stringResource(R.string.chat_round_number, it + 1) }
-                                ?: stringResource(R.string.chat_event_count, runtimeEvents.size),
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                        )
-                    }
-                    Text("·", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outlineVariant)
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp),
-                    ) {
-                        RuntimeIcon(RuntimeIconName.Brain, Modifier.size(11.dp), MaterialTheme.colorScheme.secondary)
-                        Text(
-                            stringResource(R.string.chat_memory_pill_subtitle, memoryCount, scratchpadCount),
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                        )
-                    }
-                }
-                RuntimeIcon(
-                    name = RuntimeIconName.ChevronDown,
-                    modifier = Modifier.size(11.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 14.dp, vertical = 1.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp, Alignment.Start),
+        ) {
+            // 1. 模型选择项
+            WorkbenchStatusItem(
+                icon = RuntimeIconName.Brain,
+                label = activeModelName,
+                tint = MaterialTheme.colorScheme.primary,
+                onClick = onOpenModels,
+            )
+
+            StatusDivider()
+
+            // 2. 审批模式/权重项
+            WorkbenchStatusItem(
+                icon = RuntimeIconName.Shield,
+                label = stringResource(modeLabelRes),
+                tint = modeColor,
+                onClick = onOpenApprovalModes,
+            )
+
+            StatusDivider()
+
+            // 3. 分支状态项
+            WorkbenchStatusItem(
+                icon = RuntimeIconName.Hub,
+                label = currentBranch?.name ?: stringResource(R.string.chat_main_line),
+                tint = MaterialTheme.colorScheme.primary,
+                onClick = onOpenBranches,
+            )
+
+            StatusDivider()
+
+            // 4. 运行时/轮次状态项
+            WorkbenchStatusItem(
+                icon = RuntimeIconName.Logs,
+                label = activeRound?.let { stringResource(R.string.chat_round_number, it + 1) }
+                    ?: stringResource(R.string.chat_event_count, runtimeEvents.size),
+                tint = if (running) Color(0xFF7C4DFF) else MaterialTheme.colorScheme.tertiary,
+                highlight = running,
+                onClick = onOpenRuntime,
+            )
         }
     }
 }
 
 @Composable
-private fun WorkspacePill(
+private fun StatusDivider() {
+    Box(
+        modifier = Modifier
+            .padding(horizontal = 2.dp)
+            .size(width = 1.dp, height = 9.dp)
+            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+    )
+}
+
+@Composable
+private fun WorkbenchStatusItem(
     icon: RuntimeIconName,
-    title: String,
-    subtitle: String,
+    label: String,
     tint: Color,
-    modifier: Modifier,
-    highlight: Boolean = false,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    highlight: Boolean = false,
 ) {
     Surface(
-        modifier = modifier.clickable(onClick = onClick),
-        color = tint.copy(alpha = if (highlight) 0.16f else 0.09f),
-        shape = RoundedCornerShape(8.dp),
+        onClick = onClick,
+        shape = RoundedCornerShape(4.dp),
+        color = if (highlight) tint.copy(alpha = 0.14f) else Color.Transparent,
+        modifier = modifier,
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
         ) {
-            RuntimeIcon(icon, Modifier.size(13.dp), tint)
-            Column(Modifier.weight(1f)) {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                )
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-            }
-            RuntimeIcon(RuntimeIconName.ChevronRight, Modifier.size(13.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+            RuntimeIcon(
+                name = icon,
+                modifier = Modifier.size(11.dp),
+                tint = tint,
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = 11.sp,
+                    fontWeight = if (highlight) FontWeight.SemiBold else FontWeight.Medium,
+                ),
+                color = if (highlight) tint else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -262,35 +215,46 @@ internal fun BranchBrowserSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
-            Text(stringResource(R.string.chat_branches_title), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                stringResource(R.string.chat_branches_title),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+            )
             Text(
                 stringResource(R.string.chat_branches_description),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
+                modifier = Modifier.padding(top = 4.dp, bottom = 6.dp),
             )
             if (branches.isEmpty()) {
                 RuntimeCard {
-                    Text(stringResource(R.string.chat_no_branches), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        stringResource(R.string.chat_no_branches),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    val conversation = branches.filter { it.kind != ConversationBranchKind.SUBAGENT }
-                    val subagents = branches.filter { it.kind == ConversationBranchKind.SUBAGENT }
-                    item { SectionLabel(stringResource(R.string.chat_conversation_paths), conversation.size) }
-                    items(conversation, key = { it.leafId ?: it.id }) { branch ->
-                        BranchCard(branch, enabled = !running && !branch.isBusy, onClick = { onSwitch(branch) })
-                    }
-                    if (subagents.isNotEmpty()) {
-                        item { SectionLabel(stringResource(R.string.chat_subagent_lanes), subagents.size) }
-                        items(subagents, key = { it.leafId ?: it.id }) { branch -> BranchCard(branch, enabled = false, onClick = {}) }
+                val conversation = branches.filter { it.kind != ConversationBranchKind.SUBAGENT }
+                val subagents = branches.filter { it.kind == ConversationBranchKind.SUBAGENT }
+                SectionLabel(stringResource(R.string.chat_conversation_paths), conversation.size)
+                conversation.forEach { branch ->
+                    BranchCard(branch, enabled = !running && !branch.isBusy, onClick = { onSwitch(branch) })
+                }
+                if (subagents.isNotEmpty()) {
+                    SectionLabel(stringResource(R.string.chat_subagent_lanes), subagents.size)
+                    subagents.forEach { branch ->
+                        BranchCard(branch, enabled = false, onClick = {})
                     }
                 }
             }
+            Spacer(Modifier.height(32.dp))
         }
     }
 }
@@ -367,22 +331,153 @@ private fun MiniBadge(text: String, color: Color) {
 internal fun RuntimeTimelineSheet(
     events: List<HarnessEvent>,
     messages: List<top.wkbin.taixu.harness.HarnessMessage>,
+    memories: List<AgentMemoryEntity> = emptyList(),
+    scratchpads: List<AgentScratchpadEntity> = emptyList(),
+    onDeleteMemory: (String) -> Unit = {},
+    onDeleteScratchpad: (String) -> Unit = {},
+    onClearScratchpads: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
-            Text(stringResource(R.string.chat_runtime_title), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        val (rounds, lifecycle) = remember(events, messages) { buildRoundGroups(events, messages) }
+        var memoriesExpanded by rememberSaveable { mutableStateOf(false) }
+        var scratchpadsExpanded by rememberSaveable { mutableStateOf(false) }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                stringResource(R.string.chat_runtime_title),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+            )
             Text(
                 stringResource(R.string.chat_runtime_description),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
+                modifier = Modifier.padding(top = 4.dp, bottom = 4.dp),
             )
+
+            // 1. 长期工作记忆折叠卡片 (Collapsible Long-term Memory Section)
+            CollapsibleRuntimeSectionCard(
+                title = stringResource(R.string.chat_memory_section, memories.size),
+                icon = RuntimeIconName.Brain,
+                tint = MaterialTheme.colorScheme.secondary,
+                expanded = memoriesExpanded,
+                onToggle = { memoriesExpanded = !memoriesExpanded },
+            ) {
+                if (memories.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.chat_memory_empty),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 4.dp),
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        memories.forEach { memory ->
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.5f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = memory.key,
+                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                        Text(
+                                            text = memory.value,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                    }
+                                    top.wkbin.taixu.ui.components.RuntimeIconButton(
+                                        onClick = { onDeleteMemory(memory.id) },
+                                        modifier = Modifier.size(24.dp),
+                                    ) {
+                                        RuntimeIcon(RuntimeIconName.Trash, Modifier.size(14.dp), MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. 任务草稿折叠卡片 (Collapsible Scratchpad Section)
+            CollapsibleRuntimeSectionCard(
+                title = stringResource(R.string.chat_scratchpad_section, scratchpads.size),
+                icon = RuntimeIconName.File,
+                tint = MaterialTheme.colorScheme.tertiary,
+                expanded = scratchpadsExpanded,
+                onToggle = { scratchpadsExpanded = !scratchpadsExpanded },
+            ) {
+                if (scratchpads.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.chat_scratchpad_empty),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 4.dp),
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        scratchpads.forEach { pad ->
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.5f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = pad.key.ifBlank { "草稿" },
+                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                            color = MaterialTheme.colorScheme.tertiary,
+                                        )
+                                        Text(
+                                            text = pad.value,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                    }
+                                    top.wkbin.taixu.ui.components.RuntimeIconButton(
+                                        onClick = { onDeleteScratchpad(pad.key) },
+                                        modifier = Modifier.size(24.dp),
+                                    ) {
+                                        RuntimeIcon(RuntimeIconName.Trash, Modifier.size(14.dp), MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if (events.isEmpty()) {
-                RuntimeCard { Text(stringResource(R.string.chat_no_events), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                RuntimeCard {
+                    Text(
+                        stringResource(R.string.chat_no_events),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             } else {
                 // 汇总统计
                 val roundCount = events.count { it is HarnessEvent.ProviderRoundStarted }
@@ -390,7 +485,9 @@ internal fun RuntimeTimelineSheet(
                 val approvalCount = events.count { it is HarnessEvent.ApprovalRequested }
                 val recoveryCount = events.count { it is HarnessEvent.RecoveryApplied }
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     StatPill(RuntimeIconName.Brain, roundCount.toString(), MaterialTheme.colorScheme.primary, Modifier.weight(1f))
@@ -398,31 +495,91 @@ internal fun RuntimeTimelineSheet(
                     StatPill(RuntimeIconName.Shield, approvalCount.toString(), Color(0xFFB25E00), Modifier.weight(1f))
                     StatPill(RuntimeIconName.Refresh, recoveryCount.toString(), MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
                 }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), modifier = Modifier.padding(bottom = 8.dp))
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
 
-                val (rounds, lifecycle) = remember(events, messages) { buildRoundGroups(events, messages) }
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 520.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    // 最新一轮在最上，组内按发生顺序链式展示；轮间以分隔线区隔。
-                    items(rounds.asReversed(), key = { "round-${it.key}" }) { round ->
-                        RoundSection(round)
-                        HorizontalDivider(
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-                            modifier = Modifier.padding(vertical = 6.dp),
-                        )
+                // 最新一轮在最上，组内按发生顺序链式展示；轮间以分隔线区隔。
+                rounds.asReversed().forEach { round ->
+                    RoundSection(round)
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                        modifier = Modifier.padding(vertical = 4.dp),
+                    )
+                }
+                if (lifecycle.isNotEmpty()) {
+                    Text(
+                        stringResource(R.string.chat_tl_lifecycle),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                    lifecycle.forEach { event ->
+                        RuntimeEventRow(event)
                     }
-                    if (lifecycle.isNotEmpty()) {
-                        item(key = "lifecycle-header") {
-                            Text(
-                                stringResource(R.string.chat_tl_lifecycle),
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        items(lifecycle, key = { "life-${it.timestamp}-${eventKey(it)}" }) { event ->
-                            RuntimeEventRow(event)
-                        }
-                    }
+                }
+            }
+            Spacer(Modifier.height(32.dp))
+        }
+    }
+}
+
+@Composable
+private fun CollapsibleRuntimeSectionCard(
+    title: String,
+    icon: RuntimeIconName,
+    tint: Color,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onToggle),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    RuntimeIcon(icon, Modifier.size(16.dp), tint)
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+                RuntimeIcon(
+                    name = if (expanded) RuntimeIconName.ChevronUp else RuntimeIconName.ChevronDown,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut(),
+            ) {
+                Box(modifier = Modifier.padding(top = 4.dp)) {
+                    content()
                 }
             }
         }
@@ -479,12 +636,12 @@ private fun buildRoundGroups(
     val toolIndexByCallId = mutableMapOf<String, Int>()
 
     fun newGroup(event: HarnessEvent.ProviderRoundStarted) {
-        current = RoundGroup(System.nanoTime(), event.round, event.modelId, event.timestamp).also { rounds += it }
+        current = RoundGroup(event.round.toLong() * 1_000_000_000L + event.timestamp, event.round, event.modelId, event.timestamp).also { rounds += it }
         toolIndexByCallId.clear()
     }
 
     fun getOrCreateGroup(): RoundGroup {
-        return current ?: RoundGroup(System.nanoTime(), 0, null, System.currentTimeMillis()).also {
+        return current ?: RoundGroup(0L, 0, null, System.currentTimeMillis()).also {
             rounds += it
             current = it
         }
@@ -570,7 +727,7 @@ private fun RoundSection(group: RoundGroup) {
 
 @Composable
 private fun RoundEntryRow(entry: TimelineEntry, isLast: Boolean) {
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(false) }
 
     val visual = when (entry) {
         is TimelineEntry.Assistant -> Triple(RuntimeIconName.Sparkles, Color(0xFF7C4DFF), stringResource(R.string.chat_tl_model_response))
@@ -608,12 +765,14 @@ private fun RoundEntryRow(entry: TimelineEntry, isLast: Boolean) {
         is TimelineEntry.Approval -> false
     }
 
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clickable(enabled = expandable) { expanded = !expanded },
-    ) {
-        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = expandable) { expanded = !expanded },
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
             // 链式节点：圆点图标 + 连接线，未轮条目首尾相接。
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(Modifier.size(28.dp).background(color.copy(alpha = 0.13f), CircleShape), contentAlignment = Alignment.Center) {
@@ -659,7 +818,11 @@ private fun RoundEntryRow(entry: TimelineEntry, isLast: Boolean) {
                 )
             }
         }
-        androidx.compose.animation.AnimatedVisibility(visible = expanded && expandable) {
+        AnimatedVisibility(
+            visible = expanded && expandable,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
             Box(Modifier.padding(start = 38.dp, bottom = 8.dp)) {
                 when (entry) {
                     is TimelineEntry.Tool -> ToolExpandContent(entry)
@@ -698,29 +861,41 @@ private fun AssistantExpandContent(message: top.wkbin.taixu.harness.AssistantTex
     }
 }
 
-/** 展开详情中的长文本容器：等宽字体 + 可滚动 + 可选中复制。 */
+/** 展开详情中的长文本容器：等宽字体 + 一键复制按钮，彻底避免内部手势拦截与底部抽屉滑动冲突。 */
 @Composable
 private fun PayloadBox(label: String, text: String) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(8.dp)) {
-            androidx.compose.foundation.text.selection.SelectionContainer {
-                Text(
-                    text,
-                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 240.dp)
-                            .verticalScroll(rememberScrollState())
-                            .padding(8.dp),
-                )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            top.wkbin.taixu.ui.components.RuntimeIconButton(
+                onClick = {
+                    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                    clipboard?.setPrimaryClip(android.content.ClipData.newPlainText(label, text))
+                    android.widget.Toast.makeText(context, "已复制", android.widget.Toast.LENGTH_SHORT).show()
+                },
+                modifier = Modifier.size(20.dp),
+            ) {
+                RuntimeIcon(RuntimeIconName.Copy, Modifier.size(12.dp), MaterialTheme.colorScheme.onSurfaceVariant)
             }
+        }
+        Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(8.dp)) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+            )
         }
     }
 }

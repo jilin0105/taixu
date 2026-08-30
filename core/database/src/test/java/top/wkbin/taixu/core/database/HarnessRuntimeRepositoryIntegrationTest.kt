@@ -38,7 +38,7 @@ class HarnessRuntimeRepositoryIntegrationTest {
             .allowMainThreadQueries()
             .build()
         dao = database.harnessRuntimeDao()
-        repository = RoomHarnessRuntimeRepository(dao)
+        repository = RoomHarnessRuntimeRepository(dao, HarnessBlobStore(context))
     }
 
     @After
@@ -194,5 +194,34 @@ class HarnessRuntimeRepositoryIntegrationTest {
         assertTrue(repository.listQueue(sessionId, "main", "next_run").isEmpty())
         assertEquals(1, repository.listEntries(sessionId).size)
         assertEquals("consumed", repository.findLane(sessionId, "main")!!.leafId)
+    }
+
+    @Test
+    fun `large payload offloads to sandbox file and transparently restores on query`() = runBlocking {
+        val sessionId = "session-large-test"
+        repository.ensureLane(sessionId, "main")
+
+        // 构造一个 120KB 的超大文本（远超 48KB 阈值）
+        val largeText = "A".repeat(120 * 1024)
+        val largeEntry = entry("large-1", sessionId, null).copy(payloadJson = largeText)
+
+        repository.appendToLane(sessionId, "main", largeEntry)
+
+        // 验证 DAO 数据库中存储的是引用指针而非 120KB 大文本
+        val rawInDb = dao.listEntries(sessionId).first()
+        assertTrue(rawInDb.payloadJson.startsWith(HarnessBlobStore.BLOB_PREFIX))
+
+        // 验证 Repository 查询时自动透明解引用并还原完整大文本
+        val restoredFromRepo = repository.listEntries(sessionId).first()
+        assertEquals(largeText, restoredFromRepo.payloadJson)
+
+        // 验证分支树查询也透明还原
+        val branchList = repository.branch(sessionId, "large-1")
+        assertEquals(1, branchList.size)
+        assertEquals(largeText, branchList.first().payloadJson)
+
+        // 验证删除会话时级联清理外置沙箱文件
+        repository.deleteSessionData(sessionId)
+        assertTrue(repository.listEntries(sessionId).isEmpty())
     }
 }

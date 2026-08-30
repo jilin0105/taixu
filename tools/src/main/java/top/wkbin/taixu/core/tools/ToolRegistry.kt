@@ -234,6 +234,10 @@ class ToolRegistry @Inject constructor(
         uri: Uri,
         onProgress: (LocalPluginImportProgress) -> Unit = {},
     ): AppResult<ToolManifest> = withContext(Dispatchers.IO) {
+        runCatching {
+            context.cacheDir.listFiles()?.filter { it.name.startsWith("txplugin-") || it.name.startsWith("plugin-import-") }
+                ?.forEach { it.deleteRecursively() }
+        }
         val staging = File(context.cacheDir, "txplugin-${System.nanoTime()}").apply { mkdirs() }
         var committed = false
         try {

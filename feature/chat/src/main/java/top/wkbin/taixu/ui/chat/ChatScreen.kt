@@ -54,9 +54,11 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import top.wkbin.taixu.ui.components.TaiXuBrandBadge
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -399,105 +401,94 @@ fun ChatScreen(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            RuntimeTopBar(
-                title = stringResource(R.string.chat_title),
-                statusText = stringResource(R.string.chat_status, if (workspace.isNotBlank()) workspace else stringResource(R.string.chat_default_workspace), distroDisplayName),
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.background)
+                    .statusBarsPadding(),
+                verticalArrangement = Arrangement.spacedBy(1.dp),
             ) {
-                // 🌟 1. 模型与审批模式上下垂直排列复合区 (Vertical Stack: Model & Approval Mode)
-                val activeSub = activeModel?.let { entity ->
-                    entity.model.split(",").firstOrNull()?.trim().takeUnless { it.isNullOrBlank() } ?: entity.name
-                } ?: stringResource(R.string.chat_no_model_selected)
-
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                    modifier = Modifier.padding(vertical = 2.dp),
+                // 第 1 行：品牌 Badge + 标题/工作区 + 右侧模型胶囊与操作按钮
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 14.dp, end = 12.dp, top = 6.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    // 上排：模型切换胶囊（限制字数/宽度，超出显示省略号）
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                        modifier = Modifier.clickable { showModels = true },
+                    // 左侧：品牌 Badge + 标题/状态
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f, fill = false),
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp),
-                        ) {
+                        TaiXuBrandBadge(28.dp)
+                        Column {
                             Text(
-                                text = activeSub,
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontSize = 11.sp,
+                                text = stringResource(R.string.chat_title),
+                                style = MaterialTheme.typography.titleMedium.copy(
                                     fontWeight = FontWeight.SemiBold,
+                                    fontSize = 16.sp,
                                 ),
-                                color = MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.widthIn(max = 110.dp),
                             )
-                            RuntimeIcon(RuntimeIconName.ChevronDown, Modifier.size(10.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                text = stringResource(
+                                    R.string.chat_status,
+                                    if (workspace.isNotBlank()) workspace else stringResource(R.string.chat_default_workspace),
+                                    distroDisplayName,
+                                ),
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
                     }
 
-                    // 下排：审批模式状态胶囊
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                        modifier = Modifier.clickable { showApprovalModes = true },
+                    // 右侧：小窗 + 会话抽屉
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp),
-                        ) {
-                            RuntimeIcon(
-                                RuntimeIconName.Shield,
-                                Modifier.size(10.dp),
-                                tint = when (currentApprovalMode) {
-                                    ApprovalMode.FULL_ACCESS -> Color(0xFFE65100)
-                                    ApprovalMode.ASSISTED -> Color(0xFF1976D2)
-                                    ApprovalMode.REQUEST -> Color(0xFF388E3C)
+                        // 🌟 1. 智枢悬浮小窗收起按钮 (Collapse to Floating Window)
+                        IconButton(
+                            onClick = {
+                                if (Settings.canDrawOverlays(context)) {
+                                    FloatingChatService.start(context)
+                                    (context as? Activity)?.moveTaskToBack(true)
+                                } else {
+                                    showFloatingPermissionDialog = true
                                 }
-                            )
-                            Text(
-                                text = stringResource(currentApprovalMode.labelRes),
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontSize = 10.5.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                ),
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.widthIn(max = 110.dp),
-                            )
+                            },
+                            contentDescription = stringResource(R.string.chat_floating_collapse),
+                        ) {
+                            RuntimeIcon(RuntimeIconName.OpenInNew, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.primary)
+                        }
+
+                        // 🌟 2. 会话抽屉/列表（内部包含「新建会话」功能）
+                        IconButton(
+                            onClick = { showSessions = true },
+                            contentDescription = stringResource(R.string.chat_open_session_list),
+                        ) {
+                            RuntimeIcon(RuntimeIconName.List, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
 
-                // 🌟 2. 智枢悬浮小窗收起按钮 (Collapse to Floating Window)
-                IconButton(
-                    onClick = {
-                        if (Settings.canDrawOverlays(context)) {
-                            FloatingChatService.start(context)
-                            (context as? Activity)?.moveTaskToBack(true)
-                        } else {
-                            showFloatingPermissionDialog = true
-                        }
-                    },
-                    contentDescription = stringResource(R.string.chat_floating_collapse),
-                ) {
-                    RuntimeIcon(RuntimeIconName.OpenInNew, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.primary)
-                }
-
-                // 🌟 3. 会话抽屉/列表（内部包含「新建会话」功能）
-                IconButton(
-                    onClick = { showSessions = true },
-                    contentDescription = stringResource(R.string.chat_open_session_list),
-                ) {
-                    RuntimeIcon(RuntimeIconName.List, Modifier.size(20.dp), MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+                // 第 2 行：全屏极薄无边框矩形 Dev Toolbar (模型 · 审批 · 分支 · 运行)
+                CollapsibleChatWorkbenchStrip(
+                    activeModel = activeModel,
+                    approvalMode = currentApprovalMode,
+                    currentBranch = currentBranch,
+                    runtimeEvents = runtimeEvents,
+                    running = running,
+                    onOpenModels = { showModels = true },
+                    onOpenApprovalModes = { showApprovalModes = true },
+                    onOpenBranches = { showBranches = true },
+                    onOpenRuntime = { showRuntimeTimeline = true },
+                )
             }
         },
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -840,6 +831,11 @@ fun ChatScreen(
         RuntimeTimelineSheet(
             events = runtimeEvents,
             messages = messages,
+            memories = memories,
+            scratchpads = scratchpads,
+            onDeleteMemory = viewModel::deleteMemory,
+            onDeleteScratchpad = viewModel::deleteScratchpad,
+            onClearScratchpads = viewModel::clearScratchpads,
             onDismiss = { showRuntimeTimeline = false },
         )
     }
@@ -1095,18 +1091,6 @@ private fun ChatPaneContent(
     }
 
     Column(modifier = modifier) {
-        // 🌟 顶部向顶收缩/展开的工作台状态栏 (Collapsible Top Workbench Strip)
-        CollapsibleChatWorkbenchStrip(
-            currentBranch = currentBranch,
-            runtimeEvents = runtimeEvents,
-            running = running,
-            memoryCount = memoryCount,
-            scratchpadCount = scratchpadCount,
-            onOpenBranches = onOpenBranches,
-            onOpenRuntime = onOpenRuntime,
-            onOpenMemory = onOpenMemory,
-        )
-
         val renderItems = remember(messages, toolResults, expandedOverrides) {
             projectChatMessages(
                 messages = messages,
@@ -1118,7 +1102,9 @@ private fun ChatPaneContent(
             state = listState,
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth(),
+                .fillMaxWidth()
+                .scrollFadingEdge(top = 4.dp, bottom = 20.dp),
+            contentPadding = PaddingValues(top = 4.dp, bottom = 20.dp),
         ) {
             if (initializing) {
                 item {
@@ -1356,7 +1342,7 @@ private fun ChatPaneContent(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 1.dp, bottom = 2.dp)
+                .padding(top = 6.dp, bottom = 6.dp)
                 .then(
                     if (running && auroraBrush != null) {
                         Modifier.border(
@@ -1629,29 +1615,37 @@ private fun ChatPaneContent(
                             onClick = { showReasoningSlider = !showReasoningSlider },
                             shape = RoundedCornerShape(10.dp),
                             color = if (showReasoningSlider) effortTint.copy(alpha = 0.15f)
-                            else Color.Transparent,
-                            border = if (showReasoningSlider) BorderStroke(0.8.dp, effortTint.copy(alpha = 0.4f)) else null,
+                            else effortTint.copy(alpha = 0.08f),
+                            border = BorderStroke(
+                                0.7.dp,
+                                if (showReasoningSlider) effortTint.copy(alpha = 0.45f) else effortTint.copy(alpha = 0.2f),
+                            ),
                             modifier = Modifier.padding(start = 2.dp),
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
+                                RuntimeIcon(
+                                    name = RuntimeIconName.Sparkles,
+                                    modifier = Modifier.size(11.dp),
+                                    tint = effortTint,
+                                )
                                 Text(
                                     text = effortLabel,
                                     style = MaterialTheme.typography.labelSmall.copy(
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
                                     ),
-                                    color = if (showReasoningSlider) effortTint else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    color = effortTint,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 RuntimeIcon(
                                     name = if (showReasoningSlider) RuntimeIconName.ChevronDown else RuntimeIconName.ChevronUp,
-                                    modifier = Modifier.size(11.dp),
-                                    tint = if (showReasoningSlider) effortTint else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(10.dp),
+                                    tint = effortTint.copy(alpha = 0.75f),
                                 )
                             }
                         }

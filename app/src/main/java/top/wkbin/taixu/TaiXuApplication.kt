@@ -34,6 +34,7 @@ class TaiXuApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        configureCursorWindowSize()
         crashReporter.install()
         appScope.launch(Dispatchers.IO) {
             // 上一次未捕获崩溃会先落在应用私有目录；下次启动后复制到公共下载目录，
@@ -69,5 +70,19 @@ class TaiXuApplication : Application() {
     override fun onTerminate() {
         appScope.cancel()
         super.onTerminate()
+    }
+
+    /**
+     * 🌟 全局 CursorWindow 缓冲扩容：将 Android SQLite 原生游标窗口由默认 2MB 扩容至 100MB，
+     * 彻底解决已有会话中超大单行记录在 Room 查询时报 `Row too big to fit into CursorWindow` 的问题。
+     */
+    private fun configureCursorWindowSize() {
+        runCatching {
+            val field = android.database.CursorWindow::class.java.getDeclaredField("sCursorWindowSize")
+            field.isAccessible = true
+            field.set(null, 100 * 1024 * 1024) // 100MB
+        }.onFailure {
+            android.util.Log.w("TaiXuApp", "Failed to configure CursorWindow size", it)
+        }
     }
 }

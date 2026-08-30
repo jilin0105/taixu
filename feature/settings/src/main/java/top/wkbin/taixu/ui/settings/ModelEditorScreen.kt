@@ -20,10 +20,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -224,7 +228,7 @@ private fun ModelEditorContent(
         mutableStateOf(providers.firstOrNull { it.name == existing?.provider }?.id ?: providers.first().id)
     }
     val provider = providers.firstOrNull { it.id == providerId } ?: providers.first()
-    var providerMenu by rememberSaveable { mutableStateOf(false) }
+    var showProviderPicker by rememberSaveable { mutableStateOf(false) }
     var name by rememberSaveable(modelId) { mutableStateOf(existing?.name.orEmpty()) }
 
     val existingModelList = remember(existing?.model) {
@@ -381,6 +385,23 @@ private fun ModelEditorContent(
         )
     }
 
+    if (showProviderPicker) {
+        ProviderPickerDialog(
+            providers = providers,
+            currentProviderId = providerId,
+            onDismiss = { showProviderPicker = false },
+            onSelect = { option ->
+                providerId = option.id
+                url = option.baseUrl
+                if (existing == null) {
+                    selectedModels = option.recommendedModels.take(1).toSet()
+                    customModelInput = ""
+                }
+                showProviderPicker = false
+            },
+        )
+    }
+
     val compactFieldShape = RoundedCornerShape(12.dp)
     val fieldColors = OutlinedTextFieldDefaults.colors(
         focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -400,6 +421,7 @@ private fun ModelEditorContent(
                 modifier = Modifier.fillMaxWidth(),
                 containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                onClick = { showProviderPicker = true },
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -448,46 +470,13 @@ private fun ModelEditorContent(
                         )
                     }
 
-                    ExposedDropdownMenuBox(
-                        expanded = providerMenu,
-                        onExpandedChange = { providerMenu = !providerMenu },
+                    RuntimeFilledTonalButton(
+                        onClick = { showProviderPicker = true },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                     ) {
-                        RuntimeFilledTonalButton(
-                            onClick = { providerMenu = true },
-                            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text("切换预设", style = MaterialTheme.typography.labelMedium)
-                                RuntimeIcon(RuntimeIconName.ChevronDown, Modifier.size(14.dp))
-                            }
-                        }
-                        ExposedDropdownMenu(
-                            expanded = providerMenu,
-                            onDismissRequest = { providerMenu = false },
-                        ) {
-                            providers.forEach { option ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                        ) {
-                                            ProviderBadge(providerIdOrName = option.id, size = 22.dp)
-                                            Text(option.name)
-                                        }
-                                    },
-                                    onClick = {
-                                        providerId = option.id
-                                        url = option.baseUrl
-                                        if (existing == null) {
-                                            selectedModels = option.recommendedModels.take(1).toSet()
-                                            customModelInput = ""
-                                        }
-                                        providerMenu = false
-                                    },
-                                )
-                            }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("切换预设", style = MaterialTheme.typography.labelMedium)
+                            RuntimeIcon(RuntimeIconName.ChevronDown, Modifier.size(14.dp))
                         }
                     }
                 }
@@ -1425,4 +1414,253 @@ private fun QuickImportJsonDialog(
             }
         },
     )
+}
+
+@Composable
+private fun ProviderPickerDialog(
+    providers: List<AgentProviderDefinition>,
+    currentProviderId: String,
+    onDismiss: () -> Unit,
+    onSelect: (AgentProviderDefinition) -> Unit,
+) {
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var selectedGroup by rememberSaveable { mutableStateOf<ProviderGroup?>(null) }
+
+    val filteredProviders = remember(providers, searchQuery, selectedGroup) {
+        providers.filter { item ->
+            val matchesGroup = selectedGroup == null || item.group == selectedGroup
+            val matchesSearch = searchQuery.isBlank() ||
+                item.name.contains(searchQuery, ignoreCase = true) ||
+                item.id.contains(searchQuery, ignoreCase = true) ||
+                item.baseUrl.contains(searchQuery, ignoreCase = true)
+            matchesGroup && matchesSearch
+        }
+    }
+
+    RuntimeAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RuntimeIcon(RuntimeIconName.Sparkles, Modifier.size(20.dp), MaterialTheme.colorScheme.primary)
+                Text("选择服务商预设", fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                // 搜索框
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("搜索服务商名称或端点...", style = MaterialTheme.typography.bodySmall) },
+                    leadingIcon = {
+                        RuntimeIcon(RuntimeIconName.Search, Modifier.size(16.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            RuntimeIconButton(
+                                onClick = { searchQuery = "" },
+                                modifier = Modifier.size(28.dp),
+                            ) {
+                                RuntimeIcon(RuntimeIconName.Close, Modifier.size(14.dp))
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    textStyle = MaterialTheme.typography.bodySmall,
+                )
+
+                // 分类 Filter Chips
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    ProviderFilterChip(
+                        label = "全部",
+                        selected = selectedGroup == null,
+                        onClick = { selectedGroup = null },
+                    )
+                    ProviderFilterChip(
+                        label = "官方",
+                        selected = selectedGroup == ProviderGroup.OFFICIAL,
+                        onClick = { selectedGroup = ProviderGroup.OFFICIAL },
+                    )
+                    ProviderFilterChip(
+                        label = "国内",
+                        selected = selectedGroup == ProviderGroup.CHINA,
+                        onClick = { selectedGroup = ProviderGroup.CHINA },
+                    )
+                    ProviderFilterChip(
+                        label = "聚合",
+                        selected = selectedGroup == ProviderGroup.AGGREGATOR,
+                        onClick = { selectedGroup = ProviderGroup.AGGREGATOR },
+                    )
+                    ProviderFilterChip(
+                        label = "本地",
+                        selected = selectedGroup == ProviderGroup.LOCAL,
+                        onClick = { selectedGroup = ProviderGroup.LOCAL },
+                    )
+                    ProviderFilterChip(
+                        label = "自定义",
+                        selected = selectedGroup == ProviderGroup.CUSTOM,
+                        onClick = { selectedGroup = ProviderGroup.CUSTOM },
+                    )
+                }
+
+                // 列表
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 340.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (filteredProviders.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 24.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = "未找到匹配的服务商",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    } else {
+                        items(filteredProviders, key = { it.id }) { option ->
+                            val isSelected = option.id == currentProviderId
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isSelected) {
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.5f)
+                                },
+                                border = if (isSelected) {
+                                    BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
+                                } else {
+                                    null
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        onSelect(option)
+                                    },
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.6f)),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        ProviderBadge(providerIdOrName = option.id, size = 22.dp)
+                                    }
+
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        ) {
+                                            Text(
+                                                text = option.name,
+                                                style = MaterialTheme.typography.bodyMedium.copy(
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                ),
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f),
+                                            ) {
+                                                Text(
+                                                    text = when (option.group) {
+                                                        ProviderGroup.OFFICIAL -> "官方"
+                                                        ProviderGroup.CHINA -> "国内"
+                                                        ProviderGroup.AGGREGATOR -> "聚合"
+                                                        ProviderGroup.LOCAL -> "本地"
+                                                        ProviderGroup.CUSTOM -> "自定义"
+                                                    },
+                                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = option.baseUrl.ifBlank { "需自定义 Base URL" },
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+
+                                    if (isSelected) {
+                                        RuntimeIcon(
+                                            name = RuntimeIconName.Check,
+                                            modifier = Modifier.size(18.dp),
+                                            tint = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭")
+            }
+        },
+    )
+}
+
+@Composable
+private fun ProviderFilterChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.6f),
+        border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)) else null,
+        modifier = Modifier.clickable(onClick = onClick),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                fontSize = 11.sp,
+            ),
+            color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+        )
+    }
 }

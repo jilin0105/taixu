@@ -279,6 +279,7 @@
     <string name="chat_compaction_banner">已折叠 %1$d 条早期消息进入上下文摘要，点按查看模型仍记得什么</string>
     <!-- 记忆与草稿抽屉 -->
     <string name="chat_memory_pill_title">记忆</string>
+    <string name="chat_memory_count">%1$d 记忆</string>
     <string name="chat_memory_pill_subtitle">%1$d 记忆 · %2$d 草稿</string>
     <string name="chat_memory_sheet_title">会话工作记忆</string>
     <string name="chat_memory_section">长期记忆（%1$d）</string>
