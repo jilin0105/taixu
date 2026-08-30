@@ -463,8 +463,7 @@ internal fun ChatComposer(
                     cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
                     minLines = 1,
                     maxLines = 5,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { doSend() }),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                 )
             }
 
