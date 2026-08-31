@@ -1,8 +1,11 @@
 package top.wkbin.taixu.harness.task
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.wkbin.taixu.core.common.logging.AppLogger
@@ -19,17 +22,22 @@ class AgentStateMachine @Inject constructor(
     private val activeJobs = ConcurrentHashMap<String, Job>()
 
     fun startTask(taskId: String, scope: CoroutineScope) {
-        if (activeJobs.containsKey(taskId)) return
-
-        val job = scope.launch {
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
+                val task = taskDao.getTaskById(taskId)
+                    ?: error("Task $taskId does not exist")
                 taskDao.updateTaskStatus(taskId, TaskStatus.RUNNING, null, System.currentTimeMillis())
                 logger.i("[AgentStateMachine] Task $taskId started.")
 
-                // TODO: Wire HarnessLoop session dispatch here
-
-                taskDao.updateTaskStatus(taskId, TaskStatus.COMPLETED, null, System.currentTimeMillis())
-                logger.i("[AgentStateMachine] Task $taskId completed.")
+                // This legacy background-task surface is not connected to HarnessLoop. Failing
+                // explicitly prevents an accepted task from being reported as completed without
+                // ever executing its description.
+                error("Background task execution is not configured: ${task.title}")
+            } catch (cancelled: CancellationException) {
+                withContext(NonCancellable) {
+                    taskDao.updateTaskStatus(taskId, TaskStatus.SUSPENDED, null, System.currentTimeMillis())
+                }
+                throw cancelled
             } catch (e: Exception) {
                 // Use NonCancellable to ensure DB update even if the coroutine is cancelled
                 withContext(NonCancellable) {
@@ -37,16 +45,22 @@ class AgentStateMachine @Inject constructor(
                 }
                 logger.e("[AgentStateMachine] Task $taskId failed", e)
             } finally {
-                activeJobs.remove(taskId)
+                activeJobs.remove(taskId, currentCoroutineContext()[Job])
             }
         }
-        activeJobs[taskId] = job
+        if (activeJobs.putIfAbsent(taskId, job) == null) {
+            job.start()
+        } else {
+            job.cancel()
+        }
     }
 
     fun cancelTask(taskId: String, scope: CoroutineScope) {
-        activeJobs[taskId]?.cancel()
-        activeJobs.remove(taskId)
-        // Write SUSPENDED status via NonCancellable so it persists after cancellation
+        val job = activeJobs[taskId]
+        if (job != null) {
+            job.cancel()
+            return
+        }
         scope.launch {
             withContext(NonCancellable) {
                 taskDao.updateTaskStatus(taskId, TaskStatus.SUSPENDED, null, System.currentTimeMillis())
@@ -56,15 +70,7 @@ class AgentStateMachine @Inject constructor(
 
     fun cancelAll(scope: CoroutineScope) {
         val ids = activeJobs.keys.toList()
-        ids.forEach { taskId ->
-            activeJobs[taskId]?.cancel()
-            activeJobs.remove(taskId)
-            scope.launch {
-                withContext(NonCancellable) {
-                    taskDao.updateTaskStatus(taskId, TaskStatus.SUSPENDED, null, System.currentTimeMillis())
-                }
-            }
-        }
+        ids.forEach { taskId -> cancelTask(taskId, scope) }
     }
 
     object TaskStatus {

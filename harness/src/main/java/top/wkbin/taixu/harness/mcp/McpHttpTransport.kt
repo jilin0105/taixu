@@ -14,6 +14,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -22,6 +25,8 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -29,6 +34,8 @@ import top.wkbin.taixu.core.common.logging.AppLogger
 import top.wkbin.taixu.core.model.McpServerConfig
 import top.wkbin.taixu.core.model.McpToolInfo
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
  * 远程 MCP 传输：同时支持 Streamable HTTP（2025-03-26+）与 legacy HTTP+SSE（2024-11-05）。
@@ -36,8 +43,8 @@ import kotlin.time.Duration.Companion.milliseconds
  * 连接策略：
  * - 会话按服务 id 复用，一次握手（initialize + notifications/initialized）后所有请求直接复用；
  * - 自动协商：URL 以 /sse 结尾优先尝试 legacy SSE，否则先试 Streamable HTTP，失败回落另一种；
- * - 请求失败且属于传输层故障（IO / HTTP 状态码 / 会话失效）时丢弃会话重建并重试一次，
- *   JSON-RPC 应用层错误不重试，避免工具副作用被重复执行。
+ * - initialize/tools-list 等只读发现请求遇到传输故障时允许重建并重试一次；
+ * - tools/call 永不自动重试，响应丢失时返回不确定结果，避免重复执行副作用。
  */
 @Singleton
 class McpHttpTransport @Inject constructor(
@@ -48,6 +55,7 @@ class McpHttpTransport @Inject constructor(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sessions = ConcurrentHashMap<String, HttpSession>()
+    private val sessionMutexes = ConcurrentHashMap<String, Mutex>()
 
     /** 连接失败冷却：服务 id → 冷却截止时间戳。冷却期内直接快速失败，不再空耗连接超时。 */
     private val downUntil = ConcurrentHashMap<String, Long>()
@@ -55,14 +63,25 @@ class McpHttpTransport @Inject constructor(
     // 握手/列表用短超时；工具调用可能耗时较长；SSE 长连接读流不设超时。
     // connectTimeout 单独收紧：本地端口无服务时（ECONNREFUSED 被系统延迟上报）也要快速失败。
     private val fastClient = client.newBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
         .connectTimeout(FAST_CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         .callTimeout(FAST_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         .build()
+    /** POSTs that may already have taken effect must not be transparently replayed by OkHttp. */
+    private val nonRetryingFastClient = fastClient.newBuilder()
+        .retryOnConnectionFailure(false)
+        .build()
     private val callClient = client.newBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .retryOnConnectionFailure(false)
         .connectTimeout(CALL_CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         .callTimeout(CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         .build()
     private val sseClient = client.newBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
         .connectTimeout(CALL_CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         .callTimeout(0, TimeUnit.MILLISECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
@@ -84,7 +103,8 @@ class McpHttpTransport @Inject constructor(
 
     override suspend fun execute(server: McpServerConfig, toolName: String, arguments: JsonObject): Pair<Boolean, String> =
         withContext(Dispatchers.IO) {
-            withRetryableSession(server) { session ->
+            val session = ensureSession(server)
+            try {
                 val params = json.encodeToJsonElement(
                     McpCallToolParams.serializer(),
                     McpCallToolParams(toolName, arguments),
@@ -94,6 +114,13 @@ class McpHttpTransport @Inject constructor(
                     ?: error("MCP tools/call did not return a result")
                 !result.isError to result.content.joinToString("\n") { it.text.orEmpty() }
                     .ifBlank { if (result.isError) "执行失败" else "执行成功" }
+            } catch (t: Throwable) {
+                if (t is CancellationException) throw t
+                if (isTransportFailure(t)) {
+                    dropSession(server.id, session)
+                    throw IOException("MCP 工具响应丢失；为避免副作用重复，未自动重试 tools/call", t)
+                }
+                throw t
             }
         }
 
@@ -115,7 +142,12 @@ class McpHttpTransport @Inject constructor(
     private fun isTransportFailure(t: Throwable): Boolean =
         t is IOException || (t is IllegalStateException && t.message?.startsWith("MCP HTTP ") == true)
 
-    private suspend fun ensureSession(server: McpServerConfig, bypassCooldown: Boolean = false): HttpSession {
+    private suspend fun ensureSession(server: McpServerConfig, bypassCooldown: Boolean = false): HttpSession =
+        sessionMutexes.getOrPut(server.id) { Mutex() }.withLock {
+            ensureSessionLocked(server, bypassCooldown)
+        }
+
+    private suspend fun ensureSessionLocked(server: McpServerConfig, bypassCooldown: Boolean): HttpSession {
         val url = server.serverUrl.trim()
         sessions[server.id]?.let { existing ->
             if (existing.serverUrl == url && existing.isOpen) return existing
@@ -230,7 +262,7 @@ class McpHttpTransport @Inject constructor(
             )
         }
 
-    private fun postStreamable(
+    private suspend fun postStreamable(
         endpoint: HttpUrl,
         sessionId: String?,
         method: String,
@@ -244,7 +276,7 @@ class McpHttpTransport @Inject constructor(
             .post(payload.toRequestBody(JSON))
             .build()
         val client = if (longRunning) callClient else fastClient
-        return client.newCall(request).execute().use { response ->
+        return client.newCall(request).executeCancellable().use { response ->
             check(response.isSuccessful) { "MCP HTTP ${response.code}" }
             val rpc = readResponse(response, id)
             rpc.error?.let { error("MCP JSON-RPC ${it.code}: ${it.message}") }
@@ -252,21 +284,21 @@ class McpHttpTransport @Inject constructor(
         }
     }
 
-    private fun postNotification(session: HttpSession, method: String) {
+    private suspend fun postNotification(session: HttpSession, method: String) {
         val payload = json.encodeToString(JsonRpcNotification.serializer(), JsonRpcNotification(method = method))
         val request = requestBuilder(session.endpoint, session.sessionId)
             .header("MCP-Protocol-Version", session.protocolVersion)
             .post(payload.toRequestBody(JSON))
             .build()
-        fastClient.newCall(request).execute().use { check(it.isSuccessful) { "MCP HTTP ${it.code}" } }
+        fastClient.newCall(request).executeCancellable().use { check(it.isSuccessful) { "MCP HTTP ${it.code}" } }
     }
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        private suspend fun postViaLegacy(channel: LegacySseChannel, method: String, params: JsonElement): JsonRpcResponse {
+    private suspend fun postViaLegacy(channel: LegacySseChannel, method: String, params: JsonElement): JsonRpcResponse {
         val id = UUID.randomUUID().toString()
         val payload = json.encodeToString(JsonRpcRequest.serializer(), JsonRpcRequest(id = id, method = method, params = params))
         val deferred = channel.register(id)
         return try {
-            postLegacyPayload(channel, payload)
+            postLegacyPayload(channel, payload, retryable = method != "tools/call")
             withTimeoutOrNull(CALL_TIMEOUT_MS.milliseconds) { channel.await(id, deferred) }
                 ?: error("MCP 响应超时（${CALL_TIMEOUT_MS / 1000}s）")
         } catch (t: Throwable) {
@@ -275,16 +307,30 @@ class McpHttpTransport @Inject constructor(
         }
     }
 
-    private fun postViaLegacyNotification(channel: LegacySseChannel, method: String) {
+    private suspend fun postViaLegacyNotification(channel: LegacySseChannel, method: String) {
         val payload = json.encodeToString(JsonRpcNotification.serializer(), JsonRpcNotification(method = method))
-        postLegacyPayload(channel, payload)
+        postLegacyPayload(channel, payload, retryable = true)
     }
 
-    private fun postLegacyPayload(channel: LegacySseChannel, payload: String) {
+    private suspend fun postLegacyPayload(channel: LegacySseChannel, payload: String, retryable: Boolean) {
         val endpoint = channel.messageEndpoint ?: error("Legacy SSE 消息端点未就绪")
         val request = Request.Builder().url(endpoint).header("Accept", ACCEPT)
             .post(payload.toRequestBody(JSON)).build()
-        fastClient.newCall(request).execute().use { check(it.isSuccessful) { "MCP HTTP ${it.code}" } }
+        val client = if (retryable) fastClient else nonRetryingFastClient
+        client.newCall(request).executeCancellable().use { check(it.isSuccessful) { "MCP HTTP ${it.code}" } }
+    }
+
+    private suspend fun Call.executeCancellable(): Response = suspendCancellableCoroutine { continuation ->
+        continuation.invokeOnCancellation { cancel() }
+        enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                if (continuation.isActive) continuation.resumeWithException(e)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                if (continuation.isActive) continuation.resume(response) else response.close()
+            }
+        })
     }
 
     private fun requestBuilder(endpoint: HttpUrl, sessionId: String?) = Request.Builder()
@@ -304,8 +350,8 @@ class McpHttpTransport @Inject constructor(
         val source = response.body.source()
         val data = mutableListOf<String>()
         var bytes = 0
-        while (true) {
-            val line = source.readUtf8Line() ?: break
+        while (!source.exhausted()) {
+            val line = source.readUtf8LineStrict(MAX_SSE_LINE_BYTES.toLong())
             bytes += line.toByteArray().size + 1
             require(bytes <= MAX_BYTES) { "MCP response is too large" }
             if (line.isBlank()) {
@@ -388,9 +434,12 @@ class McpHttpTransport @Inject constructor(
                     check(response.isSuccessful) { "MCP HTTP ${response.code}" }
                     var event = ""
                     val data = mutableListOf<String>()
+                    var eventBytes = 0
                     val source = response.body.source()
-                    while (true) {
-                        val line = source.readUtf8Line() ?: break
+                    while (!source.exhausted()) {
+                        val line = source.readUtf8LineStrict(MAX_SSE_LINE_BYTES.toLong())
+                        eventBytes += line.toByteArray(Charsets.UTF_8).size + 1
+                        require(eventBytes <= MAX_BYTES) { "MCP SSE event is too large" }
                         when {
                             line.startsWith("event:") -> event = line.removePrefix("event:").trim()
                             line.startsWith("data:") -> data += line.removePrefix("data:").trimStart()
@@ -398,6 +447,7 @@ class McpHttpTransport @Inject constructor(
                                 onEvent(event, data)
                                 event = ""
                                 data.clear()
+                                eventBytes = 0
                             }
                         }
                     }
@@ -415,8 +465,12 @@ class McpHttpTransport @Inject constructor(
                         IllegalStateException("无法解析 endpoint 地址：${data.first()}"),
                     )
                 } else {
-                    messageEndpoint = resolved
-                    endpointDeferred.complete(resolved)
+                    runCatching { validatedDerivedMcpEndpoint(url, resolved) }
+                        .onSuccess {
+                            messageEndpoint = it
+                            endpointDeferred.complete(it)
+                        }
+                        .onFailure { endpointDeferred.completeExceptionally(it) }
                 }
                 return
             }
@@ -463,6 +517,7 @@ class McpHttpTransport @Inject constructor(
     companion object {
         private const val ACCEPT = "application/json, text/event-stream"
         private const val MAX_BYTES = 4 * 1024 * 1024
+        private const val MAX_SSE_LINE_BYTES = 1 * 1024 * 1024
         private const val FAST_TIMEOUT_MS = 5_000L
         private const val CALL_TIMEOUT_MS = 120_000L
         private const val HANDSHAKE_TIMEOUT_MS = 4_000L
@@ -490,4 +545,11 @@ internal fun validatedMcpHttpEndpoint(baseUrl: String): HttpUrl {
         "明文 MCP 仅允许 localhost、回环地址或 192.168.* 局域网地址"
     }
     return url
+}
+
+internal fun validatedDerivedMcpEndpoint(base: HttpUrl, resolved: HttpUrl): HttpUrl {
+    require(base.scheme == resolved.scheme && base.host == resolved.host && base.port == resolved.port) {
+        "MCP SSE endpoint 必须与初始服务同源"
+    }
+    return validatedMcpHttpEndpoint(resolved.toString())
 }

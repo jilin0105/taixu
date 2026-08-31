@@ -153,12 +153,13 @@ class RoomAndroidAppRepository @Inject constructor(private val dao: AndroidAppDa
 interface AgentContextRepository {
     suspend fun saveMemory(memory: AgentMemoryEntity)
     suspend fun getMemoryById(id: String): AgentMemoryEntity?
-    suspend fun getMemoryByKey(key: String, scope: String): AgentMemoryEntity?
-    suspend fun getMemoriesByScopes(scopes: List<String>): List<AgentMemoryEntity>
+    suspend fun getMemoryByKey(key: String, scope: String, ownerId: String): AgentMemoryEntity?
+    suspend fun getMemoriesForContext(projectOwnerId: String, sessionId: String, limit: Int = 100): List<AgentMemoryEntity>
+    suspend fun countMemories(scope: String, ownerId: String): Int
     fun observeAllMemories(): Flow<List<AgentMemoryEntity>>
-    suspend fun searchMemories(query: String): List<AgentMemoryEntity>
+    suspend fun searchMemories(query: String, projectOwnerId: String, sessionId: String, limit: Int = 50): List<AgentMemoryEntity>
     suspend fun deleteMemoryById(id: String)
-    suspend fun deleteMemoryByKey(key: String, scope: String)
+    suspend fun deleteMemoryByKey(key: String, scope: String, ownerId: String)
     suspend fun savePlan(plan: AgentPlanEntity)
     suspend fun getPlanBySession(sessionId: String): AgentPlanEntity?
     suspend fun getActivePlan(sessionId: String): AgentPlanEntity?
@@ -219,12 +220,15 @@ class RoomTerminalSessionRepository @Inject constructor(private val dao: Termina
 class RoomAgentContextRepository @Inject constructor(private val dao: AgentContextDao) : AgentContextRepository {
     override suspend fun saveMemory(memory: AgentMemoryEntity) = dao.saveMemory(memory)
     override suspend fun getMemoryById(id: String) = dao.getMemoryById(id)
-    override suspend fun getMemoryByKey(key: String, scope: String) = dao.getMemoryByKey(key, scope)
-    override suspend fun getMemoriesByScopes(scopes: List<String>) = dao.getMemoriesByScopes(scopes)
+    override suspend fun getMemoryByKey(key: String, scope: String, ownerId: String) = dao.getMemoryByKey(key, scope, ownerId)
+    override suspend fun getMemoriesForContext(projectOwnerId: String, sessionId: String, limit: Int) =
+        dao.getMemoriesForContext(projectOwnerId, sessionId, limit)
+    override suspend fun countMemories(scope: String, ownerId: String) = dao.countMemories(scope, ownerId)
     override fun observeAllMemories() = dao.observeAllMemories()
-    override suspend fun searchMemories(query: String) = dao.searchMemories(query)
+    override suspend fun searchMemories(query: String, projectOwnerId: String, sessionId: String, limit: Int) =
+        dao.searchMemories(query, projectOwnerId, sessionId, limit)
     override suspend fun deleteMemoryById(id: String) = dao.deleteMemoryById(id)
-    override suspend fun deleteMemoryByKey(key: String, scope: String) = dao.deleteMemoryByKey(key, scope)
+    override suspend fun deleteMemoryByKey(key: String, scope: String, ownerId: String) = dao.deleteMemoryByKey(key, scope, ownerId)
     override suspend fun savePlan(plan: AgentPlanEntity) = dao.savePlan(plan)
     override suspend fun getPlanBySession(sessionId: String) = dao.getPlanBySession(sessionId)
     override suspend fun getActivePlan(sessionId: String) = dao.getActivePlan(sessionId)

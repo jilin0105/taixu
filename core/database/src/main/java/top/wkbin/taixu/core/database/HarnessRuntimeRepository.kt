@@ -13,6 +13,12 @@ interface HarnessRuntimeRepository {
     suspend fun listEntriesInRange(start: Long?, end: Long?): List<HarnessEntryEntity>
     suspend fun countEntriesInRange(start: Long?, end: Long?): Int
     suspend fun branch(sessionId: String, leafId: String?): List<HarnessEntryEntity>
+    suspend fun searchBranch(sessionId: String, leafId: String?, query: String, limit: Int): List<HarnessEntryEntity> =
+        branch(sessionId, leafId).asReversed().filter { it.entryType == "message" && it.payloadJson.contains(query, ignoreCase = true) }.take(limit)
+    suspend fun branchEntryAt(sessionId: String, leafId: String?, index: Int): HarnessEntryEntity? =
+        branch(sessionId, leafId).filter { it.entryType == "message" }.getOrNull(index)
+    suspend fun findEntry(sessionId: String, entryId: String): HarnessEntryEntity? =
+        listEntries(sessionId).firstOrNull { it.id == entryId }
     suspend fun appendToLane(sessionId: String, laneName: String, entry: HarnessEntryEntity)
     suspend fun moveLane(sessionId: String, laneName: String, leafId: String?)
     suspend fun clearLaneOperation(sessionId: String, laneName: String)
@@ -26,6 +32,7 @@ interface HarnessRuntimeRepository {
     suspend fun finishOperation(result: HarnessLaneResultEntity, lane: HarnessLaneEntity)
     suspend fun enqueue(item: HarnessQueueItemEntity)
     suspend fun listQueue(sessionId: String, laneName: String, queueType: String): List<HarnessQueueItemEntity>
+    suspend fun listAllQueues(sessionId: String, laneName: String): List<HarnessQueueItemEntity>
     suspend fun cancelQueued(itemId: String)
     suspend fun clearQueue(sessionId: String, laneName: String, queueType: String)
     suspend fun consumeQueued(itemId: String, entry: HarnessEntryEntity, lane: HarnessLaneEntity)
@@ -76,8 +83,17 @@ class RoomHarnessRuntimeRepository @Inject constructor(
     override suspend fun countEntriesInRange(start: Long?, end: Long?) = dao.countEntriesInRange(start, end)
 
     override suspend fun branch(sessionId: String, leafId: String?): List<HarnessEntryEntity> {
-        return EntryTree.branch(dao.listEntries(sessionId), leafId).map(::restoreFromStorage)
+        return leafId?.let { dao.branch(sessionId, it).map(::restoreFromStorage) }.orEmpty()
     }
+    override suspend fun searchBranch(sessionId: String, leafId: String?, query: String, limit: Int): List<HarnessEntryEntity> =
+        leafId?.let {
+            val escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            dao.searchBranch(sessionId, it, escaped, limit).map(::restoreFromStorage)
+        }.orEmpty()
+    override suspend fun branchEntryAt(sessionId: String, leafId: String?, index: Int): HarnessEntryEntity? =
+        leafId?.let { dao.branchEntryAt(sessionId, it, index)?.let(::restoreFromStorage) }
+    override suspend fun findEntry(sessionId: String, entryId: String): HarnessEntryEntity? =
+        dao.findEntry(entryId)?.takeIf { it.sessionId == sessionId }?.let(::restoreFromStorage)
 
     override suspend fun appendToLane(sessionId: String, laneName: String, entry: HarnessEntryEntity) {
         val lane = ensureLane(sessionId, laneName)
@@ -112,6 +128,8 @@ class RoomHarnessRuntimeRepository @Inject constructor(
     override suspend fun enqueue(item: HarnessQueueItemEntity) = dao.insertQueueItem(item)
     override suspend fun listQueue(sessionId: String, laneName: String, queueType: String) =
         dao.listQueue(sessionId, laneName, queueType)
+    override suspend fun listAllQueues(sessionId: String, laneName: String) =
+        dao.listAllQueues(sessionId, laneName)
     override suspend fun cancelQueued(itemId: String) = dao.deleteQueueItem(itemId)
     override suspend fun clearQueue(sessionId: String, laneName: String, queueType: String) =
         dao.clearQueue(sessionId, laneName, queueType)

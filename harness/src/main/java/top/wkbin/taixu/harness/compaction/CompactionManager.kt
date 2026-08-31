@@ -63,9 +63,7 @@ class CompactionManager @Inject constructor(
         val collapsed = context.messages.take(keepFromIndex)
         val retained = context.messages.drop(keepFromIndex)
         val incrementalSummary = ContextWindowPolicy.buildHistorySummary(collapsed)
-        val summary = listOfNotNull(context.summary, incrementalSummary.takeIf { it.isNotBlank() })
-            .joinToString("\n\n")
-            .take(MAX_SUMMARY_CHARS)
+        val summary = mergeRollingSummary(context.summary, incrementalSummary)
         val now = System.currentTimeMillis()
         val payload = CompactionPayload(
             sourceLeafId = lane.leafId,
@@ -95,6 +93,23 @@ class CompactionManager @Inject constructor(
         }
 
     private fun messageTokens(message: HarnessMessage): Int = ContextWindowPolicy.estimateTokens(message.toString())
+
+    /** Preserve both durable early context and the newest folded state after the cap is reached. */
+    private fun mergeRollingSummary(previous: String?, incremental: String): String {
+        val old = previous.orEmpty().trim()
+        val newest = incremental.trim()
+        val combined = listOf(old, newest).filter { it.isNotBlank() }.joinToString("\n\n")
+        if (combined.length <= MAX_SUMMARY_CHARS) return combined
+        if (old.isBlank()) return newest.takeLast(MAX_SUMMARY_CHARS)
+        if (newest.isBlank()) return old.take(MAX_SUMMARY_CHARS)
+
+        val marker = "\n\n[较早摘要中段已省略]\n\n"
+        val newestBudget = minOf(newest.length, MAX_SUMMARY_CHARS / 2)
+        val oldBudget = (MAX_SUMMARY_CHARS - marker.length - newestBudget).coerceAtLeast(0)
+        val oldHead = old.take((oldBudget + 1) / 2)
+        val oldTail = old.takeLast(oldBudget / 2)
+        return (oldHead + marker + oldTail + "\n\n" + newest.takeLast(newestBudget)).takeLast(MAX_SUMMARY_CHARS)
+    }
 
     companion object {
         const val ENTRY_TYPE = "compaction"

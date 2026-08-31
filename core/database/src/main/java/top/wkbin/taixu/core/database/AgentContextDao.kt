@@ -17,23 +17,41 @@ interface AgentContextDao {
     @Query("SELECT * FROM agent_memories WHERE id = :id LIMIT 1")
     suspend fun getMemoryById(id: String): AgentMemoryEntity?
 
-    @Query("SELECT * FROM agent_memories WHERE `key` = :key AND scope = :scope LIMIT 1")
-    suspend fun getMemoryByKey(key: String, scope: String): AgentMemoryEntity?
+    @Query("SELECT * FROM agent_memories WHERE `key` = :key AND scope = :scope AND ownerId = :ownerId LIMIT 1")
+    suspend fun getMemoryByKey(key: String, scope: String, ownerId: String): AgentMemoryEntity?
 
-    @Query("SELECT * FROM agent_memories WHERE scope IN (:scopes) ORDER BY updatedAt DESC")
-    suspend fun getMemoriesByScopes(scopes: List<String>): List<AgentMemoryEntity>
+    @Query("""
+        SELECT * FROM agent_memories
+        WHERE (scope = 'global' AND ownerId = '')
+           OR (:projectOwnerId != '' AND scope = 'project' AND ownerId = :projectOwnerId)
+           OR (:sessionId != '' AND scope = 'session' AND ownerId = :sessionId)
+        ORDER BY updatedAt DESC
+        LIMIT :limit
+    """)
+    suspend fun getMemoriesForContext(projectOwnerId: String, sessionId: String, limit: Int): List<AgentMemoryEntity>
+
+    @Query("SELECT COUNT(*) FROM agent_memories WHERE scope = :scope AND ownerId = :ownerId")
+    suspend fun countMemories(scope: String, ownerId: String): Int
 
     @Query("SELECT * FROM agent_memories ORDER BY updatedAt DESC")
     fun observeAllMemories(): Flow<List<AgentMemoryEntity>>
 
-    @Query("SELECT * FROM agent_memories WHERE `key` LIKE '%' || :query || '%' OR `value` LIKE '%' || :query || '%' ORDER BY updatedAt DESC")
-    suspend fun searchMemories(query: String): List<AgentMemoryEntity>
+    @Query("""
+        SELECT * FROM agent_memories
+        WHERE ((scope = 'global' AND ownerId = '')
+            OR (:projectOwnerId != '' AND scope = 'project' AND ownerId = :projectOwnerId)
+            OR (:sessionId != '' AND scope = 'session' AND ownerId = :sessionId))
+          AND (`key` LIKE '%' || :query || '%' OR `value` LIKE '%' || :query || '%')
+        ORDER BY updatedAt DESC
+        LIMIT :limit
+    """)
+    suspend fun searchMemories(query: String, projectOwnerId: String, sessionId: String, limit: Int): List<AgentMemoryEntity>
 
     @Query("DELETE FROM agent_memories WHERE id = :id")
     suspend fun deleteMemoryById(id: String)
 
-    @Query("DELETE FROM agent_memories WHERE `key` = :key AND scope = :scope")
-    suspend fun deleteMemoryByKey(key: String, scope: String)
+    @Query("DELETE FROM agent_memories WHERE `key` = :key AND scope = :scope AND ownerId = :ownerId")
+    suspend fun deleteMemoryByKey(key: String, scope: String, ownerId: String)
 
     // ========== 任务规划 (Plan) ==========
 

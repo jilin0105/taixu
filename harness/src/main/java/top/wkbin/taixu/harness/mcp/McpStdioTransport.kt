@@ -34,6 +34,7 @@ class McpStdioTransport @Inject constructor(
 ) : McpTransport {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val connections = ConcurrentHashMap<String, Connection>()
+    private val startupMutexes = ConcurrentHashMap<String, Mutex>()
 
     /** 连接失败冷却：服务 id → 冷却截止时间戳。避免每轮对话重复空耗沙箱启动超时。 */
     private val downUntil = ConcurrentHashMap<String, Long>()
@@ -97,7 +98,12 @@ class McpStdioTransport @Inject constructor(
         connections.values.forEach { it.lastActivityMs = target }
     }
 
-    private suspend fun connection(server: McpServerConfig, bypassCooldown: Boolean = false): Connection {
+    private suspend fun connection(server: McpServerConfig, bypassCooldown: Boolean = false): Connection =
+        startupMutexes.getOrPut(server.id) { Mutex() }.withLock {
+            connectionLocked(server, bypassCooldown)
+        }
+
+    private suspend fun connectionLocked(server: McpServerConfig, bypassCooldown: Boolean): Connection {
         connections[server.id]?.takeIf { it.session.isAlive && it.fingerprint == fingerprint(server) }?.let {
             it.markActive()
             return it
@@ -145,7 +151,7 @@ class McpStdioTransport @Inject constructor(
 
         /** 是否有请求正在执行（供空闲清扫跳过，避免误杀长调用）。 */
         val inFlight: Boolean get() = mutex.isLocked
-        private val lines = Channel<String>(Channel.UNLIMITED)
+        private val lines = Channel<String>(capacity = MAX_BUFFERED_LINES)
         private var initialized = false
         private var readerJob: Job? = null
 
@@ -160,15 +166,26 @@ class McpStdioTransport @Inject constructor(
         fun startReader() {
             readerJob = scope.launch {
                 val buffer = StringBuilder()
-                session.output.collect { output ->
-                    buffer.append(output.text)
-                    while (true) {
-                        val newline = buffer.indexOf("\n")
-                        if (newline < 0) break
-                        val line = buffer.substring(0, newline).trim()
-                        buffer.delete(0, newline + 1)
-                        if (line.startsWith("{")) lines.send(line)
+                try {
+                    session.output.collect { output ->
+                        val chunk = output.text
+                        var start = 0
+                        while (start < chunk.length) {
+                            val newline = chunk.indexOf('\n', start)
+                            val end = if (newline >= 0) newline else chunk.length
+                            val partLength = end - start
+                            require(buffer.length + partLength <= MAX_FRAME_CHARS) { "MCP STDIO frame is too large" }
+                            buffer.append(chunk, start, end)
+                            if (newline < 0) break
+                            val line = buffer.toString().trim()
+                            buffer.clear()
+                            if (line.startsWith("{")) lines.send(line)
+                            start = newline + 1
+                        }
                     }
+                } catch (t: Throwable) {
+                    lines.close(t)
+                    runCatching { session.close() }
                 }
             }
         }
@@ -250,6 +267,8 @@ class McpStdioTransport @Inject constructor(
 
         /** tools/call 超时：codegraph_sync 等全量索引在手机沙箱上可合法运行数分钟。 */
         private const val CALL_REQUEST_TIMEOUT_MS = 600_000L
+        private const val MAX_BUFFERED_LINES = 64
+        private const val MAX_FRAME_CHARS = 1 * 1024 * 1024
 
         /** 空闲连接回收阈值与清扫周期。 */
         internal const val IDLE_TIMEOUT_MS = 10 * 60 * 1000L

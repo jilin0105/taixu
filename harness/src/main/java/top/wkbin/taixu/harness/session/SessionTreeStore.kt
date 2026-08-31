@@ -67,19 +67,22 @@ class SessionTreeStore @Inject constructor(
     }
 
     suspend fun search(sessionId: String, query: String, limit: Int = 8): List<HarnessMessage> {
-        val needle = query.trim().lowercase()
+        val needle = query.trim()
         if (needle.isBlank()) return emptyList()
-        return load(sessionId).asSequence()
-            .filter { searchableText(it).lowercase().contains(needle) }
-            .take(limit.coerceIn(1, 20))
-            .toList()
+        val lane = repository.ensureLane(sessionId, MAIN_LANE)
+        return repository.searchBranch(sessionId, lane.leafId, needle, limit.coerceIn(1, 20))
+            .mapNotNull(::decode)
     }
 
     suspend fun read(sessionId: String, messageId: String? = null, index: Int? = null): HarnessMessage? {
-        val messages = load(sessionId)
         return when {
-            !messageId.isNullOrBlank() -> messages.firstOrNull { it.id == messageId }
-            index != null && messages.isNotEmpty() -> messages.getOrNull(index.coerceIn(0, messages.lastIndex))
+            !messageId.isNullOrBlank() -> {
+                repository.findEntry(sessionId, messageId)?.let(::decode)
+            }
+            index != null && index >= 0 -> {
+                val lane = repository.ensureLane(sessionId, MAIN_LANE)
+                repository.branchEntryAt(sessionId, lane.leafId, index)?.let(::decode)
+            }
             else -> null
         }
     }

@@ -70,6 +70,7 @@ class ToolExecutor @Inject constructor(
         sessionId: String = "",
         workspace: String = "",
         bypassApproval: Boolean = false,
+        allowApprovalRequest: Boolean = true,
         progressReporter: (suspend (String) -> Unit)? = null,
         operationId: String? = null,
     ): ToolResult {
@@ -81,6 +82,15 @@ class ToolExecutor @Inject constructor(
                 val mode = sessionMode ?: repository?.currentMode() ?: ApprovalMode.FULL_ACCESS
                 val decision = ApprovalPolicyEngine().decide(mode, toolCall.tool, toolCall.args, workspace)
                 if (decision.required) {
+                    if (!allowApprovalRequest) {
+                        return ToolResult(
+                            id = UUID.randomUUID().toString(),
+                            createdAt = now,
+                            toolCallId = toolCall.id,
+                            success = false,
+                            output = "该工具需要用户审批，子智能体后台 Lane 不支持暂停审批；请交由主智能体调用。",
+                        )
+                    }
                     checkNotNull(repository) { "审批仓库未初始化" }
                     val request = ApprovalPolicyEngine().createRequest(sessionId, toolCall, workspace, decision, operationId)
                     repository.create(request)
@@ -222,7 +232,10 @@ class ToolExecutor @Inject constructor(
             if (namespace == "system") {
                 val apiOk = manager.writeSystemSetting(key, value)
                 if (apiOk) {
-                    android.util.Log.i("TaiXu-Host", "action=settings_put via API success: system.$key=$value")
+                    android.util.Log.i(
+                        "TaiXu-Host",
+                        secretRedactor.redact("action=settings_put via API success: system.$key=$value"),
+                    )
                     return true to "mode api · exit 0\n[Android API] settings put system $key = $value"
                 }
                 // API 写入失败（通常是未授权 WRITE_SETTINGS），发事件引导用户授权，然后回退 shell
@@ -372,7 +385,13 @@ class ToolExecutor @Inject constructor(
                 } finally {
                     cancelHandle?.dispose()
                 }
-                android.util.Log.i("TaiXu-Host", "action=$action exit=${result.exitCode} success=${result.success}\ncmd=$command\nstdout=${result.stdout.take(500)}\nstderr=${result.stderr.take(300)}")
+                android.util.Log.i(
+                    "TaiXu-Host",
+                    secretRedactor.redact(
+                        "action=$action exit=${result.exitCode} success=${result.success}\n" +
+                            "cmd=$command\nstdout=${result.stdout.take(500)}\nstderr=${result.stderr.take(300)}",
+                    ),
+                )
                 val body = buildString {
                     append("mode ").append(info.mode.shortLabel).append(" · exit ").append(result.exitCode)
                     if (result.stdout.isNotBlank()) append("\n").append(result.stdout.trim())

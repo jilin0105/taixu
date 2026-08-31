@@ -307,6 +307,9 @@ class OperationCoordinatorTest {
         override suspend fun listQueue(sessionId: String, laneName: String, queueType: String) =
             queue(sessionId, laneName, queueType)
 
+        override suspend fun listAllQueues(sessionId: String, laneName: String) =
+            queueItems.filter { it.sessionId == sessionId && it.laneName == laneName }
+
         override suspend fun cancelQueued(itemId: String) {
             queueItems.removeAll { it.id == itemId }
         }

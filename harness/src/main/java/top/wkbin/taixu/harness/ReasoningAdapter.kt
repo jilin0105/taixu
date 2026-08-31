@@ -55,23 +55,20 @@ object ReasoningAdapter {
     }
 
     /** Anthropic Messages API 的 thinking 参数（null = 不注入）。 */
-    fun anthropicThinking(model: ModelConfig): JsonObject? {
+    fun anthropicThinking(model: ModelConfig, effectiveMaxTokens: Int = model.maxTokens ?: 8_192): JsonObject? {
         if (model.reasoningMode == ReasoningMode.AUTO) return null
         return if (model.reasoningMode == ReasoningMode.DISABLED) {
             buildJsonObject { put("type", "disabled") }
         } else {
+            // Anthropic cannot represent enabled thinking when the entire output budget is <= 1024.
+            if (effectiveMaxTokens <= 1_024) return null
             buildJsonObject {
                 put("type", "enabled")
                 // budget_tokens 必填；按强度映射并保证严格小于 max_tokens（Anthropic 硬性要求）
                 val budget = model.reasoningEffort.budgetTokens()
-                val maxTokens = model.maxTokens
                 put(
                     "budget_tokens",
-                    if (maxTokens != null) {
-                        budget.coerceAtMost((maxTokens - 1024).coerceAtLeast(1024))
-                    } else {
-                        budget
-                    },
+                    budget.coerceIn(1_024, effectiveMaxTokens - 1),
                 )
             }
         }

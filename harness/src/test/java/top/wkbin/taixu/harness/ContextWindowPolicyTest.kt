@@ -21,6 +21,37 @@ class ContextWindowPolicyTest {
     }
 
     @Test
+    fun `exhausted budget retains only a minimal recent turn instead of all history`() {
+        val messages = listOf(
+            UserMessage("old-user", 1, "old request"),
+            AssistantText("old-assistant", 2, "old answer"),
+            UserMessage("latest-user", 3, "latest request"),
+        )
+
+        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 4_000, systemTokens = 4_000)
+
+        assertEquals(2, keepFrom)
+    }
+
+    @Test
+    fun `exhausted budget does not orphan the only tool result`() {
+        val call = ToolCall("call", 1, HarnessTool.BASE, kotlinx.serialization.json.buildJsonObject {})
+        val messages = listOf(call, ToolResult("result", 2, "call", true, "ok"))
+
+        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 0, systemTokens = 0)
+
+        assertEquals(0, keepFrom)
+    }
+
+    @Test
+    fun `oversized system prompt is bounded`() {
+        val fitted = ContextWindowPolicy.fitSystemPrompt("x".repeat(100_000), budget = 8_000)
+
+        assertTrue(fitted.length < 100_000)
+        assertTrue(fitted.contains("系统提示因上下文预算受限已截断"))
+    }
+
+    @Test
     fun compactsLongToolOutputWithHeadAndTail() {
         val compacted = ContextWindowPolicy.compactToolOutput(
             toolName = null,

@@ -1,17 +1,25 @@
 package top.wkbin.taixu.core.database
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
  * 长期语义与事实记忆实体
  * 用于记录用户的长期偏好、项目架构规范、全局事实。
  */
-@Entity(tableName = "agent_memories")
+@Entity(
+    tableName = "agent_memories",
+    indices = [Index(value = ["scope", "ownerId", "key"])],
+)
 data class AgentMemoryEntity(
     @PrimaryKey
     val id: String,
     val scope: String, // global, project, session
+    /** global 为空；project 为稳定 workspace；session 为 sessionId。 */
+    @ColumnInfo(defaultValue = "''")
+    val ownerId: String = "",
     val kind: String,  // preference, rule, fact, project_info
     val key: String,
     val value: String,

@@ -33,15 +33,23 @@ class AgentContextExecutor @Inject constructor(
                     ?: return false to "memory save 必须提供 key 参数"
                 val value = args["value"]?.jsonPrimitive?.contentOrNull?.trim()
                     ?: return false to "memory save 必须提供 value 参数"
+                if (key.length > MAX_MEMORY_KEY_CHARS) return false to "memory key 不能超过 $MAX_MEMORY_KEY_CHARS 字符"
+                if (value.length > MAX_MEMORY_VALUE_CHARS) return false to "memory value 不能超过 $MAX_MEMORY_VALUE_CHARS 字符"
                 val kind = args["kind"]?.jsonPrimitive?.contentOrNull?.lowercase() ?: "fact"
                 val scope = args["scope"]?.jsonPrimitive?.contentOrNull?.lowercase()
                     ?: if (workspace.isNotBlank()) "project" else "global"
-                val existing = agentContextDao.getMemoryByKey(key, scope)
+                val ownerId = memoryOwner(scope, sessionId, workspace)
+                    ?: return false to "scope 仅支持 global/project/session，且 project/session 必须有对应上下文"
+                val existing = agentContextDao.getMemoryByKey(key, scope, ownerId)
+                if (existing == null && agentContextDao.countMemories(scope, ownerId) >= MAX_MEMORIES_PER_OWNER) {
+                    return false to "[$scope] 记忆已达到上限 $MAX_MEMORIES_PER_OWNER 条，请删除旧记忆后再保存"
+                }
                 val id = existing?.id ?: UUID.randomUUID().toString()
                 agentContextDao.saveMemory(
                     AgentMemoryEntity(
                         id = id,
                         scope = scope,
+                        ownerId = ownerId,
                         kind = kind,
                         key = key,
                         value = value,
@@ -59,7 +67,11 @@ class AgentContextExecutor @Inject constructor(
                 val query = args["query"]?.jsonPrimitive?.contentOrNull?.trim()
                     ?: args["key"]?.jsonPrimitive?.contentOrNull?.trim()
                     ?: return false to "memory query 必须提供 query 或 key"
-                val results = agentContextDao.searchMemories(query)
+                val results = agentContextDao.searchMemories(
+                    query = query.take(MAX_MEMORY_QUERY_CHARS),
+                    projectOwnerId = projectOwner(workspace),
+                    sessionId = sessionId,
+                )
                 if (results.isEmpty()) {
                     true to "未查询到与 '$query' 相关的记忆"
                 } else {
@@ -68,8 +80,7 @@ class AgentContextExecutor @Inject constructor(
                 }
             }
             "list" -> {
-                val scopes = listOf("global", "project", "session")
-                val results = agentContextDao.getMemoriesByScopes(scopes)
+                val results = agentContextDao.getMemoriesForContext(projectOwner(workspace), sessionId)
                 if (results.isEmpty()) {
                     true to "当前暂无长期记忆"
                 } else {
@@ -81,11 +92,22 @@ class AgentContextExecutor @Inject constructor(
                 val key = args["key"]?.jsonPrimitive?.contentOrNull?.trim()
                 val id = args["id"]?.jsonPrimitive?.contentOrNull?.trim()
                 if (id != null) {
+                    val memory = agentContextDao.getMemoryById(id)
+                        ?: return false to "未找到记忆 id=$id"
+                    val visible = when (memory.scope) {
+                        "global" -> memory.ownerId.isEmpty()
+                        "project" -> memory.ownerId == projectOwner(workspace) && memory.ownerId.isNotBlank()
+                        "session" -> memory.ownerId == sessionId && sessionId.isNotBlank()
+                        else -> false
+                    }
+                    if (!visible) return false to "无权删除不属于当前项目或会话的记忆"
                     agentContextDao.deleteMemoryById(id)
                     true to "已删除记忆 id=$id"
                 } else if (key != null) {
                     val scope = args["scope"]?.jsonPrimitive?.contentOrNull?.lowercase() ?: "global"
-                    agentContextDao.deleteMemoryByKey(key, scope)
+                    val ownerId = memoryOwner(scope, sessionId, workspace)
+                        ?: return false to "scope 仅支持 global/project/session，且 project/session 必须有对应上下文"
+                    agentContextDao.deleteMemoryByKey(key, scope, ownerId)
                     true to "已删除记忆 [$scope] key=$key"
                 } else {
                     false to "memory delete 需提供 id 或 key"
@@ -93,6 +115,22 @@ class AgentContextExecutor @Inject constructor(
             }
             else -> false to "未知的 memory 动作: $action"
         }
+    }
+
+    private fun memoryOwner(scope: String, sessionId: String, workspace: String): String? = when (scope) {
+        "global" -> ""
+        "project" -> projectOwner(workspace).takeIf { it.isNotBlank() }
+        "session" -> sessionId.trim().takeIf { it.isNotBlank() }
+        else -> null
+    }
+
+    private fun projectOwner(workspace: String): String = workspace.trim().trimEnd('/')
+
+    private companion object {
+        const val MAX_MEMORY_KEY_CHARS = 128
+        const val MAX_MEMORY_VALUE_CHARS = 4_096
+        const val MAX_MEMORY_QUERY_CHARS = 256
+        const val MAX_MEMORIES_PER_OWNER = 100
     }
 
     suspend fun executePlan(args: JsonObject, sessionId: String): Pair<Boolean, String> {

@@ -66,11 +66,16 @@ class SessionStateMirrors @Inject constructor(
     }
 
     fun setStatus(sessionId: String, statusText: String?) {
+        val normalized = statusText?.takeIf { it.isNotBlank() }
+        if (_sessionStatuses.value[sessionId] == normalized) {
+            if (tracker.isForeground(sessionId) && _status.value != normalized) _status.value = normalized
+            return
+        }
         _sessionStatuses.update { map ->
-            if (statusText.isNullOrBlank()) map - sessionId else map + (sessionId to statusText)
+            if (normalized == null) map - sessionId else map + (sessionId to normalized)
         }
         if (tracker.isForeground(sessionId)) {
-            _status.value = statusText
+            _status.value = normalized
         }
     }
 

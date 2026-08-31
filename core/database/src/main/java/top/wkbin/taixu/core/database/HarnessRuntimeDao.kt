@@ -46,6 +46,44 @@ interface HarnessRuntimeDao {
     @Query("SELECT * FROM harness_entries WHERE id = :entryId LIMIT 1")
     suspend fun findEntry(entryId: String): HarnessEntryEntity?
 
+    @Query("""
+        WITH RECURSIVE branch AS (
+            SELECT * FROM harness_entries WHERE id = :leafId AND sessionId = :sessionId
+            UNION ALL
+            SELECT parent.* FROM harness_entries AS parent
+            JOIN branch AS child ON parent.id = child.parentId
+            WHERE parent.sessionId = :sessionId
+        )
+        SELECT * FROM branch ORDER BY sequence
+    """)
+    suspend fun branch(sessionId: String, leafId: String): List<HarnessEntryEntity>
+
+    @Query("""
+        WITH RECURSIVE branch AS (
+            SELECT * FROM harness_entries WHERE id = :leafId AND sessionId = :sessionId
+            UNION ALL
+            SELECT parent.* FROM harness_entries AS parent
+            JOIN branch AS child ON parent.id = child.parentId
+            WHERE parent.sessionId = :sessionId
+        )
+        SELECT * FROM branch
+        WHERE entryType = 'message' AND payloadJson LIKE '%' || :query || '%' ESCAPE '\'
+        ORDER BY sequence DESC LIMIT :limit
+    """)
+    suspend fun searchBranch(sessionId: String, leafId: String, query: String, limit: Int): List<HarnessEntryEntity>
+
+    @Query("""
+        WITH RECURSIVE branch AS (
+            SELECT * FROM harness_entries WHERE id = :leafId AND sessionId = :sessionId
+            UNION ALL
+            SELECT parent.* FROM harness_entries AS parent
+            JOIN branch AS child ON parent.id = child.parentId
+            WHERE parent.sessionId = :sessionId
+        )
+        SELECT * FROM branch WHERE entryType = 'message' ORDER BY sequence LIMIT 1 OFFSET :index
+    """)
+    suspend fun branchEntryAt(sessionId: String, leafId: String, index: Int): HarnessEntryEntity?
+
     @Query("SELECT * FROM harness_operations WHERE id = :operationId LIMIT 1")
     suspend fun findOperation(operationId: String): HarnessOperationEntity?
 
@@ -54,6 +92,9 @@ interface HarnessRuntimeDao {
 
     @Query("SELECT * FROM harness_queue_items WHERE sessionId = :sessionId AND laneName = :laneName AND queueType = :queueType ORDER BY createdAt, id")
     suspend fun listQueue(sessionId: String, laneName: String, queueType: String): List<HarnessQueueItemEntity>
+
+    @Query("SELECT * FROM harness_queue_items WHERE sessionId = :sessionId AND laneName = :laneName ORDER BY createdAt, id")
+    suspend fun listAllQueues(sessionId: String, laneName: String): List<HarnessQueueItemEntity>
 
     @Query("SELECT * FROM harness_usage WHERE sessionId = :sessionId ORDER BY sequence")
     suspend fun listUsage(sessionId: String): List<HarnessUsageEntity>

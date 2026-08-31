@@ -208,7 +208,12 @@ internal class AnthropicApi(
                 }
                 "assistant" -> {
                     val content = buildJsonArray {
-                        if (!message.content.isNullOrBlank()) add(JsonPrimitive(message.content))
+                        if (!message.content.isNullOrBlank()) {
+                            add(buildJsonObject {
+                                put("type", "text")
+                                put("text", message.content)
+                            })
+                        }
                         message.tool_calls.orEmpty().forEach { call ->
                             add(
                                 buildJsonObject {
@@ -258,10 +263,11 @@ internal class AnthropicApi(
         val requestBody = buildJsonObject {
             put("model", model.model)
             // Anthropic 必填；未配置时用安全默认值
-            put("max_tokens", model.maxTokens ?: DEFAULT_MAX_TOKENS)
+            val effectiveMaxTokens = model.maxTokens ?: DEFAULT_MAX_TOKENS
+            put("max_tokens", effectiveMaxTokens)
             // 推理开关/强度：thinking enabled 时 Anthropic 强制要求 temperature=1（省略即默认），
             // 且此时不再发送 temperature/top_p 以免 400。
-            val thinking = ReasoningAdapter.anthropicThinking(model)
+            val thinking = ReasoningAdapter.anthropicThinking(model, effectiveMaxTokens)
             thinking?.let { put("thinking", it) }
             val thinkingEnabled = thinking?.get("type")?.jsonPrimitive?.contentOrNull == "enabled"
             if (!thinkingEnabled) {

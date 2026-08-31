@@ -2,6 +2,9 @@ package top.wkbin.taixu.harness
 
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -124,6 +127,26 @@ class AnthropicApiTest {
     }
 
     @Test
+    fun `assistant text is encoded as a typed content block`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+        api.chat(
+            model(),
+            listOf(
+                ApiMessage(role = "user", content = "first"),
+                ApiMessage(role = "assistant", content = "answer"),
+                ApiMessage(role = "user", content = "next"),
+            ),
+        )
+
+        val body = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        val assistant = body.getValue("messages").jsonArray[1].jsonObject
+        val textBlock = assistant.getValue("content").jsonArray.single().jsonObject
+        assertEquals("assistant", assistant.getValue("role").jsonPrimitive.content)
+        assertEquals("text", textBlock.getValue("type").jsonPrimitive.content)
+        assertEquals("answer", textBlock.getValue("text").jsonPrimitive.content)
+    }
+
+    @Test
     fun `max tokens is required and defaults when unset`() = runBlocking {
         server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
         api.chat(model(), listOf(ApiMessage(role = "user", content = "hi")))
@@ -168,8 +191,35 @@ class AnthropicApiTest {
             listOf(ApiMessage(role = "user", content = "hi")),
         )
         val body = server.takeRequest().body.readUtf8()
-        // 默认 2048 需严格小于 max_tokens 2500，clamp 到 2500-1024=1476
-        assertTrue(body.contains("\"budget_tokens\":1476"))
+        assertTrue(body.contains("\"budget_tokens\":2048"))
+    }
+
+    @Test
+    fun `high thinking budget remains strictly below default max tokens`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+        api.chat(
+            model().copy(reasoningMode = ReasoningMode.ENABLED, reasoningEffort = ReasoningEffort.HIGH),
+            listOf(ApiMessage(role = "user", content = "hi")),
+        )
+
+        val body = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertEquals(8_192, body.getValue("max_tokens").jsonPrimitive.content.toInt())
+        assertEquals(
+            8_191,
+            body.getValue("thinking").jsonObject.getValue("budget_tokens").jsonPrimitive.content.toInt(),
+        )
+    }
+
+    @Test
+    fun `enabled thinking is omitted when output budget cannot satisfy minimum`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+        api.chat(
+            model().copy(reasoningMode = ReasoningMode.ENABLED, maxTokens = 1_024),
+            listOf(ApiMessage(role = "user", content = "hi")),
+        )
+
+        val body = server.takeRequest().body.readUtf8()
+        assertFalse(body.contains("\"thinking\""))
     }
 
     @Test

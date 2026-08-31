@@ -11,6 +11,9 @@ object ContextWindowPolicy {
     private const val INPUT_BUDGET_FRACTION = 0.75
     private const val RESERVED_OUTPUT_TOKENS = 8_192
     private const val TOOL_SCHEMA_RESERVE_TOKENS = 4_096
+    private const val MAX_SYSTEM_PROMPT_FRACTION = 0.60
+    private const val MIN_SYSTEM_PROMPT_TOKENS = 512
+    private const val APPROX_CHARS_PER_TOKEN = 4
 
     /**
      * Compaction threshold (in characters) per tool type. `read`/`base` commonly
@@ -154,10 +157,11 @@ object ContextWindowPolicy {
     }
 
     fun computeKeepFromIndex(messages: List<HarnessMessage>, budget: Int, systemTokens: Int): Int {
-        if (budget <= 0) return 0
+        if (messages.size <= 1) return 0
+        if (budget <= 0) return minimalKeepFromIndex(messages)
         val limit = (budget * INPUT_BUDGET_FRACTION).toInt() -
             systemTokens - RESERVED_OUTPUT_TOKENS - TOOL_SCHEMA_RESERVE_TOKENS
-        if (limit <= 0) return 0
+        if (limit <= 0) return minimalKeepFromIndex(messages)
         var used = 0
         for (index in messages.indices.reversed()) {
             val tokens = when (val message = messages[index]) {
@@ -173,6 +177,28 @@ object ContextWindowPolicy {
             used += tokens
         }
         return 0
+    }
+
+    private fun minimalKeepFromIndex(messages: List<HarnessMessage>): Int {
+        val lastUser = messages.indexOfLast { it is UserMessage }
+        val candidate = when {
+            lastUser >= 0 -> lastUser
+            messages.size > 1 -> messages.lastIndex
+            else -> 0
+        }
+        val aligned = alignKeepFromIndex(messages, candidate)
+        // A two-message tool pair (or the only user turn) cannot be shortened without
+        // producing an invalid provider transcript. Preserve that minimal protocol unit.
+        return if (aligned <= 0) 0 else aligned.coerceAtMost(messages.lastIndex)
+    }
+
+    /** Prevent an oversized dynamic prompt from consuming the entire context before history. */
+    fun fitSystemPrompt(prompt: String, budget: Int): String {
+        if (prompt.isBlank() || budget <= 0) return prompt
+        val maxTokens = (budget * MAX_SYSTEM_PROMPT_FRACTION).toInt().coerceAtLeast(MIN_SYSTEM_PROMPT_TOKENS)
+        if (estimateTokens(prompt) <= maxTokens) return prompt
+        val suffix = "\n\n[系统提示因上下文预算受限已截断；请优先遵守以上核心规则]"
+        return prompt.take((maxTokens * APPROX_CHARS_PER_TOKEN - suffix.length).coerceAtLeast(0)) + suffix
     }
 
     private fun alignKeepFromIndex(messages: List<HarnessMessage>, candidate: Int): Int {

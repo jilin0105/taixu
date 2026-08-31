@@ -10,6 +10,7 @@ import top.wkbin.taixu.harness.mcp.McpToolApiName
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -101,6 +102,9 @@ class HarnessLoop @Inject constructor(
 
     private val sessionJobs = ConcurrentHashMap<String, Job>()
     private val sessionMutexes = ConcurrentHashMap<String, Mutex>()
+    private val sessionCancelEpochs = ConcurrentHashMap<String, AtomicLong>()
+    private val foregroundLoadGeneration = AtomicLong()
+    private val cancellingSessions = ConcurrentHashMap.newKeySet<String>()
     private val sessionLoopDetectors = ConcurrentHashMap<String, ToolCallLoopDetector>()
     /** Sessions being deleted; reject new runs and skip pending drainage. */
     private val tombstonedSessions = ConcurrentHashMap.newKeySet<String>()
@@ -160,12 +164,14 @@ class HarnessLoop @Inject constructor(
     }
 
     private fun isSessionBusy(sessId: String): Boolean =
-        sessionJobs[sessId]?.isActive == true ||
+        sessionJobs[sessId]?.isCompleted == false ||
+            cancellingSessions.contains(sessId) ||
             stateMirrors.isWaitingApproval(sessId)
 
     /** 新建会话。workspace 为关联的工作区 Linux 路径（如 /workspace/proj），空串表示不关联。 */
     suspend fun newSession(title: String, workspace: String = "", projectType: String = ""): String {
         val id = UUID.randomUUID().toString()
+        foregroundLoadGeneration.incrementAndGet()
         tombstonedSessions.remove(id)
         sessionTracker.setCurrent(id)
         _workspace.value = workspace
@@ -197,12 +203,15 @@ class HarnessLoop @Inject constructor(
 
     /** 恢复已有会话的历史消息与工作区关联，不中断正在后台运行的任何会话。 */
     suspend fun loadSession(id: String) {
+        val generation = foregroundLoadGeneration.incrementAndGet()
         sessionTracker.setCurrent(id)
         val sessionEntity = withContext(Dispatchers.IO) { sessionDao.findById(id) }
+        if (!isCurrentLoad(id, generation)) return
         _workspace.value = sessionEntity?.workspace.orEmpty()
         _projectType.value = sessionEntity?.projectType.orEmpty()
 
         val liveFlow = messageProjector.preparedForLoad(id)
+        if (!isCurrentLoad(id, generation)) return
 
         messageProjector.resetForegroundProjection(liveFlow.value)
         stateMirrors.setForegroundRunning(sessionJobs[id]?.isActive == true)
@@ -212,6 +221,7 @@ class HarnessLoop @Inject constructor(
         refreshPendingProjection(id)
 
         if (withContext(Dispatchers.IO) { approvalRepository.pendingNow(id).isNotEmpty() }) {
+            if (!isCurrentLoad(id, generation)) return
             stateMirrors.setRunState(id, SessionRunState.WAITING_APPROVAL)
             stateMirrors.setStatus(id, "等待用户批准")
         }
@@ -303,6 +313,8 @@ class HarnessLoop @Inject constructor(
         approvalRepository.deleteForSession(id)
         sessionDao.deleteSession(id)
         sessionLoopDetectors.remove(id)
+        sessionCancelEpochs.remove(id)
+        cancellingSessions.remove(id)
         tombstonedSessions.remove(id)
         if (sessionTracker.currentSessionId.value == id) {
             val remaining = sessionDao.observeAll().first()
@@ -340,12 +352,17 @@ class HarnessLoop @Inject constructor(
         val sessId = targetSessionId?.ifBlank { null } ?: sessionTracker.currentSessionId.value
         val trimmed = text.trim()
         if (sessId.isBlank() || (trimmed.isBlank() && imageUrls.isEmpty())) return
-        if (!isSessionBusy(sessId)) {
-            send(trimmed, sessId, imageUrls)
-            return
-        }
         loopScope.launch {
-            promptQueueManager.enqueue(sessId, queue, PendingMessage(trimmed, imageUrls))
+            val pending = PendingMessage(trimmed, imageUrls)
+            val mutex = sessionMutexes.getOrPut(sessId) { Mutex() }
+            mutex.withLock {
+                if (tombstonedSessions.contains(sessId)) return@withLock
+                if (isSessionBusy(sessId)) {
+                    promptQueueManager.enqueue(sessId, queue, pending)
+                } else {
+                    launchSessionJobLocked(sessId) { runLoop(sessId, pending.text, pending.imageUrls) }
+                }
+            }
             refreshPendingProjection(sessId)
         }
     }
@@ -475,20 +492,41 @@ class HarnessLoop @Inject constructor(
     fun cancel(targetSessionId: String? = null) {
         val sessId = targetSessionId?.ifBlank { null } ?: sessionTracker.currentSessionId.value
         if (sessId.isBlank()) return
-        _sessionPendingMessages[sessId]?.value = emptyList()
-        loopScope.launch {
-            PromptQueue.entries.forEach { promptQueueManager.clear(sessId, it) }
-            refreshPendingProjection(sessId)
-        }
         stateMirrors.setStatus(sessId, "正在停止…")
-        // Do NOT remove the job from the map here: cancellation is asynchronous, and
-        // removing by key would let a dying job's finally later delete a *new* job.
-        // finishRun removes only its own job via sessionJobs.remove(sessId, selfJob).
-        sessionJobs[sessId]?.cancel()
-        stateMirrors.setRunState(sessId, SessionRunState.IDLE)
-        if (sessId == sessionTracker.foregroundId) {
-            _pendingMessages.value = emptyList()
-            stateMirrors.setForegroundRunning(false)
+        loopScope.launch {
+            val mutex = sessionMutexes.getOrPut(sessId) { Mutex() }
+            val job = mutex.withLock {
+                cancellingSessions += sessId
+                sessionCancelEpochs.getOrPut(sessId) { AtomicLong() }.incrementAndGet()
+                PromptQueue.entries.forEach { promptQueueManager.clear(sessId, it) }
+                sessionJobs[sessId]?.also { it.cancel() }
+            }
+            job?.cancelAndJoin()
+            val restarted = mutex.withLock {
+                var approvalsSettled = true
+                try {
+                    rejectPendingApprovalsForCancel(sessId)
+                } catch (throwable: Throwable) {
+                    approvalsSettled = false
+                    logger.e("Failed to settle pending approvals while cancelling $sessId", throwable)
+                } finally {
+                    cancellingSessions -= sessId
+                }
+                approvalsSettled && !tombstonedSessions.contains(sessId) && startNextQueuedLocked(sessId)
+            }
+            refreshPendingProjection(sessId)
+            if (!restarted) {
+                val stillWaiting = runCatching { approvalRepository.pendingNow(sessId).isNotEmpty() }
+                    .getOrDefault(true)
+                if (stillWaiting) {
+                    stateMirrors.setRunState(sessId, SessionRunState.WAITING_APPROVAL)
+                    stateMirrors.setStatus(sessId, "等待用户批准")
+                } else {
+                    stateMirrors.setRunState(sessId, SessionRunState.IDLE)
+                    stateMirrors.setStatus(sessId, null)
+                    if (sessId == sessionTracker.foregroundId) stateMirrors.setForegroundRunning(false)
+                }
+            }
         }
     }
 
@@ -521,15 +559,8 @@ class HarnessLoop @Inject constructor(
         }
     }
 
-    private suspend fun enqueuePending(sessId: String, pending: PendingMessage) {
-        promptQueueManager.enqueue(sessId, PromptQueue.NEXT_RUN, pending)
-        refreshPendingProjection(sessId)
-    }
-
     private suspend fun refreshPendingProjection(sessId: String) {
-        val all = PromptQueue.entries.flatMap { queue ->
-            promptQueueManager.list(sessId, queue).map { (id, message) -> QueuedPrompt(id, queue, message) }
-        }.sortedBy { it.message.createdAt }
+        val all = promptQueueManager.listAll(sessId)
         val pending = all.filter { it.queue == PromptQueue.NEXT_RUN }.map { it.message }
         getOrCreatePendingFlow(sessId).value = pending
         if (sessId == sessionTracker.currentSessionId.value) {
@@ -538,18 +569,36 @@ class HarnessLoop @Inject constructor(
         }
     }
 
-    private suspend fun finishRun(sessId: String, job: Job) {
-        // Only remove ourselves; never clobber a newer job that started after cancel().
-        sessionJobs.remove(sessId, job)
-        val waitingApproval = stateMirrors.onRunFinished(sessId)
-        if (waitingApproval) return
-        if (tombstonedSessions.contains(sessId)) return
-        val (queueItemId, next) = promptQueueManager.first(sessId, PromptQueue.NEXT_RUN) ?: return
+    private suspend fun finishRun(sessId: String, job: Job, runEpoch: Long) = withContext(NonCancellable) {
+        val mutex = sessionMutexes.getOrPut(sessId) { Mutex() }
+        mutex.withLock {
+            sessionJobs.remove(sessId, job)
+            val waitingApproval = stateMirrors.onRunFinished(sessId)
+            if (waitingApproval || tombstonedSessions.contains(sessId)) return@withLock
+            if (sessionCancelEpochs[sessId]?.get() != runEpoch || cancellingSessions.contains(sessId)) return@withLock
+            startNextQueuedLocked(sessId)
+        }
+        refreshPendingProjection(sessId)
+    }
+
+    /** Caller holds the session mutex. Consumes and starts exactly one durable next-run item. */
+    private suspend fun startNextQueuedLocked(sessId: String): Boolean {
+        val (queueItemId, next) = promptQueueManager.first(sessId, PromptQueue.NEXT_RUN) ?: return false
         val userMessage = UserMessage(newId(), now(), next.text, next.imageUrls)
         val operationId = operationCoordinator.acceptQueuedRun(sessId, queueItemId, userMessage)
         messageProjector.publishPersisted(sessId, userMessage)
-        refreshPendingProjection(sessId)
-        startSessionRun(sessId) { runLoopInternal(sessId, now(), operationId) }
+        launchSessionJobLocked(sessId) { runLoopInternal(sessId, now(), operationId) }
+        return true
+    }
+
+    /** Caller holds the session mutex. A lazy Job counts as busy as soon as it enters the map. */
+    private fun launchSessionJobLocked(sessId: String, block: suspend () -> RunResult) {
+        val epoch = sessionCancelEpochs.getOrPut(sessId) { AtomicLong() }.get()
+        val job = loopScope.launch(start = CoroutineStart.LAZY) {
+            executeSessionRun(sessId, epoch, block)
+        }
+        sessionJobs[sessId] = job
+        job.start()
     }
 
     fun clearError(targetSessionId: String? = null) {
@@ -571,20 +620,19 @@ class HarnessLoop @Inject constructor(
         if (tombstonedSessions.contains(sessId)) return
         loopScope.launch {
             val mutex = sessionMutexes.getOrPut(sessId) { Mutex() }
-            var queueAfterUnlock: PendingMessage? = null
+            var refreshQueue = false
             mutex.withLock {
                 if (tombstonedSessions.contains(sessId)) return@withLock
                 if (isSessionBusy(sessId)) {
-                    queueAfterUnlock = enqueueOnBusy
+                    enqueueOnBusy?.let {
+                        promptQueueManager.enqueue(sessId, PromptQueue.NEXT_RUN, it)
+                        refreshQueue = true
+                    }
                     return@withLock
                 }
-                val job = launch(start = CoroutineStart.LAZY) {
-                    executeSessionRun(sessId, block)
-                }
-                sessionJobs[sessId] = job
-                job.start()
+                launchSessionJobLocked(sessId, block)
             }
-            queueAfterUnlock?.let { enqueuePending(sessId, it) }
+            if (refreshQueue) refreshPendingProjection(sessId)
         }
     }
 
@@ -599,16 +647,52 @@ class HarnessLoop @Inject constructor(
             val mutex = sessionMutexes.getOrPut(sessId) { Mutex() }
             mutex.withLock {
                 if (tombstonedSessions.contains(sessId)) return@withLock
-                val job = launch(start = CoroutineStart.LAZY) {
-                    executeSessionRun(sessId, block)
-                }
-                sessionJobs[sessId] = job
-                job.start()
+                launchSessionJobLocked(sessId, block)
             }
         }
     }
 
-    private suspend fun executeSessionRun(sessId: String, block: suspend () -> RunResult) {
+    /** Resolve a waiting approval as a cancelled tool call before allowing a new run. */
+    private suspend fun rejectPendingApprovalsForCancel(sessId: String) {
+        var finalEntryId: String? = null
+        for (request in approvalRepository.pendingNow(sessId)) {
+            if (!approvalRepository.claimPending(
+                    request.id,
+                    top.wkbin.taixu.core.database.AgentApprovalRequestEntity.STATUS_REJECTED,
+                )
+            ) {
+                continue
+            }
+            val result = ToolResult(
+                id = newId(),
+                createdAt = now(),
+                toolCallId = request.toolCallId,
+                success = false,
+                output = "用户已停止本次运行，待审批工具未执行。",
+            )
+            val active = operationCoordinator.active(sessId)
+            if (active != null && (request.operationId == null || request.operationId == active.id)) {
+                operationCoordinator.toolSettled(active.id, result, round = 0, toolName = request.toolName)
+                messageProjector.publishPersisted(sessId, result)
+            } else {
+                messageProjector.append(sessId, result)
+            }
+            finalEntryId = result.id
+        }
+        if (finalEntryId != null) {
+            operationCoordinator.finish(
+                sessId,
+                "aborted",
+                finalEntryId = finalEntryId,
+                details = "cancelled while waiting for approval",
+            )
+        }
+    }
+
+    private fun isCurrentLoad(sessionId: String, generation: Long): Boolean =
+        foregroundLoadGeneration.get() == generation && sessionTracker.currentSessionId.value == sessionId
+
+    private suspend fun executeSessionRun(sessId: String, runEpoch: Long, block: suspend () -> RunResult) {
         val selfJob = requireNotNull(currentCoroutineContext()[Job])
         stateMirrors.setRunState(sessId, SessionRunState.RUNNING)
         stateMirrors.setError(sessId, null)
@@ -662,7 +746,7 @@ class HarnessLoop @Inject constructor(
                 ),
             )
         } finally {
-            finishRun(sessId, selfJob)
+            finishRun(sessId, selfJob, runEpoch)
         }
     }
 
@@ -847,6 +931,15 @@ class HarnessLoop @Inject constructor(
         val streamReasoning = StreamBuffer(maxChars = ProviderClient.MAX_STREAM_REASONING_CHARS)
         var streamed: ChatResult? = null
         var netRetry = 0
+        // Context and prompt are immutable for retries of the same provider effect.
+        // Rebuilding here used to repeat Room/DataStore/filesystem work on every network failure.
+        val requestMessages = contextAssembler.assemble(
+            sessId = sessId,
+            model = model,
+            workspacePath = sessionWorkspace,
+            projectTypeOverride = sessionEntity?.projectType.orEmpty(),
+            thinkingMode = stateMirrors.requestThinkingMode(sessId),
+        )
         while (streamed == null) {
             try {
                 operationCoordinator.providerIntent(
@@ -858,13 +951,7 @@ class HarnessLoop @Inject constructor(
                 )
                 streamed = providerClient.chatStream(
                     model,
-                    contextAssembler.assemble(
-                        sessId = sessId,
-                        model = model,
-                        workspacePath = sessionWorkspace,
-                        projectTypeOverride = sessionEntity?.projectType.orEmpty(),
-                        thinkingMode = stateMirrors.requestThinkingMode(sessId),
-                    ),
+                    requestMessages,
                     onReasoning = { chunk ->
                         streamReasoning.append(chunk)
                         stateMirrors.setThinkingLive(sessId, true)
@@ -889,6 +976,7 @@ class HarnessLoop @Inject constructor(
                 }
             } catch (cancellation: CancellationException) {
                 agentEventLogger.log(sessId, "Cancelled", "用户主动取消执行")
+                messageProjector.remove(sessId, assistantId)
                 throw cancellation
             } catch (rateLimit: LlmRateLimitException) {
                 currentCoroutineContext().ensureActive()
@@ -946,6 +1034,7 @@ class HarnessLoop @Inject constructor(
                 return ProviderCallOutcome.Failed(friendly(throwable))
             }
         }
+        messageProjector.endStreaming(sessId)
         return ProviderCallOutcome.Success(streamed, streamText.toString())
     }
 
@@ -1443,9 +1532,10 @@ class HarnessLoop @Inject constructor(
         val nearest = (nativeTools + mcpTools.map { McpToolApiName.encode(it) })
             .mapNotNull { candidate ->
                 val distance = levenshtein(target, candidate.lowercase())
-                if (distance <= (target.length / 2).coerceAtLeast(3)) candidate else null
+                if (distance <= (target.length / 2).coerceAtLeast(3)) candidate to distance else null
             }
-            .minOrNull()
+            .minByOrNull { it.second }
+            ?.first
         return buildString {
             append("未知工具：$called。工具名不可编造或猜测，必须从下列清单中原样选取。")
             append("原生工具：${nativeTools.joinToString(" / ")}。")

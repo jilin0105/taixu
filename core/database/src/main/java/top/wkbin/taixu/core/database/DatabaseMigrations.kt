@@ -87,3 +87,14 @@ val MIGRATION_36_37 = object : Migration(36, 37) {
         db.execSQL("CREATE INDEX IF NOT EXISTS index_agent_tasks_updatedAt ON agent_tasks(updatedAt)")
     }
 }
+
+/** Give project/session memories an explicit owner so they cannot leak across contexts. */
+val MIGRATION_37_38 = object : Migration(37, 38) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE agent_memories ADD COLUMN ownerId TEXT NOT NULL DEFAULT ''")
+        // Existing non-global rows have no trustworthy owner. Keep them for manual recovery,
+        // but exclude them from every live project/session context.
+        db.execSQL("UPDATE agent_memories SET ownerId = 'legacy-unscoped' WHERE scope != 'global'")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_agent_memories_scope_ownerId_key ON agent_memories(scope, ownerId, `key`)")
+    }
+}

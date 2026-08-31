@@ -10,6 +10,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import top.wkbin.taixu.harness.session.LaneManager
@@ -29,6 +31,8 @@ class SubagentOrchestrator @Inject constructor(
     private val subagentRepository: top.wkbin.taixu.core.database.AgentSubagentRepository,
     private val promptAssets: PromptAssetLoader,
 ) {
+    /** Application-wide budget: multiple parent sessions share the same API/PRoot/Room resources. */
+    private val globalParallelism = Semaphore(MAX_GLOBAL_SUBAGENTS)
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     suspend fun executeSubagents(
@@ -52,33 +56,35 @@ class SubagentOrchestrator @Inject constructor(
 
         val results = specs.map { spec ->
             async {
-                val profile = profiles.firstOrNull { configured ->
-                    configured.id.equals(spec.role, ignoreCase = true) ||
-                        configured.name.equals(spec.role, ignoreCase = true)
-                }
-                if (profile == null) {
-                    return@async SubagentExecutionOutcome(
+                globalParallelism.withPermit {
+                    val profile = profiles.firstOrNull { configured ->
+                        configured.id.equals(spec.role, ignoreCase = true) ||
+                            configured.name.equals(spec.role, ignoreCase = true)
+                    }
+                    if (profile == null) {
+                        return@async SubagentExecutionOutcome(
+                            spec = spec,
+                            subSessionId = "",
+                            isSuccess = false,
+                            summary = "角色 ${spec.role} 未配置或未启用。可用角色：${profiles.joinToString { it.id }}",
+                            toolCallCount = 0,
+                        )
+                    }
+                    val laneName = "subagent:${profile.id}:${java.util.UUID.randomUUID()}"
+                    laneManager.create(parentSessionId, laneName, parentLeaf)
+                    val prompt = buildSubagentPrompt(spec, profile, workspace)
+                    val laneResult = withTimeoutOrNull(180_000L) {
+                        laneRunner.run(parentSessionId, laneName, prompt, workspace)
+                    }
+
+                    SubagentExecutionOutcome(
                         spec = spec,
-                        subSessionId = "",
-                        isSuccess = false,
-                        summary = "角色 ${spec.role} 未配置或未启用。可用角色：${profiles.joinToString { it.id }}",
-                        toolCallCount = 0,
+                        subSessionId = laneName,
+                        isSuccess = laneResult?.success == true,
+                        summary = laneResult?.summary ?: "执行超时 (3 分钟)",
+                        toolCallCount = laneResult?.toolCallCount ?: 0,
                     )
                 }
-                val laneName = "subagent:${profile.id}:${java.util.UUID.randomUUID()}"
-                laneManager.create(parentSessionId, laneName, parentLeaf)
-                val prompt = buildSubagentPrompt(spec, profile, workspace)
-                val laneResult = withTimeoutOrNull(180_000L) {
-                    laneRunner.run(parentSessionId, laneName, prompt, workspace)
-                }
-
-                SubagentExecutionOutcome(
-                    spec = spec,
-                    subSessionId = laneName,
-                    isSuccess = laneResult?.success == true,
-                    summary = laneResult?.summary ?: "执行超时 (3 分钟)",
-                    toolCallCount = laneResult?.toolCallCount ?: 0,
-                )
             }
         }.awaitAll()
 
@@ -99,6 +105,10 @@ class SubagentOrchestrator @Inject constructor(
                 "TASK_PROMPT" to spec.prompt,
             ),
         )
+    }
+
+    private companion object {
+        const val MAX_GLOBAL_SUBAGENTS = 4
     }
 
     private fun buildSummaryMarkdown(outcomes: List<SubagentExecutionOutcome>): String {

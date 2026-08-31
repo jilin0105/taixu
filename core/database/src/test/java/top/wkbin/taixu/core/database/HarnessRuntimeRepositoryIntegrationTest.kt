@@ -142,6 +142,20 @@ class HarnessRuntimeRepositoryIntegrationTest {
     }
 
     @Test
+    fun `branch search and indexed read stay on active branch and treat wildcards literally`() = runBlocking {
+        val sessionId = "s-search"
+        val root = entry("root", sessionId, null).copy(payloadJson = "literal 100% complete")
+        val active = entry("active", sessionId, "root").copy(payloadJson = "active needle")
+        val abandoned = entry("abandoned", sessionId, "root").copy(payloadJson = "abandoned needle")
+        listOf(root, active, abandoned).forEach { dao.insertEntry(it) }
+
+        assertEquals(listOf("active"), repository.searchBranch(sessionId, "active", "needle", 10).map { it.id })
+        assertEquals(listOf("root"), repository.searchBranch(sessionId, "active", "100%", 10).map { it.id })
+        assertEquals("active", repository.branchEntryAt(sessionId, "active", 1)?.id)
+        assertNull(repository.branchEntryAt(sessionId, "active", 2))
+    }
+
+    @Test
     fun `finishOperation clears lane pointer and removes operation row`() = runBlocking {
         val sessionId = "s4"
         val op = operation("op-4", sessionId)

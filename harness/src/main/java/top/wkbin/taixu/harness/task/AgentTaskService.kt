@@ -51,7 +51,9 @@ class AgentTaskService : Service() {
                 }
             }
         }
-        return START_STICKY
+        // There is no durable dispatcher/recovery implementation for this legacy service yet.
+        // Do not let Android recreate an empty foreground service after process death.
+        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

@@ -51,7 +51,7 @@ class ApiContextAssembler @Inject constructor(
         val latestUserText = msgs.filterIsInstance<UserMessage>().lastOrNull()?.text.orEmpty()
         val mentionedNames = MentionExtractor.parse(latestUserText)
 
-        val systemPrompt = if (!model.pureChatMode) {
+        val rawSystemPrompt = if (!model.pureChatMode) {
             systemPromptBuilder.build(
                 workspacePath,
                 toolCallMode,
@@ -64,6 +64,7 @@ class ApiContextAssembler @Inject constructor(
         } else {
             ""
         }
+        val systemPrompt = ContextWindowPolicy.fitSystemPrompt(rawSystemPrompt, budgetTokens)
         return buildList {
             if (systemPrompt.isNotEmpty()) {
                 add(ApiMessage(role = "system", content = systemPrompt))

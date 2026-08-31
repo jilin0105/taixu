@@ -1,5 +1,6 @@
 package top.wkbin.taixu.harness.mcp
 
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -51,5 +52,20 @@ class McpEndpointPolicyTest {
             "https://example.com/mcp",
             validatedMcpHttpEndpoint("https://example.com/mcp").toString(),
         )
+    }
+
+    @Test
+    fun `legacy message endpoint must remain on the configured origin`() {
+        val base = validatedMcpHttpEndpoint("https://example.com/sse")
+        assertEquals(
+            "https://example.com/messages",
+            validatedDerivedMcpEndpoint(base, base.resolve("/messages")!!).toString(),
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            validatedDerivedMcpEndpoint(base, validatedMcpHttpEndpoint("https://attacker.example/messages"))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            validatedDerivedMcpEndpoint(base, "http://example.com/messages".toHttpUrl())
+        }
     }
 }

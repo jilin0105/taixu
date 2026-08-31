@@ -9,6 +9,7 @@ import top.wkbin.taixu.core.database.HarnessQueueItemEntity
 import top.wkbin.taixu.core.database.HarnessRuntimeRepository
 import top.wkbin.taixu.harness.HarnessMessage
 import top.wkbin.taixu.harness.PendingMessage
+import top.wkbin.taixu.harness.QueuedPrompt
 import top.wkbin.taixu.harness.UserMessage
 import top.wkbin.taixu.harness.session.SessionTreeStore
 
@@ -63,6 +64,16 @@ class PromptQueueManager @Inject constructor(
         queue: PromptQueue,
         laneName: String = SessionTreeStore.MAIN_LANE,
     ): Pair<String, PendingMessage>? = list(sessionId, queue, laneName).firstOrNull()
+
+    suspend fun listAll(
+        sessionId: String,
+        laneName: String = SessionTreeStore.MAIN_LANE,
+    ): List<QueuedPrompt> = repository.listAllQueues(sessionId, laneName).mapNotNull { item ->
+        val queue = PromptQueue.entries.firstOrNull { it.id == item.queueType } ?: return@mapNotNull null
+        runCatching {
+            QueuedPrompt(item.id, queue, json.decodeFromString(PendingMessage.serializer(), item.payloadJson))
+        }.getOrNull()
+    }
 
     suspend fun cancel(sessionId: String, queue: PromptQueue, index: Int, laneName: String = SessionTreeStore.MAIN_LANE) {
         list(sessionId, queue, laneName).getOrNull(index)?.first?.let { repository.cancelQueued(it) }

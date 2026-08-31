@@ -12,6 +12,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -62,6 +63,41 @@ class AgentContextTest {
         val (listOk, listMsg) = executor.executeMemory(listArgs, "session-1", "")
         assertTrue(listOk)
         assertTrue(listMsg.contains("user_preferred_lang"))
+    }
+
+    @Test
+    fun `project and session memories are isolated while global memory is shared`() = runBlocking {
+        suspend fun save(key: String, value: String, scope: String, session: String, workspace: String) {
+            val (ok, _) = executor.executeMemory(
+                buildJsonObject {
+                    put("action", "save")
+                    put("key", key)
+                    put("value", value)
+                    put("scope", scope)
+                },
+                session,
+                workspace,
+            )
+            assertTrue(ok)
+        }
+
+        save("build", "gradle-a", "project", "session-a", "/workspace/a")
+        save("build", "gradle-b", "project", "session-b", "/workspace/b")
+        save("draft", "only-a", "session", "session-a", "/workspace/a")
+        save("language", "kotlin", "global", "session-a", "/workspace/a")
+
+        val listArgs = buildJsonObject { put("action", "list") }
+        val (_, projectA) = executor.executeMemory(listArgs, "session-a", "/workspace/a")
+        val (_, projectB) = executor.executeMemory(listArgs, "session-b", "/workspace/b")
+
+        assertTrue(projectA.contains("gradle-a"))
+        assertTrue(projectA.contains("only-a"))
+        assertFalse(projectA.contains("gradle-b"))
+        assertTrue(projectB.contains("gradle-b"))
+        assertFalse(projectB.contains("gradle-a"))
+        assertFalse(projectB.contains("only-a"))
+        assertTrue(projectA.contains("kotlin"))
+        assertTrue(projectB.contains("kotlin"))
     }
 
     @Test
@@ -135,24 +171,33 @@ private class FakeAgentContextDao : AgentContextRepository {
 
     override suspend fun getMemoryById(id: String): AgentMemoryEntity? = memories[id]
 
-    override suspend fun getMemoryByKey(key: String, scope: String): AgentMemoryEntity? =
-        memories.values.find { it.key == key && it.scope == scope }
+    override suspend fun getMemoryByKey(key: String, scope: String, ownerId: String): AgentMemoryEntity? =
+        memories.values.find { it.key == key && it.scope == scope && it.ownerId == ownerId }
 
-    override suspend fun getMemoriesByScopes(scopes: List<String>): List<AgentMemoryEntity> =
-        memories.values.filter { it.scope in scopes }.sortedByDescending { it.updatedAt }
+    override suspend fun getMemoriesForContext(projectOwnerId: String, sessionId: String, limit: Int): List<AgentMemoryEntity> =
+        memories.values.filter {
+            (it.scope == "global" && it.ownerId.isEmpty()) ||
+                (projectOwnerId.isNotEmpty() && it.scope == "project" && it.ownerId == projectOwnerId) ||
+                (sessionId.isNotEmpty() && it.scope == "session" && it.ownerId == sessionId)
+        }.sortedByDescending { it.updatedAt }.take(limit)
+
+    override suspend fun countMemories(scope: String, ownerId: String): Int =
+        memories.values.count { it.scope == scope && it.ownerId == ownerId }
 
     override fun observeAllMemories(): Flow<List<AgentMemoryEntity>> =
         flowOf(memories.values.sortedByDescending { it.updatedAt })
 
-    override suspend fun searchMemories(query: String): List<AgentMemoryEntity> =
-        memories.values.filter { it.key.contains(query, ignoreCase = true) || it.value.contains(query, ignoreCase = true) }
+    override suspend fun searchMemories(query: String, projectOwnerId: String, sessionId: String, limit: Int): List<AgentMemoryEntity> =
+        getMemoriesForContext(projectOwnerId, sessionId, limit).filter {
+            it.key.contains(query, ignoreCase = true) || it.value.contains(query, ignoreCase = true)
+        }.take(limit)
 
     override suspend fun deleteMemoryById(id: String) {
         memories.remove(id)
     }
 
-    override suspend fun deleteMemoryByKey(key: String, scope: String) {
-        memories.values.removeAll { it.key == key && it.scope == scope }
+    override suspend fun deleteMemoryByKey(key: String, scope: String, ownerId: String) {
+        memories.values.removeAll { it.key == key && it.scope == scope && it.ownerId == ownerId }
     }
 
     override suspend fun savePlan(plan: AgentPlanEntity) {

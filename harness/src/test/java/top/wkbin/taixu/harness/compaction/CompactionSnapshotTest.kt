@@ -101,4 +101,23 @@ class CompactionSnapshotTest {
         // 横幅展示的必须是“当前生效”的压缩状态：快照摘要与第二轮投影一致
         assertEquals(compaction.project(sessionId).summary, snapshot.summary)
     }
+
+    @Test
+    fun `rolling summary keeps newly folded facts after previous summary reaches cap`() = runBlocking {
+        val sessionId = "s-rolling"
+        repository.ensureLane(sessionId, "main")
+        val latestMarker = "LATEST_DECISION_USE_SQL_QUERY"
+        val context = CompactedContext(
+            summary = "old-context ".repeat(600),
+            messages = listOf(
+                UserMessage("latest", 1, "关键决定：$latestMarker"),
+                UserMessage("retained", 2, "continue"),
+            ),
+        )
+
+        val compacted = compaction.compact(sessionId, context, keepFromIndex = 1)
+
+        assertTrue(compacted.summary.orEmpty().contains(latestMarker))
+        assertTrue(compacted.summary.orEmpty().length <= 4_800)
+    }
 }

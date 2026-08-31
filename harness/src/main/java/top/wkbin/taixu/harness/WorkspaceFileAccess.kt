@@ -4,6 +4,7 @@ import top.wkbin.taixu.core.common.result.AppError
 import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.common.result.ErrorCode
 import java.io.File
+import java.nio.file.Files
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -31,8 +32,15 @@ class WorkspaceFileAccess(
         try {
             val directory = resolveRequired(path)
             check(directory.isDirectory) { "不是目录：${display(path)}" }
-            val entries = directory.listFiles().orEmpty()
-                .map { WorkspaceEntry(it.name, it.isDirectory, if (it.isFile) it.length() else 0L) }
+            val entries = Files.newDirectoryStream(directory.toPath()).use { stream ->
+                val iterator = stream.iterator()
+                buildList {
+                    while (iterator.hasNext() && size < MAX_LIST_ENTRIES) {
+                        val file = iterator.next().toFile()
+                        add(WorkspaceEntry(file.name, file.isDirectory, if (file.isFile) file.length() else 0L))
+                    }
+                }
+            }
                 .sortedWith(compareBy<WorkspaceEntry> { !it.isDirectory }.thenBy { it.name.lowercase() })
             AppResult.Success(entries)
         } catch (throwable: Throwable) {
@@ -79,7 +87,8 @@ class WorkspaceFileAccess(
 
     suspend fun write(path: String, content: String): AppResult<Unit> = withContext(Dispatchers.IO) {
         try {
-            require(content.length <= MAX_WRITE_BYTES) { "内容过长（${content.length} 字符，上限 ${MAX_WRITE_BYTES}）" }
+            val contentBytes = content.toByteArray(Charsets.UTF_8).size
+            require(contentBytes <= MAX_WRITE_BYTES) { "内容过长（$contentBytes 字节，上限 $MAX_WRITE_BYTES）" }
             val file = resolveWritable(path)
             file.parentFile?.mkdirs()
             val temporary = File(file.parentFile, ".${file.name}.tmp-${System.nanoTime()}")
@@ -103,6 +112,9 @@ class WorkspaceFileAccess(
             require(oldText.isNotEmpty()) { "oldText 不能为空" }
             val file = resolveWritable(path)
             check(file.isFile) { "不是文件：${display(path)}" }
+            check(file.length() <= MAX_EDIT_BYTES) {
+                "文件过大（${file.length()} 字节，上限 $MAX_EDIT_BYTES），请使用 base 的流式文本工具进行定点修改"
+            }
             val content = file.readText(Charsets.UTF_8)
             val first = content.indexOf(oldText)
             check(first >= 0) { "oldText 未找到" }
@@ -135,6 +147,20 @@ class WorkspaceFileAccess(
 
     /** Resolve a download destination while preserving the workspace boundary checks. */
     fun resolveDownloadDestination(path: String): File = resolveWritable(path)
+
+    /** Cheap cache stamp for prompt-relevant workspace metadata without reading file bodies. */
+    suspend fun changeStamp(path: String, relativePaths: List<String>): Long = withContext(Dispatchers.IO) {
+        val base = resolveRequired(path)
+        var stamp = base.lastModified()
+        relativePaths.forEach { relative ->
+            val child = File(base, relative).canonicalFile
+            if (isInside(base, child) && child.exists()) {
+                stamp = stamp * 31L + child.lastModified()
+                stamp = stamp * 31L + child.length()
+            }
+        }
+        stamp
+    }
 
     fun withBase(workspaceBase: String): WorkspaceFileAccess {
         val clean = workspaceBase.trim().removePrefix("/workspace/").removePrefix("/workspace").removePrefix("/")
@@ -176,6 +202,8 @@ class WorkspaceFileAccess(
     companion object {
         const val MAX_READ_BYTES = 1 * 1024 * 1024L
         const val MAX_WRITE_BYTES = 1 * 1024 * 1024
+        const val MAX_EDIT_BYTES = 1 * 1024 * 1024L
+        const val MAX_LIST_ENTRIES = 5_000
 
         /** 无参 read 的默认行窗口；单次 limit 也以此为上限，避免单次读取灌爆工具输出。 */
         const val DEFAULT_READ_LINES = 2000

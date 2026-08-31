@@ -1,6 +1,7 @@
 package top.wkbin.taixu.harness.projection
 
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -41,6 +42,9 @@ class SessionMessageProjector @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val liveFlows = ConcurrentHashMap<String, MutableStateFlow<List<HarnessMessage>>>()
+    private val lastAccess = ConcurrentHashMap<String, Long>()
+    private val accessCounter = AtomicLong()
+    private val streamingSessions = ConcurrentHashMap.newKeySet<String>()
 
     private val _foregroundMessages = MutableStateFlow<List<HarnessMessage>>(emptyList())
     /** 当前前台聚焦会话的消息列表（供聊天界面观察）。 */
@@ -56,24 +60,30 @@ class SessionMessageProjector @Inject constructor(
      * 获取或创建会话的实时消息流。首次创建时异步合并持久化历史：
      * 历史读取期间新追加的消息不会被丢弃，而是按时间归并。
      */
-    fun messagesFlow(sessionId: String): MutableStateFlow<List<HarnessMessage>> =
-        liveFlows.getOrPut(sessionId) {
-            val flow = MutableStateFlow<List<HarnessMessage>>(emptyList())
+    fun messagesFlow(sessionId: String): MutableStateFlow<List<HarnessMessage>> {
+        touch(sessionId)
+        liveFlows[sessionId]?.let {
+            evictLeastRecentlyUsed(sessionId)
+            return it
+        }
+        val created = MutableStateFlow<List<HarnessMessage>>(emptyList())
+        val flow = liveFlows.putIfAbsent(sessionId, created) ?: created.also {
             scope.launch(Dispatchers.IO) {
                 val history = history(sessionId)
-                flow.update { current ->
+                created.update { current ->
                     if (current.isEmpty()) {
                         history
                     } else {
-                        val historyIds = history.mapTo(mutableSetOf()) { it.id }
-                        (history + current.filter { it.id !in historyIds })
-                            .sortedBy { it.createdAt }
+                        // Current contains newer stream/persisted projections and wins on duplicate ids.
+                        (history + current).associateBy { it.id }.values.sortedBy { it.createdAt }
                     }
                 }
-                mirrorIfForeground(sessionId, flow.value)
+                mirrorIfForeground(sessionId, created.value)
             }
-            flow
         }
+        evictLeastRecentlyUsed(sessionId)
+        return flow
+    }
 
     private suspend fun history(sessionId: String): List<HarnessMessage> =
         withContext(Dispatchers.IO) { store.load(sessionId) }
@@ -86,14 +96,19 @@ class SessionMessageProjector @Inject constructor(
      * 避免异步合并窗口期把刚切换的会话闪成空列表。
      */
     suspend fun preparedForLoad(sessionId: String): MutableStateFlow<List<HarnessMessage>> {
-        return liveFlows[sessionId] ?: MutableStateFlow(loadHistory(sessionId)).also { created ->
-            liveFlows.putIfAbsent(sessionId, created)
-        }
+        touch(sessionId)
+        liveFlows[sessionId]?.let { return it }
+        val created = MutableStateFlow(loadHistory(sessionId))
+        val selected = liveFlows.putIfAbsent(sessionId, created) ?: created
+        evictLeastRecentlyUsed(sessionId)
+        return selected
     }
 
     /** 新建会话：无条件以空列表开局。 */
     fun seedEmpty(sessionId: String) {
+        touch(sessionId)
         liveFlows[sessionId] = MutableStateFlow(emptyList())
+        evictLeastRecentlyUsed(sessionId)
     }
 
     /** 新建/加载会话后复位前台镜像为该会话当前值。 */
@@ -109,6 +124,8 @@ class SessionMessageProjector @Inject constructor(
 
     fun removeSession(sessionId: String) {
         liveFlows.remove(sessionId)
+        lastAccess.remove(sessionId)
+        streamingSessions.remove(sessionId)
     }
 
     override suspend fun append(sessionId: String, message: HarnessMessage) {
@@ -117,39 +134,51 @@ class SessionMessageProjector @Inject constructor(
     }
 
     override suspend fun publishPersisted(sessionId: String, message: HarnessMessage) {
-        messagesFlow(sessionId).update { current ->
+        val flow = messagesFlow(sessionId)
+        flow.update { current ->
             if (current.any { it.id == message.id }) current.map { if (it.id == message.id) message else it }
             else current + message
         }
-        mirrorIfForeground(sessionId, messagesFlow(sessionId).value)
+        mirrorIfForeground(sessionId, flow.value)
+        if (message is AssistantText) streamingSessions.remove(sessionId)
     }
 
     override fun snapshot(sessionId: String): List<HarnessMessage> = messagesFlow(sessionId).value
 
     /** 移除一条仅存在于实时流中的消息（如出错后的空气泡）。 */
     fun remove(sessionId: String, messageId: String) {
-        messagesFlow(sessionId).update { current -> current.filterNot { it.id == messageId } }
-        mirrorIfForeground(sessionId, messagesFlow(sessionId).value)
+        val flow = messagesFlow(sessionId)
+        flow.update { current -> current.filterNot { it.id == messageId } }
+        mirrorIfForeground(sessionId, flow.value)
+        streamingSessions.remove(sessionId)
+    }
+
+    /** Mark a provider stream complete even when it yielded only tool calls/reasoning. */
+    fun endStreaming(sessionId: String) {
+        streamingSessions.remove(sessionId)
     }
 
     /** 流式助手文本增量刷新：保留已有 reasoning。 */
     fun streamText(sessionId: String, id: String, createdAt: Long, text: String) {
+        streamingSessions += sessionId
         val flow = messagesFlow(sessionId)
         flow.update { current ->
-            val existing = current.firstOrNull { it.id == id }
+            val idx = current.indexOfFirst { it.id == id }
+            val existing = current.getOrNull(idx)
             val message = AssistantText(
                 id = id,
                 createdAt = createdAt,
                 text = text,
                 reasoning = (existing as? AssistantText)?.reasoning,
             )
-            if (existing != null) current.map { if (it.id == id) message else it } else current + message
+            if (idx >= 0) current.toMutableList().apply { this[idx] = message } else current + message
         }
         mirrorIfForeground(sessionId, flow.value)
     }
 
     /** 流式思考过程增量刷新：文本未就绪时先行生成占位气泡。 */
     fun streamReasoning(sessionId: String, id: String, createdAt: Long, reasoning: String) {
+        streamingSessions += sessionId
         val flow = messagesFlow(sessionId)
         flow.update { current ->
             val idx = current.indexOfFirst { it.id == id }
@@ -163,5 +192,31 @@ class SessionMessageProjector @Inject constructor(
             }
         }
         mirrorIfForeground(sessionId, flow.value)
+    }
+
+    private fun touch(sessionId: String) {
+        lastAccess[sessionId] = accessCounter.incrementAndGet()
+    }
+
+    private fun evictLeastRecentlyUsed(protectedSessionId: String) {
+        var excess = liveFlows.size - MAX_CACHED_SESSIONS
+        if (excess <= 0) return
+        lastAccess.entries.asSequence()
+            .filter { (id, _) ->
+                id != protectedSessionId && !tracker.isForeground(id) && id !in streamingSessions
+            }
+            .sortedBy { it.value }
+            .map { it.key }
+            .forEach { id ->
+                if (excess <= 0) return@forEach
+                if (liveFlows.remove(id) != null) {
+                    lastAccess.remove(id)
+                    excess--
+                }
+            }
+    }
+
+    private companion object {
+        const val MAX_CACHED_SESSIONS = 8
     }
 }
