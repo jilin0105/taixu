@@ -163,6 +163,7 @@
     <string name="workshop_signing_section">Keystores</string>
     <string name="workshop_signing_section_description">Used for signing Release builds. Create or import</string>
     <string name="workshop_signing_create">Create Keystore</string>
+    <string name="workshop_signing_default">Default Keystore</string>
     <string name="workshop_signing_import">Import Keystore</string>
     <string name="workshop_signing_empty">No keystore yet</string>
     <string name="workshop_signing_empty_hint">Create or import a keystore, then select it when building a Release package</string>

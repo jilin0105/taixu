@@ -44,6 +44,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import top.wkbin.taixu.core.database.AiModelEntity
 import top.wkbin.taixu.core.model.ApprovalMode
 import top.wkbin.taixu.harness.AssistantText
@@ -200,6 +202,7 @@ fun ChatScreen(
     val currentBranch = remember(branches) { branches.firstOrNull { it.isCurrent } }
 
     val isImeVisible = WindowInsets.isImeVisible
+    val coroutineScope = rememberCoroutineScope()
 
     // Navigation3 removes inactive tab content from composition. Persist this marker with the
     // entry so returning to 智枢 does not perform a second, redundant scrollToItem during the
@@ -622,6 +625,16 @@ fun ChatScreen(
             onDeleteMemory = viewModel::deleteMemory,
             onDeleteScratchpad = viewModel::deleteScratchpad,
             onClearScratchpads = viewModel::clearScratchpads,
+            onNavigateToMessage = { messageId ->
+                showRuntimeTimeline = false
+                coroutineScope.launch {
+                    val targetIndex = messages.filter { it !is ToolResult }.indexOfFirst { it.id == messageId }
+                    if (targetIndex >= 0) {
+                        val headerOffset = (if (activeCompaction != null) 1 else 0) + (if (activePlan != null) 1 else 0)
+                        listState.animateScrollToItem((targetIndex + headerOffset).coerceAtLeast(0))
+                    }
+                }
+            },
             onDismiss = { showRuntimeTimeline = false },
         )
     }

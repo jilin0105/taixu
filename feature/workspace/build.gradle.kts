@@ -47,4 +47,6 @@ dependencies {
     implementation(project(":project-template"))
     implementation(project(":tools"))
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    testImplementation(libs.junit)
 }

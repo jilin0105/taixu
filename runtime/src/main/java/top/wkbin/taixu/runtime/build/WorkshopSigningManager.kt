@@ -75,8 +75,16 @@ class WorkshopSigningManager @Inject constructor(
         if (storePassword.length < 6) {
             return@withContext AppResult.Failure(AppError(ErrorCode.UNKNOWN, "密钥库口令至少需要 6 位"))
         }
-        val fileName = "${sanitizeFileName(safeName)}-${UUID.randomUUID().toString().substring(0, 8)}.p12"
+        if (keyPassword.isNotBlank() && keyPassword.length < 6) {
+            return@withContext AppResult.Failure(AppError(ErrorCode.UNKNOWN, "密钥口令至少需要 6 位"))
+        }
+
         val distroId = linuxRuntime.activeDistroId.value
+        if (distroId.isBlank()) {
+            return@withContext AppResult.Failure(AppError(ErrorCode.UNKNOWN, "环境不完整"))
+        }
+
+        val fileName = "${sanitizeFileName(safeName)}-${UUID.randomUUID().toString().substring(0, 8)}.p12"
         val sandboxDir = sandboxKeystoreDir(distroId).apply { mkdirs() }
         val sandboxFile = File(sandboxDir, fileName)
         sandboxFile.delete()
@@ -99,9 +107,14 @@ class WorkshopSigningManager @Inject constructor(
         )
         if (!result.isSuccess || !sandboxFile.isFile || sandboxFile.length() == 0L) {
             sandboxFile.delete()
-            val reason = (result.stderr + "\n" + result.stdout).trim().take(500)
+            val rawReason = (result.stderr + "\n" + result.stdout).trim()
+            val reason = if (result.exitCode == 127 || rawReason.contains("No such file", ignoreCase = true) || rawReason.contains("not found", ignoreCase = true)) {
+                "环境不完整"
+            } else {
+                rawReason.take(400).ifBlank { "exit ${result.exitCode}" }
+            }
             return@withContext AppResult.Failure(
-                AppError(ErrorCode.UNKNOWN, "生成签名失败：${reason.ifBlank { "keytool 执行失败 (exit ${result.exitCode})" }}"),
+                AppError(ErrorCode.UNKNOWN, reason),
             )
         }
         // 复制主副本到宿主私有目录，并登记元数据。
@@ -172,9 +185,14 @@ class WorkshopSigningManager @Inject constructor(
         if (!verify.isSuccess) {
             sandboxFile.delete()
             hostFile.delete()
-            val reason = (verify.stderr + "\n" + verify.stdout).trim().takeLast(400)
+            val rawReason = (verify.stderr + "\n" + verify.stdout).trim()
+            val reason = if (verify.exitCode == 127 || rawReason.contains("not found", ignoreCase = true)) {
+                "环境缺失：未检测到 keytool 工具链"
+            } else {
+                "口令错误或文件不是有效密钥库"
+            }
             return@withContext AppResult.Failure(
-                AppError(ErrorCode.UNKNOWN, "签名校验失败（口令错误或文件不是有效密钥库）：$reason"),
+                AppError(ErrorCode.UNKNOWN, "签名校验失败（$reason）"),
             )
         }
         // 从 keytool 输出中解析首个别名作为默认 alias。
