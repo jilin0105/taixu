@@ -10,6 +10,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import top.wkbin.taixu.core.database.HarnessSessionEntity
 import top.wkbin.taixu.core.database.HarnessSessionRepository
+import top.wkbin.taixu.core.database.AiModelRepository
 import top.wkbin.taixu.core.database.AgentApprovalRepository
 import top.wkbin.taixu.core.database.AgentApprovalRequestEntity
 import top.wkbin.taixu.core.model.ApprovalMode
@@ -30,19 +31,22 @@ import top.wkbin.taixu.runtime.webchat.WebChatSessionSnapshot
 class TaiXuWebChatAgentGateway @Inject constructor(
     private val harnessLoop: HarnessLoop,
     private val sessions: HarnessSessionRepository,
+    private val models: AiModelRepository,
     private val approvals: AgentApprovalRepository,
 ) : WebChatAgentGateway {
 
     override suspend fun createSession(title: String, workspace: String): String {
         val now = System.currentTimeMillis()
         val id = UUID.randomUUID().toString()
+        val defaultModel = models.activeModel()
         sessions.upsert(
             HarnessSessionEntity(
                 id = id,
                 title = title.trim().ifBlank { "新会话" },
                 createdAt = now,
                 updatedAt = now,
-                modelId = null,
+                modelId = defaultModel?.id,
+                modelVariant = defaultModel?.model?.substringBefore(',')?.trim()?.takeIf { it.isNotBlank() },
                 workspace = workspace,
                 approvalMode = ApprovalMode.ASSISTED.id,
             ),

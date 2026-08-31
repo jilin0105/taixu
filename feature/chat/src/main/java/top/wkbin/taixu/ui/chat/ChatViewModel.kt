@@ -822,16 +822,10 @@ class ChatViewModel @Inject constructor(
     fun selectModel(id: String, subModel: String? = null) {
         viewModelScope.launch {
             val entity = aiModelDao.findById(id) ?: return@launch
-            aiModelDao.clearActive()
-            if (!subModel.isNullOrBlank()) {
-                val models = entity.model.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                if (models.contains(subModel) && models.firstOrNull() != subModel) {
-                    val reordered = listOf(subModel) + models.filter { it != subModel }
-                    aiModelDao.upsert(entity.copy(model = reordered.joinToString(", "), isActive = true))
-                    return@launch
-                }
-            }
-            aiModelDao.setActive(id)
+            val sessionId = currentSessionId.value.takeIf { it.isNotBlank() } ?: return@launch
+            val variant = subModel?.trim()?.takeIf { it.isNotBlank() }
+                ?: entity.model.substringBefore(',').trim().takeIf { it.isNotBlank() }
+            sessionDao.setModelSelection(sessionId, entity.id, variant, System.currentTimeMillis())
         }
     }
 
@@ -881,35 +875,26 @@ class ChatViewModel @Inject constructor(
     }
 
     /**
-     * 在同一供应商档案内切换模型 ID（复用 baseUrl / Key / 推理参数）。
-     * 不新建档案，只更新当前档案的 model 字段。
+     * 在同一供应商档案内为当前会话选择具体模型 ID（复用 baseUrl / Key / 推理参数）。
+     * 档案本身保持不变，避免其他会话被连带切换。
      */
     fun switchModelInProfile(profileId: String, modelId: String) {
         val trimmed = modelId.trim()
         if (trimmed.isBlank()) return
         viewModelScope.launch {
             val profile = aiModelDao.findById(profileId) ?: return@launch
-            val displayName = when {
-                profile.name.isBlank() -> trimmed
-                profile.name == profile.model -> trimmed
-                else -> profile.name
-            }
-            aiModelDao.upsert(
-                profile.copy(
-                    name = displayName,
-                    model = trimmed,
-                ),
-            )
-            aiModelDao.clearActive()
-            aiModelDao.setActive(profileId)
+            val sessionId = currentSessionId.value.takeIf { it.isNotBlank() } ?: return@launch
+            sessionDao.setModelSelection(sessionId, profile.id, trimmed, System.currentTimeMillis())
             closeProviderModelPicker()
         }
     }
 
     fun updateActiveModelReasoning(mode: String?, effort: String?) {
         viewModelScope.launch {
-            val active = aiModelDao.activeModel() ?: return@launch
-            aiModelDao.updateReasoning(active.id, mode, effort)
+            val sessionModelId = currentSessionId.value.takeIf { it.isNotBlank() }
+                ?.let { sessionDao.findById(it)?.modelId }
+            val profile = sessionModelId?.let { aiModelDao.findById(it) } ?: aiModelDao.activeModel() ?: return@launch
+            aiModelDao.updateReasoning(profile.id, mode, effort)
         }
     }
 

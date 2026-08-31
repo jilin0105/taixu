@@ -17,7 +17,10 @@ data class HarnessSessionEntity(
     val title: String,
     val createdAt: Long,
     val updatedAt: Long,
+    /** Bound model profile id. Null keeps legacy fallback to the global default profile. */
     val modelId: String?,
+    /** Concrete provider model id selected inside [modelId]'s profile. */
+    val modelVariant: String? = null,
     val workspace: String = "",
     /** Explicit type selected for empty/imported workspaces; blank means auto-detect. */
     val projectType: String = "",
@@ -47,6 +50,9 @@ interface HarnessSessionDao {
 
     @Query("UPDATE harness_sessions SET approvalMode = :approvalMode, updatedAt = :updatedAt")
     suspend fun setApprovalModeForAll(approvalMode: String, updatedAt: Long)
+
+    @Query("UPDATE harness_sessions SET modelId = :modelId, modelVariant = :modelVariant, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun setModelSelection(id: String, modelId: String?, modelVariant: String?, updatedAt: Long)
 
     @Query("DELETE FROM harness_sessions WHERE id = :id")
     suspend fun deleteSession(id: String)

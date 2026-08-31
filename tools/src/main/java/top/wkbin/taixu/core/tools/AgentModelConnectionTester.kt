@@ -15,10 +15,30 @@ class AgentModelConnectionTester @Inject constructor(private val http: OkHttpCli
         val cleanBaseUrl = ProviderEndpointPolicy.normalizeUrl(baseUrl)
         require(cleanBaseUrl.isNotBlank() && ProviderEndpointPolicy.isSafeBaseUrl(cleanBaseUrl)) { "Base URL 不安全或为空" }
         val isAnthropic = cleanBaseUrl.trimEnd('/').contains("api.anthropic.com")
-        if (isAnthropic) {
+        if (model.isBlank()) {
+            testModelCatalog(cleanBaseUrl, apiKey, isAnthropic)
+        } else if (isAnthropic) {
             testAnthropic(cleanBaseUrl, model, apiKey)
         } else {
             testOpenAi(cleanBaseUrl, model, apiKey)
+        }
+    }
+
+    private fun testModelCatalog(baseUrl: String, apiKey: String?, isAnthropic: Boolean) {
+        val request = Request.Builder().url("${baseUrl.trimEnd('/')}/models")
+            .apply {
+                if (isAnthropic) {
+                    header("anthropic-version", "2023-06-01")
+                    if (!apiKey.isNullOrBlank()) header("x-api-key", apiKey)
+                } else if (!apiKey.isNullOrBlank()) {
+                    header("Authorization", "Bearer $apiKey")
+                }
+            }
+            .get()
+            .build()
+        http.newCall(request).execute().use { response ->
+            val text = response.body.string()
+            check(response.isSuccessful) { "连接失败 HTTP ${response.code}：${text.take(240)}" }
         }
     }
 

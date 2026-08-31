@@ -172,8 +172,18 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val context = LocalContext.current
 
-    val activeModel = remember(models) { models.firstOrNull { it.isActive } }
     val currentSession = remember(sessions, currentSessionId) { sessions.firstOrNull { it.id == currentSessionId } }
+    val boundModelProfile = remember(models, currentSession?.modelId) {
+        currentSession?.modelId?.let { id -> models.firstOrNull { it.id == id } }
+    }
+    val activeModel = remember(models, boundModelProfile, currentSession?.modelVariant) {
+        val profile = boundModelProfile ?: models.firstOrNull { it.isActive }
+        profile?.copy(
+            model = currentSession?.modelVariant
+                ?.takeIf { boundModelProfile != null && it.isNotBlank() }
+                ?: profile.model.substringBefore(',').trim(),
+        )
+    }
     val currentApprovalMode = remember(currentSession?.approvalMode) { ApprovalMode.fromId(currentSession?.approvalMode) }
     val activeWorkspaceProject = remember(workspace, workspaces) {
         workspaces.firstOrNull { it.linuxPath == workspace }
@@ -570,6 +580,8 @@ fun ChatScreen(
     if (showModels) {
         ModelDialog(
             models = models,
+            selectedProfileId = activeModel?.id,
+            selectedModelVariant = activeModel?.model,
             providerModelIds = providerModelIds,
             discoveringProviderModels = discoveringProviderModels,
             providerModelDiscoveryError = providerModelDiscoveryError,

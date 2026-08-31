@@ -30,6 +30,7 @@ interface HarnessSessionRepository {
     suspend fun rename(id: String, title: String, updatedAt: Long)
     suspend fun setApprovalMode(id: String, approvalMode: String, updatedAt: Long)
     suspend fun setApprovalModeForAll(approvalMode: String, updatedAt: Long)
+    suspend fun setModelSelection(id: String, modelId: String?, modelVariant: String?, updatedAt: Long)
     suspend fun deleteSession(id: String)
     suspend fun countInRange(start: Long?, end: Long?): Int
     suspend fun listAll(): List<HarnessSessionEntity>
@@ -192,6 +193,8 @@ class RoomHarnessSessionRepository @Inject constructor(private val dao: HarnessS
     override suspend fun rename(id: String, title: String, updatedAt: Long) = dao.rename(id, title, updatedAt)
     override suspend fun setApprovalMode(id: String, approvalMode: String, updatedAt: Long) = dao.setApprovalMode(id, approvalMode, updatedAt)
     override suspend fun setApprovalModeForAll(approvalMode: String, updatedAt: Long) = dao.setApprovalModeForAll(approvalMode, updatedAt)
+    override suspend fun setModelSelection(id: String, modelId: String?, modelVariant: String?, updatedAt: Long) =
+        dao.setModelSelection(id, modelId, modelVariant, updatedAt)
     override suspend fun deleteSession(id: String) = dao.deleteSession(id)
     override suspend fun countInRange(start: Long?, end: Long?) = dao.countInRange(start, end)
     override suspend fun listAll() = dao.listAll()

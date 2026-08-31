@@ -42,6 +42,7 @@ class SubagentOrchestrator @Inject constructor(
         val parentSession = sessionDao.findById(parentSessionId)
         val workspace = parentSession?.workspace.orEmpty()
         val modelId = parentSession?.modelId
+        val modelVariant = parentSession?.modelVariant
         val projectType = parentSession?.projectType.orEmpty()
         val specs = SubagentArgsParser.parse(args)
         if (specs.isEmpty()) {
@@ -74,7 +75,7 @@ class SubagentOrchestrator @Inject constructor(
                     laneManager.create(parentSessionId, laneName, parentLeaf)
                     val prompt = buildSubagentPrompt(spec, profile, workspace)
                     val laneResult = withTimeoutOrNull(SUBAGENT_TIMEOUT_MS) {
-                        laneRunner.run(parentSessionId, laneName, prompt, workspace, modelId)
+                        laneRunner.run(parentSessionId, laneName, prompt, workspace, modelId, modelVariant)
                     }
 
                     SubagentExecutionOutcome(

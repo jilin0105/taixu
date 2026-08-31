@@ -403,6 +403,8 @@ internal fun RenameSessionDialog(
 @Composable
 internal fun ModelDialog(
     models: List<AiModelEntity>,
+    selectedProfileId: String?,
+    selectedModelVariant: String?,
     providerModelIds: List<String>,
     discoveringProviderModels: Boolean,
     providerModelDiscoveryError: String?,
@@ -433,6 +435,7 @@ internal fun ModelDialog(
     if (pickingProfile != null) {
         ProviderModelPickerDialog(
             profile = pickingProfile,
+            selectedModelVariant = selectedModelVariant.takeIf { pickingProfile.id == selectedProfileId },
             modelIds = providerModelIds,
             discovering = discoveringProviderModels,
             error = providerModelDiscoveryError,
@@ -470,17 +473,18 @@ internal fun ModelDialog(
                     ) {
                         items(models, key = { it.id }) { model ->
                     val subModels = model.model.split(",").map { it.trim() }.filter { it.isNotEmpty() }.ifEmpty { listOf(model.model) }
+                    val isProfileSelected = model.id == selectedProfileId
                     Column(
                         Modifier
                             .fillMaxWidth()
                             .clip(MaterialTheme.shapes.small)
                             .background(
-                                if (model.isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent,
+                                if (isProfileSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent,
                                 MaterialTheme.shapes.small,
                             )
                             .border(
                                 1.dp,
-                                if (model.isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f) else Color.Transparent,
+                                if (isProfileSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f) else Color.Transparent,
                                 MaterialTheme.shapes.small,
                             )
                             .padding(horizontal = 10.dp, vertical = 8.dp),
@@ -512,7 +516,7 @@ internal fun ModelDialog(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                             }
-                            if (model.isActive) {
+                            if (isProfileSelected) {
                                 Surface(
                                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
                                     shape = RoundedCornerShape(6.dp),
@@ -539,8 +543,8 @@ internal fun ModelDialog(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
-                                subModels.forEachIndexed { subIndex, subModel ->
-                                    val isSubActive = model.isActive && (subIndex == 0)
+                                subModels.forEach { subModel ->
+                                    val isSubActive = isProfileSelected && subModel == selectedModelVariant
                                     Surface(
                                         color = if (isSubActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceContainerHighest,
                                         shape = RoundedCornerShape(8.dp),
@@ -656,6 +660,7 @@ internal fun ModelDialog(
 @Composable
 internal fun ProviderModelPickerDialog(
     profile: AiModelEntity,
+    selectedModelVariant: String?,
     modelIds: List<String>,
     discovering: Boolean,
     error: String?,
@@ -663,7 +668,9 @@ internal fun ProviderModelPickerDialog(
     onRefresh: () -> Unit,
     onSelect: (String) -> Unit,
 ) {
-    var manualId by remember(profile.id, profile.model) { mutableStateOf(profile.model) }
+    var manualId by remember(profile.id, profile.model, selectedModelVariant) {
+        mutableStateOf(selectedModelVariant ?: profile.model.substringBefore(',').trim())
+    }
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -714,7 +721,7 @@ internal fun ProviderModelPickerDialog(
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             items(modelIds) { modelId ->
-                                val selected = modelId == profile.model
+                                val selected = modelId == selectedModelVariant
                                 Row(
                                     Modifier
                                         .fillMaxWidth()

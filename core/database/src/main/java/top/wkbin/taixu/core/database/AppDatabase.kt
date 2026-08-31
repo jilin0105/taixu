@@ -39,7 +39,7 @@ import top.wkbin.taixu.core.database.task.AgentTaskDao
         ProjectBuildScriptBindingEntity::class,
         AgentTaskEntity::class,
     ],
-    version = 38,
+    version = 39,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {

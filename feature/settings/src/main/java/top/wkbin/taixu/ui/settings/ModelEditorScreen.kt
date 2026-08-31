@@ -1076,7 +1076,7 @@ private fun ModelEditorContent(
 
         // ---- 7. 连通性测试与错误提示 ----
         item {
-            val testModelTarget = (if (existing != null) customModelInput.trim() else (selectedModels.firstOrNull() ?: customModelInput.trim())).ifBlank { provider.recommendedModels.firstOrNull().orEmpty() }
+            val testModelTarget = selectedModels.firstOrNull() ?: customModelInput.trim()
 
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -1084,7 +1084,7 @@ private fun ModelEditorContent(
             ) {
                 RuntimeOutlinedButton(
                     onClick = { test(url, testModelTarget, combinedKey) },
-                    enabled = !testing && testModelTarget.isNotBlank() && url.isNotBlank(),
+                    enabled = !testing && url.isNotBlank(),
                     modifier = Modifier.fillMaxWidth().height(44.dp),
                     shape = RoundedCornerShape(12.dp),
                 ) {

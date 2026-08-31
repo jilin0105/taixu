@@ -91,6 +91,7 @@ class HarnessLoop @Inject constructor(
     private val toolExecutor: ToolExecutor,
     private val messageStore: SessionTreeStore,
     private val sessionDao: HarnessSessionRepository,
+    private val modelRepository: top.wkbin.taixu.core.database.AiModelRepository,
     private val settingsDataStore: AgentPreferences,
     private val json: Json,
     private val logger: AppLogger,
@@ -233,6 +234,7 @@ class HarnessLoop @Inject constructor(
     /** 新建会话。workspace 为关联的工作区 Linux 路径（如 /workspace/proj），空串表示不关联。 */
     suspend fun newSession(title: String, workspace: String = "", projectType: String = ""): String {
         val id = UUID.randomUUID().toString()
+        val defaultModel = modelRepository.activeModel()
         foregroundLoadGeneration.incrementAndGet()
         tombstonedSessions.remove(id)
         sessionTracker.setCurrent(id)
@@ -244,7 +246,8 @@ class HarnessLoop @Inject constructor(
                 title = title.ifBlank { "新会话" },
                 createdAt = System.currentTimeMillis(),
                 updatedAt = System.currentTimeMillis(),
-                modelId = null,
+                modelId = defaultModel?.id,
+                modelVariant = defaultModel?.model?.substringBefore(',')?.trim()?.takeIf { it.isNotBlank() },
                 workspace = workspace,
                 projectType = projectType,
                 approvalMode = approvalRepository.currentMode().id,
@@ -878,7 +881,7 @@ class HarnessLoop @Inject constructor(
             metrics.steeringInjected(drainSteeringMessages(sessId))
             stateMirrors.setStatus(sessId, "思考中")
             val model = try {
-                providerClient.resolveConfigured()
+                providerClient.resolveConfigured(sessionEntity?.modelId, sessionEntity?.modelVariant)
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (throwable: Throwable) {

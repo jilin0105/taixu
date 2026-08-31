@@ -139,8 +139,7 @@ class RuntimeForegroundService : Service() {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setAutoCancel(false)
-            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
-            .setProgress(0, 0, true)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .addAction(
                 NotificationCompat.Action(
                     R.drawable.taixu_notification,

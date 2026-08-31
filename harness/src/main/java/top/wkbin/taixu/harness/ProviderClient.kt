@@ -612,10 +612,11 @@ class ProviderClient @Inject constructor(
     }
 
     /**
-     * 同 [resolveModel]，但额外做最小配置校验。[modelId] 非空且存在时优先使用该会话绑定模型，
+     * 同 [resolveModel]，但额外做最小配置校验。[modelId] 非空且存在时优先使用该会话绑定档案，
+     * [modelVariant] 用于覆盖档案里的默认模型名，实现同一供应商档案下的会话级模型隔离。
      * 否则回退到当前激活模型。无可用模型且未设置 API Key 时直接抛出明确异常。
      */
-    suspend fun resolveConfigured(modelId: String? = null): ModelConfig = withContext(Dispatchers.IO) {
+    suspend fun resolveConfigured(modelId: String? = null, modelVariant: String? = null): ModelConfig = withContext(Dispatchers.IO) {
         val requested = modelId?.takeIf { it.isNotBlank() }?.let { modelDao.findById(it) }
         val active = requested ?: modelDao.activeModel()
         val providerKey = providerRepository.readApiKey().orEmpty()
@@ -636,8 +637,13 @@ class ProviderClient @Inject constructor(
                 protocol = inferProtocol(baseUrl, provider),
             )
         }
+        val sessionConfig = if (requested != null && !modelVariant.isNullOrBlank()) {
+            baseConfig.copy(model = modelVariant.trim())
+        } else {
+            baseConfig
+        }
         val dynamicMcp = runCatching { mcpManager.getActiveMcpTools() }.getOrDefault(emptyList())
-        baseConfig.applyGlobalReasoningDepth().copy(dynamicMcpTools = dynamicMcp)
+        sessionConfig.applyGlobalReasoningDepth().copy(dynamicMcpTools = dynamicMcp)
     }
 
     /**

@@ -98,3 +98,10 @@ val MIGRATION_37_38 = object : Migration(37, 38) {
         db.execSQL("CREATE INDEX IF NOT EXISTS index_agent_memories_scope_ownerId_key ON agent_memories(scope, ownerId, `key`)")
     }
 }
+
+/** Bind a concrete provider model variant to each chat session. */
+val MIGRATION_38_39 = object : Migration(38, 39) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE harness_sessions ADD COLUMN modelVariant TEXT")
+    }
+}

@@ -12,6 +12,7 @@ import top.wkbin.taixu.core.database.MIGRATION_34_35
 import top.wkbin.taixu.core.database.MIGRATION_35_36
 import top.wkbin.taixu.core.database.MIGRATION_36_37
 import top.wkbin.taixu.core.database.MIGRATION_37_38
+import top.wkbin.taixu.core.database.MIGRATION_38_39
 import top.wkbin.taixu.core.database.BuildScriptDao
 import top.wkbin.taixu.core.database.task.AgentTaskDao
 import top.wkbin.taixu.core.database.ToolDao
@@ -79,7 +80,7 @@ object AppModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase {
         return Room.databaseBuilder(context, AppDatabase::class.java, "taixu.db")
-            .addMigrations(MIGRATION_27_28, MIGRATION_28_29, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37, MIGRATION_37_38)
+            .addMigrations(MIGRATION_27_28, MIGRATION_28_29, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37, MIGRATION_37_38, MIGRATION_38_39)
             .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
     }
