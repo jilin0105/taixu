@@ -106,6 +106,16 @@ fun ToolActivityPill(
     }
     var elapsedMillis by remember { mutableLongStateOf(0L) }
 
+    // 仅在用户手动点击胶囊时弹窗；工具切换或执行完成时重置状态，绝不自动弹窗
+    LaunchedEffect(activeToolCall?.id) {
+        showDetailSheet = false
+    }
+    LaunchedEffect(running) {
+        if (!running) {
+            showDetailSheet = false
+        }
+    }
+
     LaunchedEffect(running, timingStart) {
         if (running && timingStart > 0L) {
             while (true) {
