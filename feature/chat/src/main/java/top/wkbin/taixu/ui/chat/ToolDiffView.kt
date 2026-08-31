@@ -41,6 +41,10 @@ import top.wkbin.taixu.feature.chat.R
 import top.wkbin.taixu.harness.HarnessTool
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolResult
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 
@@ -284,7 +288,43 @@ private fun FilePathHeader(
     onOpenFile: ((String, String) -> Unit)?,
     previewContent: String? = null,
 ) {
+    val context = LocalContext.current
     var showPreviewSheet by remember { mutableStateOf(false) }
+
+    val defaultFileName = remember(path) {
+        val raw = path.substringAfterLast('/')
+        if (raw.isNotBlank()) raw else "file.txt"
+    }
+    val extension = remember(path) { path.substringAfterLast('.', "").lowercase() }
+    val mimeType = remember(extension) {
+        when (extension) {
+            "md", "markdown" -> "text/markdown"
+            "json" -> "application/json"
+            "html", "htm" -> "text/html"
+            "xml" -> "application/xml"
+            "csv" -> "text/csv"
+            "txt", "kt", "java", "py", "c", "cpp", "h", "rs", "go", "js", "ts", "sh", "yaml", "yml", "gradle" -> "text/plain"
+            else -> "text/plain"
+        }
+    }
+
+    // SAF 外部目录导出选择器
+    val exportDocumentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(mimeType),
+    ) { uri ->
+        if (uri != null && previewContent != null) {
+            runCatching {
+                context.contentResolver.openOutputStream(uri)?.use { output ->
+                    output.write(previewContent.toByteArray(Charsets.UTF_8))
+                    output.flush()
+                } ?: error("无法打开目标文件流")
+            }.onSuccess {
+                Toast.makeText(context, context.getString(R.string.chat_artifact_export_success), Toast.LENGTH_SHORT).show()
+            }.onFailure { err ->
+                Toast.makeText(context, context.getString(R.string.chat_artifact_export_failed, err.message ?: ""), Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     if (showPreviewSheet && !previewContent.isNullOrEmpty()) {
         top.wkbin.taixu.ui.chat.artifact.ArtifactPreviewSheet(
@@ -353,6 +393,27 @@ private fun FilePathHeader(
                         RuntimeIcon(RuntimeIconName.Document, Modifier.size(12.dp), tint = Color(0xFF79C0FF))
                         Text(
                             text = stringResource(R.string.chat_artifact_preview),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF79C0FF),
+                        )
+                    }
+                }
+
+                Surface(
+                    color = Color(0xFF1B2C47),
+                    shape = RoundedCornerShape(4.dp),
+                    modifier = Modifier.minimumInteractiveComponentSize().clickable {
+                        exportDocumentLauncher.launch(defaultFileName)
+                    },
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        RuntimeIcon(RuntimeIconName.Download, Modifier.size(12.dp), tint = Color(0xFF79C0FF))
+                        Text(
+                            text = stringResource(R.string.chat_artifact_export_short),
                             style = MaterialTheme.typography.labelSmall,
                             color = Color(0xFF79C0FF),
                         )

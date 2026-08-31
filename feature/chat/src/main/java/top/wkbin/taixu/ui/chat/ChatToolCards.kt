@@ -48,12 +48,16 @@ import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import top.wkbin.taixu.core.database.AgentApprovalRequestEntity
 
 /** 工具调用卡与审批请求卡。 */
 private val DotRunning = Color(0xFFB25E00)
 private val DotSuccess = Color(0xFF2E7D32)
 private val DotFailed = Color(0xFFBA1A1A)
+private val DiffAddedColor = Color(0xFF2E7D32)
+private val DiffDeletedColor = Color(0xFFC62828)
 
 @Composable
 internal fun ToolCard(
@@ -135,6 +139,15 @@ internal fun ToolCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                // 代码改动统计徽章 (+N -M)
+                val diffStat = remember(call, result) {
+                    if (call.tool == HarnessTool.WRITE || call.tool == HarnessTool.EDIT) {
+                        parseDiffStat(call, result)
+                    } else null
+                }
+                diffStat?.let { (added, deleted) ->
+                    DiffStatBadge(added = added, deleted = deleted)
+                }
                 val durationText = if (result != null) {
                     val duration = result.durationMs ?: (result.createdAt - call.createdAt).coerceAtLeast(0L)
                     formatChatDuration(duration)
@@ -328,5 +341,89 @@ internal fun toolArgsSummary(call: ToolCall): String {
     val entries = call.args.toMap().entries.take(3)
         .joinToString(", ") { (key, value) -> "$key=${value.toString().take(40)}" }
     return entries
+}
+
+/**
+ * 代码行数增减变更徽章：类似 GitHub 的 +27 -8。
+ * 绿色展示增加行数，红色展示删除行数。
+ */
+@Composable
+internal fun DiffStatBadge(
+    added: Int,
+    deleted: Int,
+    modifier: Modifier = Modifier,
+) {
+    if (added == 0 && deleted == 0) return
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.5f))
+            .padding(horizontal = 4.dp, vertical = 1.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (added > 0) {
+            Text(
+                text = "+$added",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp,
+                ),
+                color = DiffAddedColor,
+            )
+        }
+        if (deleted > 0) {
+            Text(
+                text = "-$deleted",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp,
+                ),
+                color = DiffDeletedColor,
+            )
+        }
+    }
+}
+
+private val DIFF_STAT_REGEX = Regex("""DIFF_STAT:\s*\+(\d+)\s*-(\d+)""")
+
+/**
+ * 从工具输出或参数中解析代码变更统计（增加行数, 删除行数）。
+ */
+internal fun parseDiffStat(call: ToolCall, result: ToolResult?): Pair<Int, Int>? {
+    // 若工具执行已完成且失败，不展示代码变更统计
+    if (result != null && !result.success) return null
+
+    // 优先从 ToolResult.output 中标准化 DIFF_STAT 标记提取
+    if (result != null) {
+        val match = DIFF_STAT_REGEX.find(result.output)
+        if (match != null) {
+            val added = match.groupValues[1].toIntOrNull() ?: 0
+            val deleted = match.groupValues[2].toIntOrNull() ?: 0
+            if (added > 0 || deleted > 0) return added to deleted
+        }
+    }
+    // 兜底：从 ToolCall 参数中计算行数
+    return when (call.tool) {
+        HarnessTool.WRITE -> {
+            val content = call.args["content"]?.jsonPrimitive?.contentOrNull
+            if (!content.isNullOrBlank()) {
+                val lines = content.lines().size
+                lines to 0
+            } else null
+        }
+        HarnessTool.EDIT -> {
+            val newText = call.args["newText"]?.jsonPrimitive?.contentOrNull
+            val oldText = call.args["oldText"]?.jsonPrimitive?.contentOrNull
+            if (newText != null || oldText != null) {
+                val added = newText?.lines()?.size ?: 0
+                val deleted = oldText?.lines()?.size ?: 0
+                if (added > 0 || deleted > 0) added to deleted else null
+            } else null
+        }
+        else -> null
+    }
 }
 

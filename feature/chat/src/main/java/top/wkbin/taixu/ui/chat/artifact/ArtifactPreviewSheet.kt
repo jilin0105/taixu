@@ -54,6 +54,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.runtime.mutableFloatStateOf
 import top.wkbin.taixu.ui.chat.MarkdownText
 import top.wkbin.taixu.feature.chat.R
 import top.wkbin.taixu.ui.components.RuntimeButton
@@ -96,6 +102,26 @@ fun ArtifactPreviewSheet(
         target.substringAfterLast('.', "").lowercase()
     }
 
+    val isDark = isSystemInDarkTheme()
+    var zoomScale by remember { mutableFloatStateOf(1f) }
+
+    val defaultFileName = remember(relativePath, title, extension) {
+        val raw = if (relativePath.isNotEmpty()) relativePath.substringAfterLast('/') else title
+        if (raw.isNotBlank()) raw else "artifact.${if (extension.isNotBlank()) extension else "txt"}"
+    }
+
+    val mimeType = remember(extension) {
+        when (extension) {
+            "md", "markdown" -> "text/markdown"
+            "json" -> "application/json"
+            "html", "htm" -> "text/html"
+            "xml" -> "application/xml"
+            "csv" -> "text/csv"
+            "txt", "kt", "java", "py", "c", "cpp", "h", "rs", "go", "js", "ts", "sh", "yaml", "yml", "gradle" -> "text/plain"
+            else -> "text/plain"
+        }
+    }
+
     val isMarkdown = extension == "md" || extension == "markdown"
     var viewMode by remember {
         mutableStateOf(if (isMarkdown) ArtifactViewMode.PREVIEW else ArtifactViewMode.CODE)
@@ -103,6 +129,32 @@ fun ArtifactPreviewSheet(
 
     var editableContent by remember(content) { mutableStateOf(content) }
     val isDirty = editableContent != content
+
+    // SAF 外部目录保存 / 导出文档选择器
+    val exportDocumentLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.CreateDocument(mimeType),
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.openOutputStream(uri)?.use { output ->
+                    output.write(editableContent.toByteArray(Charsets.UTF_8))
+                    output.flush()
+                } ?: error("无法打开目标文件流")
+            }.onSuccess {
+                Toast.makeText(context, context.getString(R.string.chat_artifact_export_success), Toast.LENGTH_SHORT).show()
+            }.onFailure { err ->
+                Toast.makeText(context, context.getString(R.string.chat_artifact_export_failed, err.message ?: ""), Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    val contentBg = when {
+        viewMode == ArtifactViewMode.PREVIEW -> MaterialTheme.colorScheme.surface
+        isDark -> Color(0xFF090D14)
+        else -> MaterialTheme.colorScheme.surfaceContainerLowest
+    }
+    val codeTextColor = if (isDark) Color(0xFFDCE6F5) else MaterialTheme.colorScheme.onSurface
+    val lineNumColor = if (isDark) Color.White.copy(alpha = 0.35f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -217,12 +269,17 @@ fun ArtifactPreviewSheet(
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
-            // 2. 主体内容区
+            // 2. 主体内容区（支持双指捏合手势 Pinch-to-zoom 缩放）
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .background(Color(0xFF090D14)),
+                    .background(contentBg)
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, _, zoom, _ ->
+                            zoomScale = (zoomScale * zoom).coerceIn(0.7f, 2.5f)
+                        }
+                    },
             ) {
                 when (viewMode) {
                     ArtifactViewMode.PREVIEW -> {
@@ -231,7 +288,12 @@ fun ArtifactPreviewSheet(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .verticalScroll(rememberScrollState())
-                                .padding(16.dp),
+                                .padding(16.dp)
+                                .graphicsLayer {
+                                    scaleX = zoomScale
+                                    scaleY = zoomScale
+                                    transformOrigin = TransformOrigin(0f, 0f)
+                                },
                         ) {
                             MarkdownText(
                                 markdown = editableContent,
@@ -241,11 +303,13 @@ fun ArtifactPreviewSheet(
                     }
 
                     ArtifactViewMode.CODE -> {
-                        // 语法高亮代码模式
-                        val highlighted = remember(editableContent, extension) {
-                            SyntaxHighlighter.highlight(editableContent, extension)
+                        // 语法高亮代码模式（支持浅色/暗黑主题自适应 + 手势缩放）
+                        val highlighted = remember(editableContent, extension, isDark) {
+                            SyntaxHighlighter.highlight(editableContent, extension, isDark = isDark)
                         }
                         val lines = remember(editableContent) { editableContent.lines() }
+                        val codeFontSize = (12 * zoomScale).sp
+                        val codeLineHeight = (18 * zoomScale).sp
 
                         SelectionContainer {
                             Row(
@@ -264,9 +328,9 @@ fun ArtifactPreviewSheet(
                                         Text(
                                             text = "${idx + 1}",
                                             fontFamily = FontFamily.Monospace,
-                                            fontSize = 12.sp,
-                                            lineHeight = 18.sp,
-                                            color = Color.White.copy(alpha = 0.35f),
+                                            fontSize = codeFontSize,
+                                            lineHeight = codeLineHeight,
+                                            color = lineNumColor,
                                         )
                                     }
                                 }
@@ -275,9 +339,9 @@ fun ArtifactPreviewSheet(
                                 Text(
                                     text = highlighted,
                                     fontFamily = FontFamily.Monospace,
-                                    fontSize = 12.sp,
-                                    lineHeight = 18.sp,
-                                    color = Color(0xFFDCE6F5),
+                                    fontSize = codeFontSize,
+                                    lineHeight = codeLineHeight,
+                                    color = codeTextColor,
                                 )
                             }
                         }
@@ -285,6 +349,9 @@ fun ArtifactPreviewSheet(
 
                     ArtifactViewMode.EDIT -> {
                         // 就地编辑模式
+                        val editFontSize = (13 * zoomScale).sp
+                        val editLineHeight = (19 * zoomScale).sp
+
                         BasicTextField(
                             value = editableContent,
                             onValueChange = { editableContent = it },
@@ -294,9 +361,9 @@ fun ArtifactPreviewSheet(
                                 .verticalScroll(rememberScrollState()),
                             textStyle = TextStyle(
                                 fontFamily = FontFamily.Monospace,
-                                fontSize = 13.sp,
-                                lineHeight = 19.sp,
-                                color = Color(0xFFDCE6F5),
+                                fontSize = editFontSize,
+                                lineHeight = editLineHeight,
+                                color = codeTextColor,
                             ),
                             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         )
@@ -306,7 +373,7 @@ fun ArtifactPreviewSheet(
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
-            // 3. 底栏操作通道
+            // 3. 底栏操作通道与缩放微调
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -314,7 +381,10 @@ fun ArtifactPreviewSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     // 复制全文
                     RuntimeOutlinedButton(
                         onClick = {
@@ -346,22 +416,85 @@ fun ArtifactPreviewSheet(
                         Spacer(Modifier.width(4.dp))
                         Text(stringResource(R.string.chat_artifact_share), fontSize = 12.sp)
                     }
+
+                    // 导出到外部目录 (SAF)
+                    RuntimeOutlinedButton(
+                        onClick = {
+                            exportDocumentLauncher.launch(defaultFileName)
+                        },
+                    ) {
+                        RuntimeIcon(RuntimeIconName.Download, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(stringResource(R.string.chat_artifact_export), fontSize = 12.sp)
+                    }
                 }
 
-                // 保存/保存修改
-                if (viewMode == ArtifactViewMode.EDIT && onSaveContent != null) {
-                    RuntimeButton(
-                        onClick = {
-                        onSaveContent(editableContent)
-                        Toast.makeText(context, context.getString(R.string.chat_artifact_saved), Toast.LENGTH_SHORT).show()
-                        viewMode = if (isMarkdown) ArtifactViewMode.PREVIEW else ArtifactViewMode.CODE
-                    },
-                    enabled = isDirty,
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    RuntimeIcon(RuntimeIconName.Check, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(stringResource(R.string.chat_artifact_save), fontSize = 12.sp)
-                }
+                    // 手动缩放微调控制器
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp)),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(26.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .clickable { zoomScale = (zoomScale - 0.15f).coerceIn(0.7f, 2.5f) },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text("-", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                            }
+
+                            Text(
+                                text = "${(zoomScale * 100).toInt()}%",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 11.sp,
+                                ),
+                                color = if (zoomScale != 1f) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .clickable { zoomScale = 1f }
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                            )
+
+                            Box(
+                                modifier = Modifier
+                                    .size(26.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .clickable { zoomScale = (zoomScale + 0.15f).coerceIn(0.7f, 2.5f) },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text("+", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                            }
+                        }
+                    }
+
+                    // 保存/保存修改
+                    if (viewMode == ArtifactViewMode.EDIT && onSaveContent != null) {
+                        RuntimeButton(
+                            onClick = {
+                                onSaveContent(editableContent)
+                                Toast.makeText(context, context.getString(R.string.chat_artifact_saved), Toast.LENGTH_SHORT).show()
+                                viewMode = if (isMarkdown) ArtifactViewMode.PREVIEW else ArtifactViewMode.CODE
+                            },
+                            enabled = isDirty,
+                        ) {
+                            RuntimeIcon(RuntimeIconName.Check, modifier = Modifier.size(15.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(stringResource(R.string.chat_artifact_save), fontSize = 12.sp)
+                        }
+                    }
                 }
             }
         }

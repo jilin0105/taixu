@@ -141,7 +141,7 @@ class McpManager @Inject constructor(
 
     private companion object {
         /** 单服务器工具发现总超时：覆盖沙箱会话拉起 + initialize + tools/list，超时即本轮跳过注入。 */
-        const val DISCOVERY_TIMEOUT_MS = 4_000L
+        const val DISCOVERY_TIMEOUT_MS = 8_000L
 
         /** 工具发现无会话上下文，agent 事件日志用占位 sessionId。 */
         const val DISCOVERY_LOG_SESSION = "-"

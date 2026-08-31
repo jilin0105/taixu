@@ -140,12 +140,11 @@ object BuiltinMcpPresets {
         McpServerConfig(
             id = "mcp_websearch",
             name = "Web 搜索（Open-WebSearch）",
-            description = "免 API Key 的多引擎网络搜索与正文抓取：默认使用国内可直连的 baidu 引擎，可在 env 中切换 bing / duckduckgo / sogou / startpage 等；npx 已加 --prefer-offline，首次安装后启动不再联网检查版本。需要代理时在 env 中追加 USE_PROXY=true / PROXY_URL",
+            description = "免 API Key 的多引擎网络搜索与网页正文抓取（太墟内置零依赖 MCP 服务）：支持 Baidu、Bing、DuckDuckGo 等多引擎直连搜索与正文清洗提取，毫秒级响应，无需 Node.js/npx，开箱即用",
             transportType = McpTransportType.STDIO,
-            command = "npx",
-            args = listOf("-y", "--prefer-offline", "open-websearch@latest"),
+            command = "python3",
+            args = listOf("-u", "/opt/taixu/scripts/websearch_mcp_server.py"),
             env = mapOf(
-                "MODE" to "stdio",
                 "DEFAULT_SEARCH_ENGINE" to "baidu",
             ),
             isEnabled = false,

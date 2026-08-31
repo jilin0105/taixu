@@ -19,7 +19,10 @@ class CompactionManager @Inject constructor(
 ) {
     suspend fun project(sessionId: String, laneName: String = SessionTreeStore.MAIN_LANE): CompactedContext {
         val lane = repository.ensureLane(sessionId, laneName)
-        val entries = repository.branch(sessionId, lane.leafId)
+        // 超长会话保护：全量加载所有 entry 并在 IO 线程反序列化，会在堆已接近上限时触发 OOM。
+        // 取最末尾的 MAX_BRANCH_ENTRIES 条：compaction 摘要已覆盖早期语义，后尾内容更重要。
+        val allEntries = repository.branch(sessionId, lane.leafId)
+        val entries = if (allEntries.size > MAX_BRANCH_ENTRIES) allEntries.takeLast(MAX_BRANCH_ENTRIES) else allEntries
         val compactionIndex = entries.indexOfLast { it.entryType == ENTRY_TYPE }
         if (compactionIndex < 0) return CompactedContext(messages = entries.mapNotNull(::decodeMessage))
 
@@ -114,5 +117,12 @@ class CompactionManager @Inject constructor(
     companion object {
         const val ENTRY_TYPE = "compaction"
         private const val MAX_SUMMARY_CHARS = 4_800
+        /**
+         * 每次 project() 最多从 Room 加载并反序列化的 entry 数量上限。
+         * 超长会话保护：entry 平均约 2KB payload，600 条≈1.2MB 原始 JSON，
+         * 在 256MB 堆上加上其他并发会话仍有安全余量。
+         * compaction 摘要已语义覆盖早期历史，尾部 entries 最具上下文价值。
+         */
+        private const val MAX_BRANCH_ENTRIES = 600
     }
 }

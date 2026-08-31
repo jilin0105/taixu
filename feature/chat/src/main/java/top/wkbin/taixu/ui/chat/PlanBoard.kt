@@ -12,8 +12,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LinearProgressIndicator
@@ -226,6 +229,142 @@ internal fun SessionPlanBoardCard(
                                     step.isCompleted -> MaterialTheme.colorScheme.onSurfaceVariant
                                     else -> Color.Unspecified
                                 },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 常驻置底计划条：固定在消息列表与输入框之间，消息滚动时始终可见。
+ *
+ * 折叠态：单行显示「当前步骤（首个未完成项）」+ 进度计数 + 细进度条。
+ * 展开态：inline 展示完整步骤列表（与 [SessionPlanBoardCard] 同款步骤渲染）。
+ * 全部完成时显示「✓ 所有步骤已完成」。
+ */
+@Composable
+internal fun StickyPlanBar(
+    goal: String,
+    steps: List<PlanStepUi>,
+    modifier: Modifier = Modifier,
+) {
+    if (steps.isEmpty()) return
+    val haptic = LocalHapticFeedback.current
+    var expanded by remember { mutableStateOf(false) }
+    val completedCount = steps.count { it.isCompleted }
+    val allDone = completedCount == steps.size
+    val activeStep = steps.firstOrNull { !it.isCompleted }
+
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp))
+            .clickable {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                expanded = !expanded
+            },
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp),
+        border = BorderStroke(
+            1.dp,
+            if (allDone) MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+            else MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+        ),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).animateContentSize(),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            // ── 标题行 ──
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                RuntimeIcon(
+                    if (allDone) RuntimeIconName.Check else RuntimeIconName.List,
+                    Modifier.size(14.dp),
+                    if (allDone) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = when {
+                        allDone -> stringResource(R.string.chat_plan_bar_all_done)
+                        activeStep != null -> activeStep.title
+                        else -> goal.ifBlank { stringResource(R.string.chat_plan_board_header) }
+                    },
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                    color = if (allDone) MaterialTheme.colorScheme.onSurfaceVariant else Color.Unspecified,
+                )
+                // 进度计数 chip
+                Surface(
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                    shape = RoundedCornerShape(4.dp),
+                ) {
+                    Text(
+                        stringResource(R.string.chat_plan_board_progress, completedCount, steps.size),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                RuntimeIcon(
+                    if (expanded) RuntimeIconName.ChevronDown else RuntimeIconName.ChevronRight,
+                    Modifier.size(12.dp),
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                )
+            }
+            // 细进度条（始终显示）
+            LinearProgressIndicator(
+                progress = { PlanStepParser.progress(steps) },
+                modifier = Modifier.fillMaxWidth().height(2.dp).clip(CircleShape),
+                color = if (allDone) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+            )
+            // 展开：完整步骤列表（带最大高度保护与垂直滚动）
+            AnimatedVisibility(visible = expanded) {
+                Column(
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .heightIn(max = 220.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    steps.forEach { step ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            if (step.isCompleted) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(13.dp)
+                                        .background(MaterialTheme.colorScheme.primary, CircleShape),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    RuntimeIcon(RuntimeIconName.Check, Modifier.size(8.dp), MaterialTheme.colorScheme.onPrimary)
+                                }
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(13.dp)
+                                        .border(1.5.dp, MaterialTheme.colorScheme.outline, CircleShape),
+                                )
+                            }
+                            Text(
+                                step.title,
+                                style = MaterialTheme.typography.bodySmall,
+                                textDecoration = if (step.isCompleted) TextDecoration.LineThrough else null,
+                                color = when {
+                                    step.isCompleted -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    step == activeStep -> Color.Unspecified
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                                },
+                                fontWeight = if (step == activeStep) FontWeight.SemiBold else null,
                             )
                         }
                     }

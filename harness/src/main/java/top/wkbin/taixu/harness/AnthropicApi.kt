@@ -1,4 +1,4 @@
-package top.wkbin.taixu.harness
+﻿package top.wkbin.taixu.harness
 
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
@@ -313,7 +313,9 @@ internal class AnthropicApi(
                     header(name, value)
                 }
             }
-            .post(requestBody.toString().toRequestBody(JSON_MEDIA_TYPE))
+            // 直接序列化为 ByteArray，省去 JsonObject->String->ByteArray 中间的 String 副本，
+            // 高峰时减少一份完整请求体大小的临时堆驻留。
+            .post(requestBody.toString().encodeToByteArray().toRequestBody(JSON_MEDIA_TYPE))
             .build()
     }
 

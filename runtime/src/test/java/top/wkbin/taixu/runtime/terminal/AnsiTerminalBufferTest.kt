@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.ui.terminal
+package top.wkbin.taixu.ui.terminal
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -89,5 +89,25 @@ class AnsiTerminalBufferTest {
         assertEquals(true, buffer.isBracketedPasteEnabled())
         buffer.append("\u001B[?2004l")
         assertEquals(false, buffer.isBracketedPasteEnabled())
+    }
+
+    @Test
+    fun wideCharactersOverwritingExistingSpacesDoNotLeaveSpaces() {
+        val buffer = AnsiTerminalBuffer(columns = 20, maxRows = 10)
+        // 模拟 readline/bash：先清行，再输入中文字符
+        buffer.append("abcdefgh")
+        val screen = buffer.append("\u001B[1G\u001B[K你好太墟")
+
+        val line = screen.first()
+        assertEquals("你好太墟", line.cells.joinToString("") { it.character })
+        assertEquals(8, buffer.cursor().column)
+        assertEquals("你", line.cells[0].character)
+        assertEquals("", line.cells[1].character)
+        assertEquals("好", line.cells[2].character)
+        assertEquals("", line.cells[3].character)
+        assertEquals("太", line.cells[4].character)
+        assertEquals("", line.cells[5].character)
+        assertEquals("墟", line.cells[6].character)
+        assertEquals("", line.cells[7].character)
     }
 }

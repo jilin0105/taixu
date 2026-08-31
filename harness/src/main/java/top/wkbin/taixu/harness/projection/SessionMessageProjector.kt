@@ -136,8 +136,13 @@ class SessionMessageProjector @Inject constructor(
     override suspend fun publishPersisted(sessionId: String, message: HarnessMessage) {
         val flow = messagesFlow(sessionId)
         flow.update { current ->
-            if (current.any { it.id == message.id }) current.map { if (it.id == message.id) message else it }
-            else current + message
+            val idx = current.indexOfFirst { it.id == message.id }
+            if (idx >= 0) {
+                // in-place 替换：避免整列 map() copy 产生的额外 List 对象（工具密集轮次频繁触发）
+                current.toMutableList().apply { this[idx] = message }
+            } else {
+                current + message
+            }
         }
         mirrorIfForeground(sessionId, flow.value)
         if (message is AssistantText) streamingSessions.remove(sessionId)
@@ -217,6 +222,11 @@ class SessionMessageProjector @Inject constructor(
     }
 
     private companion object {
-        const val MAX_CACHED_SESSIONS = 8
+        /**
+         * 内存中最多缓存的会话实时消息流数量。
+         * 降至 4：每个缓存会话在长对话场景下驻留的 List<HarnessMessage> 可达数 MB，
+         * 256MB 堆上 8 个并发会话容易触发 OOM；4 可覆盖常见多会话工作流且安全余量更充足。
+         */
+        const val MAX_CACHED_SESSIONS = 4
     }
 }

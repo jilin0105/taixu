@@ -89,7 +89,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
@@ -169,8 +171,7 @@ fun TerminalScreen(
         charWidth to lineHeight
     }
 
-    var fieldText by remember { mutableStateOf("") }
-    var lastText by remember { mutableStateOf("") }
+    var textFieldValue by remember { mutableStateOf(TextFieldValue()) }
 
     val copyScreen = {
         val text = screen.joinToString("\n") { line ->
@@ -467,16 +468,19 @@ fun TerminalScreen(
 
                         // 透明输入锚点
                         BasicTextField(
-                            value = fieldText,
-                            onValueChange = { new ->
-                                val delta = if (new.startsWith(lastText) && new.length > lastText.length) {
-                                    new.removePrefix(lastText)
+                            value = textFieldValue,
+                            onValueChange = { newValue ->
+                                if (newValue.composition != null) {
+                                    // 输入法正在组合输入（例如拼音输入中），暂不提交到终端
+                                    textFieldValue = newValue
                                 } else {
-                                    new
+                                    // 输入法已确认提交或直接输入字符
+                                    val textToSend = newValue.text
+                                    if (textToSend.isNotEmpty()) {
+                                        viewModel.sendText(textToSend)
+                                    }
+                                    textFieldValue = TextFieldValue("")
                                 }
-                                if (delta.isNotEmpty()) viewModel.sendText(delta)
-                                lastText = new
-                                fieldText = new
                             },
                             modifier = Modifier
                                 .size(1.dp)
@@ -488,16 +492,21 @@ fun TerminalScreen(
                                     if (event.type == KeyEventType.KeyDown) {
                                         when {
                                             event.key == Key.Enter -> {
-                                                viewModel.sendText("\r")
-                                                fieldText = ""
-                                                lastText = ""
-                                                true
+                                                if (textFieldValue.composition == null) {
+                                                    viewModel.sendText("\r")
+                                                    textFieldValue = TextFieldValue("")
+                                                    true
+                                                } else {
+                                                    false
+                                                }
                                             }
                                             event.key == Key.Backspace && !event.isCtrlPressed -> {
-                                                viewModel.sendText("\u007f")
-                                                fieldText = fieldText.dropLast(1)
-                                                lastText = fieldText
-                                                true
+                                                if (textFieldValue.composition == null && textFieldValue.text.isEmpty()) {
+                                                    viewModel.sendText("\u007f")
+                                                    true
+                                                } else {
+                                                    false
+                                                }
                                             }
                                             else -> viewModel.onTerminalKey(event)
                                         }
@@ -507,14 +516,16 @@ fun TerminalScreen(
                             cursorBrush = SolidColor(Color.Transparent),
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(
-                                imeAction = ImeAction.Send,
-                                keyboardType = KeyboardType.Password,
+                                capitalization = KeyboardCapitalization.None,
                                 autoCorrectEnabled = false,
+                                keyboardType = KeyboardType.Text,
+                                imeAction = ImeAction.Send,
                             ),
                             keyboardActions = KeyboardActions(onSend = {
-                                viewModel.sendText("\r")
-                                fieldText = ""
-                                lastText = ""
+                                if (textFieldValue.composition == null) {
+                                    viewModel.sendText("\r")
+                                    textFieldValue = TextFieldValue("")
+                                }
                             }),
                             decorationBox = { innerTextField -> innerTextField() },
                         )

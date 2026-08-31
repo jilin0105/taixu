@@ -150,16 +150,6 @@ internal fun ChatMessageList(
                     )
                 }
             }
-            // 结构化任务规划看板：plan 工具的真实数据源，与文本正则卡片互补。
-            activePlan?.let { plan ->
-                item(key = "session_plan_board") {
-                    SessionPlanBoardCard(
-                        goal = plan.goal,
-                        steps = PlanStepParser.parse(plan.stepsJson),
-                        modifier = Modifier.padding(bottom = 2.dp),
-                    )
-                }
-            }
             itemsIndexed(renderItems, key = { _, item -> item.stableKey }) { index, item ->
                 val top = when {
                     item is ChatRenderItem.MessageItem && item.message is UserMessage -> 12.dp

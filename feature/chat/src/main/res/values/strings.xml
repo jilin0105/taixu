@@ -275,6 +275,7 @@
     <!-- 会话级结构化任务规划看板（plan 工具数据源） -->
     <string name="chat_plan_board_header">任务执行规划</string>
     <string name="chat_plan_board_progress">%1$d / %2$d</string>
+    <string name="chat_plan_bar_all_done">所有计划步骤已完成</string>
     <!-- 审批请求过期提示 -->
     <string name="chat_approval_expires_minutes">约 %1$d 分钟后过期，逾期将自动失效</string>
     <string name="chat_approval_expires_soon">即将过期</string>
@@ -389,8 +390,12 @@
     <string name="chat_artifact_copy">复制</string>
     <string name="chat_artifact_share">分享</string>
     <string name="chat_artifact_save">保存修改</string>
+    <string name="chat_artifact_export">导出到外部</string>
+    <string name="chat_artifact_export_short">导出</string>
     <string name="chat_artifact_copied">已复制产物全文到剪贴板</string>
     <string name="chat_artifact_saved">已保存修改</string>
+    <string name="chat_artifact_export_success">已成功保存到外部目录</string>
+    <string name="chat_artifact_export_failed">导出失败：%1$s</string>
     <string name="chat_artifact_share_chooser">分享产物：%1$s</string>
     <!-- 运行详情兜底文案 -->
     <string name="chat_result_pending">结果生成中，暂无输出</string>

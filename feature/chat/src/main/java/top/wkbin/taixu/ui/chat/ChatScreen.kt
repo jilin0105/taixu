@@ -773,6 +773,19 @@ private fun ChatPaneContent(
             onResolveApproval = onResolveApproval,
         )
 
+        activePlan?.let { plan ->
+            val steps = remember(plan.stepsJson) { PlanStepParser.parse(plan.stepsJson) }
+            if (steps.isNotEmpty()) {
+                StickyPlanBar(
+                    goal = plan.goal,
+                    steps = steps,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                )
+            }
+        }
+
         error?.let {
             Surface(
                 modifier = Modifier

@@ -1,4 +1,4 @@
-package top.wkbin.taixu.harness
+﻿package top.wkbin.taixu.harness
 
 import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.database.HarnessSessionRepository
@@ -184,13 +184,18 @@ class ToolExecutor @Inject constructor(
             HarnessTool.WRITE -> {
                 val path = requireString(args, "path")
                 val content = requireString(args, "content")
-                activeFileAccess.write(path, content).toToolOutput("已写入 $path", actionName = "write")
+                val linesAdded = content.lines().size
+                activeFileAccess.write(path, content)
+                    .toToolOutput("已写入 $path\nDIFF_STAT: +$linesAdded -0", actionName = "write")
             }
             HarnessTool.EDIT -> {
                 val path = requireString(args, "path")
                 val oldText = requireString(args, "oldText")
                 val newText = requireString(args, "newText")
-                activeFileAccess.edit(path, oldText, newText).toToolOutput("已修改 $path", actionName = "edit")
+                val linesAdded = newText.lines().size
+                val linesDeleted = oldText.lines().size
+                activeFileAccess.edit(path, oldText, newText)
+                    .toToolOutput("已修改 $path\nDIFF_STAT: +$linesAdded -$linesDeleted", actionName = "edit")
             }
             HarnessTool.BASE -> executeBase(args, workspace)
             HarnessTool.PROCESS -> executeProcess(args, workspace)

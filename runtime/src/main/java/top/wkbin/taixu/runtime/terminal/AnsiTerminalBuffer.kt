@@ -299,13 +299,13 @@ class AnsiTerminalBuffer(
     }
 
     private fun write(character: String) {
-        if (cursorColumn >= columns) {
+        val cellWidth = unicodeWidth(character)
+        if (cursorColumn + cellWidth > columns) {
             lineFeed()
             cursorColumn = 0
         }
         val row = activeRows[cursorRow]
         while (row.size <= cursorColumn) row += TerminalCell(" ")
-        val cellWidth = unicodeWidth(character)
         if (cellWidth == 0 && cursorColumn > 0 && cursorColumn - 1 < row.size) {
             val previous = row[cursorColumn - 1]
             row[cursorColumn - 1] = previous.copy(character = previous.character + character)
@@ -324,7 +324,11 @@ class AnsiTerminalBuffer(
             width = cellWidth,
         )
         if (cellWidth == 2) {
-            while (row.size <= cursorColumn + 1) row += TerminalCell("", width = 0)
+            if (cursorColumn + 1 < row.size) {
+                row[cursorColumn + 1] = TerminalCell("", width = 0)
+            } else {
+                while (row.size <= cursorColumn + 1) row += TerminalCell("", width = 0)
+            }
         }
         cursorColumn += cellWidth
     }
