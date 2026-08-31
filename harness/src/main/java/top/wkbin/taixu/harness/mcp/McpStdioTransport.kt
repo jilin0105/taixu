@@ -4,12 +4,16 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -17,14 +21,17 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.encodeToJsonElement
 import top.wkbin.taixu.core.model.McpServerConfig
 import top.wkbin.taixu.core.model.McpToolInfo
+import top.wkbin.taixu.core.model.RuntimeState
 import top.wkbin.taixu.runtime.LinuxRuntime
 import top.wkbin.taixu.runtime.shell.LinuxSession
 import top.wkbin.taixu.runtime.shell.SessionConfig
+import kotlin.time.Duration.Companion.milliseconds
 
 /** Reusable newline-framed JSON-RPC sessions for stateful STDIO MCP servers. */
 @Singleton
@@ -44,33 +51,63 @@ class McpStdioTransport @Inject constructor(
         // 每分钟清扫一次，超过 IDLE_TIMEOUT 未活动的连接被关闭，下次调用按需重建。
         scope.launch {
             while (isActive) {
-                delay(SWEEP_INTERVAL_MS)
+                delay(SWEEP_INTERVAL_MS.milliseconds)
                 runCatching { sweepIdleOnce(System.currentTimeMillis()) }
             }
         }
     }
 
-    override suspend fun check(server: McpServerConfig): Boolean = runCatching {
+    override suspend fun check(server: McpServerConfig): Boolean = try {
         // 设置页手动检测连接不受冷却限制
         connection(server, bypassCooldown = true).withInitialized { true }
-    }.getOrDefault(false)
+    } catch (cancellation: CancellationException) {
+        discardConnection(server.id)
+        throw cancellation
+    } catch (_: Throwable) {
+        discardConnection(server.id)
+        false
+    }
 
-    override suspend fun discover(server: McpServerConfig): List<McpToolInfo> = connection(server).withInitialized {
-        val response = request("tools/list", JsonObject(emptyMap()))
-        val result = response.result?.let { json.decodeFromJsonElement(McpToolsListResponse.serializer(), it) }
-            ?: error("MCP tools/list did not return a result")
-        result.tools.map { dto -> dto.toInfo(server, json.encodeToString(JsonObject.serializer(), dto.inputSchema)) }
+    override suspend fun discover(server: McpServerConfig): List<McpToolInfo> = try {
+        connection(server).withInitialized {
+            val response = request("tools/list", JsonObject(emptyMap()))
+            val result = response.result?.let { json.decodeFromJsonElement(McpToolsListResponse.serializer(), it) }
+                ?: error("MCP tools/list did not return a result")
+            result.tools.map { dto -> dto.toInfo(server, json.encodeToString(JsonObject.serializer(), dto.inputSchema)) }
+        }
+    } catch (throwable: Throwable) {
+        // 超时、取消或协议损坏后不能复用半初始化连接，否则下一次请求会继续消费旧响应。
+        discardConnection(server.id)
+        throw throwable
     }
 
     override suspend fun execute(server: McpServerConfig, toolName: String, arguments: JsonObject): Pair<Boolean, String> =
-        connection(server).withInitialized {
-            val params = json.encodeToJsonElement(McpCallToolParams.serializer(), McpCallToolParams(toolName, arguments))
-            val response = request("tools/call", params)
-            val result = response.result?.let { json.decodeFromJsonElement(McpCallToolResult.serializer(), it) }
-                ?: error("MCP tools/call did not return a result")
-            !result.isError to result.content.joinToString("\n") { it.text.orEmpty() }
-                .ifBlank { if (result.isError) "执行失败" else "执行成功" }
+        try {
+            connection(server).withInitialized {
+                val params = json.encodeToJsonElement(McpCallToolParams.serializer(), McpCallToolParams(toolName, arguments))
+                val response = request("tools/call", params)
+                val result = response.result?.let { json.decodeFromJsonElement(McpCallToolResult.serializer(), it) }
+                    ?: error("MCP tools/call did not return a result")
+                !result.isError to result.content.joinToString("\n") { it.text.orEmpty() }
+                    .ifBlank { if (result.isError) "执行失败" else "执行成功" }
+            }
+        } catch (throwable: Throwable) {
+            discardConnection(server.id)
+            throw throwable
         }
+
+    /** 服务被禁用/删除或请求失败时立即释放常驻进程，不等待十分钟空闲回收。 */
+    suspend fun closeConnection(serverId: String) {
+        downUntil.remove(serverId)
+        discardConnection(serverId)
+    }
+
+    private suspend fun discardConnection(serverId: String) {
+        // 超时会先取消当前协程；清理必须在 NonCancellable 中完成，否则旧 PTY/响应队列仍会被复用。
+        withContext(NonCancellable + Dispatchers.IO) {
+            connections.remove(serverId)?.close()
+        }
+    }
 
     /**
      * 关闭所有空闲超时的连接；返回关闭数量。可见性放宽给单元测试直接驱动。
@@ -108,6 +145,11 @@ class McpStdioTransport @Inject constructor(
             it.markActive()
             return it
         }
+        // MCP 单例可能早于 Onboarding 的运行时恢复创建。预热时沙箱未就绪不代表服务故障，
+        // 不能因此写入三分钟冷却；运行时 Ready 后由下一次探测正常重试。
+        if (linuxRuntime.state.value !is RuntimeState.Ready) {
+            error("Linux 沙箱尚未就绪，暂不启动 MCP[${server.name}]")
+        }
         val now = System.currentTimeMillis()
         if (!bypassCooldown) {
             val until = downUntil[server.id]
@@ -122,7 +164,7 @@ class McpStdioTransport @Inject constructor(
         // startSession 本身无内部超时，沙箱忙或 PRoot 异常时会无限挂起且不留任何日志；
         // 这里必须有界，让挂起在 10s 内转化为可被上层记录的失败。
         val session = try {
-            withTimeoutOrNull(STARTUP_TIMEOUT_MS) {
+            withTimeoutOrNull(STARTUP_TIMEOUT_MS.milliseconds) {
                 linuxRuntime.startSession(
                     SessionConfig(
                         workingDirectory = "/root",
@@ -215,17 +257,33 @@ class McpStdioTransport @Inject constructor(
             markActive()
             val id = UUID.randomUUID().toString()
             write(json.encodeToString(JsonRpcRequest.serializer(), JsonRpcRequest(id = id, method = method, params = params)))
-            return withTimeout(timeoutMs) {
+            return withTimeout(timeoutMs.milliseconds) {
+                var ignoredFrames = 0
                 while (true) {
-                    val element = runCatching { json.parseToJsonElement(lines.receive()) }.getOrNull() ?: continue
+                    currentCoroutineContext().ensureActive()
+                    val rawLine = lines.receive()
+                    val element = withContext(Dispatchers.Default) {
+                        runCatching { json.parseToJsonElement(rawLine) }.getOrNull()
+                    }
+                    if (element == null) {
+                        ignoredFrames++
+                        require(ignoredFrames <= MAX_IGNORED_FRAMES) { "MCP 输出了过多无效 JSON 行" }
+                        continue
+                    }
                     // PTY 会话的行规则可能回显请求原文、或透出服务器日志；带 method 字段的
                     // 行是请求/通知，不可能是响应，跳过以避免同 id 无 result 的误匹配。
-                    if (element is JsonObject && element.containsKey("method")) continue
+                    if (element is JsonObject && element.containsKey("method")) {
+                        ignoredFrames++
+                        require(ignoredFrames <= MAX_IGNORED_FRAMES) { "MCP 输出了过多请求回显或通知" }
+                        continue
+                    }
                     val parsed = runCatching { json.decodeFromJsonElement(JsonRpcResponse.serializer(), element) }.getOrNull()
                     if (parsed?.id == id) {
                         parsed.error?.let { error("MCP JSON-RPC ${it.code}: ${it.message}") }
                         return@withTimeout parsed
                     }
+                    ignoredFrames++
+                    require(ignoredFrames <= MAX_IGNORED_FRAMES) { "MCP 未返回当前请求的响应（id=$id）" }
                 }
                 @Suppress("UNREACHABLE_CODE") error("unreachable")
             }
@@ -269,6 +327,7 @@ class McpStdioTransport @Inject constructor(
         private const val CALL_REQUEST_TIMEOUT_MS = 600_000L
         private const val MAX_BUFFERED_LINES = 64
         private const val MAX_FRAME_CHARS = 1 * 1024 * 1024
+        private const val MAX_IGNORED_FRAMES = 256
 
         /** 空闲连接回收阈值与清扫周期。 */
         internal const val IDLE_TIMEOUT_MS = 10 * 60 * 1000L

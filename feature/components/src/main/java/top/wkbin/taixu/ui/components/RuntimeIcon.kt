@@ -29,9 +29,11 @@ import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.DownloadForOffline
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.FolderShared
@@ -98,7 +100,7 @@ enum class RuntimeIconName {
     Bot, Palette, FontSize, Battery, Bug, Update, Extension, Hub, Mount, OpenInNew, Key, Tune,
     Brain, Sparkles, Vibrate, FolderDownload, Document, SdCard, Server, Compress,
     Prompt, Wrench, Model, Network, Community, FolderOpen, Speed, Cable, Admin, Link,
-    Reverse, PowerSettingsNew, Visibility, VisibilityOff,
+    Reverse, PowerSettingsNew, Visibility, VisibilityOff, Sponsor, Mail,
 }
 
 /** Official Material & Customized Brand vector icons, shared by every screen for consistent optical weight. */
@@ -256,6 +258,8 @@ private fun RuntimeIconName.materialVector(): ImageVector = when (this) {
     RuntimeIconName.Link -> Icons.Outlined.Link
     RuntimeIconName.Reverse -> Icons.Outlined.LockOpen
     RuntimeIconName.PowerSettingsNew -> Icons.Outlined.PowerSettingsNew
+    RuntimeIconName.Sponsor -> Icons.Outlined.FavoriteBorder
+    RuntimeIconName.Mail -> Icons.Outlined.Email
     // 专有品牌矢量
     RuntimeIconName.Linux -> LinuxVector
     RuntimeIconName.Debian,

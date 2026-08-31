@@ -4,15 +4,19 @@ import top.wkbin.taixu.core.database.AiModelRepository
 import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.core.tools.ProviderRepository
 import java.io.IOException
+import java.net.SocketTimeoutException
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -80,12 +84,13 @@ internal class ChatApi(
         model: ModelConfig,
         messages: List<ApiMessage>,
         onReasoning: (String) -> Unit = {},
+        onToolProgress: (ToolCallStreamProgress) -> Unit = {},
         onDelta: (String) -> Unit,
     ): ChatResult = try {
-        executeStream(model, messages, onReasoning, onDelta, includeUsage = true)
+        executeStream(model, messages, onReasoning, onToolProgress, onDelta, includeUsage = true)
     } catch (rejected: IllegalStateException) {
         if (rejected.message?.contains("stream_options", ignoreCase = true) == true) {
-            executeStream(model, messages, onReasoning, onDelta, includeUsage = false)
+            executeStream(model, messages, onReasoning, onToolProgress, onDelta, includeUsage = false)
         } else {
             throw rejected
         }
@@ -96,6 +101,7 @@ internal class ChatApi(
         model: ModelConfig,
         messages: List<ApiMessage>,
         onReasoning: (String) -> Unit,
+        onToolProgress: (ToolCallStreamProgress) -> Unit,
         onDelta: (String) -> Unit,
         includeUsage: Boolean,
     ): ChatResult = withContext(Dispatchers.IO) {
@@ -104,6 +110,15 @@ internal class ChatApi(
         // 关闭底层 socket，阻塞读才会立刻抛出 IOException 退出——否则要等读超时（最长 3 分钟），
         // 表现为"停止按钮没反应"。
         val cancelHandle = coroutineContext[Job]?.invokeOnCompletion(onCancelling = true) { call.cancel() }
+        // source.timeout() 只有收到 HTTP 响应头后才生效。看门狗覆盖 DNS、连接、请求体上传、
+        // 等待响应头以及首个 SSE 事件的完整阶段，避免大请求仍静默等满 callTimeout。
+        val firstEventState = AtomicInteger(ProviderClient.FIRST_EVENT_WAITING)
+        val firstEventWatchdog = launch {
+            delay(ProviderClient.FIRST_STREAM_EVENT_TIMEOUT_MS)
+            if (firstEventState.compareAndSet(ProviderClient.FIRST_EVENT_WAITING, ProviderClient.FIRST_EVENT_TIMED_OUT)) {
+                call.cancel()
+            }
+        }
         try {
             call.execute().use { response ->
                 if (!response.isSuccessful) {
@@ -123,6 +138,13 @@ internal class ChatApi(
                     val data = line.removePrefix("data:").trim()
                     if (data == "[DONE]") break
                     val root = runCatching { json.parseToJsonElement(data) as? JsonObject }.getOrNull()
+                    if (root != null && firstEventState.compareAndSet(
+                            ProviderClient.FIRST_EVENT_WAITING,
+                            ProviderClient.FIRST_EVENT_RECEIVED,
+                        )
+                    ) {
+                        firstEventWatchdog.cancel()
+                    }
                     // usage 块位于 chunk 顶层（stream_options.include_usage 时由最后一个 chunk 携带；
                     // DeepSeek/OpenRouter 等默认就会发）。后面的块覆盖前面的，保留最终值。
                     (root?.get("usage") as? JsonObject)?.let { block ->
@@ -156,9 +178,11 @@ internal class ChatApi(
                             ?.takeIf { it.isNotEmpty() }?.let { accum.name = it }
                         function?.get("arguments")?.let { it as? JsonPrimitive }?.contentOrNull
                             ?.let { accum.arguments.append(it) }
+                        accum.publishProgress(onToolProgress)
                     }
                 }
                 demuxer.flush()
+                toolCalls.values.forEach { it.publishProgress(onToolProgress, force = true) }
                 // 部分 OpenAI 兼容端对无参数函数不下发 arguments 分片，空串须兜底为 "{}"
                 val calls = toolCalls.values.map {
                     ApiToolCallSpec(it.id, it.name, it.arguments.toString().ifBlank { "{}" })
@@ -170,7 +194,15 @@ internal class ChatApi(
                     usage = usage,
                 )
             }
+        } catch (io: IOException) {
+            if (firstEventState.get() == ProviderClient.FIRST_EVENT_TIMED_OUT) {
+                throw SocketTimeoutException(
+                    "等待模型首个响应超过 ${ProviderClient.FIRST_STREAM_EVENT_TIMEOUT_MS / 1000}s",
+                ).apply { initCause(io) }
+            }
+            throw io
         } finally {
+            firstEventWatchdog.cancel()
             cancelHandle?.dispose()
         }
     }
@@ -277,7 +309,96 @@ internal data class ToolCallAccumulator(
     var id: String = "",
     var name: String = "",
     val arguments: StringBuilder = StringBuilder(),
+) {
+    private var lastProgressAtNanos: Long = 0L
+    private var lastProgress: Pair<Int, Int>? = null
+
+    /**
+     * 工具参数本身也是 SSE 分片。WRITE/EDIT 在完整 JSON 到达前不能执行，但可以从
+     * 已收到的 JSON 字符串片段估算增删行数，避免大文件生成期间 UI 长时间停在“思考中”。
+     */
+    fun publishProgress(onProgress: (ToolCallStreamProgress) -> Unit, force: Boolean = false) {
+        val normalizedName = name.trim().lowercase()
+        if (normalizedName != "write" && normalizedName != "edit") return
+        val now = System.nanoTime()
+        if (!force && lastProgressAtNanos != 0L && now - lastProgressAtNanos < TOOL_PROGRESS_INTERVAL_NANOS) return
+
+        val progress = when (normalizedName) {
+            "write" -> ToolCallStreamProgress(
+                name = normalizedName,
+                addedLines = countPartialJsonStringLines(arguments, "content") ?: 0,
+                deletedLines = 0,
+            )
+            else -> ToolCallStreamProgress(
+                name = normalizedName,
+                addedLines = countPartialJsonStringLines(arguments, "newText") ?: 0,
+                deletedLines = countPartialJsonStringLines(arguments, "oldText") ?: 0,
+            )
+        }
+        val counts = progress.addedLines to progress.deletedLines
+        if (force || counts != lastProgress) {
+            lastProgress = counts
+            lastProgressAtNanos = now
+            onProgress(progress)
+        }
+    }
+
+    private companion object {
+        const val TOOL_PROGRESS_INTERVAL_NANOS = 200_000_000L
+    }
+}
+
+/** WRITE/EDIT 工具参数流的轻量进度；只用于 UI，不参与最终文件写入。 */
+data class ToolCallStreamProgress(
+    val name: String,
+    val addedLines: Int,
+    val deletedLines: Int,
 )
+
+/**
+ * 从尚未闭合的 JSON 参数中读取指定字符串字段的当前行数。
+ * JSON 中换行通常是 `\n`；转义反斜杠 `\\n` 不应误判为新行。
+ */
+internal fun countPartialJsonStringLines(arguments: CharSequence, fieldName: String): Int? {
+    val key = "\"$fieldName\""
+    var searchFrom = 0
+    while (searchFrom < arguments.length) {
+        val keyStart = arguments.indexOf(key, searchFrom)
+        if (keyStart < 0) return null
+        var cursor = keyStart + key.length
+        while (cursor < arguments.length && arguments[cursor].isWhitespace()) cursor++
+        if (cursor >= arguments.length) return null
+        if (arguments[cursor] != ':') {
+            searchFrom = keyStart + key.length
+            continue
+        }
+        cursor++
+        while (cursor < arguments.length && arguments[cursor].isWhitespace()) cursor++
+        if (cursor >= arguments.length) return null
+        if (arguments[cursor] != '"') {
+            searchFrom = keyStart + key.length
+            continue
+        }
+        cursor++
+        var lines = 1
+        var escaped = false
+        while (cursor < arguments.length) {
+            val char = arguments[cursor++]
+            if (escaped) {
+                if (char == 'n') lines++
+                escaped = false
+            } else {
+                when (char) {
+                    '\\' -> escaped = true
+                    '\n' -> lines++
+                    '"' -> return lines
+                }
+            }
+        }
+        return lines
+    }
+    return null
+}
 
 /** 解析后的模型运行配置。 */
 data class ModelConfig(
@@ -569,11 +690,24 @@ class ProviderClient @Inject constructor(
         model: ModelConfig,
         messages: List<ApiMessage>,
         onReasoning: (String) -> Unit = {},
+        onToolProgress: (ToolCallStreamProgress) -> Unit = {},
         onDelta: (String) -> Unit,
     ): ChatResult = executeWithRotatedApiKey(model, apiKeyScheduler) { selected ->
         when (selected.protocol) {
-            ApiProtocol.ANTHROPIC -> AnthropicApi(httpClient, json).chatStream(selected, messages, onReasoning, onDelta)
-            ApiProtocol.OPENAI -> ChatApi(httpClient, json).chatStream(selected, messages, onReasoning, onDelta)
+            ApiProtocol.ANTHROPIC -> AnthropicApi(httpClient, json).chatStream(
+                selected,
+                messages,
+                onReasoning,
+                onToolProgress,
+                onDelta,
+            )
+            ApiProtocol.OPENAI -> ChatApi(httpClient, json).chatStream(
+                selected,
+                messages,
+                onReasoning,
+                onToolProgress,
+                onDelta,
+            )
         }
     }
 
@@ -581,6 +715,12 @@ class ProviderClient @Inject constructor(
         const val DEFAULT_BASE_URL = "https://api.openai.com/v1"
         const val DEFAULT_MODEL = "gpt-4o-mini"
         private const val CALL_TIMEOUT_MS = 3 * 60 * 1000L
+
+        /** 大请求若迟迟没有任何合法 SSE 事件，应尽早失败并向 UI 暴露重试，而不是静默等满 3 分钟。 */
+        internal const val FIRST_STREAM_EVENT_TIMEOUT_MS = 90_000L
+        internal const val FIRST_EVENT_WAITING = 0
+        internal const val FIRST_EVENT_RECEIVED = 1
+        internal const val FIRST_EVENT_TIMED_OUT = 2
 
         /**
          * 单回合推理内容的累积上限（字符）。推理是执行过程草稿，不是长期上下文；
@@ -710,7 +850,7 @@ class ProviderClient @Inject constructor(
             return LlmRateLimitException(message, retrySeconds, quotaExhausted)
         }
 
-        private const val READ_TIMEOUT_MS = 3 * 60 * 1000L
+        internal const val READ_TIMEOUT_MS = 3 * 60 * 1000L
         internal val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
         /** 工具 JSON Schema，与 ToolExecutor 的参数契约一一对应。 */

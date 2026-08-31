@@ -7,8 +7,9 @@ import org.junit.Test
 
 class ProviderEndpointPolicyTest {
     @Test
-    fun acceptsHttpsAndExactLoopbackHttpHosts() {
+    fun acceptsHttpsAndHttpHosts() {
         assertTrue(ProviderEndpointPolicy.isSafeBaseUrl("https://api.example.com/v1"))
+        assertTrue(ProviderEndpointPolicy.isSafeBaseUrl("http://www.wlgs.top:8521/v1"))
         assertTrue(ProviderEndpointPolicy.isSafeBaseUrl("http://localhost:8080/v1"))
         assertTrue(ProviderEndpointPolicy.isSafeBaseUrl("http://127.0.0.1:8080"))
         assertTrue(ProviderEndpointPolicy.isSafeBaseUrl("http://[::1]:8080"))

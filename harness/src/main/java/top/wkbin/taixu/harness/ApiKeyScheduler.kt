@@ -3,6 +3,7 @@ package top.wkbin.taixu.harness
 import java.security.MessageDigest
 import java.util.ArrayDeque
 import kotlinx.coroutines.delay
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * 进程内的 Key 轮询与滑动窗口限流器。它只保留 Key 的 SHA-256 标识和请求时间，
@@ -98,7 +99,7 @@ internal suspend fun <T> executeWithRotatedApiKey(
         if (selectedKey == null) {
             if (excluded.size >= keys.size) throw requireNotNull(lastRateLimit)
             if (selection.waitMillis > 0L) {
-                delay(selection.waitMillis)
+                delay(selection.waitMillis.milliseconds)
                 continue
             }
             throw lastRateLimit ?: IllegalStateException("当前模型没有可用的 API Key")

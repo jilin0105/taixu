@@ -1038,23 +1038,57 @@ class HarnessLoop @Inject constructor(
         val streamReasoning = StreamBuffer(maxChars = ProviderClient.MAX_STREAM_REASONING_CHARS)
         var streamed: ChatResult? = null
         var netRetry = 0
-        // Context and prompt are immutable for retries of the same provider effect.
-        // Rebuilding here used to repeat Room/DataStore/filesystem work on every network failure.
-        val requestMessages = contextAssembler.assemble(
+        suspend fun assembleFor(requestModel: ModelConfig) = contextAssembler.assemble(
             sessId = sessId,
-            model = model,
+            model = requestModel,
             workspacePath = sessionWorkspace,
             projectTypeOverride = sessionEntity?.projectType.orEmpty(),
             thinkingMode = stateMirrors.requestThinkingMode(sessId),
         )
+        fun estimateTokens(messages: List<ApiMessage>) = messages.sumOf { message ->
+            ContextWindowPolicy.estimateTokens(message.content.orEmpty()) +
+                ContextWindowPolicy.estimateTokens(message.reasoning_content.orEmpty()) +
+                message.tool_calls.orEmpty().sumOf { call ->
+                    ContextWindowPolicy.estimateTokens(call.function.name) +
+                        ContextWindowPolicy.estimateTokens(call.function.arguments)
+                } +
+                message.imageUrls.size * ESTIMATED_IMAGE_TOKENS
+        }
+        // Context and prompt remain immutable during network retries. 但在第一次发送前先做一次预检：
+        // 超大上下文主动按 64k 预算再压缩，避免把 80k~100k 请求反复推给首包延迟较高的兼容网关。
+        var requestMessages = assembleFor(model)
+        val originalEstimatedTokens = estimateTokens(requestMessages)
+        if (originalEstimatedTokens >= LARGE_REQUEST_TOKEN_THRESHOLD) {
+            val compactedModel = model.copy(
+                contextTokens = model.contextTokens?.coerceAtMost(LARGE_REQUEST_CONTEXT_BUDGET)
+                    ?: LARGE_REQUEST_CONTEXT_BUDGET,
+            )
+            requestMessages = assembleFor(compactedModel)
+            agentEventLogger.log(
+                sessId,
+                "LargeContextCompaction",
+                "发送前上下文压缩：约 $originalEstimatedTokens → ${estimateTokens(requestMessages)} tokens",
+            )
+        }
+        val estimatedRequestTokens = estimateTokens(requestMessages)
+        val maxNetworkRetries = maxNetworkRetriesFor(originalEstimatedTokens, retryPolicy.maxRetries)
+        val maxAttempts = maxNetworkRetries + 1
+        if (maxNetworkRetries < retryPolicy.maxRetries) {
+            agentEventLogger.log(
+                sessId,
+                "LargeContextRetryPolicy",
+                "估算输入约 $estimatedRequestTokens tokens，大上下文网络重试限制为 $maxNetworkRetries 次",
+            )
+        }
         while (streamed == null) {
             try {
+                stateMirrors.setStatus(sessId, "等待模型首个响应（${netRetry + 1}/$maxAttempts）")
                 operationCoordinator.providerIntent(
                     operationId = operationId,
                     effectId = assistantId,
                     round = round,
                     attempt = netRetry + 1,
-                    maxAttempts = retryPolicy.maxAttempts,
+                    maxAttempts = maxAttempts,
                 )
                 streamed = providerClient.chatStream(
                     model,
@@ -1066,6 +1100,17 @@ class HarnessLoop @Inject constructor(
                         streamReasoning.publishIfDue(now(), ProviderClient.STREAM_PUBLISH_INTERVAL_MS)?.let {
                             messageProjector.streamReasoning(sessId, assistantId, assistantAt, it)
                         }
+                    },
+                    onToolProgress = { progress ->
+                        stateMirrors.setThinkingLive(sessId, false)
+                        stateMirrors.setStatus(
+                            sessId,
+                            if (progress.name == "write") {
+                                "正在生成 write · +${progress.addedLines}"
+                            } else {
+                                "正在生成 edit · +${progress.addedLines} -${progress.deletedLines}"
+                            },
+                        )
                     },
                 ) { chunk ->
                     stateMirrors.setStatus(sessId, "回复中")
@@ -1096,28 +1141,28 @@ class HarnessLoop @Inject constructor(
                     return ProviderCallOutcome.Failed("模型服务商额度已耗尽，无法继续执行。请充值、切换可用模型或更新 API Key。$detail")
                 }
                 netRetry++
-                if (netRetry > retryPolicy.maxRetries) throw rateLimit
+                if (netRetry > maxNetworkRetries) throw rateLimit
                 metrics.streamRetry()
                 stateMirrors.setThinkingLive(sessId, false)
                 val waitSeconds = rateLimit.retryAfterSeconds ?: (netRetry * RETRY_BACKOFF_SEC).coerceAtMost(60L)
-                stateMirrors.setStatus(sessId, "请求受限，${waitSeconds} 秒后自动重试（$netRetry/$MAX_STREAM_RETRIES）")
-                agentEventLogger.log(sessId, "RateLimitRetry", "限流退避 ${waitSeconds}s，重试 $netRetry/$MAX_STREAM_RETRIES", rateLimit)
+                stateMirrors.setStatus(sessId, "请求受限，${waitSeconds} 秒后自动重试（$netRetry/$maxNetworkRetries）")
+                agentEventLogger.log(sessId, "RateLimitRetry", "限流退避 ${waitSeconds}s，重试 $netRetry/$maxNetworkRetries", rateLimit)
                 streamText.clear()
                 streamReasoning.clear()
                 messageProjector.streamText(sessId, assistantId, assistantAt, "")
                 for (remaining in waitSeconds downTo 1L) {
                     currentCoroutineContext().ensureActive()
-                    stateMirrors.setStatus(sessId, "请求受限，${remaining} 秒后自动重试（$netRetry/$MAX_STREAM_RETRIES）")
+                    stateMirrors.setStatus(sessId, "请求受限，${remaining} 秒后自动重试（$netRetry/$maxNetworkRetries）")
                     delay(1000L.milliseconds)
                 }
             } catch (io: IOException) {
                 currentCoroutineContext().ensureActive()
                 netRetry++
+                agentEventLogger.log(sessId, "NetworkRetry", "网络中断重试 $netRetry/$maxNetworkRetries: ${io.message}", io)
+                if (netRetry > maxNetworkRetries) throw io
                 metrics.streamRetry()
-                agentEventLogger.log(sessId, "NetworkRetry", "网络中断重试 $netRetry/$MAX_STREAM_RETRIES: ${io.message}", io)
-                if (netRetry > retryPolicy.maxRetries) throw io
                 stateMirrors.setThinkingLive(sessId, false)
-                stateMirrors.setStatus(sessId, "网络中断，重试中（$netRetry/$MAX_STREAM_RETRIES）")
+                stateMirrors.setStatus(sessId, "网络中断，重试中（$netRetry/$maxNetworkRetries）")
                 streamText.clear()
                 streamReasoning.clear()
                 messageProjector.streamText(sessId, assistantId, assistantAt, "")
@@ -1717,7 +1762,17 @@ class HarnessLoop @Inject constructor(
             .filter { it != HarnessTool.MCP }
             .map { HarnessApiMapper.apiName(it) }
             .toSet() + "subagent"
-        const val MAX_STREAM_RETRIES = 5
+        private const val LARGE_REQUEST_TOKEN_THRESHOLD = 64_000
+        private const val LARGE_REQUEST_CONTEXT_BUDGET = 64_000
+        private const val LARGE_REQUEST_MAX_RETRIES = 1
+        private const val ESTIMATED_IMAGE_TOKENS = 1_000
+
+        internal fun maxNetworkRetriesFor(estimatedRequestTokens: Int, configuredRetries: Int): Int =
+            if (estimatedRequestTokens >= LARGE_REQUEST_TOKEN_THRESHOLD) {
+                minOf(configuredRetries, LARGE_REQUEST_MAX_RETRIES)
+            } else {
+                configuredRetries
+            }
         const val RETRY_BACKOFF_MS = 1_000L
         const val RETRY_BACKOFF_SEC = 2L
 

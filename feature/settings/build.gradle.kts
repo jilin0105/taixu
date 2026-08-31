@@ -42,6 +42,8 @@ dependencies {
     implementation(project(":feature:components"))
     implementation(project(":feature:theme"))
     implementation(libs.backdrop)
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
     implementation(project(":core:datastore"))
     implementation(project(":core:database"))
     implementation(project(":core:network"))

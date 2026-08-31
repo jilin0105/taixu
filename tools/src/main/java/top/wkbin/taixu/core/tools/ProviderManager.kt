@@ -92,21 +92,14 @@ object ProviderEndpointPolicy {
             if (httpUrl.username.isNotEmpty() || httpUrl.password.isNotEmpty()) return false
             val host = httpUrl.host.lowercase()
             if (host.isBlank()) return false
-            return when (httpUrl.scheme.lowercase()) {
-                "https" -> true
-                "http" -> isLocalOrPrivateHost(host)
-                else -> false
-            }
+            return httpUrl.scheme.equals("https", ignoreCase = true) ||
+                httpUrl.scheme.equals("http", ignoreCase = true)
         }
 
         val uri = runCatching { java.net.URI(normalized) }.getOrNull() ?: return false
         if (uri.userInfo != null || uri.host.isNullOrBlank()) return false
-        val host = uri.host.lowercase()
-        return when (uri.scheme?.lowercase()) {
-            "https" -> true
-            "http" -> isLocalOrPrivateHost(host)
-            else -> false
-        }
+        return uri.scheme.equals("https", ignoreCase = true) ||
+            uri.scheme.equals("http", ignoreCase = true)
     }
 
     private fun isLocalOrPrivateHost(host: String): Boolean {

@@ -65,6 +65,7 @@ sealed interface AppDestination : NavKey
 @Serializable data object AppearanceSettingsDestination : AppDestination
 @Serializable data object SystemDevSettingsDestination : AppDestination
 @Serializable data object AboutCommunityDestination : AppDestination
+@Serializable data object SponsorDestination : AppDestination
 @Serializable data object AgentSettingsDestination : AppDestination
 @Serializable data object AgentSubagentSettingsDestination : AppDestination
 @Serializable data object AgentSkillSettingsDestination : AppDestination
@@ -262,8 +263,12 @@ fun TaiXuNavHost() {
             entry<AboutCommunityDestination> {
                 top.wkbin.taixu.ui.settings.AboutCommunityScreen(
                     onBack = ::popBack,
+                    onOpenSponsor = { settingsStack.push(SponsorDestination) },
                     viewModel = settingsViewModel,
                 )
+            }
+            entry<SponsorDestination> {
+                top.wkbin.taixu.ui.settings.SponsorScreen(onBack = ::popBack)
             }
             entry<DistroManagementDestination> {
                 top.wkbin.taixu.ui.settings.DistroManagementScreen(

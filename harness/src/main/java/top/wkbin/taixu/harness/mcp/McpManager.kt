@@ -3,6 +3,7 @@ package top.wkbin.taixu.harness.mcp
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -18,6 +19,7 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import top.wkbin.taixu.core.common.logging.AppLogger
@@ -27,6 +29,7 @@ import top.wkbin.taixu.core.model.McpServerConfig
 import top.wkbin.taixu.core.model.McpToolInfo
 import top.wkbin.taixu.core.model.McpTransportType
 import top.wkbin.taixu.harness.events.AgentEventLogger
+import kotlin.time.Duration.Companion.milliseconds
 
 /** Thin MCP registry coordinator; transports own protocol and process details. */
 @Singleton
@@ -54,10 +57,17 @@ class McpManager @Inject constructor(
 
     fun getLastError(serverId: String): String? = lastErrors[serverId]
 
-    suspend fun checkConnection(server: McpServerConfig) = transport(server).check(server)
+    suspend fun checkConnection(server: McpServerConfig): Boolean = withContext(Dispatchers.IO) {
+        withTimeoutOrNull(DISCOVERY_TIMEOUT_MS.milliseconds) { transport(server).check(server) } ?: false
+    }
 
-    suspend fun refreshConnections() {
+    suspend fun refreshConnections() = withContext(Dispatchers.IO) {
         val servers = repository.servers.first()
+        servers.filterNot { it.isEnabled }.forEach { server ->
+            cache.remove(server.id)
+            lastErrors.remove(server.id)
+            if (server.transportType == McpTransportType.STDIO) stdio.closeConnection(server.id)
+        }
         _connectionStates.value = servers.associate { it.id to if (it.isEnabled) McpConnectionState.CHECKING else McpConnectionState.UNKNOWN }
         coroutineScope {
             servers.filter { it.isEnabled }.map { server ->
@@ -69,25 +79,40 @@ class McpManager @Inject constructor(
         }
     }
 
-    suspend fun getActiveMcpTools(): List<McpToolInfo> {
-        val enabledServers = repository.servers.first().filter { it.isEnabled }
-        if (enabledServers.isEmpty()) return emptyList()
+    suspend fun getActiveMcpTools(): List<McpToolInfo> = withContext(Dispatchers.IO) {
+        val servers = repository.servers.first()
+        servers.filterNot { it.isEnabled }.forEach { server ->
+            cache.remove(server.id)
+            if (server.transportType == McpTransportType.STDIO) stdio.closeConnection(server.id)
+        }
+        val enabledServers = servers.filter { it.isEnabled }
+        if (enabledServers.isEmpty()) return@withContext emptyList()
 
-        return coroutineScope {
+        coroutineScope {
             enabledServers.map { server ->
                 async {
                     val fingerprint = fingerprint(server)
                     cache[server.id]?.takeIf { it.fingerprint == fingerprint }?.tools
                         ?: discoveryMutexes.getOrPut(server.id) { Mutex() }.withLock {
-                            cache[server.id]?.takeIf { it.fingerprint == fingerprint }?.tools ?: runCatching {
+                            cache[server.id]?.takeIf { it.fingerprint == fingerprint }?.tools ?: run {
                                 // 总超时兜底：沙箱会话拉起或 MCP 进程挂起时不能阻塞每轮对话（挂起是无日志的），
                                 // 超时按失败处理，本轮不注入该服务工具，下一轮重试。
                                 agentEventLogger.log(DISCOVERY_LOG_SESSION, "McpDiscovery", "MCP[${server.name}] 工具发现开始（transport=${server.transportType}）")
                                 val startedAt = System.currentTimeMillis()
-                                val tools = withTimeoutOrNull(DISCOVERY_TIMEOUT_MS) { discoverTools(server) }
-                                    ?: error("工具发现超时（${DISCOVERY_TIMEOUT_MS / 1000}s）：沙箱会话或 MCP 进程可能已挂起")
-                                agentEventLogger.log(DISCOVERY_LOG_SESSION, "McpDiscovery", "MCP[${server.name}] 发现 ${tools.size} 个工具，耗时 ${System.currentTimeMillis() - startedAt}ms")
-                                tools
+                                cancellableResult { discoverWithTimeout(server) }.onSuccess {
+                                    agentEventLogger.log(
+                                        DISCOVERY_LOG_SESSION,
+                                        "McpDiscovery",
+                                        "MCP[${server.name}] 发现 ${it.size} 个工具，耗时 ${System.currentTimeMillis() - startedAt}ms",
+                                    )
+                                }.onFailure {
+                                    agentEventLogger.log(
+                                        DISCOVERY_LOG_SESSION,
+                                        "McpDiscovery",
+                                        "MCP[${server.name}] 工具发现失败，耗时 ${System.currentTimeMillis() - startedAt}ms：${it.message ?: it::class.simpleName}",
+                                        it,
+                                    )
+                                }
                             }.onSuccess {
                                 cache[server.id] = CachedTools(fingerprint, it)
                                 lastErrors.remove(server.id)
@@ -111,24 +136,40 @@ class McpManager @Inject constructor(
         }
     }
 
-    suspend fun discoverTools(server: McpServerConfig) = transport(server).discover(server)
+    suspend fun discoverTools(server: McpServerConfig): List<McpToolInfo> = withContext(Dispatchers.IO) {
+        transport(server).discover(server)
+    }
 
-    suspend fun testServer(server: McpServerConfig): Result<List<McpToolInfo>> = runCatching { discoverTools(server) }
+    suspend fun testServer(server: McpServerConfig): Result<List<McpToolInfo>> = withContext(Dispatchers.IO) {
+        cancellableResult { discoverWithTimeout(server) }
         .onSuccess { cache[server.id] = CachedTools(fingerprint(server), it); state(server.id, McpConnectionState.ONLINE) }
         .onFailure { cache.remove(server.id); state(server.id, McpConnectionState.OFFLINE) }
+    }
 
-    suspend fun executeTool(fullToolName: String, arguments: JsonObject): Pair<Boolean, String> {
-        if (!fullToolName.startsWith("mcp__")) return false to "无效的 MCP 工具名称：$fullToolName"
+    suspend fun executeTool(fullToolName: String, arguments: JsonObject): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        if (!fullToolName.startsWith("mcp__")) return@withContext false to "无效的 MCP 工具名称：$fullToolName"
         val tool = getActiveMcpTools().firstOrNull { McpToolApiName.matches(it, fullToolName) }
-            ?: return false to "未找到 MCP 工具：$fullToolName"
+            ?: return@withContext false to "未找到 MCP 工具：$fullToolName"
         val server = repository.servers.first().firstOrNull { it.id == tool.serverId && it.isEnabled }
-            ?: return false to "未找到 MCP 服务：${tool.serverId}"
-        return runCatching { transport(server).execute(server, tool.name, arguments) }
+            ?: return@withContext false to "未找到 MCP 服务：${tool.serverId}"
+        return@withContext cancellableResult { transport(server).execute(server, tool.name, arguments) }
             .onFailure { logger.e("MCP[${server.name}] 工具 ${tool.name} 执行异常: ${it.message}", it) }
             .onSuccess { (ok, output) ->
                 if (!ok) logger.w("MCP[${server.name}] 工具 ${tool.name} 返回错误: $output".take(500))
             }
             .getOrElse { false to "MCP 工具执行异常：${it.message ?: it::class.simpleName}" }
+    }
+
+    private suspend fun discoverWithTimeout(server: McpServerConfig): List<McpToolInfo> =
+        withTimeoutOrNull(DISCOVERY_TIMEOUT_MS.milliseconds) { transport(server).discover(server) }
+            ?: error("工具发现超时（${DISCOVERY_TIMEOUT_MS / 1000}s）：沙箱会话或 MCP 进程可能已挂起")
+
+    private suspend fun <T> cancellableResult(block: suspend () -> T): Result<T> = try {
+        Result.success(block())
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (throwable: Throwable) {
+        Result.failure(throwable)
     }
 
     private fun state(id: String, state: McpConnectionState) { _connectionStates.update { it + (id to state) } }

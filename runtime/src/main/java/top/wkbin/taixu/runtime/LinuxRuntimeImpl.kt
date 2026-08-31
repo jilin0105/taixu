@@ -397,6 +397,10 @@ class LinuxRuntimeImpl @Inject constructor(
         }
         runCatching { configureChinaMirrors(effectiveDistro) }
         runCatching { configureEnvironment(effectiveDistro) }
+        // APK 升级可能新增或替换内置 MCP/构建脚本。已有 rootfs 不会再走 configureRootfs，
+        // 因此恢复时必须幂等同步一次，避免数据库预设已切换到新脚本而沙箱内文件仍是旧版本。
+        runCatching { assetSynchronizer.syncAssetsToDistro(effectiveDistro) }
+            .onFailure { logger.w("Restore asset synchronization failed for $effectiveDistro: ${it.message}", it) }
         hostBridge.start()
         _state.value = RuntimeState.Ready
         logger.i("Linux runtime restored from disk and ready with distro: $effectiveDistro")

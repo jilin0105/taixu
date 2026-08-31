@@ -1,9 +1,13 @@
 ﻿package top.wkbin.taixu.harness
 
 import java.io.IOException
+import java.net.SocketTimeoutException
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -59,11 +63,19 @@ internal class AnthropicApi(
         model: ModelConfig,
         messages: List<ApiMessage>,
         onReasoning: (String) -> Unit,
+        onToolProgress: (ToolCallStreamProgress) -> Unit = {},
         onDelta: (String) -> Unit,
     ): ChatResult = withContext(Dispatchers.IO) {
         val call = okHttpClient.newCall(buildRequest(model, messages, stream = true))
         // 与 ChatApi 一致：取消时立即关闭 socket，保证"停止"秒级生效
         val cancelHandle = coroutineContext[Job]?.invokeOnCompletion(onCancelling = true) { call.cancel() }
+        val firstEventState = AtomicInteger(ProviderClient.FIRST_EVENT_WAITING)
+        val firstEventWatchdog = launch {
+            delay(ProviderClient.FIRST_STREAM_EVENT_TIMEOUT_MS)
+            if (firstEventState.compareAndSet(ProviderClient.FIRST_EVENT_WAITING, ProviderClient.FIRST_EVENT_TIMED_OUT)) {
+                call.cancel()
+            }
+        }
         try {
             call.execute().use { response ->
                 if (!response.isSuccessful) {
@@ -87,6 +99,13 @@ internal class AnthropicApi(
                     val event = runCatching {
                         json.parseToJsonElement(data) as? JsonObject
                     }.getOrNull() ?: continue
+                    if (firstEventState.compareAndSet(
+                            ProviderClient.FIRST_EVENT_WAITING,
+                            ProviderClient.FIRST_EVENT_RECEIVED,
+                        )
+                    ) {
+                        firstEventWatchdog.cancel()
+                    }
                     when (event["type"]?.jsonPrimitive?.contentOrNull) {
                         "message_start" -> {
                             // message_start.usage 携带 input/cache 计数（output_tokens 此时尚未确定）
@@ -106,6 +125,7 @@ internal class AnthropicApi(
                                 toolCalls.getOrPut(index) { ToolCallAccumulator() }.apply {
                                     id = block["id"]?.jsonPrimitive?.contentOrNull.orEmpty()
                                     name = block["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                                    publishProgress(onToolProgress)
                                 }
                             }
                         }
@@ -128,7 +148,10 @@ internal class AnthropicApi(
                                     }
                                 }
                                 "input_json_delta" -> delta["partial_json"]?.jsonPrimitive?.contentOrNull?.let { chunk ->
-                                    toolCalls.getOrPut(index) { ToolCallAccumulator() }.arguments.append(chunk)
+                                    toolCalls.getOrPut(index) { ToolCallAccumulator() }.apply {
+                                        arguments.append(chunk)
+                                        publishProgress(onToolProgress)
+                                    }
                                 }
                             }
                         }
@@ -136,6 +159,7 @@ internal class AnthropicApi(
                         else -> Unit // message_start / ping / content_block_stop / message_delta 等无需处理
                     }
                 }
+                toolCalls.values.forEach { it.publishProgress(onToolProgress, force = true) }
                 ChatResult(
                     content = text.toString().ifEmpty { null },
                     // 无参数的工具调用（input={}）不会下发 input_json_delta，累积结果为空串，须兜底为 "{}"
@@ -146,7 +170,15 @@ internal class AnthropicApi(
                     usage = usage,
                 )
             }
+        } catch (io: IOException) {
+            if (firstEventState.get() == ProviderClient.FIRST_EVENT_TIMED_OUT) {
+                throw SocketTimeoutException(
+                    "等待模型首个响应超过 ${ProviderClient.FIRST_STREAM_EVENT_TIMEOUT_MS / 1000}s",
+                ).apply { initCause(io) }
+            }
+            throw io
         } finally {
+            firstEventWatchdog.cancel()
             cancelHandle?.dispose()
         }
     }
