@@ -78,6 +78,7 @@ import top.wkbin.taixu.core.database.AgentApprovalRequestEntity
 import top.wkbin.taixu.core.database.AgentPlanEntity
 import top.wkbin.taixu.harness.QueuedPrompt
 import top.wkbin.taixu.harness.compaction.CompactionSnapshot
+import top.wkbin.taixu.harness.mcp.McpWorkspaceRecommender
 import top.wkbin.taixu.runtime.ProjectType
 
 // 悬浮玻璃底栏实际占高 = 上下 8dp padding + 64dp 条体 = 80dp，额外留 ~10dp 呼吸空间
@@ -120,6 +121,7 @@ fun ChatScreen(
     val providerModelDiscoveryError by viewModel.providerModelDiscoveryError.collectAsStateWithLifecycle()
     val modelPickerProfileId by viewModel.modelPickerProfileId.collectAsStateWithLifecycle()
     val workspace by viewModel.workspace.collectAsStateWithLifecycle()
+    val mcpRecommendations by viewModel.mcpRecommendations.collectAsStateWithLifecycle()
     val sessionProjectType by viewModel.projectType.collectAsStateWithLifecycle()
     val matchingCommands by viewModel.matchingCommands.collectAsStateWithLifecycle()
     val matchingMentions by viewModel.matchingMentions.collectAsStateWithLifecycle()
@@ -389,6 +391,9 @@ fun ChatScreen(
                         quickPhrases = quickPhrases,
                         onSelectPhrase = viewModel::applyQuickPhrase,
                         activeCompaction = activeCompaction,
+                        mcpRecommendations = mcpRecommendations,
+                        onEnableMcpRecommendation = viewModel::enableMcpRecommendation,
+                        onDismissMcpRecommendation = viewModel::dismissMcpRecommendation,
                     )
 
                     VerticalDivider(
@@ -472,6 +477,9 @@ fun ChatScreen(
                     quickPhrases = quickPhrases,
                     onSelectPhrase = viewModel::applyQuickPhrase,
                     activeCompaction = activeCompaction,
+                    mcpRecommendations = mcpRecommendations,
+                    onEnableMcpRecommendation = viewModel::enableMcpRecommendation,
+                    onDismissMcpRecommendation = viewModel::dismissMcpRecommendation,
                 )
             }
 
@@ -725,6 +733,9 @@ private fun ChatPaneContent(
     pendingApprovals: List<AgentApprovalRequestEntity> = emptyList(),
     activePlan: AgentPlanEntity? = null,
     activeCompaction: CompactionSnapshot? = null,
+    mcpRecommendations: List<McpWorkspaceRecommender.Recommendation> = emptyList(),
+    onEnableMcpRecommendation: (String) -> Unit = {},
+    onDismissMcpRecommendation: (String) -> Unit = {},
     onResolveApproval: (String, Boolean) -> Unit = { _, _ -> },
     contextUsage: ContextUsage = ContextUsage(),
     quickPhrases: List<QuickPhrase> = emptyList(),
@@ -787,6 +798,12 @@ private fun ChatPaneContent(
             }
         }
 
+        McpRecommendationBanner(
+            recommendations = mcpRecommendations,
+            onEnable = onEnableMcpRecommendation,
+            onDismiss = onDismissMcpRecommendation,
+        )
+
         ChatComposer(
             listState = listState,
             running = running,
@@ -822,5 +839,48 @@ private fun ChatPaneContent(
             onUpdateReasoning = onUpdateReasoning,
             contextUsage = contextUsage,
         )
+    }
+}
+
+/** 工作区感知的 MCP 预设推荐横幅：每条推荐展示启用理由，可一键启用或忽略。 */
+@Composable
+private fun McpRecommendationBanner(
+    recommendations: List<McpWorkspaceRecommender.Recommendation>,
+    onEnable: (String) -> Unit,
+    onDismiss: (String) -> Unit,
+) {
+    if (recommendations.isEmpty()) return
+    recommendations.forEach { recommendation ->
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.secondaryContainer,
+        ) {
+            Row(
+                Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        recommendation.presetName,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Text(
+                        recommendation.reason,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                TextButton(onClick = { onEnable(recommendation.presetId) }) {
+                    Text(stringResource(R.string.chat_enable), color = MaterialTheme.colorScheme.onSecondaryContainer)
+                }
+                TextButton(onClick = { onDismiss(recommendation.presetId) }) {
+                    Text(stringResource(R.string.chat_ignore), color = MaterialTheme.colorScheme.onSecondaryContainer)
+                }
+            }
+        }
     }
 }

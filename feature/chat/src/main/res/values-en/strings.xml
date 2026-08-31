@@ -39,6 +39,8 @@
     <string name="chat_attachment_access_hint">When tool access is needed, use base to read the absolute paths above. Do not use Android content:// URIs or host paths.</string>
     <string name="chat_thinking">Thinking…</string>
     <string name="chat_close">Close</string>
+    <string name="chat_enable">Enable</string>
+    <string name="chat_ignore">Ignore</string>
     <string name="chat_queue_item">Queued %1$d:</string>
     <string name="chat_input_running">Working… You can queue another request</string>
     <string name="chat_input_hint">Enter a request… Use @ for skills, MCP tools, and attachments</string>

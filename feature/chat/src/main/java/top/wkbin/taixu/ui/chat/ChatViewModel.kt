@@ -157,6 +157,12 @@ class ChatViewModel @Inject constructor(
     val thinkingLive: StateFlow<Boolean> = harnessLoop.thinkingLive
     val workspace: StateFlow<String> = harnessLoop.workspace
     val projectType: StateFlow<String> = harnessLoop.projectType
+    /** 基于当前工作区内容自动推荐的 MCP 预设（已启用的已过滤），仅提示不自动启用。 */
+    val mcpRecommendations: StateFlow<List<top.wkbin.taixu.harness.mcp.McpWorkspaceRecommender.Recommendation>> =
+        harnessLoop.mcpRecommendations
+
+    fun enableMcpRecommendation(presetId: String) = harnessLoop.enableRecommendedMcp(presetId)
+    fun dismissMcpRecommendation(presetId: String) = harnessLoop.dismissMcpRecommendation(presetId)
     /** 运行中排队的待发送消息（当前任务结束后自动接续）。 */
     val pendingMessages: StateFlow<List<PendingMessage>> = harnessLoop.pendingMessages
     val queuedPrompts: StateFlow<List<QueuedPrompt>> = harnessLoop.queuedPrompts
