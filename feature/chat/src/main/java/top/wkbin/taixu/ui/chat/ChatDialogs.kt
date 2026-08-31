@@ -446,13 +446,29 @@ internal fun ModelDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.chat_select_model), fontWeight = FontWeight.Bold) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 400.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 Text(
                     stringResource(R.string.chat_select_provider_hint),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                models.forEach { model ->
+                if (models.isEmpty()) {
+                    Text(
+                        stringResource(R.string.chat_no_models),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        items(models, key = { it.id }) { model ->
                     val subModels = model.model.split(",").map { it.trim() }.filter { it.isNotEmpty() }.ifEmpty { listOf(model.model) }
                     Column(
                         Modifier
@@ -591,9 +607,8 @@ internal fun ModelDialog(
                             }
                         }
                     }
-                }
-                if (models.isEmpty()) {
-                    Text(stringResource(R.string.chat_no_models), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
                 }
             }
         },
@@ -692,13 +707,13 @@ internal fun ProviderModelPickerDialog(
                         )
                     }
                     modelIds.isNotEmpty() -> {
-                        Column(
-                            Modifier
+                        LazyColumn(
+                            modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(max = 280.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
-                            modelIds.forEach { modelId ->
+                            items(modelIds) { modelId ->
                                 val selected = modelId == profile.model
                                 Row(
                                     Modifier

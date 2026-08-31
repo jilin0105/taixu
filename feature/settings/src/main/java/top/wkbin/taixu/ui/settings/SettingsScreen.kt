@@ -1213,9 +1213,9 @@ fun AboutCommunityScreen(
 
 // 赞赏码与赞助邮箱
 private const val SPONSOR_EMAIL = "wangkebin1997@gmail.com"
-// TODO: 把支付宝/微信赞赏码图片放到仓库 qr/ 目录并推送到 GitHub 后即可生效（未上传时弹窗显示占位）
-private const val SPONSOR_ALIPAY_QR_URL = "https://raw.githubusercontent.com/wkbin/taixu/main/qr/alipay.png"
-private const val SPONSOR_WECHAT_QR_URL = "https://raw.githubusercontent.com/wkbin/taixu/main/qr/wechat.png"
+// 收款码已打包进 settings 模块 mipmap 资源（settings_qr_*），离线可用、不依赖外网
+private val SPONSOR_ALIPAY_QR_RES = top.wkbin.taixu.feature.settings.R.mipmap.settings_qr_alipay
+private val SPONSOR_WECHAT_QR_RES = top.wkbin.taixu.feature.settings.R.mipmap.settings_qr_wechat
 private val SponsorAccent: Color = Color(0xFFFF4D6D)
 
 /**
@@ -1234,7 +1234,7 @@ fun SponsorScreen(
     if (showAlipayQrDialog) {
         SponsorQrDialog(
             title = "支付宝赞赏码",
-            qrUrl = SPONSOR_ALIPAY_QR_URL,
+            qrRes = SPONSOR_ALIPAY_QR_RES,
             accent = Color(0xFF1677FF),
             onDismiss = { showAlipayQrDialog = false },
         )
@@ -1242,7 +1242,7 @@ fun SponsorScreen(
     if (showWeChatQrDialog) {
         SponsorQrDialog(
             title = "微信赞赏码",
-            qrUrl = SPONSOR_WECHAT_QR_URL,
+            qrRes = SPONSOR_WECHAT_QR_RES,
             accent = SponsorAccent,
             onDismiss = { showWeChatQrDialog = false },
         )
@@ -1296,7 +1296,7 @@ fun SponsorScreen(
                             )
                         }
                         Text(
-                            "太墟（TaiXu）完全免费且开源，由作者在业余时间独立维护。你的每一份赞助都将用于服务器与 CI 构建、应用签名证书、多设备兼容性测试以及持续的开发迭代，帮助我们把项目做得更好。",
+                            "太墟（TaiXu）完全免费且开源，由作者在业余时间独立维护。你的每一份赞助都将用于购买 API Token 与持续的开发迭代，帮助我们把项目做得更好。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1390,11 +1390,11 @@ fun SponsorScreen(
     }
 }
 
-/** 赞赏码弹窗：展示外部二维码图片，未上传时显示占位说明 */
+/** 赞赏码弹窗：展示打包在 mipmap 中的二维码图片 */
 @Composable
 private fun SponsorQrDialog(
     title: String,
-    qrUrl: String,
+    qrRes: Int,
     accent: Color,
     onDismiss: () -> Unit,
 ) {
@@ -1421,7 +1421,7 @@ private fun SponsorQrDialog(
                     contentAlignment = Alignment.Center,
                 ) {
                     SubcomposeAsyncImage(
-                        model = qrUrl,
+                        model = qrRes,
                         contentDescription = "$title 图片",
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Fit,
@@ -1433,7 +1433,7 @@ private fun SponsorQrDialog(
                             ) {
                                 RuntimeIcon(RuntimeIconName.Sponsor, Modifier.size(32.dp), tint = accent.copy(alpha = 0.6f))
                                 Text(
-                                    "二维码图片尚未上传\n（请将图片放到仓库 qr/ 目录）",
+                                    "二维码加载失败，请稍后重试",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
