@@ -73,15 +73,15 @@ class SubagentOrchestrator @Inject constructor(
                     val laneName = "subagent:${profile.id}:${java.util.UUID.randomUUID()}"
                     laneManager.create(parentSessionId, laneName, parentLeaf)
                     val prompt = buildSubagentPrompt(spec, profile, workspace)
-                    val laneResult = withTimeoutOrNull(180_000L) {
-                        laneRunner.run(parentSessionId, laneName, prompt, workspace)
+                    val laneResult = withTimeoutOrNull(SUBAGENT_TIMEOUT_MS) {
+                        laneRunner.run(parentSessionId, laneName, prompt, workspace, modelId)
                     }
 
                     SubagentExecutionOutcome(
                         spec = spec,
                         subSessionId = laneName,
                         isSuccess = laneResult?.success == true,
-                        summary = laneResult?.summary ?: "执行超时 (3 分钟)",
+                        summary = laneResult?.summary ?: "执行超时 (${SUBAGENT_TIMEOUT_MS / 60_000} 分钟)",
                         toolCallCount = laneResult?.toolCallCount ?: 0,
                     )
                 }
@@ -89,8 +89,8 @@ class SubagentOrchestrator @Inject constructor(
         }.awaitAll()
 
         val summaryMarkdown = buildSummaryMarkdown(results)
-        val allSuccess = results.all { it.isSuccess }
-        allSuccess to summaryMarkdown
+        val anySuccess = results.any { it.isSuccess }
+        anySuccess to summaryMarkdown
     }
 
     private fun buildSubagentPrompt(spec: SubagentTaskSpec, profile: AgentSubagent, workspace: String): String {
@@ -108,12 +108,19 @@ class SubagentOrchestrator @Inject constructor(
     }
 
     private companion object {
-        const val MAX_GLOBAL_SUBAGENTS = 4
+        const val MAX_GLOBAL_SUBAGENTS = 2
+        const val SUBAGENT_TIMEOUT_MS = 6 * 60 * 1000L
     }
 
     private fun buildSummaryMarkdown(outcomes: List<SubagentExecutionOutcome>): String {
         return buildString {
-            append("### 🤖 子智能体协同执行完成 (共 ${outcomes.size} 个任务)\n\n")
+            val succeeded = outcomes.count { it.isSuccess }
+            val batchStatus = when (succeeded) {
+                outcomes.size -> "全部成功"
+                0 -> "全部失败"
+                else -> "部分成功"
+            }
+            append("### 🤖 子智能体协同执行完成 · $batchStatus ($succeeded/${outcomes.size})\n\n")
             outcomes.forEachIndexed { index, outcome ->
                 val statusIcon = if (outcome.isSuccess) "✅" else "⚠️"
                 append("#### ${index + 1}. $statusIcon 【${outcome.spec.taskName}】(角色: ${outcome.spec.role})\n")

@@ -612,11 +612,12 @@ class ProviderClient @Inject constructor(
     }
 
     /**
-     * 同 [resolveModel]，但额外做最小配置校验：无激活模型且未设置 API Key 时
-     * 直接抛出明确异常，让发送前就能拦截，而不是让 Agent 空转后以 401 告警收场。
+     * 同 [resolveModel]，但额外做最小配置校验。[modelId] 非空且存在时优先使用该会话绑定模型，
+     * 否则回退到当前激活模型。无可用模型且未设置 API Key 时直接抛出明确异常。
      */
-    suspend fun resolveConfigured(): ModelConfig = withContext(Dispatchers.IO) {
-        val active = modelDao.activeModel()
+    suspend fun resolveConfigured(modelId: String? = null): ModelConfig = withContext(Dispatchers.IO) {
+        val requested = modelId?.takeIf { it.isNotBlank() }?.let { modelDao.findById(it) }
+        val active = requested ?: modelDao.activeModel()
         val providerKey = providerRepository.readApiKey().orEmpty()
         if (active == null && providerKey.isBlank()) {
             throw IllegalStateException("未配置模型或 API Key，请先在「设置 → 模型」中添加并激活一个模型")
