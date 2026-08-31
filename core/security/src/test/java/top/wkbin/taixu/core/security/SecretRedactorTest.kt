@@ -34,6 +34,27 @@ class SecretRedactorTest {
         assertTrue(out.contains(secret))
     }
 
+    @Test
+    fun `redacts passwords in json and embedded scripts`() {
+        val jsonSecret = "json-secret-value"
+        val scriptSecret = "script-secret-value"
+        val out = redactor.redact(
+            """Args={"password":"$jsonSecret","expression":"pwd.value = '$scriptSecret'"}""",
+        )
+
+        assertFalse(out.contains(jsonSecret))
+        assertFalse(out.contains(scriptSecret))
+        assertTrue(out.contains("[REDACTED]"))
+    }
+
+    @Test
+    fun `redacts mainland phone identifiers from agent logs`() {
+        val out = redactor.redact("acct.value = '13812345678'")
+
+        assertFalse(out.contains("13812345678"))
+        assertTrue(out.contains("[PHONE_REDACTED]"))
+    }
+
     private fun assertEqualsIgnoreCase(a: String, b: String) {
         assertTrue(a.equals(b, ignoreCase = true))
     }

@@ -13,6 +13,15 @@ interface HarnessRuntimeRepository {
     suspend fun listEntriesInRange(start: Long?, end: Long?): List<HarnessEntryEntity>
     suspend fun countEntriesInRange(start: Long?, end: Long?): Int
     suspend fun branch(sessionId: String, leafId: String?): List<HarnessEntryEntity>
+    suspend fun branchTail(sessionId: String, leafId: String?, limit: Int): List<HarnessEntryEntity> {
+        require(limit > 0) { "Branch tail limit must be positive" }
+        return branch(sessionId, leafId).takeLast(limit)
+    }
+    suspend fun latestBranchEntryOfType(
+        sessionId: String,
+        leafId: String?,
+        entryType: String,
+    ): HarnessEntryEntity? = branch(sessionId, leafId).lastOrNull { it.entryType == entryType }
     suspend fun searchBranch(sessionId: String, leafId: String?, query: String, limit: Int): List<HarnessEntryEntity> =
         branch(sessionId, leafId).asReversed().filter { it.entryType == "message" && it.payloadJson.contains(query, ignoreCase = true) }.take(limit)
     suspend fun branchEntryAt(sessionId: String, leafId: String?, index: Int): HarnessEntryEntity? =
@@ -84,6 +93,17 @@ class RoomHarnessRuntimeRepository @Inject constructor(
 
     override suspend fun branch(sessionId: String, leafId: String?): List<HarnessEntryEntity> {
         return leafId?.let { dao.branch(sessionId, it).map(::restoreFromStorage) }.orEmpty()
+    }
+    override suspend fun branchTail(sessionId: String, leafId: String?, limit: Int): List<HarnessEntryEntity> {
+        require(limit > 0) { "Branch tail limit must be positive" }
+        return leafId?.let { dao.branchTail(sessionId, it, limit).map(::restoreFromStorage) }.orEmpty()
+    }
+    override suspend fun latestBranchEntryOfType(
+        sessionId: String,
+        leafId: String?,
+        entryType: String,
+    ): HarnessEntryEntity? = leafId?.let {
+        dao.latestBranchEntryOfType(sessionId, it, entryType)?.let(::restoreFromStorage)
     }
     override suspend fun searchBranch(sessionId: String, leafId: String?, query: String, limit: Int): List<HarnessEntryEntity> =
         leafId?.let {

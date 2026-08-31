@@ -14,6 +14,8 @@ object ContextWindowPolicy {
     private const val MAX_SYSTEM_PROMPT_FRACTION = 0.60
     private const val MIN_SYSTEM_PROMPT_TOKENS = 512
     private const val APPROX_CHARS_PER_TOKEN = 4
+    /** Detailed provider history is bounded by user turns even on very large-context models. */
+    const val MAX_DETAILED_USER_TURNS = 24
 
     /**
      * Compaction threshold (in characters) per tool type. `read`/`base` commonly
@@ -158,10 +160,15 @@ object ContextWindowPolicy {
 
     fun computeKeepFromIndex(messages: List<HarnessMessage>, budget: Int, systemTokens: Int): Int {
         if (messages.size <= 1) return 0
-        if (budget <= 0) return minimalKeepFromIndex(messages)
+        val roundBoundary = recentTurnKeepFromIndex(messages)
+        if (budget <= 0) {
+            return alignKeepFromIndex(messages, maxOf(roundBoundary, minimalKeepFromIndex(messages)))
+        }
         val limit = (budget * INPUT_BUDGET_FRACTION).toInt() -
             systemTokens - RESERVED_OUTPUT_TOKENS - TOOL_SCHEMA_RESERVE_TOKENS
-        if (limit <= 0) return minimalKeepFromIndex(messages)
+        if (limit <= 0) {
+            return alignKeepFromIndex(messages, maxOf(roundBoundary, minimalKeepFromIndex(messages)))
+        }
         var used = 0
         for (index in messages.indices.reversed()) {
             val tokens = when (val message = messages[index]) {
@@ -172,9 +179,22 @@ object ContextWindowPolicy {
                 is ToolCall -> estimateTokens(message.args.toString()) + estimateTokens(message.reasoning.orEmpty())
             }
             if (used + tokens > limit) {
-                return alignKeepFromIndex(messages, (index + 1).coerceIn(0, messages.size))
+                val tokenBoundary = alignKeepFromIndex(messages, (index + 1).coerceIn(0, messages.lastIndex))
+                return alignKeepFromIndex(messages, maxOf(roundBoundary, tokenBoundary))
             }
             used += tokens
+        }
+        return alignKeepFromIndex(messages, roundBoundary)
+    }
+
+    /** Keep complete detail starting at the oldest of the newest N user turns. */
+    private fun recentTurnKeepFromIndex(messages: List<HarnessMessage>): Int {
+        var remaining = MAX_DETAILED_USER_TURNS
+        for (index in messages.indices.reversed()) {
+            if (messages[index] is UserMessage) {
+                remaining--
+                if (remaining == 0) return index
+            }
         }
         return 0
     }
@@ -201,11 +221,33 @@ object ContextWindowPolicy {
         return prompt.take((maxTokens * APPROX_CHARS_PER_TOKEN - suffix.length).coerceAtLeast(0)) + suffix
     }
 
+    /**
+     * Move a token-derived cut to a complete user turn. Cutting at an arbitrary message
+     * can split a parallel tool exchange (call1, call2, result1, result2), which produces
+     * an invalid provider transcript and can make the model retry the missing tool forever.
+     */
     private fun alignKeepFromIndex(messages: List<HarnessMessage>, candidate: Int): Int {
-        if (candidate !in messages.indices || messages[candidate] !is ToolResult) return candidate
-        val result = messages[candidate] as ToolResult
-        val callIndex = messages.indexOfLast { it is ToolCall && it.id == result.toolCallId }
-        return if (callIndex in 0 until candidate) callIndex else candidate
+        if (messages.isEmpty()) return 0
+        val boundedCandidate = candidate.coerceIn(0, messages.lastIndex)
+        val nextUser = (boundedCandidate..messages.lastIndex).firstOrNull { messages[it] is UserMessage }
+        val previousUser = (boundedCandidate downTo 0).firstOrNull { messages[it] is UserMessage }
+        var boundary = nextUser ?: previousUser ?: boundedCandidate
+
+        // Defensive closure for persisted/interrupted histories where a result may have
+        // crossed a user boundary. Repeat because moving back can reveal another result
+        // from the same parallel tool-call group.
+        do {
+            val previousBoundary = boundary
+            messages.subList(boundary, messages.size)
+                .filterIsInstance<ToolResult>()
+                .forEach { result ->
+                    val callIndex = messages.indexOfLast {
+                        it is ToolCall && it.id == result.toolCallId
+                    }
+                    if (callIndex in 0 until boundary) boundary = callIndex
+                }
+        } while (boundary < previousBoundary)
+        return boundary
     }
 
     fun foldMessageText(role: String, text: String): String =

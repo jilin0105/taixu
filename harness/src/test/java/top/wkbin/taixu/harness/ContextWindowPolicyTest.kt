@@ -17,7 +17,8 @@ class ContextWindowPolicyTest {
         // Budget must leave room after the input-fraction + output/schema reserves.
         val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 18_000, systemTokens = 10)
 
-        assertEquals(1, keepFrom)
+        assertEquals(2, keepFrom)
+        assertTrue(messages[keepFrom] is UserMessage)
     }
 
     @Test
@@ -94,7 +95,27 @@ class ContextWindowPolicyTest {
     }
 
     @Test
-    fun keepBoundaryIncludesToolCallWhenItWouldOtherwiseStartAtResult() {
+    fun `large context models still keep only the newest detailed user turns`() {
+        val messages = buildList<HarnessMessage> {
+            repeat(ContextWindowPolicy.MAX_DETAILED_USER_TURNS + 6) { index ->
+                add(UserMessage("u-$index", index * 2L, "request $index"))
+                add(AssistantText("a-$index", index * 2L + 1, "answer $index"))
+            }
+        }
+
+        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(
+            messages = messages,
+            budget = 1_000_000,
+            systemTokens = 0,
+        )
+
+        assertEquals(12, keepFrom)
+        assertTrue(messages[keepFrom] is UserMessage)
+        assertEquals(ContextWindowPolicy.MAX_DETAILED_USER_TURNS, messages.drop(keepFrom).count { it is UserMessage })
+    }
+
+    @Test
+    fun `token boundary advances to the next complete user turn`() {
         val call = ToolCall(
             "call",
             2,
@@ -111,8 +132,56 @@ class ContextWindowPolicyTest {
 
         val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 18_000, systemTokens = 10)
 
+        assertEquals(3, keepFrom)
+        assertTrue(messages[keepFrom] is UserMessage)
+    }
+
+    @Test
+    fun `parallel tool calls and results remain paired across a forced boundary`() {
+        val call1 = ToolCall(
+            "call-1",
+            2,
+            HarnessTool.BASE,
+            kotlinx.serialization.json.buildJsonObject {},
+            reasoning = "x".repeat(4_000),
+        )
+        val call2 = ToolCall("call-2", 3, HarnessTool.READ, kotlinx.serialization.json.buildJsonObject {})
+        val messages = listOf(
+            UserMessage("old-user", 1, "old request"),
+            call1,
+            call2,
+            ToolResult("result-1", 4, "call-1", true, "first"),
+            ToolResult("result-2", 5, "call-2", true, "second"),
+            AssistantText("old-answer", 6, "done"),
+            UserMessage("latest-user", 7, "latest request"),
+        )
+
+        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 18_000, systemTokens = 10)
+        val kept = messages.drop(keepFrom)
+        val keptCallIds = kept.filterIsInstance<ToolCall>().mapTo(mutableSetOf()) { it.id }
+
+        assertEquals(6, keepFrom)
+        assertTrue(kept.first() is UserMessage)
+        assertTrue(kept.filterIsInstance<ToolResult>().all { it.toolCallId in keptCallIds })
+    }
+
+    @Test
+    fun `interrupted cross-turn tool result pulls its call back into the window`() {
+        val messages = listOf(
+            UserMessage("old-user", 1, "old request"),
+            ToolCall("call", 2, HarnessTool.BASE, kotlinx.serialization.json.buildJsonObject {}),
+            UserMessage("latest-user", 3, "latest request"),
+            ToolResult("late-result", 4, "call", true, "late"),
+        )
+
+        val keepFrom = ContextWindowPolicy.computeKeepFromIndex(messages, budget = 0, systemTokens = 0)
+        val kept = messages.drop(keepFrom)
+
         assertEquals(1, keepFrom)
-        assertTrue(messages[keepFrom] is ToolCall)
+        assertTrue(kept.first() is ToolCall)
+        assertTrue(kept.filterIsInstance<ToolResult>().all { result ->
+            kept.filterIsInstance<ToolCall>().any { it.id == result.toolCallId }
+        })
     }
 
     @Test

@@ -9,6 +9,8 @@ data class CompactionPayload(
     val summary: String,
     val retainedMessagesJson: String,
     val compactedMessageCount: Int,
+    /** Cumulative folded count, added later for O(1) snapshots; null on legacy payloads. */
+    val cumulativeCompactedMessageCount: Int? = null,
     val retainedMessageCount: Int,
     val estimatedTokensBefore: Int,
     val createdAt: Long,

@@ -26,13 +26,13 @@ class SessionTreeStore @Inject constructor(
 
     suspend fun load(sessionId: String, laneName: String = MAIN_LANE): List<HarnessMessage> = runCatching {
         val lane = repository.ensureLane(sessionId, laneName)
-        repository.branch(sessionId, lane.leafId).mapNotNull(::decode)
+        repository.branchTail(sessionId, lane.leafId, MAX_LIVE_ENTRIES).mapNotNull(::decode)
     }.onFailure { throwable ->
         logger.e("Failed to load harness branch for $sessionId/$laneName: ${throwable.message}", throwable)
     }.getOrDefault(emptyList())
 
     suspend fun loadAt(sessionId: String, leafId: String?): List<HarnessMessage> = runCatching {
-        repository.branch(sessionId, leafId).mapNotNull(::decode)
+        repository.branchTail(sessionId, leafId, MAX_LIVE_ENTRIES).mapNotNull(::decode)
     }.onFailure { throwable ->
         logger.e("Failed to load harness branch at $sessionId/$leafId: ${throwable.message}", throwable)
     }.getOrDefault(emptyList())
@@ -53,8 +53,7 @@ class SessionTreeStore @Inject constructor(
 
     /** Navigate to the parent of [entryId], preserving the abandoned branch. */
     suspend fun rewindBefore(sessionId: String, entryId: String, laneName: String = MAIN_LANE) {
-        val branch = activeEntries(sessionId, laneName)
-        val target = branch.firstOrNull { it.id == entryId } ?: return
+        val target = repository.findEntry(sessionId, entryId) ?: return
         repository.moveLane(sessionId, laneName, target.parentId)
     }
 
@@ -87,11 +86,6 @@ class SessionTreeStore @Inject constructor(
         }
     }
 
-    private suspend fun activeEntries(sessionId: String, laneName: String): List<HarnessEntryEntity> {
-        val lane = repository.ensureLane(sessionId, laneName)
-        return repository.branch(sessionId, lane.leafId)
-    }
-
     internal fun decode(entity: HarnessEntryEntity): HarnessMessage? {
         if (entity.entryType != "message") return null
         return runCatching { json.decodeFromString(HarnessMessage.serializer(), entity.payloadJson) }
@@ -117,5 +111,7 @@ class SessionTreeStore @Inject constructor(
 
     companion object {
         const val MAIN_LANE = "main"
+        /** Maximum decoded messages retained per live UI/session projection. */
+        const val MAX_LIVE_ENTRIES = 600
     }
 }

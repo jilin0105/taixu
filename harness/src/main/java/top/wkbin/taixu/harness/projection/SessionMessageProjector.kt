@@ -72,10 +72,12 @@ class SessionMessageProjector @Inject constructor(
                 val history = history(sessionId)
                 created.update { current ->
                     if (current.isEmpty()) {
-                        history
+                        boundLiveWindow(history)
                     } else {
                         // Current contains newer stream/persisted projections and wins on duplicate ids.
-                        (history + current).associateBy { it.id }.values.sortedBy { it.createdAt }
+                        boundLiveWindow(
+                            (history + current).associateBy { it.id }.values.sortedBy { it.createdAt },
+                        )
                     }
                 }
                 mirrorIfForeground(sessionId, created.value)
@@ -98,7 +100,7 @@ class SessionMessageProjector @Inject constructor(
     suspend fun preparedForLoad(sessionId: String): MutableStateFlow<List<HarnessMessage>> {
         touch(sessionId)
         liveFlows[sessionId]?.let { return it }
-        val created = MutableStateFlow(loadHistory(sessionId))
+        val created = MutableStateFlow(boundLiveWindow(loadHistory(sessionId)))
         val selected = liveFlows.putIfAbsent(sessionId, created) ?: created
         evictLeastRecentlyUsed(sessionId)
         return selected
@@ -113,13 +115,14 @@ class SessionMessageProjector @Inject constructor(
 
     /** 新建/加载会话后复位前台镜像为该会话当前值。 */
     fun resetForegroundProjection(value: List<HarnessMessage>) {
-        _foregroundMessages.value = value
+        _foregroundMessages.value = boundLiveWindow(value)
     }
 
     /** 整体替换某会话的实时消息（重生成 / 回退 / 分支切换等场景）。 */
     fun replaceAll(sessionId: String, messages: List<HarnessMessage>) {
-        messagesFlow(sessionId).value = messages
-        mirrorIfForeground(sessionId, messages)
+        val bounded = boundLiveWindow(messages)
+        messagesFlow(sessionId).value = bounded
+        mirrorIfForeground(sessionId, bounded)
     }
 
     fun removeSession(sessionId: String) {
@@ -137,12 +140,13 @@ class SessionMessageProjector @Inject constructor(
         val flow = messagesFlow(sessionId)
         flow.update { current ->
             val idx = current.indexOfFirst { it.id == message.id }
-            if (idx >= 0) {
+            val updated = if (idx >= 0) {
                 // in-place 替换：避免整列 map() copy 产生的额外 List 对象（工具密集轮次频繁触发）
                 current.toMutableList().apply { this[idx] = message }
             } else {
                 current + message
             }
+            boundLiveWindow(updated)
         }
         mirrorIfForeground(sessionId, flow.value)
         if (message is AssistantText) streamingSessions.remove(sessionId)
@@ -176,7 +180,12 @@ class SessionMessageProjector @Inject constructor(
                 text = text,
                 reasoning = (existing as? AssistantText)?.reasoning,
             )
-            if (idx >= 0) current.toMutableList().apply { this[idx] = message } else current + message
+            val updated = if (idx >= 0) {
+                current.toMutableList().apply { this[idx] = message }
+            } else {
+                current + message
+            }
+            boundLiveWindow(updated)
         }
         mirrorIfForeground(sessionId, flow.value)
     }
@@ -187,7 +196,7 @@ class SessionMessageProjector @Inject constructor(
         val flow = messagesFlow(sessionId)
         flow.update { current ->
             val idx = current.indexOfFirst { it.id == id }
-            if (idx >= 0) {
+            val updated = if (idx >= 0) {
                 val existing = current[idx]
                 (existing as? AssistantText)?.let {
                     current.toMutableList().apply { this[idx] = it.copy(reasoning = reasoning) }
@@ -195,6 +204,7 @@ class SessionMessageProjector @Inject constructor(
             } else {
                 current + AssistantText(id = id, createdAt = createdAt, text = "", reasoning = reasoning)
             }
+            boundLiveWindow(updated)
         }
         mirrorIfForeground(sessionId, flow.value)
     }
@@ -202,6 +212,13 @@ class SessionMessageProjector @Inject constructor(
     private fun touch(sessionId: String) {
         lastAccess[sessionId] = accessCounter.incrementAndGet()
     }
+
+    private fun boundLiveWindow(messages: List<HarnessMessage>): List<HarnessMessage> =
+        if (messages.size > SessionTreeStore.MAX_LIVE_ENTRIES) {
+            messages.takeLast(SessionTreeStore.MAX_LIVE_ENTRIES)
+        } else {
+            messages
+        }
 
     private fun evictLeastRecentlyUsed(protectedSessionId: String) {
         var excess = liveFlows.size - MAX_CACHED_SESSIONS

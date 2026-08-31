@@ -142,6 +142,21 @@ class HarnessRuntimeRepositoryIntegrationTest {
     }
 
     @Test
+    fun `branch tail and latest typed entry are bounded inside Room`() = runBlocking {
+        val sessionId = "s-tail"
+        var parentId: String? = null
+        repeat(10) { index ->
+            val type = if (index == 4) "compaction" else "message"
+            val next = entry("e$index", sessionId, parentId).copy(entryType = type)
+            dao.insertEntry(next)
+            parentId = next.id
+        }
+
+        assertEquals(listOf("e7", "e8", "e9"), repository.branchTail(sessionId, "e9", 3).map { it.id })
+        assertEquals("e4", repository.latestBranchEntryOfType(sessionId, "e9", "compaction")?.id)
+    }
+
+    @Test
     fun `branch search and indexed read stay on active branch and treat wildcards literally`() = runBlocking {
         val sessionId = "s-search"
         val root = entry("root", sessionId, null).copy(payloadJson = "literal 100% complete")

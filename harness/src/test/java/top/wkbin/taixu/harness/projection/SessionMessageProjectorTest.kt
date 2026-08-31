@@ -128,4 +128,18 @@ class SessionMessageProjectorTest {
 
         assertEquals(listOf(updated), projector.snapshot("s1"))
     }
+
+    @Test
+    fun `live projection stays bounded while durable history keeps growing`() = runBlocking {
+        tracker.setCurrent("long")
+        projector.seedEmpty("long")
+        repeat(SessionTreeStore.MAX_LIVE_ENTRIES + 25) { index ->
+            projector.append("long", UserMessage(id = "m$index", createdAt = index.toLong(), text = "message $index"))
+        }
+
+        val live = projector.snapshot("long")
+        assertEquals(SessionTreeStore.MAX_LIVE_ENTRIES, live.size)
+        assertEquals("m25", live.first().id)
+        assertEquals(SessionTreeStore.MAX_LIVE_ENTRIES + 25, database.harnessRuntimeDao().listEntries("long").size)
+    }
 }

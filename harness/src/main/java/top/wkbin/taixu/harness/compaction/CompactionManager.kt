@@ -19,16 +19,19 @@ class CompactionManager @Inject constructor(
 ) {
     suspend fun project(sessionId: String, laneName: String = SessionTreeStore.MAIN_LANE): CompactedContext {
         val lane = repository.ensureLane(sessionId, laneName)
-        // 超长会话保护：全量加载所有 entry 并在 IO 线程反序列化，会在堆已接近上限时触发 OOM。
-        // 取最末尾的 MAX_BRANCH_ENTRIES 条：compaction 摘要已覆盖早期语义，后尾内容更重要。
-        val allEntries = repository.branch(sessionId, lane.leafId)
-        val entries = if (allEntries.size > MAX_BRANCH_ENTRIES) allEntries.takeLast(MAX_BRANCH_ENTRIES) else allEntries
-        val compactionIndex = entries.indexOfLast { it.entryType == ENTRY_TYPE }
-        if (compactionIndex < 0) return CompactedContext(messages = entries.mapNotNull(::decodeMessage))
+        // Both queries are bounded at the Room boundary: old payloads never enter the Java heap.
+        // The latest compaction is fetched separately so its rolling summary survives even when it
+        // sits outside the recent-entry window.
+        val latestCompaction = repository.latestBranchEntryOfType(sessionId, lane.leafId, ENTRY_TYPE)
+        val entries = repository.branchTail(sessionId, lane.leafId, MAX_BRANCH_ENTRIES)
+        if (latestCompaction == null) return CompactedContext(messages = entries.mapNotNull(::decodeMessage))
 
-        val payload = json.decodeFromString(CompactionPayload.serializer(), entries[compactionIndex].payloadJson)
+        val payload = json.decodeFromString(CompactionPayload.serializer(), latestCompaction.payloadJson)
         val retained = json.decodeFromString(ListSerializer(HarnessMessage.serializer()), payload.retainedMessagesJson)
-        val after = entries.drop(compactionIndex + 1).mapNotNull(::decodeMessage)
+        val after = entries.asSequence()
+            .filter { it.sequence > latestCompaction.sequence }
+            .mapNotNull(::decodeMessage)
+            .toList()
         return CompactedContext(summary = payload.summary, messages = retained + after)
     }
 
@@ -39,18 +42,15 @@ class CompactionManager @Inject constructor(
      */
     suspend fun latestSnapshot(sessionId: String, laneName: String = SessionTreeStore.MAIN_LANE): CompactionSnapshot? {
         val lane = runCatching { repository.ensureLane(sessionId, laneName) }.getOrNull() ?: return null
-        val payloads = runCatching { repository.branch(sessionId, lane.leafId) }
-            .getOrNull()
-            ?.filter { it.entryType == ENTRY_TYPE }
-            ?.mapNotNull { entry ->
-                runCatching { json.decodeFromString(CompactionPayload.serializer(), entry.payloadJson) }.getOrNull()
-            }
-            .orEmpty()
-        if (payloads.isEmpty()) return null
-        val newest = payloads.maxBy { it.createdAt }
+        val latestEntry = runCatching {
+            repository.latestBranchEntryOfType(sessionId, lane.leafId, ENTRY_TYPE)
+        }.getOrNull() ?: return null
+        val newest = runCatching {
+            json.decodeFromString(CompactionPayload.serializer(), latestEntry.payloadJson)
+        }.getOrNull() ?: return null
         return CompactionSnapshot(
             summary = newest.summary,
-            foldedMessageCount = payloads.sumOf { it.compactedMessageCount },
+            foldedMessageCount = newest.cumulativeCompactedMessageCount ?: newest.compactedMessageCount,
             createdAt = newest.createdAt,
         )
     }
@@ -68,11 +68,18 @@ class CompactionManager @Inject constructor(
         val incrementalSummary = ContextWindowPolicy.buildHistorySummary(collapsed)
         val summary = mergeRollingSummary(context.summary, incrementalSummary)
         val now = System.currentTimeMillis()
+        val previousFoldedCount = repository.latestBranchEntryOfType(sessionId, lane.leafId, ENTRY_TYPE)
+            ?.let { entry ->
+                runCatching { json.decodeFromString(CompactionPayload.serializer(), entry.payloadJson) }.getOrNull()
+            }
+            ?.let { it.cumulativeCompactedMessageCount ?: it.compactedMessageCount }
+            ?: 0
         val payload = CompactionPayload(
             sourceLeafId = lane.leafId,
             summary = summary,
             retainedMessagesJson = json.encodeToString(ListSerializer(HarnessMessage.serializer()), retained),
             compactedMessageCount = collapsed.size,
+            cumulativeCompactedMessageCount = previousFoldedCount + collapsed.size,
             retainedMessageCount = retained.size,
             estimatedTokensBefore = context.messages.sumOf(::messageTokens),
             createdAt = now,

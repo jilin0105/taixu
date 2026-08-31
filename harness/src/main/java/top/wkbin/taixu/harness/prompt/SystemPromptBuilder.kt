@@ -101,7 +101,10 @@ class SystemPromptBuilder @Inject constructor(
             .getOrDefault(emptyList())
         val memorySection = if (memories.isNotEmpty()) {
             "\n\n## 长期事实与偏好记忆 (Long-Term Memory)\n" +
-                memories.joinToString("\n") { "- [${it.scope}/${it.kind}] ${it.key}: ${it.value}" }
+                memories.joinToString("\n") {
+                    "- [${it.scope}/${it.kind}] ${it.key.take(MAX_PROMPT_MEMORY_KEY_CHARS)}: " +
+                        it.value.take(MAX_PROMPT_MEMORY_VALUE_CHARS)
+                }
         } else ""
 
         val activePlan = runCatching { agentContextDao.getActivePlan(sessionId) }.getOrNull()
@@ -388,7 +391,10 @@ class SystemPromptBuilder @Inject constructor(
     }
 
     companion object {
-        private const val MAX_PROMPT_MEMORIES = 100
+        // Key/value memory is a compact RAG layer, not another copy of conversation history.
+        private const val MAX_PROMPT_MEMORIES = 32
+        private const val MAX_PROMPT_MEMORY_KEY_CHARS = 128
+        private const val MAX_PROMPT_MEMORY_VALUE_CHARS = 512
         private const val MAX_WORKSPACE_CACHE_ENTRIES = 16
         const val PROJECT_CONTEXT_MAX_BYTES = 16 * 1024
 
