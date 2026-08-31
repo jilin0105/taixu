@@ -16,6 +16,8 @@ enum class ConversationBranchKind { MAIN, BRANCH, SUBAGENT, HISTORY }
 data class ConversationBranch(
     val id: String,
     val name: String,
+    /** Durable lane name used to load a read-only transcript. */
+    val laneName: String? = null,
     val leafId: String?,
     val depth: Int,
     val preview: String,
@@ -42,6 +44,14 @@ class LaneManager @Inject constructor(
     suspend fun get(sessionId: String, name: String): HarnessLaneEntity? = repository.findLane(sessionId, name)
     fun observe(sessionId: String): Flow<List<HarnessLaneEntity>> = repository.observeLanes(sessionId)
     suspend fun transcript(sessionId: String, name: String): List<HarnessMessage> = treeStore.load(sessionId, name)
+
+    /** Loads only the isolated child task, excluding the parent conversation shared before the fork. */
+    suspend fun subagentTranscript(sessionId: String, laneName: String): List<HarnessMessage> {
+        require(laneName.startsWith(SUBAGENT_PREFIX)) { "Not a subagent lane: $laneName" }
+        val fullPath = transcript(sessionId, laneName)
+        val taskStart = fullPath.indexOfLast { it is UserMessage }.takeIf { it >= 0 } ?: 0
+        return fullPath.drop(taskStart)
+    }
 
     /** Projects named lanes and otherwise-unreferenced tree leaves into a branch browser model. */
     suspend fun branches(sessionId: String): List<ConversationBranch> {
@@ -72,35 +82,50 @@ class LaneManager @Inject constructor(
                 leafId == main?.leafId -> ConversationBranchKind.MAIN
                 else -> ConversationBranchKind.HISTORY
             }
+            val scopedPathEntries = if (kind == ConversationBranchKind.SUBAGENT) {
+                val taskStart = pathEntries.indexOfLast { it.customType == "user" }.takeIf { it >= 0 } ?: 0
+                pathEntries.drop(taskStart)
+            } else {
+                pathEntries
+            }
+            val scopedMessages = scopedPathEntries.mapNotNull { treeStore.decode(it) }
+            val roleName = namedLane?.name.orEmpty()
+                .removePrefix(SUBAGENT_PREFIX)
+                .substringBefore(':')
+                .ifBlank { "子智能体" }
             val displayName = when (kind) {
                 ConversationBranchKind.MAIN -> "主线"
                 ConversationBranchKind.BRANCH -> namedLane?.name.orEmpty()
                     .removePrefix(BRANCH_PREFIX)
                     .substringAfter(':', "分支 ${index + 1}")
                     .replace('-', ' ')
-                ConversationBranchKind.SUBAGENT -> namedLane?.name.orEmpty()
-                    .removePrefix(SUBAGENT_PREFIX)
-                    .substringBefore(':')
-                    .ifBlank { "子智能体" }
+                ConversationBranchKind.SUBAGENT -> {
+                    val taskName = scopedMessages.filterIsInstance<UserMessage>().firstOrNull()
+                        ?.text?.let(::subagentTaskTitle)
+                    if (taskName.isNullOrBlank()) roleName else "$taskName · $roleName"
+                }
                 ConversationBranchKind.HISTORY -> "历史分支 ${index + 1}"
             }
-            val preview = pathEntries.asReversed().asSequence()
-                .filter { it.customType == "assistant" || it.customType == "user" }
-                .mapNotNull { treeStore.decode(it) }
+            val preview = scopedMessages.asReversed().asSequence()
                 .firstNotNullOfOrNull { message ->
                     when (message) {
                         is AssistantText -> message.text.takeIf { it.isNotBlank() }
-                        is UserMessage -> message.text.takeIf { it.isNotBlank() }
+                        is UserMessage -> if (kind == ConversationBranchKind.SUBAGENT) {
+                            subagentTaskTitle(message.text)
+                        } else {
+                            message.text.takeIf { it.isNotBlank() }
+                        }
                         else -> null
                     }
                 }.orEmpty()
-            val toolCallCount = pathEntries.count { it.customType == "tool_call" }
+            val toolCallCount = scopedPathEntries.count { it.customType == "tool_call" }
             ConversationBranch(
                 // Always key by leaf: one named lane can sit on many leaf paths (siblings/descendants).
                 id = namedLane?.let { "${it.name}@$leafId" } ?: "leaf:$leafId",
                 name = displayName,
+                laneName = namedLane?.name,
                 leafId = leafId,
-                depth = pathEntries.size,
+                depth = scopedPathEntries.size,
                 preview = preview,
                 updatedAt = pathEntries.lastOrNull()?.createdAt ?: namedLane?.updatedAt ?: 0L,
                 kind = kind,
@@ -131,3 +156,9 @@ class LaneManager @Inject constructor(
         private val LANE_NAME = Regex("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
     }
 }
+
+internal fun subagentTaskTitle(prompt: String): String? = prompt.lineSequence()
+    .firstOrNull { it.trimStart().startsWith("任务目标：") }
+    ?.substringAfter("任务目标：")
+    ?.trim()
+    ?.takeIf { it.isNotBlank() }

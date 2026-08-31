@@ -29,6 +29,7 @@ import top.wkbin.taixu.harness.events.HarnessEventBus
 import top.wkbin.taixu.harness.mcp.McpManager
 import top.wkbin.taixu.harness.queue.PromptQueue
 import top.wkbin.taixu.harness.session.ConversationBranch
+import top.wkbin.taixu.harness.session.ConversationBranchKind
 import top.wkbin.taixu.harness.session.LaneManager
 import top.wkbin.taixu.runtime.WorkspaceManager
 import top.wkbin.taixu.runtime.WorkspaceProject
@@ -69,6 +70,14 @@ import top.wkbin.taixu.runtime.terminal.TerminalSessionManager
 private const val MAX_RUNTIME_EVENTS = 160
 private const val TAG = "ChatViewModel"
 private const val KEY_INPUT_DRAFT = "chat_input_draft"
+
+data class SubagentResultUiState(
+    val sessionId: String,
+    val branch: ConversationBranch,
+    val messages: List<HarnessMessage> = emptyList(),
+    val loading: Boolean = true,
+    val error: String? = null,
+)
 
 /** 空会话首屏的权限感知引导档位；决定开场提示卡的文案与色调。 */
 enum class OnboardingPrivilege { SANDBOX, SANDBOX_UNLOCKABLE, SHIZUKU_READY, ROOT_READY }
@@ -181,12 +190,18 @@ class ChatViewModel @Inject constructor(
 
     private val _branchRefresh = MutableStateFlow(0)
     private val branchMessageRevision = messages.map { list -> list.size to list.lastOrNull()?.id }.distinctUntilChanged()
+    // 子智能体在独立 lane 中执行时主会话消息不变，用运行事件驱动分支重投影，
+    // 这样运行中也能在协同卡片里点进子 lane 看实时进展。
+    private val branchEventRevision = runtimeEvents.map { events ->
+        events.size to (events.lastOrNull()?.hashCode() ?: 0)
+    }.distinctUntilChanged()
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val branches: StateFlow<List<ConversationBranch>> = combine(
         harnessLoop.currentSessionId,
         branchMessageRevision,
         _branchRefresh,
-    ) { sessionId, _, _ -> sessionId }.mapLatest { sessionId ->
+        branchEventRevision,
+    ) { sessionId, _, _, _ -> sessionId }.mapLatest { sessionId ->
         if (sessionId.isBlank()) emptyList() else runCatching { laneManager.branches(sessionId) }.getOrDefault(emptyList())
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -817,6 +832,56 @@ class ChatViewModel @Inject constructor(
 
     fun setActiveModel(id: String) {
         selectModel(id)
+    }
+
+    private val _subagentResult = MutableStateFlow<SubagentResultUiState?>(null)
+    val subagentResult: StateFlow<SubagentResultUiState?> = _subagentResult.asStateFlow()
+
+    fun openSubagentResult(branch: ConversationBranch) {
+        if (branch.kind != ConversationBranchKind.SUBAGENT || branch.laneName.isNullOrBlank()) return
+        val sessionId = currentSessionId.value.takeIf { it.isNotBlank() } ?: return
+        _subagentResult.value = SubagentResultUiState(sessionId = sessionId, branch = branch)
+        loadSubagentResult(sessionId, branch)
+    }
+
+    fun refreshSubagentResult() {
+        val current = _subagentResult.value ?: return
+        _subagentResult.value = current.copy(loading = true, error = null)
+        loadSubagentResult(current.sessionId, current.branch)
+    }
+
+    fun closeSubagentResult() {
+        _subagentResult.value = null
+    }
+
+    private fun loadSubagentResult(sessionId: String, branch: ConversationBranch) {
+        val laneName = branch.laneName ?: return
+        viewModelScope.launch {
+            runCatching {
+                val latestBranch = laneManager.branches(sessionId)
+                    .firstOrNull { it.kind == ConversationBranchKind.SUBAGENT && it.laneName == laneName }
+                    ?: branch
+                latestBranch to laneManager.subagentTranscript(sessionId, laneName)
+            }.onSuccess { (latestBranch, transcript) ->
+                val current = _subagentResult.value
+                if (current?.sessionId == sessionId && current.branch.laneName == laneName) {
+                    _subagentResult.value = current.copy(
+                        branch = latestBranch,
+                        messages = transcript,
+                        loading = false,
+                        error = null,
+                    )
+                }
+            }.onFailure { throwable ->
+                val current = _subagentResult.value
+                if (current?.sessionId == sessionId && current.branch.laneName == laneName) {
+                    _subagentResult.value = current.copy(
+                        loading = false,
+                        error = throwable.message ?: "无法读取子智能体成果",
+                    )
+                }
+            }
+        }
     }
 
     fun selectModel(id: String, subModel: String? = null) {

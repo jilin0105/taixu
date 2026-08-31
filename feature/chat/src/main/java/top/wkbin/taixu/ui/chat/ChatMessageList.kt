@@ -107,6 +107,9 @@ internal fun ChatMessageList(
     activePlan: AgentPlanEntity?,
     pendingApprovals: List<AgentApprovalRequestEntity>,
     onResolveApproval: (String, Boolean) -> Unit,
+    onViewSubagentLanes: () -> Unit = {},
+    subagentBranches: List<top.wkbin.taixu.harness.session.ConversationBranch> = emptyList(),
+    onOpenSubagent: (top.wkbin.taixu.harness.session.ConversationBranch) -> Unit = {},
 ) {
     // 折叠状态用自定义 Saver：Map 不能直接存入 Bundle（会抛 IllegalArgumentException）
     var expandedOverrides by rememberSaveable(stateSaver = ExpandedOverridesSaver) { mutableStateOf(mapOf<String, Boolean>()) }
@@ -194,6 +197,9 @@ internal fun ChatMessageList(
                                     SubagentCard(
                                         call = message,
                                         result = toolResults[message.id],
+                                        subagentBranches = subagentBranches,
+                                        onOpenSubagent = onOpenSubagent,
+                                        onViewDetails = onViewSubagentLanes,
                                     )
                                 } else {
                                     ToolCard(

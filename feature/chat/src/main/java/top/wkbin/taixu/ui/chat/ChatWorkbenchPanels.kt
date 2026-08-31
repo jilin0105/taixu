@@ -47,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.res.stringResource
@@ -66,6 +67,12 @@ import top.wkbin.taixu.core.database.AiModelEntity
 import top.wkbin.taixu.core.model.ApprovalMode
 import top.wkbin.taixu.feature.chat.R
 import top.wkbin.taixu.harness.QueuedPrompt
+import top.wkbin.taixu.harness.AssistantText
+import top.wkbin.taixu.harness.CapabilityEvent
+import top.wkbin.taixu.harness.HarnessMessage
+import top.wkbin.taixu.harness.ToolCall
+import top.wkbin.taixu.harness.ToolResult
+import top.wkbin.taixu.harness.UserMessage
 import top.wkbin.taixu.harness.events.HarnessEvent
 import top.wkbin.taixu.harness.queue.PromptQueue
 import top.wkbin.taixu.harness.session.ConversationBranch
@@ -73,6 +80,7 @@ import top.wkbin.taixu.harness.session.ConversationBranchKind
 import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
+import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator
 
 @Composable
 internal fun CollapsibleChatWorkbenchStrip(
@@ -213,6 +221,7 @@ internal fun BranchBrowserSheet(
     running: Boolean,
     onDismiss: () -> Unit,
     onSwitch: (ConversationBranch) -> Unit,
+    onOpenSubagent: (ConversationBranch) -> Unit,
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -253,7 +262,11 @@ internal fun BranchBrowserSheet(
                 if (subagents.isNotEmpty()) {
                     SectionLabel(stringResource(R.string.chat_subagent_lanes), subagents.size)
                     subagents.forEach { branch ->
-                        BranchCard(branch, enabled = false, onClick = {})
+                        BranchCard(
+                            branch = branch,
+                            enabled = branch.laneName != null,
+                            onClick = { onOpenSubagent(branch) },
+                        )
                     }
                 }
             }
@@ -306,7 +319,13 @@ private fun BranchCard(branch: ConversationBranch, enabled: Boolean, onClick: ()
                 if (branch.isBusy) {
                     // 低优先级修复：running 禁用需给出解释，否则用户不知道为何点不动
                     Text(
-                        stringResource(R.string.chat_branch_busy_hint),
+                        stringResource(
+                            if (branch.kind == ConversationBranchKind.SUBAGENT) {
+                                R.string.chat_subagent_live_hint
+                            } else {
+                                R.string.chat_branch_busy_hint
+                            },
+                        ),
                         style = MaterialTheme.typography.labelSmall,
                         color = tint,
                     )
@@ -320,6 +339,190 @@ private fun BranchCard(branch: ConversationBranch, enabled: Boolean, onClick: ()
             if (enabled && !branch.isCurrent) RuntimeIcon(RuntimeIconName.ChevronRight, Modifier.size(18.dp), tint)
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun SubagentResultSheet(
+    state: SubagentResultUiState,
+    onRefresh: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val branch = state.branch
+    val finalResult = state.messages.filterIsInstance<AssistantText>().lastOrNull { it.text.isNotBlank() }
+    val task = state.messages.filterIsInstance<UserMessage>().firstOrNull()
+    val toolResults = remember(state.messages) {
+        state.messages.filterIsInstance<ToolResult>().associateBy { it.toolCallId }
+    }
+    var processExpanded by rememberSaveable(branch.id) { mutableStateOf(false) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Box(
+                        Modifier.size(38.dp).background(MaterialTheme.colorScheme.tertiaryContainer, CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        RuntimeIcon(RuntimeIconName.Bot, Modifier.size(20.dp), MaterialTheme.colorScheme.onTertiaryContainer)
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            branch.name,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            stringResource(R.string.chat_subagent_result_description),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (branch.isBusy) MiniBadge(stringResource(R.string.chat_badge_busy), Color(0xFF7C4DFF))
+                    if (branch.faulted) MiniBadge(stringResource(R.string.chat_badge_faulted), MaterialTheme.colorScheme.error)
+                }
+            }
+
+            if (state.loading) {
+                item {
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RuntimeCircularProgressIndicator(Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.chat_subagent_loading), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            } else if (state.error != null) {
+                item {
+                    RuntimeCard(containerColor = MaterialTheme.colorScheme.errorContainer) {
+                        Text(state.error, color = MaterialTheme.colorScheme.onErrorContainer)
+                    }
+                }
+            } else {
+                task?.let { taskMessage ->
+                    item {
+                        RuntimeCard(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
+                            Text(
+                                stringResource(R.string.chat_subagent_task),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.tertiary,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            SelectionContainer {
+                                Text(
+                                    subagentTaskDetails(taskMessage.text),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    Text(
+                        stringResource(R.string.chat_subagent_final_result),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                item {
+                    RuntimeCard(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.38f),
+                        borderColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.35f),
+                    ) {
+                        if (finalResult != null) {
+                            MarkdownText(finalResult.text, Modifier.fillMaxWidth())
+                        } else {
+                            Text(
+                                stringResource(
+                                    if (branch.isBusy) R.string.chat_subagent_pending else R.string.chat_subagent_no_result,
+                                ),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    RuntimeCard(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                        onClick = { processExpanded = !processExpanded },
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            RuntimeIcon(RuntimeIconName.Logs, Modifier.size(17.dp), MaterialTheme.colorScheme.primary)
+                            Text(
+                                stringResource(R.string.chat_subagent_process, branch.depth, branch.toolCallCount),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f),
+                            )
+                            RuntimeIcon(
+                                RuntimeIconName.ChevronDown,
+                                Modifier.size(18.dp).rotate(if (processExpanded) 180f else 0f),
+                                MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+
+                if (processExpanded) {
+                    items(
+                        items = state.messages.filter { it !is ToolResult && it.id != finalResult?.id },
+                        key = { it.id },
+                    ) { message ->
+                        when (message) {
+                            is UserMessage -> Unit
+                            is AssistantText -> RuntimeCard(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
+                                MarkdownText(message.text, Modifier.fillMaxWidth())
+                            }
+                            is ToolCall -> ToolCard(
+                                call = message,
+                                result = toolResults[message.id],
+                                workspace = "",
+                                onOpenFile = null,
+                                running = branch.isBusy,
+                                liveStatus = null,
+                            )
+                            is CapabilityEvent -> Unit
+                            is ToolResult -> Unit
+                        }
+                    }
+                }
+            }
+
+            item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onRefresh) { Text(stringResource(R.string.chat_subagent_refresh)) }
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.chat_close)) }
+                }
+            }
+        }
+    }
+}
+
+private fun subagentTaskDetails(prompt: String): String {
+    val details = prompt.substringAfter("任务详情：", missingDelimiterValue = prompt)
+        .substringBefore("你是被主智能体派发的子智能体")
+        .trim()
+    return details.ifBlank { prompt.trim() }
 }
 
 @Composable

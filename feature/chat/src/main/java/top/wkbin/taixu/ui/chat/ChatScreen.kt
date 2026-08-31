@@ -150,6 +150,7 @@ fun ChatScreen(
     val onboardingPrivilege by viewModel.privilegeOnboarding.collectAsStateWithLifecycle()
     val attachmentsProcessing by viewModel.attachmentsProcessing.collectAsStateWithLifecycle()
     val notice by viewModel.notice.collectAsStateWithLifecycle()
+    val subagentResult by viewModel.subagentResult.collectAsStateWithLifecycle()
 
     // 弹窗开关与编辑目标：用 rememberSaveable 保存，旋转 / 进程重建后不丢失
     var showSessions by rememberSaveable { mutableStateOf(false) }
@@ -300,6 +301,12 @@ fun ChatScreen(
         }
     }
 
+    // 切换会话后自动关闭遗留的子智能体成果抽屉，避免跨会话展示旧 lane
+    LaunchedEffect(currentSessionId) {
+        val opened = subagentResult
+        if (opened != null && opened.sessionId != currentSessionId) viewModel.closeSubagentResult()
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -404,6 +411,9 @@ fun ChatScreen(
                         mcpRecommendations = mcpRecommendations,
                         onEnableMcpRecommendation = viewModel::enableMcpRecommendation,
                         onDismissMcpRecommendation = viewModel::dismissMcpRecommendation,
+                        onViewSubagentLanes = { showBranches = true },
+                        subagentBranches = branches,
+                        onOpenSubagentBranch = viewModel::openSubagentResult,
                     )
 
                     VerticalDivider(
@@ -490,6 +500,9 @@ fun ChatScreen(
                     mcpRecommendations = mcpRecommendations,
                     onEnableMcpRecommendation = viewModel::enableMcpRecommendation,
                     onDismissMcpRecommendation = viewModel::dismissMcpRecommendation,
+                    onViewSubagentLanes = { showBranches = true },
+                    subagentBranches = branches,
+                    onOpenSubagentBranch = viewModel::openSubagentResult,
                 )
             }
 
@@ -633,6 +646,17 @@ fun ChatScreen(
                 viewModel.switchBranch(branch)
                 showBranches = false
             },
+            // 成果抽屉叠在分支列表之上，关闭后自然回到列表，再关闭即回主会话
+            onOpenSubagent = viewModel::openSubagentResult,
+        )
+    }
+
+    // 子智能体完整调研成果（独立 lane 的只读 transcript）
+    subagentResult?.let { state ->
+        SubagentResultSheet(
+            state = state,
+            onRefresh = viewModel::refreshSubagentResult,
+            onDismiss = viewModel::closeSubagentResult,
         )
     }
 
@@ -752,6 +776,9 @@ private fun ChatPaneContent(
     contextUsage: ContextUsage = ContextUsage(),
     quickPhrases: List<QuickPhrase> = emptyList(),
     onSelectPhrase: (QuickPhrase) -> Unit = {},
+    onViewSubagentLanes: () -> Unit = {},
+    subagentBranches: List<top.wkbin.taixu.harness.session.ConversationBranch> = emptyList(),
+    onOpenSubagentBranch: (top.wkbin.taixu.harness.session.ConversationBranch) -> Unit = {},
 ) {
     Column(modifier = modifier) {
         ChatMessageList(
@@ -783,6 +810,9 @@ private fun ChatPaneContent(
             activePlan = activePlan,
             pendingApprovals = pendingApprovals,
             onResolveApproval = onResolveApproval,
+            onViewSubagentLanes = onViewSubagentLanes,
+            subagentBranches = subagentBranches,
+            onOpenSubagent = onOpenSubagentBranch,
         )
 
         activePlan?.let { plan ->

@@ -41,6 +41,8 @@ import top.wkbin.taixu.feature.chat.R
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.harness.SubagentArgsParser
+import top.wkbin.taixu.harness.session.ConversationBranch
+import top.wkbin.taixu.harness.session.ConversationBranchKind
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 
@@ -54,6 +56,9 @@ fun SubagentCard(
     call: ToolCall,
     result: ToolResult?,
     modifier: Modifier = Modifier,
+    subagentBranches: List<ConversationBranch> = emptyList(),
+    onOpenSubagent: ((ConversationBranch) -> Unit)? = null,
+    onViewDetails: (() -> Unit)? = null,
 ) {
     var expanded by remember { mutableStateOf(result != null) }
     val rotationState by animateFloatAsState(targetValue = if (expanded) 180f else 0f, label = "arrow_anim")
@@ -177,11 +182,19 @@ fun SubagentCard(
                         "assistant" -> stringResource(R.string.chat_subagent_role_assistant)
                         else -> role
                     }
+                    // 直接定位该任务对应的子智能体 lane（运行中也可打开看实时进展）
+                    val targetBranch = remember(subagentBranches, taskName, role) {
+                        matchSubagentBranch(subagentBranches, taskName, role)
+                    }
+                    val clickable = targetBranch != null && onOpenSubagent != null
 
                     Surface(
                         shape = RoundedCornerShape(6.dp),
                         color = roleColor.copy(alpha = 0.1f),
                         border = androidx.compose.foundation.BorderStroke(0.5.dp, roleColor.copy(alpha = 0.3f)),
+                        modifier = Modifier.clickable(enabled = clickable) {
+                            targetBranch?.let { onOpenSubagent?.invoke(it) }
+                        },
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
@@ -196,6 +209,13 @@ fun SubagentCard(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
+                            if (clickable) {
+                                RuntimeIcon(
+                                    name = RuntimeIconName.ChevronRight,
+                                    modifier = Modifier.size(11.dp),
+                                    tint = roleColor,
+                                )
+                            }
                         }
                     }
                 }
@@ -236,8 +256,52 @@ fun SubagentCard(
                             modifier = Modifier.padding(vertical = 4.dp),
                         )
                     }
+
+                    // 入口：打开分支面板里的子智能体 lane，查看完整调研过程与最终成果
+                    if (onViewDetails != null) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            TextButton(onClick = onViewDetails) {
+                                Text(
+                                    stringResource(R.string.chat_subagent_view_details),
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                RuntimeIcon(
+                                    name = RuntimeIconName.ChevronRight,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+/**
+ * 把协同卡片里的某个子任务匹配到它的 lane 分支：
+ * lane 名为 subagent:<roleId>:<uuid>，分支名为「任务目标 · roleId」。
+ * 先按 role + 任务名精确匹配，退化到仅按 role；branches 已按更新时间倒序，取最新一条。
+ */
+private fun matchSubagentBranch(
+    branches: List<ConversationBranch>,
+    taskName: String,
+    role: String,
+): ConversationBranch? {
+    val subs = branches.filter {
+        it.kind == ConversationBranchKind.SUBAGENT && !it.laneName.isNullOrBlank()
+    }
+    if (subs.isEmpty()) return null
+    val roleOf: (ConversationBranch) -> String = {
+        it.laneName.orEmpty().removePrefix("subagent:").substringBefore(':')
+    }
+    subs.firstOrNull { branch ->
+        roleOf(branch).equals(role, ignoreCase = true) &&
+            branch.name.substringBefore(" · ").trim() == taskName.trim()
+    }?.let { return it }
+    subs.firstOrNull { roleOf(it).equals(role, ignoreCase = true) }?.let { return it }
+    // 模型可能用中文角色名派发（lane 里落的是 profile.id），再退化到仅按任务名匹配
+    return subs.firstOrNull { it.name.substringBefore(" · ").trim() == taskName.trim() }
 }
