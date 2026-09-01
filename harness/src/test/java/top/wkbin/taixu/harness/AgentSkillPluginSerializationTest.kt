@@ -5,7 +5,7 @@ import top.wkbin.taixu.core.model.AgentSkill
 import top.wkbin.taixu.core.model.BuiltinPlugins
 import top.wkbin.taixu.core.model.BuiltinSkills
 import top.wkbin.taixu.core.model.AgentSubagent
-import top.wkbin.taixu.core.model.BuiltinSubagents
+import top.wkbin.taixu.core.model.AgentDepartments
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -55,16 +55,21 @@ class AgentSkillPluginSerializationTest {
     }
 
     @Test
-    fun testBuiltinSubagentsAreValidAndSerializable() {
-        val profiles = BuiltinSubagents.presets
-        assertTrue(profiles.isNotEmpty())
-        assertEquals(profiles.size, profiles.map { it.id }.distinct().size)
-        assertEquals(profiles.indices.toList(), profiles.map { it.sortOrder })
-        assertTrue(profiles.all { it.id.matches(Regex("[a-z0-9_-]+")) })
-        assertTrue(profiles.all { it.name.isNotBlank() && it.description.isNotBlank() && it.systemPrompt.isNotBlank() })
+    fun testDepartmentAwareSubagentIsSerializable() {
+        assertEquals(9, AgentDepartments.agency.size)
+        assertEquals(9, AgentDepartments.agency.map { it.id }.distinct().size)
+        val profile = AgentSubagent(
+            id = "agency_engineering_frontend_developer",
+            name = "Frontend Developer",
+            description = "Frontend implementation",
+            systemPrompt = "Build production-ready interfaces.",
+            departmentId = "engineering",
+            sortOrder = 0,
+        )
 
-        val encoded = json.encodeToString(profiles)
-        val decoded = json.decodeFromString<List<AgentSubagent>>(encoded)
-        assertEquals(profiles, decoded)
+        val encoded = json.encodeToString(profile)
+        val decoded = json.decodeFromString<AgentSubagent>(encoded)
+        assertEquals(profile, decoded)
+        assertEquals("Engineering", AgentDepartments.find(decoded.departmentId).name)
     }
 }

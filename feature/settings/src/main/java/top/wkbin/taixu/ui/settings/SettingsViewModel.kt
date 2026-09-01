@@ -787,6 +787,7 @@ class SettingsViewModel @Inject constructor(
                 name = trimmedName,
                 description = description.trim().ifBlank { "自定义子智能体角色" },
                 systemPrompt = trimmedPrompt,
+                departmentId = previous?.departmentId ?: top.wkbin.taixu.core.model.AgentDepartments.CUSTOM_ID,
                 isEnabled = previous?.isEnabled ?: true,
                 isBuiltin = previous?.isBuiltin ?: false,
                 sortOrder = previous?.sortOrder ?: subagentRepository.nextSortOrder(),

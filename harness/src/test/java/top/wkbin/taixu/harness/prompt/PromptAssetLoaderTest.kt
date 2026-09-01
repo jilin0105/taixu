@@ -66,7 +66,7 @@ class PromptAssetLoaderTest {
             "PKG_MANAGER" to "apt-get install",
             "ACTIVE_SKILLS" to "",
             "TRIGGER_POLICY" to "manual",
-            "ROLE_LIST" to "- assistant",
+            "DEPARTMENT_INDEX" to "- department=\"engineering\"：工程研发 / Engineering（启用 59）",
             "MARKER_TEXT" to "README.md",
             "WORKSPACE_PATH" to "/workspace/demo",
             "TYPE_GUIDANCE" to "general",
@@ -81,6 +81,22 @@ class PromptAssetLoaderTest {
             val rendered = loader.render(path, variables)
             assertFalse("Unresolved variable in $path", rendered.contains(Regex("""\{\{[A-Z]""")))
         }
+    }
+
+    @Test
+    fun subagentGuidanceUsesOnlyTheConstantDepartmentIndex() {
+        val rendered = loader.render(
+            "prompts/subagent_guidance.md",
+            mapOf(
+                "TRIGGER_POLICY" to "manual",
+                "DEPARTMENT_INDEX" to "- department=\"engineering\"：工程研发 / Engineering（启用 59）",
+            ),
+        )
+
+        assertTrue(rendered.contains("department + agentQuery"))
+        assertTrue(rendered.contains("启用 59"))
+        assertFalse(rendered.contains("agency_engineering_frontend_developer"))
+        assertFalse(rendered.contains("Frontend Developer"))
     }
 
     /** 递归列出 assets 下指定目录中的全部 .md 文件（含子目录如 system/）。 */

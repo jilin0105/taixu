@@ -47,9 +47,11 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -62,6 +64,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.wkbin.taixu.core.model.AgentPlugin
 import top.wkbin.taixu.core.model.AgentSkill
 import top.wkbin.taixu.core.model.AgentSubagent
+import top.wkbin.taixu.core.model.AgentDepartments
 import top.wkbin.taixu.core.model.ApprovalMode
 import top.wkbin.taixu.ui.components.RuntimeCard
 import top.wkbin.taixu.ui.components.RuntimeIcon
@@ -103,6 +106,19 @@ fun AgentSettingsScreen(
     var showSubagentDialog by remember { mutableStateOf(false) }
     var deletingSubagent by remember { mutableStateOf<AgentSubagent?>(null) }
     var deletingSkill by remember { mutableStateOf<AgentSkill?>(null) }
+    var subagentQuery by rememberSaveable { mutableStateOf("") }
+    var expandedDepartmentIds by rememberSaveable { mutableStateOf(listOf<String>()) }
+    val visibleSubagentGroups = remember(subagents, subagentQuery) {
+        val query = subagentQuery.trim().lowercase()
+        subagents.asSequence()
+            .filter { profile ->
+                query.isBlank() || profile.name.lowercase().contains(query) ||
+                    profile.id.lowercase().contains(query) || profile.description.lowercase().contains(query)
+            }
+            .groupBy { it.departmentId }
+            .entries
+            .sortedBy { AgentDepartments.find(it.key).sortOrder }
+    }
     val skillArchivePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(viewModel::importSkillArchive) }
 
     Scaffold(
@@ -258,8 +274,8 @@ fun AgentSettingsScreen(
             // ---- 模块 3：内置子智能体 ----
             item {
                 SectionHeader(
-                    title = "子智能体角色 (${subagents.count { it.isEnabled }}/${subagents.size} 已启用)",
-                    subtitle = "主智能体按任务需要自主选择角色并并行委派",
+                    title = "软件研发 Agent (${subagents.count { it.isEnabled }}/${subagents.size} 已启用)",
+                    subtitle = "Agency Agents · 9 个研发部门 · MIT 许可 · 完整提示词离线内置",
                 )
             }
             item {
@@ -284,6 +300,17 @@ fun AgentSettingsScreen(
                 AgentBlockTitle("角色列表")
             }
             item {
+                OutlinedTextField(
+                    value = subagentQuery,
+                    onValueChange = { subagentQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("搜索 Agent") },
+                    placeholder = { Text("名称、角色标识或职责") },
+                    leadingIcon = { RuntimeIcon(RuntimeIconName.Search, Modifier.size(18.dp)) },
+                    singleLine = true,
+                )
+            }
+            item {
                 Button(
                     onClick = {
                         editingSubagent = null
@@ -299,16 +326,38 @@ fun AgentSettingsScreen(
                     }
                 }
             }
-            items(subagents, key = { "subagent:${it.id}" }) { profile ->
-                SubagentProfileCard(
-                    profile = profile,
-                    onToggle = { enabled -> viewModel.toggleSubagent(profile.id, enabled) },
-                    onEdit = {
-                        editingSubagent = profile
-                        showSubagentDialog = true
-                    },
-                    onDelete = { deletingSubagent = profile },
-                )
+            visibleSubagentGroups.forEach { (departmentId, profiles) ->
+                val expanded = subagentQuery.isNotBlank() || departmentId in expandedDepartmentIds
+                item(key = "department:$departmentId") {
+                    AgentDepartmentCard(
+                        departmentId = departmentId,
+                        enabledCount = profiles.count { it.isEnabled },
+                        agentCount = profiles.size,
+                        expanded = expanded,
+                        onClick = {
+                            if (subagentQuery.isBlank()) {
+                                expandedDepartmentIds = if (expanded) {
+                                    expandedDepartmentIds - departmentId
+                                } else {
+                                    expandedDepartmentIds + departmentId
+                                }
+                            }
+                        },
+                    )
+                }
+                if (expanded) {
+                    items(profiles, key = { "subagent:${it.id}" }) { profile ->
+                        SubagentProfileCard(
+                            profile = profile,
+                            onToggle = { enabled -> viewModel.toggleSubagent(profile.id, enabled) },
+                            onEdit = {
+                                editingSubagent = profile
+                                showSubagentDialog = true
+                            },
+                            onDelete = { deletingSubagent = profile },
+                        )
+                    }
+                }
             }
 
             }
@@ -651,6 +700,57 @@ private fun ApprovalModeSelectorRow(
 }
 
 @Composable
+private fun AgentDepartmentCard(
+    departmentId: String,
+    enabledCount: Int,
+    agentCount: Int,
+    expanded: Boolean,
+    onClick: () -> Unit,
+) {
+    val department = AgentDepartments.find(departmentId)
+    val departmentColor = Color(department.colorArgb)
+    RuntimeCard(
+        modifier = Modifier.fillMaxWidth(),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        borderColor = departmentColor.copy(alpha = 0.4f),
+        onClick = onClick,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(departmentColor.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                RuntimeIcon(RuntimeIconName.Bot, Modifier.size(20.dp), departmentColor)
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    "${department.localizedName} · ${department.name}",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    maxLines = 1,
+                )
+                Text(
+                    "$enabledCount/$agentCount 已启用",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            RuntimeIcon(
+                if (expanded) RuntimeIconName.ChevronUp else RuntimeIconName.ChevronDown,
+                Modifier.size(20.dp),
+                MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
 private fun SubagentProfileCard(
     profile: AgentSubagent,
     onToggle: (Boolean) -> Unit,
@@ -687,7 +787,7 @@ private fun SubagentProfileCard(
                         shape = RoundedCornerShape(4.dp),
                     ) {
                         Text(
-                            "预置",
+                            "Agency",
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,

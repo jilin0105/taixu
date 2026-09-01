@@ -52,6 +52,26 @@ class BuiltinToolContractTest {
     }
 
     @Test
+    fun subagentToolUsesDepartmentIndexRoutingWithoutRequiringExactRole() {
+        val tool = ProviderClient.TOOLS.single { it.function.name == "invoke_subagent" }
+        val subagents = tool.function.parameters["properties"]!!.jsonObject["subagents"]!!.jsonObject
+        val item = subagents["items"]!!.jsonObject
+        val properties = item["properties"]!!.jsonObject
+        val required = item["required"]!!.jsonArray.map { it.jsonPrimitive.content }
+        val departments = properties["department"]!!.jsonObject["enum"]!!.jsonArray
+            .map { it.jsonPrimitive.content }
+
+        assertTrue("department" in required)
+        assertTrue("agentQuery" in required)
+        assertTrue("prompt" in required)
+        assertTrue("role" in properties)
+        assertTrue("role" !in required)
+        assertEquals(9, departments.size)
+        assertEquals("6", subagents["maxItems"].toString())
+        assertTrue(tool.function.description.contains("本地索引"))
+    }
+
+    @Test
     fun hostExposesStatusAndPrivilegedExec() {
         val host = ProviderClient.TOOLS.single { it.function.name == "host" }
         val encoded = host.function.parameters.toString()

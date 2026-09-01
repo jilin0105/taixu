@@ -88,8 +88,13 @@ data class McpToolInfo(
 @Serializable
 data class SubagentTaskSpec(
     val taskName: String,
-    val role: String,
+    /** Optional exact profile id/name override retained for persisted and legacy calls. */
+    val role: String = "",
     val prompt: String,
+    /** Built-in department id used to constrain local catalog matching. */
+    val department: String = "",
+    /** Short English professional keywords matched against id/name/description locally. */
+    val agentQuery: String = "",
 )
 
 /**

@@ -24,10 +24,16 @@ object SubagentArgsParser {
 
         return candidates.mapNotNull { candidate ->
             val prompt = candidate.string("prompt")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val role = candidate.string("role").orEmpty().trim()
+            val department = candidate.string("department").orEmpty().trim()
+            val agentQuery = candidate.string("agentQuery").orEmpty().trim()
+            if (role.isBlank() && (department.isBlank() || agentQuery.isBlank())) return@mapNotNull null
             SubagentTaskSpec(
-                taskName = candidate.string("taskName")?.takeIf { it.isNotBlank() } ?: defaultTaskName,
-                role = candidate.string("role")?.takeIf { it.isNotBlank() } ?: "assistant",
+                taskName = candidate.string("taskName")?.trim()?.takeIf { it.isNotBlank() } ?: defaultTaskName,
+                role = role,
                 prompt = prompt,
+                department = department,
+                agentQuery = agentQuery,
             )
         }.take(maxTasks.coerceAtLeast(0))
     }

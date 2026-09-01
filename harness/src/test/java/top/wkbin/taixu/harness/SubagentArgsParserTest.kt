@@ -43,6 +43,32 @@ class SubagentArgsParserTest {
     }
 
     @Test
+    fun `parses department index routing without a role`() {
+        val args = jsonObject(
+            """{"subagents":{"taskName":"移动端实现","department":"engineering","agentQuery":"mobile android","prompt":"实现 Android 功能"}}""",
+        )
+
+        val result = SubagentArgsParser.parse(args)
+
+        assertEquals(1, result.size)
+        assertEquals("", result.single().role)
+        assertEquals("engineering", result.single().department)
+        assertEquals("mobile android", result.single().agentQuery)
+    }
+
+    @Test
+    fun `keeps exact role as a backwards compatible override`() {
+        val args = jsonObject(
+            """{"subagents":{"taskName":"审查","role":"agency_engineering_code_reviewer","department":"testing","agentQuery":"test automation","prompt":"审查代码"}}""",
+        )
+
+        val result = SubagentArgsParser.parse(args)
+
+        assertEquals("agency_engineering_code_reviewer", result.single().role)
+        assertEquals("testing", result.single().department)
+    }
+
+    @Test
     fun `accepts legacy top-level arguments when nested value is incomplete`() {
         val args = jsonObject(
             """{"subagents":"partial","taskName":"兼容","role":"coder","prompt":"继续执行"}""",
@@ -57,6 +83,15 @@ class SubagentArgsParserTest {
     @Test
     fun `returns empty for an interrupted malformed call`() {
         val args = jsonObject("""{"subagents":"partial"}""")
+
+        assertTrue(SubagentArgsParser.parse(args).isEmpty())
+    }
+
+    @Test
+    fun `rejects a task without either exact role or complete index routing`() {
+        val args = jsonObject(
+            """{"subagents":{"taskName":"不完整","department":"engineering","prompt":"继续执行"}}""",
+        )
 
         assertTrue(SubagentArgsParser.parse(args).isEmpty())
     }

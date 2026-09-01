@@ -10,6 +10,9 @@ android {
     resourcePrefix = "database_"
     compileSdk = 37
     defaultConfig { minSdk = 29 }
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

@@ -1,8 +1,9 @@
 package top.wkbin.taixu.harness
 
 import top.wkbin.taixu.core.database.HarnessSessionRepository
-import top.wkbin.taixu.core.model.SubagentTaskSpec
 import top.wkbin.taixu.core.model.AgentSubagent
+import top.wkbin.taixu.core.model.AgentSubagentIndexEntry
+import top.wkbin.taixu.core.model.SubagentTaskSpec
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -49,8 +50,8 @@ class SubagentOrchestrator @Inject constructor(
             return@withContext false to "未解析到有效的 subagents 任务列表，请检查参数"
         }
 
-        val profiles = subagentRepository.enabledProfiles()
-        if (profiles.isEmpty()) {
+        val profileIndex = subagentRepository.enabledIndex()
+        if (profileIndex.isEmpty()) {
             return@withContext false to "当前没有启用的子智能体角色，请先在 Agent 设置中添加或启用角色"
         }
         val parentLeaf = laneManager.get(parentSessionId, "main")?.leafId
@@ -58,16 +59,13 @@ class SubagentOrchestrator @Inject constructor(
         val results = specs.map { spec ->
             async {
                 globalParallelism.withPermit {
-                    val profile = profiles.firstOrNull { configured ->
-                        configured.id.equals(spec.role, ignoreCase = true) ||
-                            configured.name.equals(spec.role, ignoreCase = true)
-                    }
+                    val profile = resolveProfile(spec, profileIndex)
                     if (profile == null) {
-                        return@async SubagentExecutionOutcome(
+                        return@withPermit SubagentExecutionOutcome(
                             spec = spec,
                             subSessionId = "",
                             isSuccess = false,
-                            summary = "角色 ${spec.role} 未配置或未启用。可用角色：${profiles.joinToString { it.id }}",
+                            summary = routingFailure(spec),
                             toolCallCount = 0,
                         )
                     }
@@ -84,6 +82,8 @@ class SubagentOrchestrator @Inject constructor(
                         isSuccess = laneResult?.success == true,
                         summary = laneResult?.summary ?: "执行超时 (${SUBAGENT_TIMEOUT_MS / 60_000} 分钟)",
                         toolCallCount = laneResult?.toolCallCount ?: 0,
+                        resolvedProfileId = profile.id,
+                        resolvedProfileName = profile.name,
                     )
                 }
             }
@@ -92,6 +92,28 @@ class SubagentOrchestrator @Inject constructor(
         val summaryMarkdown = buildSummaryMarkdown(results)
         val anySuccess = results.any { it.isSuccess }
         anySuccess to summaryMarkdown
+    }
+
+    private suspend fun resolveProfile(
+        spec: SubagentTaskSpec,
+        profileIndex: List<AgentSubagentIndexEntry>,
+    ): AgentSubagent? {
+        val selected = if (spec.role.isNotBlank()) {
+            profileIndex.firstOrNull { entry ->
+                entry.id.equals(spec.role, ignoreCase = true) ||
+                    entry.name.equals(spec.role, ignoreCase = true)
+            }
+        } else {
+            SubagentProfileMatcher.match(profileIndex, spec.department, spec.agentQuery)
+        } ?: return null
+        return subagentRepository.findEnabledProfile(selected.id)
+    }
+
+    private fun routingFailure(spec: SubagentTaskSpec): String = if (spec.role.isNotBlank()) {
+        "精确角色 ${spec.role} 未配置或未启用。可改用 department + agentQuery 让本地索引派发。"
+    } else {
+        "部门 ${spec.department} 中没有匹配 agentQuery=\"${spec.agentQuery}\" 的已启用角色。" +
+            "请保留部门并改用 2–5 个更具体的英文专业关键词。"
     }
 
     private fun buildSubagentPrompt(spec: SubagentTaskSpec, profile: AgentSubagent, workspace: String): String {
@@ -124,7 +146,12 @@ class SubagentOrchestrator @Inject constructor(
             append("### 🤖 子智能体协同执行完成 · $batchStatus ($succeeded/${outcomes.size})\n\n")
             outcomes.forEachIndexed { index, outcome ->
                 val statusIcon = if (outcome.isSuccess) "✅" else "⚠️"
-                append("#### ${index + 1}. $statusIcon 【${outcome.spec.taskName}】(角色: ${outcome.spec.role})\n")
+                val resolvedRole = if (outcome.resolvedProfileId != null) {
+                    "${outcome.resolvedProfileName} · ${outcome.resolvedProfileId}"
+                } else {
+                    outcome.spec.role.ifBlank { "${outcome.spec.department} / ${outcome.spec.agentQuery}" }
+                }
+                append("#### ${index + 1}. $statusIcon 【${outcome.spec.taskName}】(角色: $resolvedRole)\n")
                 append("- **工具调用次数**：${outcome.toolCallCount} 次\n")
                 append("- **子任务输出**：\n")
                 append(outcome.summary.trim())
@@ -139,6 +166,8 @@ class SubagentOrchestrator @Inject constructor(
         val isSuccess: Boolean,
         val summary: String,
         val toolCallCount: Int,
+        val resolvedProfileId: String? = null,
+        val resolvedProfileName: String? = null,
     )
 
 }

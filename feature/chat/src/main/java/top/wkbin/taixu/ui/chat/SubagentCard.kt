@@ -66,7 +66,8 @@ fun SubagentCard(
     val defaultTaskName = stringResource(R.string.chat_subtask)
     val tasks = remember(call.args, defaultTaskName) {
         SubagentArgsParser.parse(call.args, defaultTaskName).map { spec ->
-            Triple(spec.taskName, spec.role, spec.prompt)
+            val routingLabel = spec.role.ifBlank { "${spec.department} · ${spec.agentQuery}" }
+            Triple(spec.taskName, routingLabel, spec.prompt)
         }
     }
 
@@ -283,7 +284,7 @@ fun SubagentCard(
 /**
  * 把协同卡片里的某个子任务匹配到它的 lane 分支：
  * lane 名为 subagent:<roleId>:<uuid>，分支名为「任务目标 · roleId」。
- * 先按 role + 任务名精确匹配，退化到仅按 role；branches 已按更新时间倒序，取最新一条。
+ * 精确 role 调用先按 role + 任务名匹配；索引派发尚未在调用参数中解析出 role，退化到任务名。
  */
 private fun matchSubagentBranch(
     branches: List<ConversationBranch>,

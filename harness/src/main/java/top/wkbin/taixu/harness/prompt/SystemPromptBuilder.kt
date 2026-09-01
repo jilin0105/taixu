@@ -16,6 +16,7 @@ import top.wkbin.taixu.core.model.BuiltinMcpPresets
 import top.wkbin.taixu.core.model.McpToolInfo
 import top.wkbin.taixu.core.tools.ToolRepository
 import top.wkbin.taixu.harness.R
+import top.wkbin.taixu.harness.SubagentDepartmentIndexRenderer
 import top.wkbin.taixu.harness.ToolCallMode
 import top.wkbin.taixu.harness.WorkspaceFileAccess
 import top.wkbin.taixu.harness.mcp.McpToolApiName
@@ -296,14 +297,14 @@ class SystemPromptBuilder @Inject constructor(
 
     private suspend fun buildSubagentGuidance(toolCallMode: ToolCallMode): String {
         if (toolCallMode == ToolCallMode.DISABLED) return ""
-        val profiles = runCatching { subagentRepository.enabledProfiles() }.getOrDefault(emptyList())
-        if (profiles.isEmpty()) {
+        val departmentCounts = runCatching {
+            subagentRepository.enabledDepartmentCounts()
+        }.getOrDefault(emptyList())
+        if (departmentCounts.isEmpty()) {
             return context.getString(R.string.harness_prompt_subagent_none)
         }
         val autoEnabled = runCatching { subagentRepository.autoDelegationEnabled.first() }.getOrDefault(true)
-        val roleList = profiles.joinToString("\n") { profile ->
-            "- role=\"${profile.id}\"：${profile.name}。${profile.description}"
-        }
+        val departmentIndex = SubagentDepartmentIndexRenderer.render(departmentCounts)
         val triggerPolicy = if (autoEnabled) {
             promptAssets.render("prompts/subagent_trigger_auto.md")
         } else {
@@ -311,7 +312,7 @@ class SystemPromptBuilder @Inject constructor(
         }
         return promptAssets.render(
             "prompts/subagent_guidance.md",
-            mapOf("TRIGGER_POLICY" to triggerPolicy, "ROLE_LIST" to roleList),
+            mapOf("TRIGGER_POLICY" to triggerPolicy, "DEPARTMENT_INDEX" to departmentIndex),
         )
     }
 

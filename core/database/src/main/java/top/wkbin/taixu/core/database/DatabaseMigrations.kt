@@ -105,3 +105,11 @@ val MIGRATION_38_39 = object : Migration(38, 39) {
         db.execSQL("ALTER TABLE harness_sessions ADD COLUMN modelVariant TEXT")
     }
 }
+
+/** Replace the legacy flat built-in roles with a versioned, department-aware catalog. */
+val MIGRATION_39_40 = object : Migration(39, 40) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE agent_subagents ADD COLUMN departmentId TEXT NOT NULL DEFAULT 'custom'")
+        db.execSQL("ALTER TABLE agent_subagent_settings ADD COLUMN catalogRevision TEXT NOT NULL DEFAULT ''")
+    }
+}

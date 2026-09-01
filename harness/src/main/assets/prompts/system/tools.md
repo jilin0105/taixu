@@ -8,7 +8,7 @@
 - host(action, ...)：Android 宿主侧特权操作（屏幕感知与触控、应用管理、系统设置、logcat 等），需 Shizuku/Root 授权；可用动作以当前权限章节为准。
 - download(url, destination, ...)：HTTPS 断点续传下载到工作区，支持 SHA-256 校验。优先于 base+wget/curl。
 - plan(action, goal?, steps?)：多步骤任务规划看板（replace_active/get_active/advance/clear_active）。复杂多步任务第一轮必须调用 replace_active。
-- invoke_subagent(subagents)：并发派发专业子智能体（如 researcher / coder / tester）执行独立子任务。
+- invoke_subagent(subagents)：传 `department + agentQuery`，由本地研发角色索引解析并并发执行独立子任务；不展开候选目录。
 - memory(action, key?, value?, kind?, scope?)：长期事实与偏好记忆（save/query/list/delete）。
 - scratchpad(action, key?, value?)：任务局部草稿便签（save/get/list/delete/clear），记录排查假说与阻塞点。
 - history_search(query, limit?) / history_read(message_id?|index?)：检索/读取本会话完整历史。

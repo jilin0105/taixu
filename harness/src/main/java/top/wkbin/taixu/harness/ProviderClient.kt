@@ -982,9 +982,9 @@ class ProviderClient @Inject constructor(
             ApiToolDefinition(
                 function = ApiFunctionDefinition(
                     name = "invoke_subagent",
-                    description = "并发派发一个或多个专业角色子智能体（Subagents）执行调研、编写、编译或测试等特定子任务，并在完成后汇总结构化结论。每个子智能体在专属子会话中独立运行。",
+                    description = "按研发部门和简短专业关键词从本地索引解析角色，并发派发隔离子智能体。候选目录不会进入主对话；只有最终命中的完整角色提示会进入对应子会话。",
                     parameters = Json.parseToJsonElement(
-                        """{"type":"object","properties":{"subagents":{"type":"array","description":"子任务列表","items":{"type":"object","properties":{"taskName":{"type":"string","description":"子任务名称（如: 数据库结构调研 / 编写测试用例）"},"role":{"type":"string","description":"子智能体角色（如: researcher / coder / tester）"},"prompt":{"type":"string","description":"详细的任务指令与要求"}},"required":["taskName","role","prompt"]}}},"required":["subagents"]}""",
+                        """{"type":"object","properties":{"subagents":{"type":"array","description":"子任务列表","minItems":1,"maxItems":6,"items":{"type":"object","properties":{"taskName":{"type":"string","description":"简短子任务名称"},"department":{"type":"string","enum":["engineering","design","product","project-management","testing","security","game-development","spatial-computing","specialized"],"description":"先选研发部门，匹配严格限制在该部门"},"agentQuery":{"type":"string","minLength":2,"maxLength":80,"description":"2-5 个简短英文专业关键词，如 frontend react、mobile android、test automation；不要复制完整任务"},"role":{"type":"string","description":"可选：仅兼容已知 profile id/name 的精确覆盖；存在时优先于索引匹配"},"prompt":{"type":"string","description":"详细任务指令与交付要求"}},"required":["taskName","department","agentQuery","prompt"]}}},"required":["subagents"]}""",
                     ).jsonObject,
                 ),
             ),

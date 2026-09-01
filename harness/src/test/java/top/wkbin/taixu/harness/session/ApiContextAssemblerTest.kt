@@ -24,6 +24,7 @@ import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.core.database.AgentSkillRepository
 import top.wkbin.taixu.core.database.AgentSubagentRepository
+import top.wkbin.taixu.core.database.AgencyAgentCatalogLoader
 import top.wkbin.taixu.core.database.AppDatabase
 import top.wkbin.taixu.core.database.McpServerRepository
 import top.wkbin.taixu.core.database.RoomAgentContextRepository
@@ -82,7 +83,10 @@ class ApiContextAssemblerTest {
             skillRepository = AgentSkillRepository(database.agentSkillDao()),
             toolRepository = ToolRepository(database.toolDao(), ToolRegistry(context, OkHttpClient(), logger)),
             agentContextDao = RoomAgentContextRepository(database.agentContextDao()),
-            subagentRepository = AgentSubagentRepository(database.agentSubagentDao()),
+            subagentRepository = AgentSubagentRepository(
+                database.agentSubagentDao(),
+                AgencyAgentCatalogLoader(context, json),
+            ),
             mcpServerRepository = McpServerRepository(database.mcpServerDao(), SecretManager()),
             promptAssets = promptAssets,
             fileAccess = WorkspaceFileAccess(tempDir),
@@ -124,7 +128,11 @@ class ApiContextAssemblerTest {
         val out = assembler.assemble("s-native", nativeModel(), workspacePath = "")
 
         assertEquals("system", out[0].role)
-        assertTrue(out[0].content!!.isNotBlank())
+        val systemPrompt = out[0].content!!
+        assertTrue(systemPrompt.isNotBlank())
+        assertEquals(9, Regex("department=\\\"").findAll(systemPrompt).count())
+        assertFalse(systemPrompt.contains("agency_engineering_frontend_developer"))
+        assertFalse(systemPrompt.contains("Frontend Developer"))
         assertEquals(2, out.size - 1)
         assertEquals("user", out[1].role)
         assertEquals("assistant", out[2].role)
