@@ -8,9 +8,11 @@ import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import top.wkbin.taixu.core.datastore.AgentPreferences
 import top.wkbin.taixu.harness.ApiMessage
 import top.wkbin.taixu.harness.AssistantText
 import top.wkbin.taixu.harness.CapabilityEvent
@@ -21,6 +23,7 @@ import top.wkbin.taixu.harness.ProviderClient
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolExecutor
 import top.wkbin.taixu.harness.ToolResult
+import top.wkbin.taixu.harness.TextToolCallCodec
 import top.wkbin.taixu.harness.effects.ToolReplayPolicy
 import top.wkbin.taixu.harness.operation.OperationCoordinator
 import top.wkbin.taixu.harness.session.SessionTreeStore
@@ -48,6 +51,7 @@ class SubagentLaneRunner @Inject constructor(
     private val toolExecutor: Provider<ToolExecutor>,
     private val treeStore: SessionTreeStore,
     private val operations: OperationCoordinator,
+    private val settingsDataStore: AgentPreferences,
     private val json: Json,
 ) {
     suspend fun run(
@@ -65,14 +69,28 @@ class SubagentLaneRunner @Inject constructor(
         return try {
             val configuredModel = providerClient.resolveConfigured(modelId, modelVariant)
             val loopDetector = ToolCallLoopDetector()
-            repeat(MAX_ROUNDS) { round ->
-                val forceFinalAnswer = round == MAX_ROUNDS - 1
+            val maxRounds = runCatching { settingsDataStore.maxToolRounds.first() }
+                .getOrDefault(DEFAULT_MAX_ROUNDS)
+                .coerceIn(MIN_MAX_ROUNDS, MAX_MAX_ROUNDS)
+            repeat(maxRounds) { round ->
+                val forceFinalAnswer = shouldForceSubagentFinalAnswer(round, maxRounds)
                 val model = if (forceFinalAnswer) configuredModel.copy(pureChatMode = true) else configuredModel
                 val responseId = UUID.randomUUID().toString()
                 operations.providerIntent(operationId, responseId, round, 1, NETWORK_ATTEMPTS)
                 val text = StringBuilder()
                 val result = chatWithRetry(model, providerMessages(sessionId, laneName, forceFinalAnswer), text)
-                val assistantText = text.toString().ifBlank { result.content.orEmpty() }
+                val rawAssistantText = text.toString().ifBlank { result.content.orEmpty() }
+                val textNormalization = TextToolCallCodec.normalize(json, rawAssistantText)
+                val roundCalls = if (forceFinalAnswer) {
+                    result.toolCalls
+                } else {
+                    TextToolCallCodec.resolveCalls(result.toolCalls, textNormalization)
+                }
+                val assistantText = if (textNormalization.hasMarkers) {
+                    textNormalization.displayText
+                } else {
+                    rawAssistantText
+                }
                 val usageEntity = result.usage.takeIf { it.hasData }?.let {
                     operations.usageEntity(
                         sessionId = sessionId,
@@ -100,14 +118,41 @@ class SubagentLaneRunner @Inject constructor(
                 } else {
                     operations.providerSettled(operationId, null, usage = usageEntity, round = round)
                 }
-                // 最后一轮不向 Provider 暴露工具；即便兼容端仍返回了幻影 tool_call，
-                // 也以当前已收集内容收敛，避免重新进入第 13 轮后被硬判失败。
-                if (forceFinalAnswer || result.toolCalls.isEmpty()) {
+                // 最后一轮不向 Provider 暴露工具。只要响应仍尝试调用工具，就不能把未执行的
+                // 请求误报为成功；必须真正生成不含工具协议的可见结论。
+                if (forceFinalAnswer) {
+                    val hasConclusion = isDirectSubagentConclusion(
+                        assistantText,
+                        result.toolCalls,
+                        textNormalization,
+                    )
+                    operations.finish(
+                        sessionId,
+                        if (hasConclusion) "completed" else "failed",
+                        responseId,
+                        details = if (hasConclusion) null else "最后一轮未生成纯文本结论",
+                        laneName = laneName,
+                    )
+                    return SubagentLaneResult(
+                        hasConclusion,
+                        if (hasConclusion) assistantText else "最后一轮仍尝试调用工具，子智能体未能生成结论",
+                        toolCalls,
+                    )
+                }
+                if (roundCalls.isEmpty() && textNormalization.hasUnresolvedMarkers) {
+                    operations.finish(sessionId, "failed", details = "无法解析文本工具调用", laneName = laneName)
+                    return SubagentLaneResult(
+                        false,
+                        "模型返回了无法解析的文本工具调用，未将其误判为任务完成",
+                        toolCalls,
+                    )
+                }
+                if (roundCalls.isEmpty()) {
                     operations.finish(sessionId, "completed", responseId, laneName = laneName)
                     return SubagentLaneResult(true, finalText.ifBlank { "子智能体已完成（无文本输出）" }, toolCalls)
                 }
 
-                for (spec in result.toolCalls) {
+                for (spec in roundCalls) {
                     toolCalls++
                     val rawName = spec.name.trim()
                     val tool = HarnessApiMapper.toolByName(rawName)
@@ -211,7 +256,9 @@ class SubagentLaneRunner @Inject constructor(
     private fun now() = System.currentTimeMillis()
 
     companion object {
-        private const val MAX_ROUNDS = 12
+        private const val DEFAULT_MAX_ROUNDS = 100
+        private const val MIN_MAX_ROUNDS = 10
+        private const val MAX_MAX_ROUNDS = 300
         private const val NETWORK_ATTEMPTS = 2
         private const val NETWORK_RETRY_DELAY_MS = 1_000L
     }
@@ -234,3 +281,12 @@ internal fun isolatedProviderMessages(
         if (message !is CapabilityEvent) add(HarnessApiMapper.toApiMessage(message))
     }
 }
+
+internal fun isDirectSubagentConclusion(
+    assistantText: String,
+    structuredCalls: List<top.wkbin.taixu.harness.ApiToolCallSpec>,
+    textNormalization: TextToolCallCodec.Normalization,
+): Boolean = assistantText.isNotBlank() && structuredCalls.isEmpty() && !textNormalization.hasMarkers
+
+internal fun shouldForceSubagentFinalAnswer(round: Int, maxRounds: Int): Boolean =
+    round >= maxRounds.coerceAtLeast(1) - 1

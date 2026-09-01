@@ -1,12 +1,15 @@
 package top.wkbin.taixu.harness.subagent
 
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import top.wkbin.taixu.harness.AssistantText
+import top.wkbin.taixu.harness.ApiToolCallSpec
 import top.wkbin.taixu.harness.HarnessTool
+import top.wkbin.taixu.harness.TextToolCallCodec
 import top.wkbin.taixu.harness.ToolCall
 import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.harness.UserMessage
@@ -41,5 +44,33 @@ class SubagentLaneRunnerTest {
 
         assertTrue(result.first().content.orEmpty().contains("禁止继续调用工具"))
         assertTrue(result.first().content.orEmpty().contains("直接输出结论"))
+    }
+
+    @Test
+    fun `final round rejects textual or structured tool calls as conclusions`() {
+        val json = Json { isLenient = true }
+        val textual = TextToolCallCodec.normalize(
+            json,
+            """说明文字<vendor_tool_call>{"name":"read","arguments":{"path":"a.kt"}}</vendor_tool_call>""",
+        )
+        val plain = TextToolCallCodec.normalize(json, "分析完成")
+
+        assertFalse(isDirectSubagentConclusion(textual.displayText, emptyList(), textual))
+        assertFalse(
+            isDirectSubagentConclusion(
+                "仍想调用工具",
+                listOf(ApiToolCallSpec("native", "read", "{}")),
+                plain,
+            ),
+        )
+        assertTrue(isDirectSubagentConclusion("分析完成", emptyList(), plain))
+    }
+
+    @Test
+    fun `subagent uses configured round budget instead of forcing round twelve`() {
+        assertFalse(shouldForceSubagentFinalAnswer(round = 11, maxRounds = 100))
+        assertFalse(shouldForceSubagentFinalAnswer(round = 98, maxRounds = 100))
+        assertTrue(shouldForceSubagentFinalAnswer(round = 99, maxRounds = 100))
+        assertTrue(shouldForceSubagentFinalAnswer(round = 11, maxRounds = 12))
     }
 }

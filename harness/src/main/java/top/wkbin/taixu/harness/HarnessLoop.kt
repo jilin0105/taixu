@@ -909,16 +909,21 @@ class HarnessLoop @Inject constructor(
                 is ProviderCallOutcome.Failed -> return RunResult.Failed(call.message)
                 is ProviderCallOutcome.Success -> {
                     val result = call.result
-                    val jsonMode = model.toolCallMode == ToolCallMode.JSON_TEXT
                     val rawText = call.streamText
-                    // JSON 文本模式：从回复文本中解析 [[tool_call]]{...}[[/tool_call]] 标记，
-                    // 展示给用户与持久化时剥离标记（标记仅作为模型↔引擎的调用协议）
-                    val jsonCalls = if (jsonMode) JsonTextToolCallCodec.extract(json, rawText) else emptyList()
-                    val displayText = if (jsonMode) JsonTextToolCallCodec.stripMarkers(rawText) else rawText
+                    val toolsEnabled = !effectiveModel.pureChatMode &&
+                        effectiveModel.toolCallMode != ToolCallMode.DISABLED
+                    // 标准 tool_calls 优先；兼容端把模型原生协议泄漏到 content 时，才使用
+                    // 模型无关的文本协议归一化作为回退，避免同一调用被执行两次。
+                    val textNormalization = if (toolsEnabled) TextToolCallCodec.normalize(json, rawText) else null
+                    val allCalls = textNormalization?.let { TextToolCallCodec.resolveCalls(result.toolCalls, it) }
+                        ?: result.toolCalls
+                    val displayText = textNormalization?.displayText ?: rawText
                     agentEventLogger.log(
                         sessId,
                         "ModelResponse",
-                        "TextLength=${rawText.length}, ReasoningLength=${result.reasoningContent?.length ?: 0}, ToolCallsCount=${result.toolCalls.size}, JsonTextCalls=${jsonCalls.size}",
+                        "TextLength=${rawText.length}, ReasoningLength=${result.reasoningContent?.length ?: 0}, " +
+                            "ToolCallsCount=${result.toolCalls.size}, TextToolCalls=${textNormalization?.calls?.size ?: 0}, " +
+                            "InvalidTextMarkers=${textNormalization?.invalidMarkerCount ?: 0}",
                     )
                     persistAssistantOutput(
                         sessId = sessId,
@@ -930,11 +935,13 @@ class HarnessLoop @Inject constructor(
                         result = result,
                         effectiveModel = effectiveModel,
                         displayText = displayText,
-                        hasToolCalls = result.toolCalls.isNotEmpty() || jsonCalls.isNotEmpty(),
+                        hasToolCalls = allCalls.isNotEmpty(),
                     )
                     stateMirrors.setThinkingLive(sessId, false)
 
-                    val allCalls = result.toolCalls + jsonCalls
+                    if (allCalls.isEmpty() && textNormalization?.hasUnresolvedMarkers == true) {
+                        return RunResult.Failed("模型返回了无法解析的文本工具调用；已停止，避免把未执行的工具请求误判为完成")
+                    }
                     if (allCalls.isEmpty()) {
                         val followUps = promptQueueManager.consume(sessId, PromptQueue.FOLLOW_UP)
                         refreshPendingProjection(sessId)
