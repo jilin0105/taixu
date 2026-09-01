@@ -136,3 +136,10 @@ val MIGRATION_40_41 = object : Migration(40, 41) {
         db.execSQL("CREATE INDEX IF NOT EXISTS index_agent_tasks_nextRunAt ON agent_tasks(nextRunAt)")
     }
 }
+
+/** Explicit image-generation capability; existing model profiles remain disabled after upgrade. */
+val MIGRATION_41_42 = object : Migration(41, 42) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE harness_models ADD COLUMN imageGenerationEnabled INTEGER NOT NULL DEFAULT 0")
+    }
+}

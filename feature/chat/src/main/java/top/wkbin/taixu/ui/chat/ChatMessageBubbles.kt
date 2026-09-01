@@ -296,6 +296,13 @@ internal fun AssistantBubble(
 ) {
     val reasoning = message.reasoning
     val context = LocalContext.current
+    val generatedImagePayload = remember(message.id, message.text.length) {
+        val cacheKey = "${message.id}:${message.text.length}"
+        generatedImageFlagCache.get(cacheKey)
+            ?: message.text.contains("data:image/", ignoreCase = true).also { found ->
+                generatedImageFlagCache.put(cacheKey, found)
+            }
+    }
 
     val copyAll = {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -313,7 +320,7 @@ internal fun AssistantBubble(
             )
         }
 
-        if (!live) {
+        if (!live && !generatedImagePayload) {
             val planSteps = remember(message.text) { extractTaskPlanSteps(message.text) }
             if (planSteps.size >= 2) {
                 TaskPlanCard(steps = planSteps)
@@ -322,15 +329,60 @@ internal fun AssistantBubble(
 
         if (message.text.isNotBlank()) {
             if (live) {
-                SelectionContainer {
-                    Text(
-                        text = message.text,
-                        modifier = Modifier.fillMaxWidth(),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
+                val liveImageDataStart = remember(message.text) {
+                    message.text.indexOf("data:image/", ignoreCase = true)
+                }
+                if (liveImageDataStart >= 0) {
+                    val humanPrefix = remember(message.text, liveImageDataStart) {
+                        val markdownStart = message.text.lastIndexOf("![", liveImageDataStart)
+                            .takeIf { it >= 0 } ?: liveImageDataStart
+                        message.text.substring(0, markdownStart).trim().take(8_000)
+                    }
+                    if (humanPrefix.isNotBlank()) {
+                        SelectionContainer {
+                            Text(
+                                text = humanPrefix,
+                                modifier = Modifier.fillMaxWidth(),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                    }
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.size(width = 260.dp, height = 180.dp),
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
+                        ) {
+                            CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+                            Text(
+                                text = stringResource(R.string.chat_receiving_image),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                } else {
+                    SelectionContainer {
+                        Text(
+                            text = message.text.take(MAX_LIVE_TEXT_CHARS),
+                            modifier = Modifier.fillMaxWidth(),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
                 }
             } else {
-                MarkdownText(message.text, modifier = Modifier.fillMaxWidth())
+                MarkdownText(
+                    markdown = message.text,
+                    modifier = Modifier.fillMaxWidth(),
+                    contentCacheKey = if (generatedImagePayload) {
+                        "assistant:${message.id}:${message.text.length}"
+                    } else {
+                        null
+                    },
+                )
             }
         }
 
@@ -389,6 +441,10 @@ internal fun AssistantBubble(
         }
     }
 }
+
+private const val MAX_LIVE_TEXT_CHARS = 64_000
+/** Avoid rescanning a multi-megabyte Base64 response whenever its lazy-list item re-enters composition. */
+private val generatedImageFlagCache = LruCache<String, Boolean>(64)
 
 private data class TaskStepItem(
     val index: Int,
@@ -731,4 +787,3 @@ internal fun CapabilityEventCard(event: CapabilityEvent) {
         }
     }
 }
-

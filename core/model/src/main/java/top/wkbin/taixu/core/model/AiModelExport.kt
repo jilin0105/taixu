@@ -25,6 +25,7 @@ data class AiModelProfileExport(
     val customHeaders: String = "",
     val pureChatMode: Boolean = false,
     val visionEnabled: Boolean = true,
+    val imageGenerationEnabled: Boolean = false,
     val responseApiEnabled: Boolean = false,
 )
 

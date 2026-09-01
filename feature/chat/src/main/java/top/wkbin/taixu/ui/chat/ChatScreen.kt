@@ -807,6 +807,7 @@ private fun ChatPaneContent(
             toolResults = toolResults,
             initializing = initializing,
             running = running,
+            imageGenerationModel = activeModel?.imageGenerationEnabled == true,
             status = status,
             workspace = workspace,
             workspaceProject = workspaceProject,

@@ -44,4 +44,3 @@ internal fun formatTokenCount(tokens: Int): String = when {
     tokens >= 1_000 -> String.format(java.util.Locale.US, "%.2fk", tokens / 1000f)
     else -> tokens.toString()
 }
-

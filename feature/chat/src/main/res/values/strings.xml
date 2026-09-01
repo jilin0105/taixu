@@ -3,7 +3,14 @@
     <string name="chat_web_image">网络图片</string>
     <string name="chat_web_content">网络内容</string>
     <string name="chat_open_link_failed">无法打开该链接</string>
-    <string name="chat_image_load_failed">图片加载失败，点击下方链接打开原地址</string>
+    <string name="chat_image_load_failed">图片加载失败</string>
+    <string name="chat_generating_content">正在生成内容</string>
+    <string name="chat_generating_content_hint">图片模型可能需要一点时间，请稍候</string>
+    <string name="chat_receiving_image">正在接收图片…</string>
+    <string name="chat_image_preview">图片预览</string>
+    <string name="chat_save_image">保存图片</string>
+    <string name="chat_image_saved">已保存到相册（Pictures/TaiXu）</string>
+    <string name="chat_image_save_failed">图片保存失败</string>
     <string name="chat_code_clipboard_label">代码片段</string>
     <string name="chat_code_copied">已复制代码</string>
     <string name="chat_copy">复制</string>

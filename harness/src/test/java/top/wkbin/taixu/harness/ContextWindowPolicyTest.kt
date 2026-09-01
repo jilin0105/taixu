@@ -1,11 +1,24 @@
 package top.wkbin.taixu.harness
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlinx.serialization.json.put
 
 class ContextWindowPolicyTest {
+    @Test
+    fun `generated image payload is omitted from provider context and token estimate`() {
+        val payload = "A".repeat(1_000_000)
+        val raw = "完成：![图](data:image/png;base64,$payload) 请继续"
+
+        val sanitized = ContextWindowPolicy.assistantTextForContext(raw)
+
+        assertTrue(sanitized.contains("生成了一张图片"))
+        assertTrue(sanitized.contains("请继续"))
+        assertFalse(sanitized.contains(payload.take(64)))
+        assertTrue(ContextWindowPolicy.estimateTokens(sanitized) < 100)
+    }
     @Test
     fun keepsRecentMessagesWithinBudget() {
         val messages = listOf(

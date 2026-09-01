@@ -2,11 +2,22 @@ package top.wkbin.taixu.ui.chat
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ContentValues
 import android.content.Context
+import android.net.Uri
+import android.os.Environment
+import android.provider.MediaStore
+import android.util.Base64
 import android.util.LruCache
 import android.widget.Toast
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,16 +43,24 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.isUnspecified
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.res.stringResource
 import top.wkbin.taixu.feature.chat.R
 import androidx.compose.ui.text.AnnotatedString
@@ -59,8 +78,18 @@ import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.SubcomposeAsyncImage
+import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayInputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlin.math.abs
 import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator as CircularProgressIndicator
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
@@ -72,10 +101,21 @@ import top.wkbin.taixu.ui.components.SyntaxHighlighter
  * 远程图片与表格。远程图片由 Coil 加载，网页链接由 Compose LinkAnnotation 打开。
  */
 @Composable
-fun MarkdownText(markdown: String, modifier: Modifier = Modifier) {
-    val blocks = remember(markdown) { parseMarkdownBlocks(markdown) }
+fun MarkdownText(
+    markdown: String,
+    modifier: Modifier = Modifier,
+    contentCacheKey: String? = null,
+) {
+    val blocks = remember(contentCacheKey, markdown) {
+        contentCacheKey?.let(largeMarkdownBlockCache::get)
+            ?: parseMarkdownBlocks(markdown).also { parsed ->
+                if (contentCacheKey != null && markdown.length > MARKDOWN_CACHE_MAX_CHARS) {
+                    largeMarkdownBlockCache.put(contentCacheKey, parsed)
+                }
+            }
+    }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        blocks.forEach { block ->
+        blocks.forEachIndexed { index, block ->
             when (block) {
                 is MdParagraph -> InlineText(block.text, MaterialTheme.typography.bodyMedium)
                 is MdHeading -> InlineText(
@@ -92,7 +132,10 @@ fun MarkdownText(markdown: String, modifier: Modifier = Modifier) {
                 is MdList -> ListBlock(block)
                 is MdQuote -> QuoteBlock(block)
                 is MdTable -> TableBlock(block)
-                is MdRemoteMedia -> RemoteMediaBlock(block)
+                is MdRemoteMedia -> RemoteMediaBlock(
+                    block = block,
+                    cacheKey = contentCacheKey?.let { "$it:media:$index" },
+                )
                 is MdHr -> HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
         }
@@ -131,10 +174,13 @@ private val inlineWebUrlRegex = Regex("https?://[^\\s<>\\[\\]{}\"']+", RegexOpti
 private val imageFileExtensions = setOf("jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "avif", "heic", "heif")
 
 private val markdownBlockCache = LruCache<String, List<MdBlock>>(300)
+/** Generated image responses are expensive to parse, so retain a few by their short message ID. */
+private val largeMarkdownBlockCache = LruCache<String, List<MdBlock>>(4)
 private val inlineSpanCache = LruCache<String, AnnotatedString>(500)
 
 private fun parseMarkdownBlocks(md: String): List<MdBlock> {
-    markdownBlockCache.get(md)?.let { return it }
+    val cacheable = md.length <= MARKDOWN_CACHE_MAX_CHARS
+    if (cacheable) markdownBlockCache.get(md)?.let { return it }
     val raw = parseRawBlocks(md)
     // 段落后处理：把行内的 ![alt](url)、<img src="url">、原始图片 URL 拆成独立图片块，
     // 否则模型带前后文字输出图片时，解析器只当纯文本渲染，Coil 永远不会被调用。
@@ -142,7 +188,7 @@ private fun parseMarkdownBlocks(md: String): List<MdBlock> {
         if (block is MdParagraph) extractInlineMedia(block.text)
         else listOf(block)
     }
-    markdownBlockCache.put(md, parsed)
+    if (cacheable) markdownBlockCache.put(md, parsed)
     return parsed
 }
 
@@ -429,87 +475,341 @@ private fun trimUrlPunctuation(value: String): String {
 }
 
 @Composable
-private fun RemoteMediaBlock(block: MdRemoteMedia) {
+private fun RemoteMediaBlock(block: MdRemoteMedia, cacheKey: String? = null) {
     val context = LocalContext.current
-    val uriHandler = LocalUriHandler.current
-    val openSource = {
-        runCatching { uriHandler.openUri(block.url) }
-            .onFailure { Toast.makeText(context, context.getString(R.string.chat_open_link_failed), Toast.LENGTH_SHORT).show() }
-        Unit
-    }
+    var previewing by remember(block.url) { mutableStateOf(false) }
+    var loaded by remember(cacheKey, block.url) { mutableStateOf(false) }
+    var failed by remember(cacheKey, block.url) { mutableStateOf(false) }
+    var aspectRatio by remember(cacheKey, block.url) { mutableFloatStateOf(0f) }
     val shape = RoundedCornerShape(14.dp)
+    val density = LocalDensity.current
+    val decodeWidthPx = with(density) { MEDIA_MAX_WIDTH.roundToPx() }
+    val decodeHeightPx = with(density) { MEDIA_MAX_HEIGHT.roundToPx() }
 
-    // 尺寸策略：按原始宽高比等比缩放，限制在上限框（宽 MEDIA_MAX_WIDTH、高 MEDIA_MAX_HEIGHT）内，
-    // 缩放后至少贴合一边（等比缩放的天然结果）；拿到加载完成后的真实尺寸前用固定高度占位。
-    SubcomposeAsyncImage(
-        model = remember(block.url) {
-            val dataModel: Any = when {
-                block.url.startsWith("http://", ignoreCase = true) ||
-                    block.url.startsWith("https://", ignoreCase = true) ||
-                    block.url.startsWith("data:", ignoreCase = true) ||
-                    block.url.startsWith("file://", ignoreCase = true) -> block.url
-                block.url.startsWith("/") -> java.io.File(block.url)
-                else -> block.url
-            }
-            ImageRequest.Builder(context)
-                .data(dataModel)
-                .crossfade(true)
-                .build()
-        },
-        contentDescription = block.description.ifBlank { stringResource(R.string.chat_web_content) },
-        // 外层不占满宽度：内容自适应尺寸，消息流内自然靠左对齐
-        modifier = Modifier,
+    val request = remember(block.url, cacheKey, decodeWidthPx, decodeHeightPx) {
+        val dataModel: Any = when {
+            block.url.startsWith("http://", ignoreCase = true) ||
+                block.url.startsWith("https://", ignoreCase = true) ||
+                block.url.startsWith("data:", ignoreCase = true) ||
+                block.url.startsWith("file://", ignoreCase = true) -> block.url
+            block.url.startsWith("/") -> java.io.File(block.url)
+            else -> block.url
+        }
+        ImageRequest.Builder(context)
+            .data(dataModel)
+            .size(decodeWidthPx, decodeHeightPx)
+            .apply { if (cacheKey != null) memoryCacheKey(cacheKey) }
+            .crossfade(true)
+            .build()
+    }
+    val imageWidth: androidx.compose.ui.unit.Dp
+    val imageHeight: androidx.compose.ui.unit.Dp
+    if (aspectRatio > 0f) {
+        imageWidth = minOf(MEDIA_MAX_WIDTH, MEDIA_MAX_HEIGHT * aspectRatio)
+        imageHeight = imageWidth / aspectRatio
+    } else {
+        imageWidth = MEDIA_MAX_WIDTH
+        imageHeight = MEDIA_PLACEHOLDER_HEIGHT
+    }
+
+    // AsyncImage avoids SubcomposeAsyncImage's per-item subcomposition overhead in the LazyColumn.
+    Box(
+        modifier = Modifier
+            .size(imageWidth, imageHeight)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .then(if (loaded) Modifier.clickable { previewing = true } else Modifier),
+        contentAlignment = Alignment.Center,
     ) {
-        val state = painter.state.collectAsState().value
-        when (state) {
-            is coil3.compose.AsyncImagePainter.State.Error -> MediaStateBox(shape) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    RuntimeIcon(
-                        RuntimeIconName.Image,
-                        Modifier.size(32.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        stringResource(R.string.chat_image_load_failed),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            is coil3.compose.AsyncImagePainter.State.Success -> {
+        AsyncImage(
+            model = request,
+            contentDescription = block.description.ifBlank { stringResource(R.string.chat_web_content) },
+            contentScale = ContentScale.FillBounds,
+            onLoading = {
+                loaded = false
+                failed = false
+            },
+            onSuccess = { state ->
                 val src = state.painter.intrinsicSize
-                val knownSize = !src.isUnspecified && src.width > 0f && src.height > 0f
-                val imageModifier = if (knownSize) {
-                    // 按原始比例等比缩放，撑满宽或高中先到上限的一边
-                    val ratio = src.width / src.height
-                    var width = MEDIA_MAX_WIDTH
-                    var height = width / ratio
-                    if (height > MEDIA_MAX_HEIGHT) {
-                        height = MEDIA_MAX_HEIGHT
-                        width = height * ratio
-                    }
-                    Modifier.size(width = width, height = height)
-                } else {
-                    // 拿不到真实尺寸时的兜底：固定框内等比缩放（Fit 同样保证填满一边）
-                    Modifier.size(width = MEDIA_MAX_WIDTH, height = MEDIA_PLACEHOLDER_HEIGHT)
+                if (!src.isUnspecified && src.width > 0f && src.height > 0f) {
+                    aspectRatio = src.width / src.height
                 }
-                androidx.compose.foundation.Image(
-                    painter = state.painter,
-                    contentDescription = null,
-                    contentScale = if (knownSize) ContentScale.FillBounds else ContentScale.Fit,
-                    modifier = imageModifier
-                        .clip(shape)
-                        .clickable(onClick = openSource),
+                loaded = true
+                failed = false
+            },
+            onError = {
+                loaded = false
+                failed = true
+            },
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { alpha = if (loaded) 1f else 0f },
+        )
+        when {
+            failed -> Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                RuntimeIcon(
+                    RuntimeIconName.Image,
+                    Modifier.size(32.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    stringResource(R.string.chat_image_load_failed),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            else -> MediaStateBox(shape) {
-                CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+            !loaded -> CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+        }
+    }
+
+    if (previewing) {
+        ImagePreviewDialog(
+            block = block,
+            onDismiss = { previewing = false },
+        )
+    }
+}
+
+/** Full-screen generated-image viewer with pinch zoom, pan, and Save As support. */
+@Composable
+private fun ImagePreviewDialog(block: MdRemoteMedia, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val mimeType = remember(block.url) { imageMimeType(block.url) }
+    var saving by remember(block.url) { mutableStateOf(false) }
+    var scale by remember(block.url) { mutableFloatStateOf(1f) }
+    var offsetX by remember(block.url) { mutableFloatStateOf(0f) }
+    var panOffsetY by remember(block.url) { mutableFloatStateOf(0f) }
+    // This state is read only inside graphicsLayer lambdas below, so drag frames invalidate the
+    // render layers rather than recomposing the Coil image and the entire full-screen dialog.
+    var dismissOffsetY by remember(block.url) { mutableFloatStateOf(0f) }
+    val density = LocalDensity.current
+    val dismissThresholdPx = with(density) { 140.dp.toPx() }
+    val fadeDistancePx = with(density) { 360.dp.toPx() }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+    ) {
+        Surface(color = Color.Transparent, modifier = Modifier.fillMaxSize()) {
+            Box(Modifier.fillMaxSize()) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            val progress = (abs(dismissOffsetY) / fadeDistancePx).coerceIn(0f, 1f)
+                            alpha = 1f - progress * 0.82f
+                        }
+                        .background(Color.Black),
+                )
+                SubcomposeAsyncImage(
+                    model = remember(block.url) { imageRequest(context, block.url) },
+                    contentDescription = block.description.ifBlank { stringResource(R.string.chat_image_preview) },
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(12.dp)
+                        .graphicsLayer {
+                            val progress = (abs(dismissOffsetY) / fadeDistancePx).coerceIn(0f, 1f)
+                            val dismissScale = 1f - progress * 0.14f
+                            scaleX = scale * dismissScale
+                            scaleY = scale * dismissScale
+                            translationX = offsetX
+                            translationY = panOffsetY + dismissOffsetY
+                            alpha = 1f - progress * 0.72f
+                        }
+                        .pointerInput(block.url) {
+                            awaitEachGesture {
+                                awaitFirstDown(requireUnconsumed = false)
+                                var pointersStillPressed: Boolean
+                                do {
+                                    val event = awaitPointerEvent()
+                                    val zoomChange = event.calculateZoom()
+                                    val panChange = event.calculatePan()
+                                    val pressedPointers = event.changes.count { it.pressed }
+                                    val nextScale = (scale * zoomChange).coerceIn(1f, 6f)
+                                    val isZooming = pressedPointers > 1 || abs(zoomChange - 1f) > 0.001f
+
+                                    if (isZooming || scale > 1.01f || nextScale > 1.01f) {
+                                        scale = nextScale
+                                        dismissOffsetY = 0f
+                                        if (scale <= 1.01f) {
+                                            scale = 1f
+                                            offsetX = 0f
+                                            panOffsetY = 0f
+                                        } else {
+                                            offsetX += panChange.x
+                                            panOffsetY += panChange.y
+                                        }
+                                    } else if (abs(panChange.y) >= abs(panChange.x)) {
+                                        // At 1x, a one-finger vertical drag dismisses the viewer.
+                                        dismissOffsetY += panChange.y
+                                    }
+                                    event.changes.forEach { change ->
+                                        if (change.positionChanged()) change.consume()
+                                    }
+                                    pointersStillPressed = event.changes.any { it.pressed }
+                                } while (pointersStillPressed)
+
+                                if (scale <= 1.01f && abs(dismissOffsetY) >= dismissThresholdPx) {
+                                    onDismiss()
+                                } else if (dismissOffsetY != 0f) {
+                                    val startOffset = dismissOffsetY
+                                    scope.launch {
+                                        Animatable(startOffset).animateTo(0f, spring()) {
+                                            dismissOffsetY = value
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                ) {
+                    when (painter.state.collectAsState().value) {
+                        is coil3.compose.AsyncImagePainter.State.Error -> Text(
+                            text = stringResource(R.string.chat_image_load_failed),
+                            color = Color.White,
+                            modifier = Modifier.align(Alignment.Center),
+                        )
+                        is coil3.compose.AsyncImagePainter.State.Success -> androidx.compose.foundation.Image(
+                            painter = painter,
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        else -> CircularProgressIndicator(
+                            modifier = Modifier.align(Alignment.Center).size(32.dp),
+                            color = Color.White,
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(16.dp)
+                        .graphicsLayer {
+                            val progress = (abs(dismissOffsetY) / fadeDistancePx).coerceIn(0f, 1f)
+                            alpha = 1f - progress
+                        },
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    IconButton(
+                        onClick = {
+                            if (!saving) scope.launch {
+                                saving = true
+                                val saved = withContext(Dispatchers.IO) {
+                                    saveImageToGallery(context, block.url, mimeType)
+                                }
+                                saving = false
+                                Toast.makeText(
+                                    context,
+                                    context.getString(if (saved) R.string.chat_image_saved else R.string.chat_image_save_failed),
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        },
+                        enabled = !saving,
+                        contentDescription = stringResource(R.string.chat_save_image),
+                    ) {
+                        if (saving) {
+                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
+                        } else {
+                            RuntimeIcon(RuntimeIconName.Download, Modifier.size(22.dp), Color.White)
+                        }
+                    }
+                    IconButton(onClick = onDismiss, contentDescription = stringResource(R.string.chat_close)) {
+                        RuntimeIcon(RuntimeIconName.Close, Modifier.size(22.dp), Color.White)
+                    }
+                }
             }
         }
     }
+}
+
+private fun imageRequest(context: Context, source: String): ImageRequest {
+    val dataModel: Any = when {
+        source.startsWith("/") -> java.io.File(source)
+        else -> source
+    }
+    return ImageRequest.Builder(context).data(dataModel).crossfade(true).build()
+}
+
+private fun imageMimeType(source: String): String {
+    if (source.startsWith("data:", ignoreCase = true)) {
+        return source.substringAfter("data:").substringBefore(';').takeIf { it.startsWith("image/") } ?: "image/png"
+    }
+    val clean = source.substringBefore('?').substringBefore('#').lowercase()
+    return when {
+        clean.endsWith(".jpg") || clean.endsWith(".jpeg") -> "image/jpeg"
+        clean.endsWith(".webp") -> "image/webp"
+        clean.endsWith(".gif") -> "image/gif"
+        clean.endsWith(".avif") -> "image/avif"
+        else -> "image/png"
+    }
+}
+
+private fun imageExtension(mimeType: String): String = when (mimeType.lowercase()) {
+    "image/jpeg" -> "jpg"
+    "image/webp" -> "webp"
+    "image/gif" -> "gif"
+    "image/avif" -> "avif"
+    else -> "png"
+}
+
+/** Saves into Pictures/TaiXu so the generated image appears in the system gallery immediately. */
+private fun saveImageToGallery(context: Context, source: String, mimeType: String): Boolean {
+    val resolver = context.contentResolver
+    val values = ContentValues().apply {
+        put(MediaStore.Images.Media.DISPLAY_NAME, "taixu-${System.currentTimeMillis()}.${imageExtension(mimeType)}")
+        put(MediaStore.Images.Media.MIME_TYPE, mimeType)
+        put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/TaiXu")
+        put(MediaStore.Images.Media.IS_PENDING, 1)
+    }
+    val target = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
+    return runCatching {
+        copyImageSource(context, source, target)
+        resolver.update(
+            target,
+            ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) },
+            null,
+            null,
+        )
+        true
+    }.getOrElse {
+        resolver.delete(target, null, null)
+        false
+    }
+}
+
+private fun copyImageSource(context: Context, source: String, target: Uri) {
+    context.contentResolver.openOutputStream(target)?.use { output ->
+        when {
+            source.startsWith("data:", ignoreCase = true) -> {
+                val payload = source.substringAfter(',', missingDelimiterValue = "")
+                require(payload.isNotEmpty()) { "Invalid image data URL" }
+                ByteArrayInputStream(Base64.decode(payload, Base64.DEFAULT)).use { it.copyTo(output) }
+            }
+            source.startsWith("file://", ignoreCase = true) ->
+                java.io.File(source.removePrefix("file://")).inputStream().use { it.copyTo(output) }
+            source.startsWith("/") -> java.io.File(source).inputStream().use { it.copyTo(output) }
+            source.startsWith("http://", true) || source.startsWith("https://", true) -> {
+                val connection = URL(source).openConnection() as HttpURLConnection
+                connection.connectTimeout = 15_000
+                connection.readTimeout = 30_000
+                connection.instanceFollowRedirects = true
+                try {
+                    check(connection.responseCode in 200..299) { "HTTP ${connection.responseCode}" }
+                    connection.inputStream.use { it.copyTo(output) }
+                } finally {
+                    connection.disconnect()
+                }
+            }
+            else -> java.io.File(source).inputStream().use { it.copyTo(output) }
+        }
+    } ?: error("Cannot open destination")
 }
 
 /** 媒体加载中/失败态的占位块（圆角与成图一致，避免前后跳变）。 */
@@ -528,6 +828,7 @@ private fun MediaStateBox(shape: RoundedCornerShape, content: @Composable androi
 private val MEDIA_MAX_WIDTH = 260.dp
 private val MEDIA_MAX_HEIGHT = 340.dp
 private val MEDIA_PLACEHOLDER_HEIGHT = 180.dp
+private const val MARKDOWN_CACHE_MAX_CHARS = 128_000
 
 @Composable
 private fun CodeBlock(block: MdCodeBlock) {

@@ -140,7 +140,8 @@ object ContextWindowPolicy {
                     conversationTokens += estimateTokens(message.text) + message.imageUrls.size * 1_000
                 }
                 is AssistantText -> {
-                    conversationTokens += estimateTokens(message.text) + estimateTokens(message.reasoning.orEmpty())
+                    conversationTokens += estimateTokens(assistantTextForContext(message.text)) +
+                        estimateTokens(message.reasoning.orEmpty())
                 }
                 is ToolCall -> {
                     toolTokens += estimateTokens(message.args.toString()) + estimateTokens(message.reasoning.orEmpty())
@@ -174,7 +175,8 @@ object ContextWindowPolicy {
             val tokens = when (val message = messages[index]) {
                 is CapabilityEvent -> 0
                 is UserMessage -> estimateTokens(message.text) + message.imageUrls.size * 1_000
-                is AssistantText -> estimateTokens(message.text) + estimateTokens(message.reasoning.orEmpty())
+                is AssistantText -> estimateTokens(assistantTextForContext(message.text)) +
+                    estimateTokens(message.reasoning.orEmpty())
                 is ToolResult -> estimateTokens(message.output)
                 is ToolCall -> estimateTokens(message.args.toString()) + estimateTokens(message.reasoning.orEmpty())
             }
@@ -253,6 +255,47 @@ object ContextWindowPolicy {
     fun foldMessageText(role: String, text: String): String =
         "[早期历史已折叠·$role] ${text.take(80).replace('\n', ' ')}…（内容过长，已省略，请依据最近轮次继续）"
 
+    /**
+     * Generated image bytes stay in the persisted transcript for UI rendering, but must never be
+     * counted as language tokens or echoed into a subsequent provider request.
+     */
+    fun assistantTextForContext(text: String): String {
+        if (!text.contains("data:image/", ignoreCase = true) &&
+            !text.contains("\"b64_json\"", ignoreCase = true)
+        ) return text
+
+        val out = StringBuilder(minOf(text.length, 4_096))
+        var cursor = 0
+        while (cursor < text.length) {
+            val dataStart = text.indexOf("data:image/", cursor, ignoreCase = true)
+            val jsonKeyStart = text.indexOf("\"b64_json\"", cursor, ignoreCase = true)
+            val nextStart = listOf(dataStart, jsonKeyStart).filter { it >= 0 }.minOrNull()
+            if (nextStart == null) {
+                out.append(text, cursor, text.length)
+                break
+            }
+            if (nextStart == dataStart) {
+                val markdownStart = text.lastIndexOf("![", dataStart).takeIf { start ->
+                    start >= cursor && text.indexOf("](", start).let { it in start until dataStart }
+                }
+                val htmlStart = text.lastIndexOf("<img", dataStart, ignoreCase = true).takeIf { it >= cursor }
+                val mediaStart = listOfNotNull(markdownStart, htmlStart).maxOrNull() ?: dataStart
+                out.append(text, cursor, mediaStart)
+                out.append("[助手生成了一张图片；图片二进制已从模型上下文中省略]")
+                val end = text.indexOfAny(charArrayOf(')', '"', '\'', '>', ' ', '\n', '\r', '\t'), dataStart)
+                cursor = if (end >= 0) end + 1 else text.length
+            } else {
+                out.append(text, cursor, jsonKeyStart)
+                out.append("\"b64_json\":\"[图片二进制已省略]\"")
+                val colon = text.indexOf(':', jsonKeyStart + 10)
+                val valueStart = if (colon >= 0) text.indexOf('"', colon + 1) else -1
+                val valueEnd = if (valueStart >= 0) text.indexOf('"', valueStart + 1) else -1
+                cursor = if (valueEnd >= 0) valueEnd + 1 else text.length
+            }
+        }
+        return out.toString()
+    }
+
     fun buildHistorySummary(
         messages: List<HarnessMessage>,
         toolCallDetails: Map<String, Pair<String, JsonObject>> = messages.filterIsInstance<ToolCall>().associate {
@@ -278,11 +321,12 @@ object ContextWindowPolicy {
                 command.orEmpty().take(180) + " " + output.replace('\n', ' ').take(360)
         }
         val lastAssistant = messages.filterIsInstance<AssistantText>().lastOrNull()?.text
+            ?.let(::assistantTextForContext)
             ?.replace('\n', ' ')?.take(240)
         val textMessages = messages.mapNotNull {
             when (it) {
                 is UserMessage -> it.text
-                is AssistantText -> it.text
+                is AssistantText -> assistantTextForContext(it.text)
                 else -> null
             }
         }

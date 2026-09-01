@@ -65,7 +65,7 @@ class LaneManager @Inject constructor(
 
         return targets.mapIndexed { index, leafId ->
             val pathEntries = buildList {
-                var current = leafId?.let { entryMap[it] }
+                var current = entryMap[leafId]
                 val visited = mutableSetOf<String>()
                 while (current != null && visited.add(current.id)) {
                     add(current)
@@ -109,11 +109,11 @@ class LaneManager @Inject constructor(
             val preview = scopedMessages.asReversed().asSequence()
                 .firstNotNullOfOrNull { message ->
                     when (message) {
-                        is AssistantText -> message.text.takeIf { it.isNotBlank() }
+                        is AssistantText -> message.text.takeIf { it.isNotBlank() }?.let(::branchPreviewText)
                         is UserMessage -> if (kind == ConversationBranchKind.SUBAGENT) {
                             subagentTaskTitle(message.text)
                         } else {
-                            message.text.takeIf { it.isNotBlank() }
+                            message.text.takeIf { it.isNotBlank() }?.let(::branchPreviewText)
                         }
                         else -> null
                     }
@@ -130,7 +130,8 @@ class LaneManager @Inject constructor(
                 updatedAt = pathEntries.lastOrNull()?.createdAt ?: namedLane?.updatedAt ?: 0L,
                 kind = kind,
                 isCurrent = leafId == main?.leafId,
-                isBusy = namedLane?.currentOperationId != null || (leafId == main?.leafId && main.currentOperationId != null),
+                isBusy = namedLane?.currentOperationId != null ||
+                    (main != null && leafId == main.leafId && main.currentOperationId != null),
                 faulted = namedLane?.faulted == true,
                 toolCallCount = toolCallCount,
             )
@@ -155,6 +156,44 @@ class LaneManager @Inject constructor(
         private const val SUBAGENT_PREFIX = "subagent:"
         private val LANE_NAME = Regex("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
     }
+}
+
+/**
+ * Branch cards must never receive an entire generated-image data URL. Besides being useless as a
+ * summary, laying out a multi-megabyte Base64 string can exhaust Compose's paragraph limits and
+ * crash as soon as the branch browser is opened.
+ */
+internal fun branchPreviewText(text: String, maxLength: Int = 240): String {
+    val out = StringBuilder(maxLength.coerceAtLeast(0))
+    var cursor = 0
+    while (cursor < text.length && out.length < maxLength) {
+        val dataStart = text.indexOf("data:image/", cursor, ignoreCase = true)
+        if (dataStart < 0) {
+            out.append(text, cursor, minOf(text.length, cursor + (maxLength - out.length)))
+            break
+        }
+
+        // Preserve the human-readable prefix, but discard the data URL itself without copying it.
+        val markdownStart = text.lastIndexOf("![", dataStart).takeIf { start ->
+            start >= cursor && text.indexOf("](", start).let { it in start until dataStart }
+        }
+        val htmlStart = text.lastIndexOf("<img", dataStart, ignoreCase = true).takeIf { it >= cursor }
+        val mediaStart = listOfNotNull(markdownStart, htmlStart).maxOrNull() ?: dataStart
+        val prefixEnd = minOf(mediaStart, cursor + (maxLength - out.length))
+        out.append(text, cursor, prefixEnd)
+        if (out.isNotEmpty() && !out.last().isWhitespace()) out.append(' ')
+        out.append("[图片]")
+
+        val markdownEnd = text.indexOf(')', dataStart).takeIf { it >= 0 }
+        val htmlEnd = text.indexOfAny(charArrayOf('"', '\'', '>', ' ', '\n', '\r', '\t'), dataStart)
+            .takeIf { it >= 0 }
+        cursor = listOfNotNull(markdownEnd, htmlEnd).minOrNull()?.plus(1) ?: text.length
+    }
+    return out.toString()
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .take(maxLength)
+        .ifBlank { "[图片]" }
 }
 
 internal fun subagentTaskTitle(prompt: String): String? = prompt.lineSequence()

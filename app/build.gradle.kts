@@ -217,7 +217,7 @@ tasks.configureEach {
             val glibcMarker = "libc.so.6".toByteArray()
             check(ptyNativeBytes.size < glibcMarker.size ||
                 (0..ptyNativeBytes.size - glibcMarker.size).none { offset ->
-                    (0 until glibcMarker.size).all { ptyNativeBytes[offset + it] == glibcMarker[it] }
+                    glibcMarker.indices.all { ptyNativeBytes[offset + it] == glibcMarker[it] }
                 }) {
                 "libpty_native.so is linked against glibc (libc.so.6). Rebuild it with the NDK " +
                     "aarch64-linux-android clang (see app/src/main/cpp/CMakeLists.txt)."

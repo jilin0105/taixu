@@ -938,6 +938,7 @@ class SettingsViewModel @Inject constructor(
         customHeaders: String = "",
         pureChatMode: Boolean = false,
         visionEnabled: Boolean = true,
+        imageGenerationEnabled: Boolean = false,
         responseApiEnabled: Boolean = false,
     ) {
         viewModelScope.launch {
@@ -960,6 +961,7 @@ class SettingsViewModel @Inject constructor(
                     customHeaders = customHeaders,
                     pureChatMode = pureChatMode,
                     visionEnabled = visionEnabled,
+                    imageGenerationEnabled = imageGenerationEnabled,
                     responseApiEnabled = responseApiEnabled,
                 ),
             )
@@ -984,6 +986,7 @@ class SettingsViewModel @Inject constructor(
         customHeaders: String = "",
         pureChatMode: Boolean = false,
         visionEnabled: Boolean = true,
+        imageGenerationEnabled: Boolean = false,
         responseApiEnabled: Boolean = false,
     ) {
         viewModelScope.launch {
@@ -1010,6 +1013,7 @@ class SettingsViewModel @Inject constructor(
                     customHeaders = customHeaders,
                     pureChatMode = pureChatMode,
                     visionEnabled = visionEnabled,
+                    imageGenerationEnabled = imageGenerationEnabled,
                     responseApiEnabled = responseApiEnabled,
                 ),
             )

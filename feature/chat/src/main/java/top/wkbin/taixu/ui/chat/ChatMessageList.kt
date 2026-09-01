@@ -57,6 +57,8 @@ import top.wkbin.taixu.harness.UserMessage
 import top.wkbin.taixu.runtime.WorkspaceProject
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
+import top.wkbin.taixu.ui.components.RuntimeCard
+import top.wkbin.taixu.ui.components.RuntimeCircularProgressIndicator as CircularProgressIndicator
 import top.wkbin.taixu.ui.components.scrollFadingEdge
 import androidx.compose.foundation.lazy.LazyListState
 import top.wkbin.taixu.core.model.QuickPhrase
@@ -85,6 +87,7 @@ internal fun ChatMessageList(
     toolResults: Map<String, ToolResult>,
     initializing: Boolean,
     running: Boolean,
+    imageGenerationModel: Boolean = false,
     status: String?,
     workspace: String,
     workspaceProject: WorkspaceProject?,
@@ -120,6 +123,18 @@ internal fun ChatMessageList(
             toolResults = toolResults,
             expandedOverrides = expandedOverrides,
         )
+    }
+    val waitingForFirstOutput = remember(messages, running, imageGenerationModel) {
+        if (!running) false else {
+            val lastUserIndex = messages.indexOfLast { it is UserMessage }
+            imageGenerationModel && lastUserIndex >= 0 && messages.drop(lastUserIndex + 1).none { message ->
+                when (message) {
+                    is AssistantText -> message.text.isNotBlank() || !message.reasoning.isNullOrBlank()
+                    is ToolCall -> true
+                    else -> false
+                }
+            }
+        }
     }
     LazyColumn(
         state = listState,
@@ -221,6 +236,12 @@ internal fun ChatMessageList(
                     }
                 }
             }
+            if (waitingForFirstOutput) {
+                item(key = "assistant_generation_placeholder") {
+                    Spacer(Modifier.height(8.dp))
+                    AssistantGenerationPlaceholder()
+                }
+            }
         }
         item {
             pendingApprovals.firstOrNull()?.let { request ->
@@ -232,6 +253,43 @@ internal fun ChatMessageList(
                 Spacer(Modifier.height(8.dp))
             }
             Spacer(Modifier.height(4.dp))
+        }
+    }
+}
+
+/** Visible while a non-streaming model (notably image generators) is still preparing its result. */
+@Composable
+private fun AssistantGenerationPlaceholder() {
+    RuntimeCard(
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), RoundedCornerShape(12.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                RuntimeIcon(RuntimeIconName.Image, Modifier.size(22.dp), MaterialTheme.colorScheme.primary)
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    text = stringResource(R.string.chat_generating_content),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = stringResource(R.string.chat_generating_content_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.5.dp)
         }
     }
 }

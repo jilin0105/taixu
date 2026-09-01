@@ -1152,7 +1152,10 @@ private fun ToolExpandContent(entry: TimelineEntry.Tool) {
 private fun AssistantExpandContent(message: top.wkbin.taixu.harness.AssistantText) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (message.text.isNotBlank()) {
-            PayloadBox(stringResource(R.string.chat_tl_response), message.text)
+            PayloadBox(
+                stringResource(R.string.chat_tl_response),
+                sanitizeModelResponseForDiagnostics(message.text),
+            )
         }
         message.reasoning?.takeIf { it.isNotBlank() }?.let {
             PayloadBox(stringResource(R.string.chat_tl_reasoning), it)
@@ -1437,6 +1440,52 @@ private fun prettyArgs(args: JsonObject): String =
 internal fun limitDiagnosticText(text: String, maxChars: Int = MAX_DIAGNOSTIC_TEXT_CHARS): String {
     if (text.length <= maxChars) return text
     return text.take(maxChars) + "\n…（内容过长，已截断）"
+}
+
+/**
+ * Runtime details are diagnostics, not a media transport. Keep the assistant message intact for
+ * chat rendering, but never copy a generated image's multi-megabyte Base64 payload into the
+ * details panel or clipboard.
+ */
+internal fun sanitizeModelResponseForDiagnostics(
+    text: String,
+    maxChars: Int = MAX_DIAGNOSTIC_TEXT_CHARS,
+): String {
+    val out = StringBuilder(minOf(text.length, maxChars))
+    var cursor = 0
+    while (cursor < text.length && out.length < maxChars) {
+        val dataStart = text.indexOf("data:image/", cursor, ignoreCase = true)
+        val jsonKeyStart = text.indexOf("\"b64_json\"", cursor, ignoreCase = true)
+        val nextStart = listOf(dataStart, jsonKeyStart).filter { it >= 0 }.minOrNull()
+        if (nextStart == null) {
+            out.append(text, cursor, minOf(text.length, cursor + (maxChars - out.length)))
+            break
+        }
+
+        if (nextStart == dataStart) {
+            val markdownStart = text.lastIndexOf("![", dataStart).takeIf { start ->
+                start >= cursor && text.indexOf("](", start).let { it in start until dataStart }
+            }
+            val htmlStart = text.lastIndexOf("<img", dataStart, ignoreCase = true).takeIf { it >= cursor }
+            val mediaStart = listOfNotNull(markdownStart, htmlStart).maxOrNull() ?: dataStart
+            out.append(text, cursor, minOf(mediaStart, cursor + (maxChars - out.length)))
+            val mime = text.substring(dataStart + 5, text.indexOf(';', dataStart).takeIf { it > dataStart } ?: dataStart)
+                .take(40)
+                .ifBlank { "image" }
+            if (out.isNotEmpty() && !out.last().isWhitespace()) out.append(' ')
+            out.append("[图片数据已隐藏：").append(mime).append(']')
+            val end = text.indexOfAny(charArrayOf(')', '"', '\'', '>', ' ', '\n', '\r', '\t'), dataStart)
+            cursor = if (end >= 0) end + 1 else text.length
+        } else {
+            out.append(text, cursor, minOf(jsonKeyStart, cursor + (maxChars - out.length)))
+            out.append("\"b64_json\":\"[图片 Base64 已隐藏]\"")
+            val colon = text.indexOf(':', jsonKeyStart + 10)
+            val valueStart = if (colon >= 0) text.indexOf('"', colon + 1) else -1
+            val valueEnd = if (valueStart >= 0) text.indexOf('"', valueStart + 1) else -1
+            cursor = if (valueEnd >= 0) valueEnd + 1 else text.length
+        }
+    }
+    return limitDiagnosticText(out.toString(), maxChars)
 }
 
 private const val MAX_DIAGNOSTIC_TEXT_CHARS = 32_000

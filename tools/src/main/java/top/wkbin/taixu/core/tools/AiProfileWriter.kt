@@ -45,6 +45,7 @@ class AiProfileWriter @Inject constructor(
         val customHeaders: String = "",
         val pureChatMode: Boolean = false,
         val visionEnabled: Boolean = true,
+        val imageGenerationEnabled: Boolean = false,
         val responseApiEnabled: Boolean = false,
     )
 
@@ -77,6 +78,7 @@ class AiProfileWriter @Inject constructor(
                 customHeaders = request.customHeaders.trim(),
                 pureChatMode = request.pureChatMode,
                 visionEnabled = request.visionEnabled,
+                imageGenerationEnabled = request.imageGenerationEnabled,
                 responseApiEnabled = request.responseApiEnabled,
                 apiKeyCount = submittedKeys.ifEmpty { existingKeys }.size,
                 requestsPerMinutePerKey = request.requestsPerMinutePerKey.coerceAtLeast(0),

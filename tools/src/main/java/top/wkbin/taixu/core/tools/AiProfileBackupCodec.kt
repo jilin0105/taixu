@@ -108,6 +108,7 @@ class AiProfileBackupCodec @Inject constructor(
                     customHeaders = profile.customHeaders,
                     pureChatMode = profile.pureChatMode,
                     visionEnabled = profile.visionEnabled,
+                    imageGenerationEnabled = profile.imageGenerationEnabled,
                     responseApiEnabled = profile.responseApiEnabled,
                 ),
             )
@@ -154,6 +155,7 @@ class AiProfileBackupCodec @Inject constructor(
         customHeaders = entity.customHeaders,
         pureChatMode = entity.pureChatMode,
         visionEnabled = entity.visionEnabled,
+        imageGenerationEnabled = entity.imageGenerationEnabled,
         responseApiEnabled = entity.responseApiEnabled,
     )
 }

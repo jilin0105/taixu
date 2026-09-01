@@ -19,6 +19,29 @@ class RuntimeTimelineGroupTest {
     }
 
     @Test
+    fun `model response diagnostics hide generated image base64`() {
+        val payload = "A".repeat(500_000)
+        val response = "生成完成：![星空](data:image/png;base64,$payload) 希望你喜欢"
+
+        val sanitized = sanitizeModelResponseForDiagnostics(response)
+
+        assertTrue(sanitized.contains("[图片数据已隐藏：image/png]"))
+        assertTrue(sanitized.contains("希望你喜欢"))
+        assertTrue(!sanitized.contains(payload.take(64)))
+        assertTrue(sanitized.length < 1_000)
+    }
+
+    @Test
+    fun `model response diagnostics hide b64 json payload`() {
+        val payload = "B".repeat(200_000)
+        val sanitized = sanitizeModelResponseForDiagnostics("{\"b64_json\":\"$payload\",\"size\":\"1024x1024\"}")
+
+        assertTrue(sanitized.contains("[图片 Base64 已隐藏]"))
+        assertTrue(sanitized.contains("1024x1024"))
+        assertTrue(!sanitized.contains(payload.take(64)))
+    }
+
+    @Test
     fun `buildRoundGroups maps corresponding user message to each round`() {
         val user1 = UserMessage(id = "user_1", createdAt = 1000L, text = "First user query")
         val user2 = UserMessage(id = "user_2", createdAt = 3000L, text = "Second user query")

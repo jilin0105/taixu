@@ -154,7 +154,7 @@ fun ModelEditorScreen(
             testResult = testResult,
             discover = { provider, url, key -> viewModel.discoverModels(provider, url, key) },
             test = viewModel::testConnection,
-            save = { name, provider, modelsList, url, key, rpmLimit, temperature, maxTokens, topP, reasoningMode, reasoningEffort, toolCallMode, contextTokens, customHeaders, pureChatMode, visionEnabled, responseApiEnabled ->
+            save = { name, provider, modelsList, url, key, rpmLimit, temperature, maxTokens, topP, reasoningMode, reasoningEffort, toolCallMode, contextTokens, customHeaders, pureChatMode, visionEnabled, imageGenerationEnabled, responseApiEnabled ->
                 viewModel.saveModels(
                     id = modelId,
                     models = modelsList,
@@ -173,6 +173,7 @@ fun ModelEditorScreen(
                     customHeaders = customHeaders,
                     pureChatMode = pureChatMode,
                     visionEnabled = visionEnabled,
+                    imageGenerationEnabled = imageGenerationEnabled,
                     responseApiEnabled = responseApiEnabled,
                 )
                 onSaved()
@@ -217,7 +218,7 @@ private fun ModelEditorContent(
     testResult: String?,
     discover: (String, String, String) -> Unit,
     test: (String, String, String) -> Unit,
-    save: (String, String, List<String>, String, String, Int, Float?, Int?, Float?, String?, String?, String?, Int?, String, Boolean, Boolean, Boolean) -> Unit,
+    save: (String, String, List<String>, String, String, Int, Float?, Int?, Float?, String?, String?, String?, Int?, String, Boolean, Boolean, Boolean, Boolean) -> Unit,
     onFillFromJson: (String) -> AiModelProfileExport?,
     showImportDialog: Boolean,
     onDismissImportDialog: () -> Unit,
@@ -305,6 +306,9 @@ private fun ModelEditorContent(
     var visionEnabled by rememberSaveable(modelId) {
         mutableStateOf(existing?.visionEnabled ?: true)
     }
+    var imageGenerationEnabled by rememberSaveable(modelId) {
+        mutableStateOf(existing?.imageGenerationEnabled ?: false)
+    }
     var responseApiEnabled by rememberSaveable(modelId) {
         mutableStateOf(existing?.responseApiEnabled ?: false)
     }
@@ -345,6 +349,7 @@ private fun ModelEditorContent(
         toolCallEnabled = profile.toolCallMode != "disabled"
         pureChatMode = profile.pureChatMode
         visionEnabled = profile.visionEnabled
+        imageGenerationEnabled = profile.imageGenerationEnabled
         responseApiEnabled = profile.responseApiEnabled
         if (profile.customHeaders.isNotBlank()) customHeaders = profile.customHeaders
     }
@@ -1042,6 +1047,13 @@ private fun ModelEditorContent(
                             )
 
                             EditorToggleRow(
+                                title = "支持图片生成 (Image Generation)",
+                                subtitle = "模型响应可直接返回生成图片；仅确认支持时开启",
+                                checked = imageGenerationEnabled,
+                                onCheckedChange = { imageGenerationEnabled = it },
+                            )
+
+                            EditorToggleRow(
                                 title = "使用 Responses API",
                                 subtitle = "使用 /v1/responses 替代 completions",
                                 checked = responseApiEnabled,
@@ -1189,6 +1201,7 @@ private fun ModelEditorContent(
                         customHeaders,
                         pureChatMode,
                         visionEnabled,
+                        imageGenerationEnabled,
                         responseApiEnabled,
                     )
                 },

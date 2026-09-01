@@ -146,7 +146,12 @@ class ApiContextAssembler @Inject constructor(
                                 isCollapsed(i) && message is AssistantText && message.text.length > 120 ->
                                     ApiMessage(
                                         role = "assistant",
-                                        content = ContextWindowPolicy.foldMessageText("助手", ProviderClient.stripThinkTags(message.text) ?: message.text),
+                                        content = ContextWindowPolicy.foldMessageText(
+                                            "助手",
+                                            ContextWindowPolicy.assistantTextForContext(
+                                                ProviderClient.stripThinkTags(message.text) ?: message.text,
+                                            ),
+                                        ),
                                         reasoning_content = null,
                                     )
                                 isCollapsed(i) && message is UserMessage && message.text.length > 120 ->
@@ -157,12 +162,16 @@ class ApiContextAssembler @Inject constructor(
                                     )
                                 isCollapsed(i) && message is AssistantText ->
                                     HarnessApiMapper.toApiMessage(message).copy(
-                                        content = ProviderClient.stripThinkTags(message.text) ?: message.text,
+                                        content = ContextWindowPolicy.assistantTextForContext(
+                                            ProviderClient.stripThinkTags(message.text) ?: message.text,
+                                        ),
                                         reasoning_content = null,
                                     )
                                 message is AssistantText ->
                                     HarnessApiMapper.toApiMessage(message).copy(
-                                        content = ProviderClient.stripThinkTags(message.text) ?: message.text,
+                                        content = ContextWindowPolicy.assistantTextForContext(
+                                            ProviderClient.stripThinkTags(message.text) ?: message.text,
+                                        ),
                                         reasoning_content = null,
                                     )
                                 else -> HarnessApiMapper.toApiMessage(message)
@@ -180,9 +189,16 @@ class ApiContextAssembler @Inject constructor(
                     }
                     // 预算折叠态：早期 assistant 文本压缩为一行占位，避免撑爆上下文。
                     val text = if (isCollapsed(i) && message is AssistantText && message.text.length > 120) {
-                        ContextWindowPolicy.foldMessageText("助手", ProviderClient.stripThinkTags(message.text) ?: message.text)
+                        ContextWindowPolicy.foldMessageText(
+                            "助手",
+                            ContextWindowPolicy.assistantTextForContext(
+                                ProviderClient.stripThinkTags(message.text) ?: message.text,
+                            ),
+                        )
                     } else {
-                        (message as? AssistantText)?.text?.let { ProviderClient.stripThinkTags(it) ?: it }
+                        (message as? AssistantText)?.text?.let {
+                            ContextWindowPolicy.assistantTextForContext(ProviderClient.stripThinkTags(it) ?: it)
+                        }
                     }
                     val toolCalls = mutableListOf<ApiToolCall>()
                     if (message is ToolCall) toolCalls.add(apiToolCall(message))

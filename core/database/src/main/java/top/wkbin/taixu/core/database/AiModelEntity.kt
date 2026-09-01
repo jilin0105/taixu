@@ -46,6 +46,8 @@ data class AiModelEntity(
     val pureChatMode: Boolean = false,
     /** 是否支持视觉多模态直接传图（true = 直接以 image_url 发送；false = 提示工具读取）。 */
     val visionEnabled: Boolean = true,
+    /** 是否支持生成图片。仅用于明确的模型能力与生图交互，默认关闭以避免误判文本模型。 */
+    val imageGenerationEnabled: Boolean = false,
     /** 是否使用 Responses API（true = /v1/responses；false = /v1/chat/completions）。 */
     val responseApiEnabled: Boolean = false,
     /** 已配置的 API Key 数量（仅元数据；Key 明文始终位于加密存储）。 */

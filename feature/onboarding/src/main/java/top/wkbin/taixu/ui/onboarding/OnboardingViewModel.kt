@@ -349,6 +349,7 @@ class OnboardingViewModel @Inject constructor(
                     customHeaders = imported?.customHeaders.orEmpty(),
                     pureChatMode = imported?.pureChatMode ?: false,
                     visionEnabled = imported?.visionEnabled ?: true,
+                    imageGenerationEnabled = imported?.imageGenerationEnabled ?: false,
                     responseApiEnabled = imported?.responseApiEnabled ?: false,
                 ),
             )
