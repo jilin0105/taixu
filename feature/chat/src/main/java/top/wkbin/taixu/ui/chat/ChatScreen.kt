@@ -80,6 +80,8 @@ import top.wkbin.taixu.harness.QueuedPrompt
 import top.wkbin.taixu.harness.compaction.CompactionSnapshot
 import top.wkbin.taixu.harness.mcp.McpWorkspaceRecommender
 import top.wkbin.taixu.runtime.ProjectType
+import top.wkbin.taixu.ui.chat.ChatRenderItem
+import top.wkbin.taixu.ui.chat.projectChatMessages
 
 // 悬浮玻璃底栏实际占高 = 上下 8dp padding + 64dp 条体 = 80dp，额外留 ~10dp 呼吸空间
 private val AgentBottomBarHeight = 90.dp
@@ -672,10 +674,27 @@ fun ChatScreen(
             onNavigateToMessage = { messageId ->
                 showRuntimeTimeline = false
                 coroutineScope.launch {
-                    val targetIndex = messages.filter { it !is ToolResult }.indexOfFirst { it.id == messageId }
-                    if (targetIndex >= 0) {
-                        val headerOffset = (if (activeCompaction != null) 1 else 0) + (if (activePlan != null) 1 else 0)
-                        listState.animateScrollToItem((targetIndex + headerOffset).coerceAtLeast(0))
+                    // 关键修复：旧的 targetIndex 用 (messages.filter { ToolResult }).indexOfFirst
+                    // 计算，没有 LazyColumn 实际头部结构（init / empty / compaction）的偏移补偿，
+                    // 也没有上界保护 —— 当消息在 sheet 打开后发生变化（流式新增 / 删除）时，
+                    // 可能传入越界索引，触发 LazyListState 的 IllegalArgumentException。
+                    // 这里改用与 ChatMessageList 完全一致的 projectChatMessages 投影，
+                    // 并 clamp 到合法区间。
+                    runCatching {
+                        val renderItems = projectChatMessages(messages, toolResults)
+                        val targetIndex = renderItems.indexOfFirst { item ->
+                            item is ChatRenderItem.MessageItem && item.message.id == messageId
+                        }
+                        if (targetIndex < 0) return@launch
+                        // LazyColumn 头部偏移：(init ? 1 : empty ? 1 : 0) + (compaction ? 1 : 0)。
+                        // activePlan 不是独立头部 —— 不要再加 1。
+                        val headerOffset = (if (initializing) 1 else 0) +
+                            (if (!initializing && messages.isEmpty()) 1 else 0) +
+                            (if (activeCompaction != null) 1 else 0)
+                        val totalCount = listState.layoutInfo.totalItemsCount
+                        if (totalCount <= 0) return@launch
+                        val safeIndex = (targetIndex + headerOffset).coerceIn(0, totalCount - 1)
+                        listState.animateScrollToItem(safeIndex)
                     }
                 }
             },
