@@ -441,6 +441,8 @@ data class ModelConfig(
     val pureChatMode: Boolean = false,
     /** 是否支持视觉多模态直接发送图片。 */
     val visionEnabled: Boolean = true,
+    /** 是否使用 OpenAI Responses API（true = POST /responses；false = /chat/completions）。 */
+    val responseApiEnabled: Boolean = false,
 )
 
 /** LLM 接入协议：绝大多数厂商提供 OpenAI 兼容端点；Anthropic Claude 需要专用适配。 */
@@ -691,9 +693,11 @@ class ProviderClient @Inject constructor(
 
     suspend fun chat(model: ModelConfig, messages: List<ApiMessage>): ChatResult =
         executeWithRotatedApiKey(model, apiKeyScheduler) { selected ->
-            when (selected.protocol) {
-                ApiProtocol.ANTHROPIC -> AnthropicApi(httpClient, json).chat(selected, messages)
-                ApiProtocol.OPENAI -> ChatApi(httpClient, json).chat(selected, messages)
+            when {
+                // 用户显式开启 Responses API 时优先走该协议（仅对 OpenAI 兼容端点有意义）
+                selected.responseApiEnabled -> ResponsesApi(httpClient, json).chat(selected, messages)
+                selected.protocol == ApiProtocol.ANTHROPIC -> AnthropicApi(httpClient, json).chat(selected, messages)
+                else -> ChatApi(httpClient, json).chat(selected, messages)
             }
         }
 
@@ -705,15 +709,22 @@ class ProviderClient @Inject constructor(
         onToolProgress: (ToolCallStreamProgress) -> Unit = {},
         onDelta: (String) -> Unit,
     ): ChatResult = executeWithRotatedApiKey(model, apiKeyScheduler) { selected ->
-        when (selected.protocol) {
-            ApiProtocol.ANTHROPIC -> AnthropicApi(httpClient, json).chatStream(
+        when {
+            selected.responseApiEnabled -> ResponsesApi(httpClient, json).chatStream(
                 selected,
                 messages,
                 onReasoning,
                 onToolProgress,
                 onDelta,
             )
-            ApiProtocol.OPENAI -> ChatApi(httpClient, json).chatStream(
+            selected.protocol == ApiProtocol.ANTHROPIC -> AnthropicApi(httpClient, json).chatStream(
+                selected,
+                messages,
+                onReasoning,
+                onToolProgress,
+                onDelta,
+            )
+            else -> ChatApi(httpClient, json).chatStream(
                 selected,
                 messages,
                 onReasoning,
@@ -784,6 +795,7 @@ class ProviderClient @Inject constructor(
                 customHeaders = customHeaders,
                 pureChatMode = pureChatMode,
                 visionEnabled = visionEnabled,
+                responseApiEnabled = responseApiEnabled,
             )
         }
 

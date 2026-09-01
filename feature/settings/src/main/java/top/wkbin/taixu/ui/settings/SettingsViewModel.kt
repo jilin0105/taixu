@@ -892,11 +892,18 @@ class SettingsViewModel @Inject constructor(
         _modelDiscoveryError.value = null
     }
 
-    fun testConnection(baseUrl: String, model: String, apiKey: String) {
+    fun testConnection(baseUrl: String, model: String, apiKey: String, useResponsesApi: Boolean = false) {
         viewModelScope.launch {
             _testingConnection.value = true
             _connectionResult.value = null
-            runCatching { connectionTester.test(baseUrl, model, profileWriter.parseApiKeys(apiKey).firstOrNull()) }
+            runCatching {
+                connectionTester.test(
+                    baseUrl,
+                    model,
+                    profileWriter.parseApiKeys(apiKey).firstOrNull(),
+                    useResponsesApi,
+                )
+            }
                 .onSuccess { _connectionResult.value = "连接成功" }
                 .onFailure {
                     logger.w("Connection test failed: ${it.message}", it)

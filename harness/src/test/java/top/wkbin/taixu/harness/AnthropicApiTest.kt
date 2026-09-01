@@ -350,6 +350,6 @@ class AnthropicApiTest {
         )
         val thrown = runCatching { api.chat(model(), listOf(ApiMessage(role = "user", content = "hi"))) }.exceptionOrNull()
         assertTrue(thrown is IllegalStateException)
-        assertFalse("Raw HTML must not leak into the message", thrown.message!!.contains("<html"))
+        assertFalse("Raw HTML must not leak into the message", thrown!!.message!!.contains("<html"))
     }
 }

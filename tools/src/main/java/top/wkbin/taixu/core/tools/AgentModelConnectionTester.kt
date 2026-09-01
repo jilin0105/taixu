@@ -11,7 +11,12 @@ import okhttp3.RequestBody.Companion.toRequestBody
 
 @Singleton
 class AgentModelConnectionTester @Inject constructor(private val http: OkHttpClient) {
-    suspend fun test(baseUrl: String, model: String, apiKey: String?) = withContext(Dispatchers.IO) {
+    suspend fun test(
+        baseUrl: String,
+        model: String,
+        apiKey: String?,
+        useResponsesApi: Boolean = false,
+    ) = withContext(Dispatchers.IO) {
         val cleanBaseUrl = ProviderEndpointPolicy.normalizeUrl(baseUrl)
         require(cleanBaseUrl.isNotBlank() && ProviderEndpointPolicy.isSafeBaseUrl(cleanBaseUrl)) { "Base URL 不安全或为空" }
         val isAnthropic = cleanBaseUrl.trimEnd('/').contains("api.anthropic.com")
@@ -19,6 +24,8 @@ class AgentModelConnectionTester @Inject constructor(private val http: OkHttpCli
             testModelCatalog(cleanBaseUrl, apiKey, isAnthropic)
         } else if (isAnthropic) {
             testAnthropic(cleanBaseUrl, model, apiKey)
+        } else if (useResponsesApi) {
+            testResponses(cleanBaseUrl, model, apiKey)
         } else {
             testOpenAi(cleanBaseUrl, model, apiKey)
         }
@@ -45,6 +52,20 @@ class AgentModelConnectionTester @Inject constructor(private val http: OkHttpCli
     private fun testOpenAi(baseUrl: String, model: String, apiKey: String?) {
         val body = """{"model":"${model.replace("\\", "\\\\").replace("\"", "\\\"")}","messages":[{"role":"user","content":"Reply with OK"}],"max_tokens":8}"""
         val request = Request.Builder().url("${baseUrl.trimEnd('/')}/chat/completions")
+            .header("Content-Type", "application/json")
+            .apply { if (!apiKey.isNullOrBlank()) header("Authorization", "Bearer $apiKey") }
+            .post(body.toRequestBody("application/json".toMediaType())).build()
+        http.newCall(request).execute().use { response ->
+            val text = response.body.string()
+            check(response.isSuccessful) { "连接失败 HTTP ${response.code}：${text.take(240)}" }
+        }
+    }
+
+    /** 按"使用 Responses API"开关测试 /responses 端点（与运行时使用同一协议结构）。 */
+    private fun testResponses(baseUrl: String, model: String, apiKey: String?) {
+        val escapedModel = model.replace("\\", "\\\\").replace("\"", "\\\"")
+        val body = """{"model":"$escapedModel","input":[{"role":"user","content":[{"type":"input_text","text":"Reply with OK"}]}],"max_output_tokens":8}"""
+        val request = Request.Builder().url("${baseUrl.trimEnd('/')}/responses")
             .header("Content-Type", "application/json")
             .apply { if (!apiKey.isNullOrBlank()) header("Authorization", "Bearer $apiKey") }
             .post(body.toRequestBody("application/json".toMediaType())).build()

@@ -217,7 +217,7 @@ private fun ModelEditorContent(
     testing: Boolean,
     testResult: String?,
     discover: (String, String, String) -> Unit,
-    test: (String, String, String) -> Unit,
+    test: (String, String, String, Boolean) -> Unit,
     save: (String, String, List<String>, String, String, Int, Float?, Int?, Float?, String?, String?, String?, Int?, String, Boolean, Boolean, Boolean, Boolean) -> Unit,
     onFillFromJson: (String) -> AiModelProfileExport?,
     showImportDialog: Boolean,
@@ -1095,7 +1095,7 @@ private fun ModelEditorContent(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 RuntimeOutlinedButton(
-                    onClick = { test(url, testModelTarget, combinedKey) },
+                    onClick = { test(url, testModelTarget, combinedKey, responseApiEnabled) },
                     enabled = !testing && url.isNotBlank(),
                     modifier = Modifier.fillMaxWidth().height(44.dp),
                     shape = RoundedCornerShape(12.dp),

@@ -74,6 +74,23 @@ object ReasoningAdapter {
         }
     }
 
+    /**
+     * OpenAI Responses API（POST /responses）的推理参数：顶层 `reasoning: {effort: low|medium|high}`。
+     *
+     * 与 Chat Completions 的 `reasoning_effort` 不同，Responses API 没有合法的 "none" 档位，
+     * 因此 DISABLED 时省略该字段（跟随服务端默认），避免发送未知取值被 400。
+     * ENABLED 但未指定强度时使用中等档位 medium。
+     */
+    fun responsesFields(model: ModelConfig): Map<String, JsonElement> {
+        if (model.reasoningMode == ReasoningMode.AUTO) return emptyMap()
+        if (model.reasoningMode == ReasoningMode.DISABLED) return emptyMap()
+        return mapOf(
+            "reasoning" to buildJsonObject {
+                put("effort", model.reasoningEffort?.openAiName() ?: "medium")
+            },
+        )
+    }
+
     // ---------- 厂商判定 ----------
 
     /**

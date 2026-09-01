@@ -6,6 +6,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -46,5 +47,20 @@ class AgentModelConnectionTesterTest {
         val request = server.takeRequest()
         assertEquals("POST", request.method)
         assertEquals("/v1/chat/completions", request.path)
+    }
+
+    @Test
+    fun `responses api flag tests the responses endpoint`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+
+        tester.test(server.url("/v1").toString(), "test-model", "secret", useResponsesApi = true)
+
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/v1/responses", request.path)
+        assertEquals("Bearer secret", request.getHeader("Authorization"))
+        val body = request.body.readUtf8()
+        assertTrue(body.contains("\"max_output_tokens\""))
+        assertTrue(body.contains("\"type\":\"input_text\""))
     }
 }
