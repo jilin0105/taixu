@@ -280,4 +280,42 @@ class ChatApiTest {
         assertTrue(thrown is IllegalStateException)
         assertEquals(1, server.requestCount)
     }
+
+    @Test
+    fun `html response is reported with a friendly message instead of a serialization stack`() = runBlocking {
+        // 模拟代理/CDN 返回 HTML 登录页 (与 runtime.log 里 Model discovery 那条同源)。
+        server.enqueue(
+            MockResponse()
+                .setBody("<!doctype html><html lang=\"en\"><head><title>Sign in</title></head><body>Auth required</body></html>"),
+        )
+        val thrown = runCatching { api.chat(model(), listOf(ApiMessage(role = "user", content = "hi"))) }.exceptionOrNull()
+        assertTrue(thrown is IllegalStateException)
+        val msg = thrown!!.message.orEmpty()
+        assertTrue("Expected HTML guidance in message, got: $msg", msg.contains("网页") || msg.contains("非 JSON"))
+        assertFalse("Raw HTML must not leak into the message: $msg", msg.contains("<html"))
+    }
+
+    @Test
+    fun `bom prefixed html is also detected`() = runBlocking {
+        // 部分代理会把 UTF-8 BOM 加在 HTML 前缀，让 kotlinx.serialization 从 offset 1 起算。
+        // 这正是 runtime.log 里那条 "Expected EOF ... but had h" 的根因。
+        server.enqueue(
+            MockResponse()
+                .setBody("\uFEFF<!doctype html><html lang=\"en\"></html>"),
+        )
+        val thrown = runCatching { api.chat(model(), listOf(ApiMessage(role = "user", content = "hi"))) }.exceptionOrNull()
+        assertTrue(thrown is IllegalStateException)
+        assertFalse(thrown!!.message!!.contains("<html"))
+    }
+
+    @Test
+    fun `looksLikeJsonResponse helper handles bom and whitespace`() {
+        assertTrue(ProviderClient.looksLikeJsonResponse("""{"choices":[]}"""))
+        assertTrue(ProviderClient.looksLikeJsonResponse("   \n  []"))
+        assertTrue(ProviderClient.looksLikeJsonResponse("\uFEFF{\"a\":1}"))
+        assertFalse(ProviderClient.looksLikeJsonResponse("<!doctype html><html></html>"))
+        assertFalse(ProviderClient.looksLikeJsonResponse("\uFEFF<html></html>"))
+        assertFalse(ProviderClient.looksLikeJsonResponse("plain text error page"))
+        assertFalse(ProviderClient.looksLikeJsonResponse(""))
+    }
 }

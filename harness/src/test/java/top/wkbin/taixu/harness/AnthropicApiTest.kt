@@ -340,4 +340,16 @@ class AnthropicApiTest {
         assertEquals(300L, result.usage.cacheReadTokens)
         assertEquals(50L, result.usage.cacheWriteTokens)
     }
+
+    @Test
+    fun `html response from claude endpoint is reported cleanly`() = runBlocking {
+        // Anthropic 路径同样要避免把 HTML 误喂给 JSON 解析器。
+        server.enqueue(
+            MockResponse()
+                .setBody("\uFEFF<!doctype html><html lang=\"en\"><head><title>Sign in</title></head></html>"),
+        )
+        val thrown = runCatching { api.chat(model(), listOf(ApiMessage(role = "user", content = "hi"))) }.exceptionOrNull()
+        assertTrue(thrown is IllegalStateException)
+        assertFalse("Raw HTML must not leak into the message", thrown.message!!.contains("<html"))
+    }
 }

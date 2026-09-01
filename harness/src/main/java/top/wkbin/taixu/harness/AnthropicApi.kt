@@ -352,6 +352,9 @@ internal class AnthropicApi(
     }
 
     private fun parseFinalResponse(body: String): ChatResult {
+        if (!ProviderClient.looksLikeJsonResponse(body)) {
+            throw IllegalStateException(ProviderClient.formatHttpErrorMessage(200, body))
+        }
         val root = json.parseToJsonElement(body).jsonObject
         val contentBlocks = root["content"]?.jsonArray.orEmpty()
         val text = StringBuilder()

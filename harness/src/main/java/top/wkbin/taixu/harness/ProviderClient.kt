@@ -54,6 +54,11 @@ internal class ChatApi(
                     }
                     throw IllegalStateException(ProviderClient.formatHttpErrorMessage(response.code, body))
                 }
+                if (!ProviderClient.looksLikeJsonResponse(body)) {
+                    throw IllegalStateException(
+                        ProviderClient.formatHttpErrorMessage(response.code, body),
+                    )
+                }
                 val parsed = json.decodeFromString(ChatCompletionResponse.serializer(), body)
                 val message = parsed.choices.firstOrNull()?.message ?: ChatResponseMessage()
                 val calls = message.tool_calls.orEmpty().mapNotNull { call ->
@@ -812,13 +817,39 @@ class ProviderClient @Inject constructor(
                 ApiProtocol.OPENAI
             }
         }
+        /**
+         * 检测响应体是否不像 JSON —— 用于在 [formatHttpErrorMessage] /
+         * ChatApi / AnthropicApi 的解析前短路，避免把 HTML / 纯文本 /
+         * BOM 头部的内容丢给 kotlinx.serialization 抛出一串反混淆栈。
+         *
+         * - UTF-8 BOM (U+FEFF) 不被 Kotlin 的 [String.trimStart] 当作空白，
+         *   但确实会让 JSON 解析器从 offset 1 开始而误判；这里先剔除。
+         * - "<!doctype html"、"<html"、纯文本错误页（Cloudflare / Nginx /
+         *   代理登录页）是最常见的"假装 JSON"响应。
+         */
+        internal fun looksLikeJsonResponse(body: String): Boolean {
+            val stripped = if (body.isNotEmpty() && body[0] == '\uFEFF') body.substring(1) else body
+            val prefix = stripped.trimStart().take(64).lowercase()
+            if (prefix.isEmpty()) return false
+            return prefix.startsWith("{") || prefix.startsWith("[")
+        }
 
         fun formatHttpErrorMessage(code: Int, rawBody: String): String {
+            val trimmedBody = if (rawBody.isNotEmpty() && rawBody[0] == '\uFEFF') rawBody.substring(1) else rawBody
+            // 远端把错误页（HTML/纯文本）当成 body 返回时，给出可读的固定文案，
+            // 避免直接把 <html>... 拼到错误提示里刷屏。
+            if (!looksLikeJsonResponse(trimmedBody)) {
+                val kind = when {
+                    trimmedBody.trimStart().startsWith("<", ignoreCase = true) -> "网页"
+                    else -> "非 JSON 文本"
+                }
+                return "LLM 请求失败 (HTTP $code)：远端返回了$kind，可能为反向代理登录页、CDN 拦截或 Base URL 路由错误。请检查 Base URL 与网络。"
+            }
             val errorMsg = runCatching {
-                val obj = Json.parseToJsonElement(rawBody) as? JsonObject
+                val obj = Json.parseToJsonElement(trimmedBody) as? JsonObject
                 val err = obj?.get("error") as? JsonObject
                 err?.get("message")?.let { it as? JsonPrimitive }?.contentOrNull
-            }.getOrNull()?.trim() ?: rawBody.take(300).trim()
+            }.getOrNull()?.trim() ?: trimmedBody.take(300).trim()
 
             val lowerMsg = errorMsg.lowercase()
             return when {
