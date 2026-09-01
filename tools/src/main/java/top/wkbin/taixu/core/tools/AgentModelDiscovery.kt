@@ -8,13 +8,13 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.JsonObject
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
 @Singleton
 class AgentModelDiscovery @Inject constructor(
     private val http: OkHttpClient,
-    private val catalog: AgentProviderCatalog,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -47,15 +47,34 @@ class AgentModelDiscovery @Inject constructor(
             .get().build()
         http.newCall(request).execute().use { response ->
             val body = response.body.string()
-            check(response.isSuccessful) { "获取模型失败 HTTP ${response.code}：${body.take(200)}" }
-            val root = json.parseToJsonElement(body).jsonObject
-            val ids = root["data"]?.jsonArray?.mapNotNull { it.jsonObject["id"]?.jsonPrimitive?.content }
-                ?: root["models"]?.jsonArray?.mapNotNull { item ->
-                    val obj = item.jsonObject
-                    obj["name"]?.jsonPrimitive?.content ?: obj["model"]?.jsonPrimitive?.content
-                }.orEmpty()
+            if (!response.isSuccessful) {
+                throw ModelDiscoveryResponseException("获取模型失败 HTTP ${response.code}：${body.take(200)}")
+            }
+            val mediaType = response.body.contentType()
+            if (looksLikeHtml(body)) {
+                throw ModelDiscoveryResponseException(
+                    "模型接口返回了网页而不是 JSON（HTTP ${response.code}，Content-Type: ${mediaType ?: "未知"}）",
+                )
+            }
+            val root = runCatching { json.parseToJsonElement(body) as? JsonObject }
+                .getOrElse { cause -> throw ModelDiscoveryResponseException("模型接口返回的 JSON 无法解析", cause) }
+                ?: throw ModelDiscoveryResponseException("模型接口返回的 JSON 顶层不是对象")
+            val ids = runCatching {
+                root["data"]?.jsonArray?.mapNotNull { it.jsonObject["id"]?.jsonPrimitive?.content }
+                    ?: root["models"]?.jsonArray?.mapNotNull { item ->
+                        val obj = item.jsonObject
+                        obj["name"]?.jsonPrimitive?.content ?: obj["model"]?.jsonPrimitive?.content
+                    }.orEmpty()
+            }.getOrElse { cause ->
+                throw ModelDiscoveryResponseException("模型接口返回的 JSON 结构不符合预期", cause)
+            }
             ids.filter(::isAgentModel).distinct().sorted()
         }
+    }
+
+    private fun looksLikeHtml(body: String): Boolean {
+        val prefix = body.trimStart().take(32).lowercase()
+        return prefix.startsWith("<!doctype html") || prefix.startsWith("<html")
     }
 
     private fun isAgentModel(id: String): Boolean {
@@ -71,3 +90,6 @@ class AgentModelDiscovery @Inject constructor(
         )
     }
 }
+
+class ModelDiscoveryResponseException(message: String, cause: Throwable? = null) :
+    IllegalStateException(message, cause)

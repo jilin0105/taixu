@@ -113,3 +113,26 @@ val MIGRATION_39_40 = object : Migration(39, 40) {
         db.execSQL("ALTER TABLE agent_subagent_settings ADD COLUMN catalogRevision TEXT NOT NULL DEFAULT ''")
     }
 }
+
+/** Connect legacy task rows to Harness sessions and persist restart-safe lifecycle checkpoints. */
+val MIGRATION_40_41 = object : Migration(40, 41) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE agent_tasks ADD COLUMN sessionId TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE agent_tasks ADD COLUMN operationId TEXT")
+        db.execSQL("ALTER TABLE agent_tasks ADD COLUMN startedAt INTEGER")
+        db.execSQL("ALTER TABLE agent_tasks ADD COLUMN completedAt INTEGER")
+        db.execSQL("ALTER TABLE agent_tasks ADD COLUMN nextRunAt INTEGER")
+        db.execSQL("ALTER TABLE agent_tasks ADD COLUMN attemptCount INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE agent_tasks ADD COLUMN maxAttempts INTEGER NOT NULL DEFAULT 2")
+        db.execSQL("ALTER TABLE agent_tasks ADD COLUMN autoResume INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("ALTER TABLE agent_tasks ADD COLUMN lastRound INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE agent_tasks ADD COLUMN maxRounds INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE agent_tasks ADD COLUMN statusDetail TEXT")
+        // Legacy RUNNING rows intentionally stay RUNNING here. Their empty sessionId makes the
+        // recovery pass classify them as exhausted and move them to SUSPENDED with an explanation.
+        db.execSQL("UPDATE agent_tasks SET status = 'SUSPENDED', statusDetail = '旧任务未绑定会话，需手动重新发起' WHERE status IN ('IDLE', 'SUSPENDED')")
+        db.execSQL("UPDATE agent_tasks SET status = 'FAILED' WHERE status = 'ERROR'")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_agent_tasks_sessionId ON agent_tasks(sessionId)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_agent_tasks_nextRunAt ON agent_tasks(nextRunAt)")
+    }
+}

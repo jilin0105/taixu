@@ -2,12 +2,21 @@ package top.wkbin.taixu.ui.chat
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import top.wkbin.taixu.harness.AssistantText
 import top.wkbin.taixu.harness.UserMessage
 import top.wkbin.taixu.harness.events.HarnessEvent
 
 class RuntimeTimelineGroupTest {
+
+    @Test
+    fun `diagnostic text is bounded before compose renders it`() {
+        val bounded = limitDiagnosticText("x".repeat(100), maxChars = 16)
+
+        assertTrue(bounded.startsWith("x".repeat(16)))
+        assertTrue(bounded.contains("已截断"))
+    }
 
     @Test
     fun `buildRoundGroups maps corresponding user message to each round`() {

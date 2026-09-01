@@ -44,14 +44,14 @@ class TaiXuApplication : Application() {
             agentSkillRepositoryLazy.get().ensureInitialized()
             mcpServerRepositoryLazy.get().ensureInitialized()
             settingsDataStore.incrementLaunchCount()
-            // 进程被杀后重启时，批量恢复所有被中断的 Agent 会话：
-            // 将"运行中"假死状态还原为 IDLE / WAITING_APPROVAL，并提示用户发送消息即可继续，
-            // 避免用户切回应用时看到空白对话或永久"运行中"状态。
+            // 进程被杀后重启时，先按 operation replay policy 修复中断检查点，再续跑已
+            // 获得 autoResume 授权且仍有尝试预算的 durable task。等待审批的任务保持冻结，
+            // 不可重放工具只写中断结果，绝不自动再次产生副作用。
             val harnessLoop = harnessLoopLazy.get()
             runCatching {
                 val recovered = harnessLoop.recoverAllInterruptedSessions()
                 if (recovered > 0) {
-                    android.util.Log.i("TaiXuApp", "已恢复 $recovered 个被中断的 Agent 会话")
+                    android.util.Log.i("TaiXuApp", "已恢复 $recovered 个被中断的 Agent 会话/任务")
                 }
             }.onFailure {
                 android.util.Log.w("TaiXuApp", "恢复中断会话失败", it)

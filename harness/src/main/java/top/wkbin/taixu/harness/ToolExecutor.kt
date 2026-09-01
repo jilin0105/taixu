@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.harness
+package top.wkbin.taixu.harness
 
 import top.wkbin.taixu.core.common.result.AppResult
 import top.wkbin.taixu.core.database.HarnessSessionRepository
@@ -44,6 +44,8 @@ import kotlinx.serialization.json.jsonPrimitive
 class ToolExecutor @Inject constructor(
     private val fileAccess: WorkspaceFileAccess,
     private val linuxRuntime: LinuxRuntime,
+    private val pathResolver: HarnessPathResolver,
+    private val approvalPolicyEngine: ApprovalPolicyEngine,
     private val secretRedactor: SecretRedactor,
     private val fileDownloader: FileDownloader,
     private val linuxEnvironmentManager: LinuxEnvironmentManager? = null,
@@ -80,7 +82,7 @@ class ToolExecutor @Inject constructor(
                 val repository = approvalRepository
                 val sessionMode = sessionDao?.findById(sessionId)?.approvalMode?.let(ApprovalMode::fromId)
                 val mode = sessionMode ?: repository?.currentMode() ?: ApprovalMode.FULL_ACCESS
-                val decision = ApprovalPolicyEngine().decide(mode, toolCall.tool, toolCall.args, workspace)
+                val decision = approvalPolicyEngine.decide(mode, toolCall.tool, toolCall.args, workspace)
                 if (decision.required) {
                     if (!allowApprovalRequest) {
                         return ToolResult(
@@ -92,7 +94,7 @@ class ToolExecutor @Inject constructor(
                         )
                     }
                     checkNotNull(repository) { "审批仓库未初始化" }
-                    val request = ApprovalPolicyEngine().createRequest(sessionId, toolCall, workspace, decision, operationId)
+                    val request = approvalPolicyEngine.createRequest(sessionId, toolCall, workspace, decision, operationId)
                     repository.create(request)
                     eventBus?.emit(
                         top.wkbin.taixu.harness.events.HarnessEvent.ApprovalRequested(
@@ -542,8 +544,7 @@ class ToolExecutor @Inject constructor(
     private suspend fun executeBase(args: JsonObject, workspace: String): Pair<Boolean, String> {
         val command = requireString(args, "command")
         require(command.length <= MAX_COMMAND_LENGTH) { "命令过长（${command.length} 字符，上限 $MAX_COMMAND_LENGTH）" }
-        val cwd = args["cwd"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-            ?: (if (workspace.isNotBlank()) (if (workspace.startsWith("/")) workspace else "/workspace/$workspace") else DEFAULT_CWD)
+        val cwd = pathResolver.resolveWorkingDirectory(args["cwd"]?.jsonPrimitive?.content, workspace)
         val configuredTimeoutSeconds = if (::settingsDataStore.isInitialized) {
             runCatching { settingsDataStore.baseCommandTimeoutSeconds.first() }
                 .getOrDefault(SettingsDataStore.DEFAULT_BASE_COMMAND_TIMEOUT_SECONDS)
@@ -590,8 +591,7 @@ class ToolExecutor @Inject constructor(
                 val internalId = processId(externalId)
                 val command = requireString(args, "command")
                 require(command.length <= MAX_COMMAND_LENGTH) { "命令过长（${command.length} 字符，上限 $MAX_COMMAND_LENGTH）" }
-                val cwd = args["cwd"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-                    ?: defaultWorkingDirectory(workspace)
+                val cwd = pathResolver.resolveWorkingDirectory(args["cwd"]?.jsonPrimitive?.content, workspace)
                 val existing = linuxRuntime.listBackground().firstOrNull { it.id == internalId && it.session.isAlive }
                 require(existing == null) { "后台进程 $externalId 已在运行；请先查询状态或停止它" }
                 val managed = linuxRuntime.startBackground(
@@ -647,12 +647,6 @@ class ToolExecutor @Inject constructor(
         }
     }
 
-    private fun defaultWorkingDirectory(workspace: String): String =
-        if (workspace.isNotBlank()) {
-            if (workspace.startsWith("/")) workspace else "/workspace/$workspace"
-        } else {
-            DEFAULT_CWD
-        }
 
     private fun requireProcessId(args: JsonObject): String {
         val id = requireString(args, "id").trim().lowercase()

@@ -9,7 +9,7 @@ import org.junit.Test
 import top.wkbin.taixu.core.model.ApprovalMode
 
 class ApprovalPolicyEngineTest {
-    private val policy = ApprovalPolicyEngine()
+    private val policy = ApprovalPolicyEngine(HarnessPathResolver())
     private val workspace = "/workspace/project"
 
     private fun args(vararg pairs: Pair<String, String>) = buildJsonObject {

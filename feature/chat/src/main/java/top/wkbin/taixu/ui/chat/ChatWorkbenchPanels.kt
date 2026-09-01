@@ -553,70 +553,77 @@ internal fun RuntimeTimelineSheet(
         var memoriesExpanded by rememberSaveable { mutableStateOf(false) }
         var scratchpadsExpanded by rememberSaveable { mutableStateOf(false) }
 
-        Column(
+        LazyColumn(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .verticalScroll(rememberScrollState()),
+                .fillMaxWidth(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
-                stringResource(R.string.chat_runtime_title),
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                stringResource(R.string.chat_runtime_description),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp, bottom = 4.dp),
-            )
-
-            // 1. 长期工作记忆折叠卡片 (Collapsible Long-term Memory Section)
-            CollapsibleRuntimeSectionCard(
-                title = stringResource(R.string.chat_memory_section, memories.size),
-                icon = RuntimeIconName.Brain,
-                tint = MaterialTheme.colorScheme.secondary,
-                expanded = memoriesExpanded,
-                onToggle = { memoriesExpanded = !memoriesExpanded },
-            ) {
-                if (memories.isEmpty()) {
+            item {
+                Column {
                     Text(
-                        text = stringResource(R.string.chat_memory_empty),
+                        stringResource(R.string.chat_runtime_title),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        stringResource(R.string.chat_runtime_description),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 4.dp),
+                        modifier = Modifier.padding(top = 4.dp, bottom = 4.dp),
                     )
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        memories.forEach { memory ->
-                            Surface(
-                                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.5f),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween,
+                }
+            }
+
+            // 1. 长期工作记忆折叠卡片 (Collapsible Long-term Memory Section)
+            item {
+                CollapsibleRuntimeSectionCard(
+                    title = stringResource(R.string.chat_memory_section, memories.size),
+                    icon = RuntimeIconName.Brain,
+                    tint = MaterialTheme.colorScheme.secondary,
+                    expanded = memoriesExpanded,
+                    onToggle = { memoriesExpanded = !memoriesExpanded },
+                ) {
+                    if (memories.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.chat_memory_empty),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 4.dp),
+                        )
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            memories.forEach { memory ->
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.5f),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth(),
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = memory.key,
-                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                                            color = MaterialTheme.colorScheme.primary,
-                                        )
-                                        Text(
-                                            text = memory.value,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                        )
-                                    }
-                                    top.wkbin.taixu.ui.components.RuntimeIconButton(
-                                        onClick = { onDeleteMemory(memory.id) },
-                                        modifier = Modifier.size(24.dp),
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween,
                                     ) {
-                                        RuntimeIcon(RuntimeIconName.Trash, Modifier.size(14.dp), MaterialTheme.colorScheme.error)
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = memory.key,
+                                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                                color = MaterialTheme.colorScheme.primary,
+                                            )
+                                            Text(
+                                                text = limitDiagnosticText(memory.value),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = DIAGNOSTIC_PREVIEW_LINES,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                        top.wkbin.taixu.ui.components.RuntimeIconButton(
+                                            onClick = { onDeleteMemory(memory.id) },
+                                            modifier = Modifier.size(24.dp),
+                                        ) {
+                                            RuntimeIcon(RuntimeIconName.Trash, Modifier.size(14.dp), MaterialTheme.colorScheme.error)
+                                        }
                                     }
                                 }
                             }
@@ -626,50 +633,54 @@ internal fun RuntimeTimelineSheet(
             }
 
             // 2. 任务草稿折叠卡片 (Collapsible Scratchpad Section)
-            CollapsibleRuntimeSectionCard(
-                title = stringResource(R.string.chat_scratchpad_section, scratchpads.size),
-                icon = RuntimeIconName.File,
-                tint = MaterialTheme.colorScheme.tertiary,
-                expanded = scratchpadsExpanded,
-                onToggle = { scratchpadsExpanded = !scratchpadsExpanded },
-            ) {
-                if (scratchpads.isEmpty()) {
-                    Text(
-                        text = stringResource(R.string.chat_scratchpad_empty),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 4.dp),
-                    )
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        scratchpads.forEach { pad ->
-                            Surface(
-                                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.5f),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween,
+            item {
+                CollapsibleRuntimeSectionCard(
+                    title = stringResource(R.string.chat_scratchpad_section, scratchpads.size),
+                    icon = RuntimeIconName.File,
+                    tint = MaterialTheme.colorScheme.tertiary,
+                    expanded = scratchpadsExpanded,
+                    onToggle = { scratchpadsExpanded = !scratchpadsExpanded },
+                ) {
+                    if (scratchpads.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.chat_scratchpad_empty),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 4.dp),
+                        )
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            scratchpads.forEach { pad ->
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.5f),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth(),
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = pad.key.ifBlank { "草稿" },
-                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                                            color = MaterialTheme.colorScheme.tertiary,
-                                        )
-                                        Text(
-                                            text = pad.value,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                        )
-                                    }
-                                    top.wkbin.taixu.ui.components.RuntimeIconButton(
-                                        onClick = { onDeleteScratchpad(pad.key) },
-                                        modifier = Modifier.size(24.dp),
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween,
                                     ) {
-                                        RuntimeIcon(RuntimeIconName.Trash, Modifier.size(14.dp), MaterialTheme.colorScheme.error)
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = pad.key.ifBlank { "草稿" },
+                                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                                color = MaterialTheme.colorScheme.tertiary,
+                                            )
+                                            Text(
+                                                text = limitDiagnosticText(pad.value),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = DIAGNOSTIC_PREVIEW_LINES,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                        top.wkbin.taixu.ui.components.RuntimeIconButton(
+                                            onClick = { onDeleteScratchpad(pad.key) },
+                                            modifier = Modifier.size(24.dp),
+                                        ) {
+                                            RuntimeIcon(RuntimeIconName.Trash, Modifier.size(14.dp), MaterialTheme.colorScheme.error)
+                                        }
                                     }
                                 }
                             }
@@ -679,11 +690,13 @@ internal fun RuntimeTimelineSheet(
             }
 
             if (events.isEmpty()) {
-                RuntimeCard {
-                    Text(
-                        stringResource(R.string.chat_no_events),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                item {
+                    RuntimeCard {
+                        Text(
+                            stringResource(R.string.chat_no_events),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             } else {
                 // 汇总统计
@@ -691,24 +704,23 @@ internal fun RuntimeTimelineSheet(
                 val toolCount = events.count { it is HarnessEvent.ToolCallStarted }
                 val approvalCount = events.count { it is HarnessEvent.ApprovalRequested }
                 val recoveryCount = events.count { it is HarnessEvent.RecoveryApplied }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    StatPill(RuntimeIconName.Brain, roundCount.toString(), MaterialTheme.colorScheme.primary, Modifier.weight(1f))
-                    StatPill(RuntimeIconName.Wrench, toolCount.toString(), MaterialTheme.colorScheme.tertiary, Modifier.weight(1f))
-                    StatPill(RuntimeIconName.Shield, approvalCount.toString(), Color(0xFFB25E00), Modifier.weight(1f))
-                    StatPill(RuntimeIconName.Refresh, recoveryCount.toString(), MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        StatPill(RuntimeIconName.Brain, roundCount.toString(), MaterialTheme.colorScheme.primary, Modifier.weight(1f))
+                        StatPill(RuntimeIconName.Wrench, toolCount.toString(), MaterialTheme.colorScheme.tertiary, Modifier.weight(1f))
+                        StatPill(RuntimeIconName.Shield, approvalCount.toString(), Color(0xFFB25E00), Modifier.weight(1f))
+                        StatPill(RuntimeIconName.Refresh, recoveryCount.toString(), MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                 }
-                HorizontalDivider(
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                    modifier = Modifier.padding(bottom = 4.dp),
-                )
 
                 // 最新一轮在最上，组内按发生顺序链式展示；轮间以分隔线区隔。
-                rounds.asReversed().forEach { round ->
+                items(rounds.asReversed()) { round ->
                     RoundSection(round, onNavigateToMessage)
                     HorizontalDivider(
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
@@ -716,19 +728,18 @@ internal fun RuntimeTimelineSheet(
                     )
                 }
                 if (lifecycle.isNotEmpty()) {
-                    Text(
-                        stringResource(R.string.chat_tl_lifecycle),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
-                    lifecycle.forEach { event ->
-                        RuntimeEventRow(event)
+                    item {
+                        Text(
+                            stringResource(R.string.chat_tl_lifecycle),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
                     }
+                    items(lifecycle) { event -> RuntimeEventRow(event) }
                 }
             }
-            Spacer(Modifier.height(32.dp))
         }
     }
 }
@@ -1178,7 +1189,7 @@ private fun PayloadBox(label: String, text: String) {
         }
         Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(8.dp)) {
             Text(
-                text = text,
+                text = limitDiagnosticText(text),
                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1422,3 +1433,11 @@ private val PAYLOAD_JSON = Json { prettyPrint = true; ignoreUnknownKeys = true }
 
 private fun prettyArgs(args: JsonObject): String =
     runCatching { PAYLOAD_JSON.encodeToString(JsonObject.serializer(), args) }.getOrDefault(args.toString())
+
+internal fun limitDiagnosticText(text: String, maxChars: Int = MAX_DIAGNOSTIC_TEXT_CHARS): String {
+    if (text.length <= maxChars) return text
+    return text.take(maxChars) + "\n…（内容过长，已截断）"
+}
+
+private const val MAX_DIAGNOSTIC_TEXT_CHARS = 32_000
+private const val DIAGNOSTIC_PREVIEW_LINES = 12

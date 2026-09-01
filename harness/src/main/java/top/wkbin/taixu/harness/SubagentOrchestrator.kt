@@ -19,6 +19,16 @@ import top.wkbin.taixu.harness.session.LaneManager
 import top.wkbin.taixu.harness.subagent.SubagentLaneRunner
 import top.wkbin.taixu.harness.prompt.PromptAssetLoader
 
+internal class SubagentConcurrencyGate(
+    maxParallelism: Int = DEFAULT_MAX_CONCURRENT_SUBAGENTS,
+) {
+    private val permits = Semaphore(maxParallelism.coerceAtLeast(1))
+
+    suspend fun <T> withPermit(block: suspend () -> T): T = permits.withPermit { block() }
+}
+
+internal const val DEFAULT_MAX_CONCURRENT_SUBAGENTS = 3
+
 /**
  * Subagent 子智能体任务编排器：
  * 负责解析主智能体的 invoke_subagent 请求，动态创建隔离的子会话，
@@ -32,8 +42,11 @@ class SubagentOrchestrator @Inject constructor(
     private val subagentRepository: top.wkbin.taixu.core.database.AgentSubagentRepository,
     private val promptAssets: PromptAssetLoader,
 ) {
-    /** Application-wide budget: multiple parent sessions share the same API/PRoot/Room resources. */
-    private val globalParallelism = Semaphore(MAX_GLOBAL_SUBAGENTS)
+    /**
+     * Application-wide budget: a three-agent fan-out should actually run three lanes at once,
+     * while larger batches still queue to protect the shared API/PRoot/Room resources.
+     */
+    private val globalParallelism = SubagentConcurrencyGate()
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     suspend fun executeSubagents(
@@ -131,7 +144,6 @@ class SubagentOrchestrator @Inject constructor(
     }
 
     private companion object {
-        const val MAX_GLOBAL_SUBAGENTS = 2
         const val SUBAGENT_TIMEOUT_MS = 6 * 60 * 1000L
     }
 

@@ -6,6 +6,9 @@ import java.util.UUID
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
+import javax.inject.Inject
+import javax.inject.Singleton
+
 data class ApprovalDecision(
     val required: Boolean,
     val riskLevel: String = "low",
@@ -14,7 +17,10 @@ data class ApprovalDecision(
 )
 
 /** Host-side policy. The model prompt is deliberately not part of this decision. */
-class ApprovalPolicyEngine {
+@Singleton
+class ApprovalPolicyEngine @Inject constructor(
+    private val pathResolver: HarnessPathResolver,
+) {
     fun decide(mode: ApprovalMode, tool: HarnessTool, args: JsonObject, workspace: String): ApprovalDecision {
         // 宿主特权命令作用于真实 Android 系统。只读操作始终放行；
         // 完全访问 = 用户显式授权一切宿主操作（含 exec / 卸载应用），全部自动放行；
@@ -143,14 +149,8 @@ class ApprovalPolicyEngine {
     private fun processAction(args: JsonObject): String =
         args["action"]?.jsonPrimitive?.content.orEmpty().trim().lowercase()
 
-    private fun isWithinWorkspace(path: String, workspace: String): Boolean {
-        if (path.isBlank()) return false
-        val normalizedPath = path.replace('\\', '/').trimEnd('/')
-        val normalizedWorkspace = workspace.replace('\\', '/').trimEnd('/')
-        if (normalizedPath.split('/').any { it == ".." }) return false
-        if (!normalizedPath.startsWith("/")) return true
-        return normalizedPath == normalizedWorkspace || normalizedPath.startsWith("$normalizedWorkspace/")
-    }
+    private fun isWithinWorkspace(path: String, workspace: String): Boolean =
+        pathResolver.isWithinWorkspace(path, workspace)
 
     private fun isRoutineCommand(command: String): Boolean {
         val normalized = command.trim().lowercase()
