@@ -10,7 +10,6 @@ enum class McpTransportType {
     STDIO,  // 在 Linux 沙箱内通过标准输入输出与进程交互
     SSE,    // 远程 HTTP 服务：连接时自动协商 Streamable HTTP 与 legacy HTTP+SSE 两种协议
 }
-
 /**
  * MCP 服务配置
  */
@@ -32,6 +31,11 @@ data class McpServerConfig(
     val isEnabled: Boolean = true,
     /** 是否为内置预设服务 */
     val isBuiltin: Boolean = false,
+    /** 内置 server 默认风险等级（如 "low" / "medium" / "high" / "critical"），MCP bootstrap 据此判定审批粒度。 */
+    val builtinRisk: String = "low",
+    /** 内置 server bootstrap 优先级。< 0 表示排在所有用户 MCP server 之前；>= 0 表示标准用户配置。 */
+    val bootstrapOrder: Int = if (isBuiltin) -1 else 0,
+
 ) {
     /** 导出为 mcpServers JSON 配置片段（键为服务 id）；配置格式约定归模型层，View 只读展示 */
     fun toExportJsonConfig(): String = buildString {
@@ -154,6 +158,17 @@ object BuiltinMcpPresets {
             ),
             isEnabled = false,
             isBuiltin = true,
+        ),
+        McpServerConfig(
+            id = "taixu-browser-builtin",
+            name = "TaiXu Browser (Built-in)",
+            description = "TaiXu 内置 in-app WebView 的 MCP server（in-process loopback 127.0.0.1:8787）；由 harness 层 BrowserMcpBootstrap 启动，暴露 mcp__browser__* 工具给 Agent 与外接 IDE。",
+            transportType = McpTransportType.SSE,
+            serverUrl = "http://127.0.0.1:8787/mcp",
+            isEnabled = true,
+            isBuiltin = true,
+            builtinRisk = "medium",
+            bootstrapOrder = -100,
         ),
     )
 }

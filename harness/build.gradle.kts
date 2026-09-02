@@ -4,7 +4,6 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
 }
-
 android {
     namespace = "top.wkbin.taixu.harness"
     resourcePrefix = "harness_"
@@ -12,6 +11,8 @@ android {
 
     defaultConfig {
         minSdk = 29
+
+        consumerProguardFiles("consumer-rules.pro")
     }
 
     compileOptions {
@@ -32,6 +33,8 @@ kotlin {
 
 dependencies {
     api(project(":core:common"))
+    api(project(":core:browser"))
+    api(project(":runtime:browser"))
     implementation(project(":core:model"))
     implementation(project(":core:datastore"))
     implementation(project(":core:database"))
@@ -43,6 +46,8 @@ dependencies {
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.okhttp)
+    implementation(libs.ktor.server.core)
+    implementation(libs.ktor.server.cio)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.core)
 

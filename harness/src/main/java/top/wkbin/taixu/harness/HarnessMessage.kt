@@ -104,4 +104,9 @@ data class ToolResult(
     /** Host approval gate paused this tool call; the model loop must wait for the user. */
     val awaitingApproval: Boolean = false,
     val approvalRequestId: String? = null,
+    /**
+     * 工具产物中的图片附件引用列表（如 mcp__browser__screenshot 落盘的 PNG）。
+     * 持久化兼容：旧数据无此字段；序列化与 Room payload 默认空数组。
+     */
+    val imageAttachments: List<top.wkbin.taixu.core.model.ToolImageRef> = emptyList(),
 ) : HarnessMessage

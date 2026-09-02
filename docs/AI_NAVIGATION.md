@@ -26,9 +26,10 @@
 ```text
 app (壳/装配/JNI)
  ├── feature/*          (components·theme·home·chat·terminal·workspace·settings·developer·navigation)
- ├── harness            (Agent 循环调度·流式推理·内置工具分派·MCP·子智能体)
+ ├── harness            (Agent 循环·内置工具分派·MCP·子智能体·in-process Browser MCP Server·Bootstrap)
  ├── tools              (插件 Registry·安装事务·Provider 安全仓储)
  ├── runtime            (PRoot 沙箱·PTY 终端·工作区构建引擎)
+├── runtime/browser    (WebView 池·Snapshot/Screenshot/Network/Storage/JS·MCP tool handlers)
  ├── project-template   (模板 Manifest·变量协议·物化引擎)
  └── core/*             (model·common·database·datastore·network·security)
 ```

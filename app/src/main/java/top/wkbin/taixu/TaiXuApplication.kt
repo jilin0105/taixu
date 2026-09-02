@@ -8,6 +8,7 @@ import top.wkbin.taixu.core.database.AgentSkillRepository
 import top.wkbin.taixu.core.database.McpServerRepository
 import top.wkbin.taixu.service.AgentForegroundService
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
+import top.wkbin.taixu.harness.browser.BrowserMcpBootstrap
 import dagger.hilt.android.HiltAndroidApp
 import dagger.Lazy
 import javax.inject.Inject
@@ -29,6 +30,7 @@ class TaiXuApplication : Application() {
     @Inject lateinit var agentSkillRepositoryLazy: Lazy<AgentSkillRepository>
     @Inject lateinit var mcpServerRepositoryLazy: Lazy<McpServerRepository>
     @Inject lateinit var privilegeManager: PrivilegeManager
+    @Inject lateinit var browserMcpBootstrap: BrowserMcpBootstrap
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -41,6 +43,8 @@ class TaiXuApplication : Application() {
             // 方便测试用户直接从 Download/TaiXu/crash-reports 取出并反馈。
             runCatching { crashReporter.exportPendingReports() }
             runCatching { privilegeManager.reconcilePersistedMode() }
+            // 启动进程内 MCP HTTP server（loopback 127.0.0.1:8787）供 harness / 外部 IDE 接入浏览器工具
+            runCatching { browserMcpBootstrap.bootstrap() }
             agentSkillRepositoryLazy.get().ensureInitialized()
             mcpServerRepositoryLazy.get().ensureInitialized()
             settingsDataStore.incrementLaunchCount()

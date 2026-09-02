@@ -21,7 +21,13 @@ data class ApprovalDecision(
 class ApprovalPolicyEngine @Inject constructor(
     private val pathResolver: HarnessPathResolver,
 ) {
-    fun decide(mode: ApprovalMode, tool: HarnessTool, args: JsonObject, workspace: String): ApprovalDecision {
+    fun decide(
+        mode: ApprovalMode,
+        tool: HarnessTool,
+        args: JsonObject,
+        workspace: String,
+        rawToolName: String? = null,
+    ): ApprovalDecision {
         // 宿主特权命令作用于真实 Android 系统。只读操作始终放行；
         // 完全访问 = 用户显式授权一切宿主操作（含 exec / 卸载应用），全部自动放行；
         // 仅 REQUEST（每次审批）与 ASSISTED 模式对可变宿主操作要求确认。
@@ -48,6 +54,10 @@ class ApprovalPolicyEngine @Inject constructor(
             )
         }
         if (mode == ApprovalMode.FULL_ACCESS) return ApprovalDecision(false)
+        // 内置浏览器 MCP 工具按风险矩阵细化审批：只读（LOW）工具在任何模式下免审
+        if (tool == HarnessTool.MCP && mcpBrowserRisk(rawToolName) == "low") {
+            return ApprovalDecision(false)
+        }
         if (tool == HarnessTool.READ || tool == HarnessTool.MEMORY || tool == HarnessTool.PLAN ||
             tool == HarnessTool.SCRATCHPAD || tool == HarnessTool.HISTORY_SEARCH || tool == HarnessTool.HISTORY_READ ||
             tool == HarnessTool.LOAD_RULE
@@ -60,7 +70,7 @@ class ApprovalPolicyEngine @Inject constructor(
             return ApprovalDecision(false)
         }
 
-        val summary = summarize(tool, args)
+        val summary = summarize(tool, args, rawToolName)
         if (mode == ApprovalMode.REQUEST) {
             return ApprovalDecision(true, "normal", "当前权限模式要求所有会改变状态或产生外部副作用的工具操作先获得批准。", summary)
         }
@@ -91,7 +101,12 @@ class ApprovalPolicyEngine @Inject constructor(
             HarnessTool.DOWNLOAD -> ApprovalDecision(true, "high", "下载会访问外部网络并写入工作区文件。", summary)
             HarnessTool.BUILD_SCRIPT -> ApprovalDecision(true, "normal", "操作将修改构建脚本或项目挂载关系。", summary)
             HarnessTool.HOST -> error("HOST 已在审批策略入口处理")
-            HarnessTool.MCP -> ApprovalDecision(true, "high", "MCP 工具可能访问外部服务或产生工作区之外的副作用。", summary)
+            HarnessTool.MCP -> when (mcpBrowserRisk(rawToolName)) {
+                "medium" -> ApprovalDecision(true, "medium", "浏览器操作会改变页面状态或新开会话。", summary)
+                "high" -> ApprovalDecision(true, "high", "浏览器操作将修改页面内容或写入本地存储。", summary)
+                "critical" -> ApprovalDecision(true, "critical", "浏览器操作涉及代码执行或读取敏感数据（Cookie/页面源码）。", summary)
+                else -> ApprovalDecision(true, "high", "MCP 工具可能访问外部服务或产生工作区之外的副作用。", summary)
+            }
             HarnessTool.READ, HarnessTool.MEMORY, HarnessTool.PLAN, HarnessTool.SCRATCHPAD,
             HarnessTool.HISTORY_SEARCH, HarnessTool.HISTORY_READ, HarnessTool.SUBAGENT, HarnessTool.LOAD_RULE -> ApprovalDecision(false)
         }
@@ -135,15 +150,37 @@ class ApprovalPolicyEngine @Inject constructor(
         }
     }
 
-    private fun summarize(tool: HarnessTool, args: JsonObject): String = when (tool) {
+    private fun summarize(tool: HarnessTool, args: JsonObject, rawToolName: String? = null): String = when (tool) {
         HarnessTool.WRITE, HarnessTool.EDIT -> "${tool.name.lowercase()} ${args["path"]?.jsonPrimitive?.content.orEmpty()}"
         HarnessTool.BASE -> args["command"]?.jsonPrimitive?.content.orEmpty().lineSequence().firstOrNull().orEmpty()
         HarnessTool.PROCESS -> "process ${processAction(args)} ${args["id"]?.jsonPrimitive?.content.orEmpty()}".trim()
         HarnessTool.DOWNLOAD -> "download ${args["destination"]?.jsonPrimitive?.content.orEmpty()}"
         HarnessTool.HOST -> "host ${args["action"]?.jsonPrimitive?.content.orEmpty()} ${args["command"]?.jsonPrimitive?.content.orEmpty().lineSequence().firstOrNull().orEmpty()}".trim()
-        HarnessTool.MCP -> "MCP ${args["name"]?.jsonPrimitive?.content ?: "工具调用"}"
+        HarnessTool.MCP -> {
+            val toolName = rawToolName?.substringAfter("__")?.substringAfter("__")?.substringBefore("__")
+                ?: args["name"]?.jsonPrimitive?.content
+            "MCP ${toolName ?: "工具调用"}"
+        }
         HarnessTool.BUILD_SCRIPT -> "build_script ${args["action"]?.jsonPrimitive?.content.orEmpty()} ${args["name"]?.jsonPrimitive?.content.orEmpty()}".trim()
         else -> tool.name.lowercase()
+    }
+
+    /** 解析 MCP 工具名（mcp__<server>__<tool>__<hash>）并映射内置浏览器工具风险档位；非浏览器工具返回 null。 */
+    private fun mcpBrowserRisk(rawToolName: String?): String? {
+        if (rawToolName == null) return null
+        val tool = rawToolName.substringAfter("__").substringAfter("__").substringBefore("__")
+        return when (tool) {
+            "browser_back", "browser_forward", "browser_refresh", "browser_list_tabs", "browser_close_tab",
+            "browser_snapshot", "browser_scroll", "browser_screenshot", "browser_current_url", "browser_title",
+            "browser_console_list", "browser_network_list" -> "low"
+            "browser_open", "browser_navigate", "browser_page_source", "browser_console_clear",
+            "browser_local_keys", "browser_session_keys" -> "medium"
+            "browser_click", "browser_type", "browser_press", "browser_cookies_set", "browser_cookies_delete",
+            "browser_local_get", "browser_local_set", "browser_local_delete",
+            "browser_session_get", "browser_session_set", "browser_session_delete" -> "high"
+            "browser_evaluate", "browser_cookies_get" -> "critical"
+            else -> null
+        }
     }
 
     private fun processAction(args: JsonObject): String =

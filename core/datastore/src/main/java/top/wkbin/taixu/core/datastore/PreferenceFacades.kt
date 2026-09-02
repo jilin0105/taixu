@@ -146,3 +146,21 @@ class ToolPreferences @Inject constructor(private val store: SettingsDataStore) 
     suspend fun setToolAccessToken(distroId: String, toolId: String, token: String?) =
         store.setToolAccessToken(distroId, toolId, token)
 }
+
+@Singleton
+class BrowserPreferences @Inject constructor(private val store: SettingsDataStore) {
+    fun defaultFamily() = store.browserDefaultFamily
+    fun homeUrl() = store.browserHomeUrl
+    fun coBrowsingEnabled() = store.browserCoBrowsingEnabled
+    fun allowRemoteConnect() = store.browserAllowRemoteConnect
+    fun allowEvalJs() = store.browserAllowEvalJs
+    fun desktopUserAgent() = store.browserDesktopUserAgent
+    fun maxCaptureBytes() = store.browserMaxCaptureBytes
+    suspend fun setDefaultFamily(value: String) = store.setBrowserDefaultFamily(value)
+    suspend fun setHomeUrl(value: String) = store.setBrowserHomeUrl(value)
+    suspend fun setCoBrowsingEnabled(value: Boolean) = store.setBrowserCoBrowsingEnabled(value)
+    suspend fun setAllowRemoteConnect(value: Boolean) = store.setBrowserAllowRemoteConnect(value)
+    suspend fun setAllowEvalJs(value: Boolean) = store.setBrowserAllowEvalJs(value)
+    suspend fun setDesktopUserAgent(value: Boolean) = store.setBrowserDesktopUserAgent(value)
+    suspend fun setMaxCaptureBytes(value: Int) = store.setBrowserMaxCaptureBytes(value)
+}

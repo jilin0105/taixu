@@ -52,3 +52,7 @@ __pycache__/
 *.pyc
 webchat/dist/
 
+
+# 运行时崩溃帧调试产物（不入库）
+.crash_frames/
+

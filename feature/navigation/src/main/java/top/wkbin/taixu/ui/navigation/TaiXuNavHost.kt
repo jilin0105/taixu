@@ -42,6 +42,8 @@ import top.wkbin.taixu.ui.settings.SettingsViewModel
 import top.wkbin.taixu.ui.settings.ToolDetailScreen
 import top.wkbin.taixu.ui.iteration.CustomIterationScreen
 import top.wkbin.taixu.ui.terminal.TerminalScreen
+import top.wkbin.taixu.ui.browser.BrowserScreen
+import top.wkbin.taixu.ui.navigation.BrowserDestination
 import top.wkbin.taixu.ui.workspace.CodeEditorScreen
 import top.wkbin.taixu.ui.workspace.WorkspaceExplorerScreen
 import top.wkbin.taixu.ui.workspace.WorkspaceScreen
@@ -87,6 +89,7 @@ sealed interface AppDestination : NavKey
 @Serializable data object DeveloperDestination : AppDestination
 @Serializable data object CustomIterationDestination : AppDestination
 @Serializable data class TerminalDestination(val toolId: String = "", val project: String = "") : AppDestination
+@Serializable data object BrowserDestination : AppDestination
 
 /**
  * 太墟核心导航分发系统
@@ -134,6 +137,7 @@ fun TaiXuNavHost() {
                     onNavigate = ::navigateMain,
                     onOpenTerminal = { homeStack.push(TerminalDestination()) },
                     onOpenToolCenter = { homeStack.push(ToolCenterDestination) },
+                    onOpenBrowser = { homeStack.push(BrowserDestination) },
                 )
             }
             entry<AgentDestination> {
@@ -386,6 +390,7 @@ fun TaiXuNavHost() {
             entry<TerminalDestination> { destination ->
                 TerminalScreen(onBack = ::popBack, project = destination.project)
             }
+            entry<BrowserDestination> { BrowserScreen(onBack = ::popBack) }
     }
 
     val density = LocalDensity.current

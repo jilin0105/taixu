@@ -82,7 +82,7 @@ class ToolExecutor @Inject constructor(
                 val repository = approvalRepository
                 val sessionMode = sessionDao?.findById(sessionId)?.approvalMode?.let(ApprovalMode::fromId)
                 val mode = sessionMode ?: repository?.currentMode() ?: ApprovalMode.FULL_ACCESS
-                val decision = approvalPolicyEngine.decide(mode, toolCall.tool, toolCall.args, workspace)
+                val decision = approvalPolicyEngine.decide(mode, toolCall.tool, toolCall.args, workspace, toolCall.rawToolName)
                 if (decision.required) {
                     if (!allowApprovalRequest) {
                         return ToolResult(

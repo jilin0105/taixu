@@ -1,4 +1,6 @@
 [versions]
+ktorServer = "3.5.2"
+androidxWebkit = "1.14.0"
 agp = "9.3.1"
 kotlin = "2.4.10"
 ksp = "2.3.11"
@@ -36,6 +38,13 @@ profileinstaller = "1.4.1"
 uiautomator = "2.3.0"
 
 [libraries]
+ktor-server-core = { group = "io.ktor", name = "ktor-server-core", version.ref = "ktorServer" }
+ktor-server-netty = { group = "io.ktor", name = "ktor-server-netty", version.ref = "ktorServer" }
+ktor-server-cio = { group = "io.ktor", name = "ktor-server-cio", version.ref = "ktorServer" }
+ktor-server-sse = { group = "io.ktor", name = "ktor-server-sse", version.ref = "ktorServer" }
+ktor-server-status-pages = { group = "io.ktor", name = "ktor-server-status-pages", version.ref = "ktorServer" }
+ktor-sse = { group = "io.ktor", name = "ktor-sse", version.ref = "ktorServer" }
+androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "androidxWebkit" }
 hiddenapi-bypass = { group = "org.lsposed.hiddenapibypass", name = "hiddenapibypass", version.ref = "hiddenApiBypass" }
 shizuku-api = { group = "dev.rikka.shizuku", name = "api", version.ref = "shizuku" }
 shizuku-provider = { group = "dev.rikka.shizuku", name = "provider", version.ref = "shizuku" }
