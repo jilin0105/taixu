@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TaiXuDev dual-package resource overlay: app label shown as TaiXuDev. -->
+<resources>
+    <string name="taixu_app_name">TaiXuDev</string>
+</resources>

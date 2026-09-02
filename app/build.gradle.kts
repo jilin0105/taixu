@@ -8,6 +8,11 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 val appVersionName = "0.9.0"
 val appVersionCode = 15
 
+// TaiXuDev 双包共存构建开关：GitHub Actions 的 taixudev-build.yml 会注入 TAIXU_DEV_BUILD=1。
+// 开启后包名切换为 top.wkbin.taixu.dev、应用名显示 TaiXuDev，
+// 与正式版（top.wkbin.taixu）在设备上独立共存、互不覆盖。
+val taiXuDevBuild = System.getenv("TAIXU_DEV_BUILD") == "1"
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.serialization)
@@ -24,7 +29,7 @@ extensions.configure<ApplicationExtension> {
     ndkVersion = "30.0.15729638"
 
     defaultConfig {
-        applicationId = "top.wkbin.taixu"
+        applicationId = if (taiXuDevBuild) "top.wkbin.taixu.dev" else "top.wkbin.taixu"
         minSdk = 29
         targetSdk = 37
         versionCode = appVersionCode
@@ -61,8 +66,13 @@ extensions.configure<ApplicationExtension> {
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
+            // TaiXuDev 构建保持与正式版完全独立的包名（top.wkbin.taixu.dev），
+            // 因此不再追加 .debug 后缀，避免产物变成 top.wkbin.taixu.dev.debug。
+            // 应用名切换由 src/dev/res 资源覆盖完成（manifest 的 label 引用 @string/taixu_app_name）。
+            if (!taiXuDevBuild) {
+                applicationIdSuffix = ".debug"
+                versionNameSuffix = "-debug"
+            }
             manifestPlaceholders["appLabel"] = "太墟 (Debug)"
         }
         release {
@@ -87,6 +97,14 @@ extensions.configure<ApplicationExtension> {
 
     buildFeatures {
         compose = true
+    }
+
+    // TaiXuDev 构建加载 dev 资源覆盖目录：应用名等文案切换为 TaiXuDev 品牌，
+    // 与正式版资源（main）物理隔离，互不影响。
+    sourceSets.getByName("debug") {
+        if (taiXuDevBuild) {
+            res.srcDir("src/dev/res")
+        }
     }
 
     packaging {

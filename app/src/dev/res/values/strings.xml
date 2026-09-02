@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TaiXuDev 双包共存构建专用资源覆盖：应用名显示为 TaiXuDev，与正式版（太墟）区分。 -->
+<resources>
+    <string name="taixu_app_name">TaiXuDev</string>
+</resources>
