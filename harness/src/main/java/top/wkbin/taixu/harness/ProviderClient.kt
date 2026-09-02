@@ -506,6 +506,69 @@ data class ApiToolCall(
     val function: ApiFunctionCall,
 )
 
+/**
+ * Provider 出口的消息序列修复（最后一道防线）。
+ *
+ * OpenAI / DeepSeek / Anthropic 协议均要求：`role=tool` 的消息必须紧跟在
+ * 包含对应 tool_call_id 的 `assistant(tool_calls)` 消息之后。中断恢复、
+ * 结果跨用户边界、超长会话头部截断（branchTail）等异常历史可能破坏该约束，
+ * 直接发送会被服务端 400 拒绝（DeepSeek 报
+ * "Messages with role 'tool' must be a response to a preceding message with 'tool_calls'"）。
+ *
+ * 修复规则：
+ * - 错位/孤立的 tool 结果转写为 user 文本（信息保留，协议合法）；
+ * - assistant.tool_calls 后缺失的结果补占位 tool 消息，避免整轮请求被拒。
+ */
+internal fun sanitizeApiTranscript(messages: List<ApiMessage>): List<ApiMessage> {
+    var awaitingResultIds = LinkedHashSet<String>()
+    val out = mutableListOf<ApiMessage>()
+
+    fun flushMissingResults() {
+        awaitingResultIds.forEach { id ->
+            out.add(
+                ApiMessage(
+                    role = "tool",
+                    content = "（工具结果缺失：历史中断或被裁剪，如仍需要请重新发起该工具调用）",
+                    tool_call_id = id,
+                ),
+            )
+        }
+        awaitingResultIds = LinkedHashSet()
+    }
+
+    for (message in messages) {
+        when {
+            message.role == "assistant" && !message.tool_calls.isNullOrEmpty() -> {
+                flushMissingResults()
+                out.add(message)
+                awaitingResultIds = message.tool_calls.orEmpty()
+                    .mapTo(LinkedHashSet()) { it.id }
+            }
+            message.role == "tool" -> {
+                val id = message.tool_call_id.orEmpty()
+                if (id.isNotEmpty() && id in awaitingResultIds) {
+                    out.add(message)
+                    awaitingResultIds.remove(id)
+                } else {
+                    // 紧邻的前一条不是包含该 tool_call_id 的 assistant(tool_calls)：转写为 user 文本
+                    out.add(
+                        ApiMessage(
+                            role = "user",
+                            content = "【工具执行结果（历史顺序异常，已转写为文本）】\n${message.content.orEmpty()}",
+                        ),
+                    )
+                }
+            }
+            else -> {
+                if (awaitingResultIds.isNotEmpty()) flushMissingResults()
+                out.add(message)
+            }
+        }
+    }
+    flushMissingResults()
+    return out
+}
+
 @Serializable
 data class ApiFunctionCall(
     val name: String,
@@ -693,11 +756,12 @@ class ProviderClient @Inject constructor(
 
     suspend fun chat(model: ModelConfig, messages: List<ApiMessage>): ChatResult =
         executeWithRotatedApiKey(model, apiKeyScheduler) { selected ->
+            val sanitized = sanitizeApiTranscript(messages)
             when {
                 // 用户显式开启 Responses API 时优先走该协议（仅对 OpenAI 兼容端点有意义）
-                selected.responseApiEnabled -> ResponsesApi(httpClient, json).chat(selected, messages)
-                selected.protocol == ApiProtocol.ANTHROPIC -> AnthropicApi(httpClient, json).chat(selected, messages)
-                else -> ChatApi(httpClient, json).chat(selected, messages)
+                selected.responseApiEnabled -> ResponsesApi(httpClient, json).chat(selected, sanitized)
+                selected.protocol == ApiProtocol.ANTHROPIC -> AnthropicApi(httpClient, json).chat(selected, sanitized)
+                else -> ChatApi(httpClient, json).chat(selected, sanitized)
             }
         }
 
@@ -709,24 +773,25 @@ class ProviderClient @Inject constructor(
         onToolProgress: (ToolCallStreamProgress) -> Unit = {},
         onDelta: (String) -> Unit,
     ): ChatResult = executeWithRotatedApiKey(model, apiKeyScheduler) { selected ->
+        val sanitized = sanitizeApiTranscript(messages)
         when {
             selected.responseApiEnabled -> ResponsesApi(httpClient, json).chatStream(
                 selected,
-                messages,
+                sanitized,
                 onReasoning,
                 onToolProgress,
                 onDelta,
             )
             selected.protocol == ApiProtocol.ANTHROPIC -> AnthropicApi(httpClient, json).chatStream(
                 selected,
-                messages,
+                sanitized,
                 onReasoning,
                 onToolProgress,
                 onDelta,
             )
             else -> ChatApi(httpClient, json).chatStream(
                 selected,
-                messages,
+                sanitized,
                 onReasoning,
                 onToolProgress,
                 onDelta,
