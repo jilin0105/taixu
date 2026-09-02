@@ -33,7 +33,18 @@
 | `runtime/browser/network/NetworkInterceptor.kt` | `shouldInterceptRequest` 拦截 | CapturedRequest |
 | `runtime/browser/storage/StorageController.kt` | Cookie + local/session 操作 | WebView eval |
 | `runtime/browser/secret/SecretRedactingInterceptor.kt` | 接入现有 `SecretRedactor` | 工具产物脱敏 |
-| `runtime/browser/tools/BrowserMcpTools.kt` | `mcp__browser__*` 工具分派 + 风险等级 | 36+ tools |
+| `runtime/browser/hook/HookRuleStore.kt` | Hook 规则存储（线程安全） | 规则 CRUD + payload 生成 |
+| `runtime/browser/hook/HookInstaller.kt` | `TaixuBridge` + document-start 注入 | 页面侧 runtime 安装 |
+| `runtime/browser/hook/HookEventPipeline.kt` | 桥事件 → 事件总线 | hook 命中/网络捕获合并 |
+| `runtime/browser/hook/NetworkBodyStore.kt` | 请求/响应体 LRU 缓存 | 字节预算内 body 存取 |
+| `runtime/browser/hook/hook_runtime.js`（assets） | 页面侧 fetch/XHR/fn/prop 拦截 | 网络改写 + 函数 hook |
+| `runtime/browser/cdp/CdpTransport.kt` | LocalSocket → DevTools socket 传输 | `webview_devtools_remote_<pid>` |
+| `runtime/browser/cdp/CdpSession.kt` | WS 帧编解码 + 命令关联/事件分发 | CDP JSON-RPC 会话 |
+| `runtime/browser/cdp/CdpManager.kt` | attach 生命周期 + socket 引用计数 | `setWebContentsDebuggingEnabled` |
+| `runtime/browser/cdp/CdpTabConnection.kt` | 单 tab 连接（Debugger + Fetch + Worker 子会话） | 断点/拦截路由 |
+| `runtime/browser/cdp/CdpDebugController.kt` | 真断点/暂停/单步/作用域/求值 | JS 调试状态机 |
+| `runtime/browser/cdp/CdpFetchInterceptor.kt` | `Fetch.requestPaused` 引擎级拦截 | Worker/子资源网络改写 |
+| `runtime/browser/tools/BrowserMcpTools.kt` | `mcp__browser__*` 工具分派 + 风险等级 | 50+ tools（hook_*/debug_* 门禁） |
 | `runtime/browser/tools/BrowserMcpResources.kt` | `browser://*` resources | 6 resources |
 | `feature/browser/BrowserScreen.kt` | 内置浏览器 Compose 主屏 | UI 入口 |
 | `feature/browser/BrowserViewModel.kt` | 持有 Registry + EventBus + Snapshot State | 状态 |

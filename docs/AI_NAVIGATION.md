@@ -17,6 +17,7 @@
 | **本地工具与生态插件开发** | [`docs/PLUGIN_DEVELOPMENT_GUIDELINES.md`](PLUGIN_DEVELOPMENT_GUIDELINES.md) | 插件 Manifest 结构、Recipe 安装事务与环境变量注入规范 |
 | **项目模板制作与变量协议** | [`docs/PROJECT_TEMPLATE_SPEC.md`](PROJECT_TEMPLATE_SPEC.md) | template.json 规范、变量表单、动态模板替换与生命周期 hooks |
 | **ARM64 Android 离线构建套件** | [`docs/ANDROID_OFFLINE_PLUGIN.md`](ANDROID_OFFLINE_PLUGIN.md) | 沙箱内内置 JDK/Android SDK/NDK/Flutter 工具链与移动端 Gradle 策略 |
+| **内置浏览器设计决策（含 Hook/CDP 引擎）** | [`docs/BROWSER_DESIGN.md`](BROWSER_DESIGN.md) | 模块拓扑、工具协议、风险矩阵、Hook 引擎与 CDP 调试 ADR |
 | **已知问题与避坑指南** | [`docs/KNOWN_ISSUES.md`](KNOWN_ISSUES.md) | PRoot 沙箱环境已知限制、架构设计历史考量与规避方案 |
 
 ---
@@ -29,7 +30,7 @@ app (壳/装配/JNI)
  ├── harness            (Agent 循环·内置工具分派·MCP·子智能体·in-process Browser MCP Server·Bootstrap)
  ├── tools              (插件 Registry·安装事务·Provider 安全仓储)
  ├── runtime            (PRoot 沙箱·PTY 终端·工作区构建引擎)
-├── runtime/browser    (WebView 池·Snapshot/Screenshot/Network/Storage/JS·MCP tool handlers)
+├── runtime/browser    (WebView 池·Snapshot/Screenshot/Network/Storage/JS·注入式 Hook 引擎·CDP 断点/Worker 级 Fetch 拦截·MCP tool handlers)
  ├── project-template   (模板 Manifest·变量协议·物化引擎)
  └── core/*             (model·common·database·datastore·network·security)
 ```

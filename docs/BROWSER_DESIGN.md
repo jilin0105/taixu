@@ -319,13 +319,40 @@ docs/AI_NAVIGATION.md, docs/ARCHITECTURE.md, docs/FILE_INDEX.md ── 同步新
 
 ---
 
+## 9.5 🎣 注入式 Hook 引擎与 CDP 调试（阶段 1 + 2，已落地）
+
+> 2026-09 起在 MVP 之上扩展的网页逆向能力，对标 WebReverse-MCP 的 hook/断点特性。
+
+### 9.5.1 注入式 Hook 引擎（阶段 1，allowHooks 门禁）
+
+- **架构**：`hook/` 包 + assets `hook_runtime.js`。规则存 `HookRuleStore`（线程安全），经 `HookInstaller` 以 document-start（`WebViewCompat.addDocumentStartJavaScript`，WebView 105+；古董版本降级 onPageStarted 补种）注入页面；页面侧改写 fetch/XHR/函数/属性，经 `TaixuHookBridge`（addJavascriptInterface）回吐事件到 `HookEventPipeline` → `BrowserEventBus`。
+- **动作集**：网络类规则支持 `log / block / redirect / mock / modify_headers` + `captureBody`；body 存 `NetworkBodyStore`（LRU，总字节预算）。
+- **MCP 工具**：`browser.hook_create / hook_list / hook_remove / hook_reset / hook_hits / inject_script / network_detail`。
+- **降级链**：document-start 不可用 → onPageStarted 注入 → onPageFinished 幂等校验补种。
+
+### 9.5.2 CDP 断点与 Worker 级拦截（阶段 2，allowCdp 门禁）
+
+- **传输**：`CdpTransport`（LocalSocket 连 `webview_devtools_remote_<pid>`）→ 自实现 WS 握手与帧编解码（`WsFrameCodec`）→ `CdpSession`（命令关联/事件分发/断连清理）。
+- **生命周期**：`CdpManager` 管理 attach（上限 + DevTools socket 引用计数，`setWebContentsDebuggingEnabled` 按需开关）；`CdpTargetMatcher` 通过 `window.__taixuTabId` 标记把 MCP tab 匹配到 CDP target；`CdpTabConnection` 持单 tab 连接 + Worker 子会话（`Target.setAutoAttach` flatten）。
+- **断点**：`CdpDebugController` —— set/remove/list 断点、暂停状态、单步（over/into/out）、暂停帧求值（`debug_eval`，可读写局部变量）、作用域读取。断点在 detach 后重 attach 自动重放。
+- **Worker 级拦截**：`CdpFetchInterceptor` 用 `Fetch.requestPaused` 做引擎级网络改写，与注入式规则共享 `HookRuleStore` 决策（`CdpFetchDecision`），覆盖 Worker/Service Worker 与注入盲区子资源。
+- **MCP 工具**：`browser.debug_attach / detach / set_breakpoint / remove_breakpoint / list_breakpoints / resume / step / state / eval / scope / status` 共 11 个。
+
+### 9.5.3 门禁与安全
+
+- `allowHooks` / `allowCdp` 为**独立 DataStore 偏好**（默认 false），设置页「MCP 插件与协议生态 → 浏览器 MCP 安全门禁」四开关（远程连接/JS 执行/Hook/CDP）；池级开关，改后需重启应用。
+- attach 期间页面暂停会冻结页内工具（evaluate/snapshot/click 拒绝），detach 前自动 resume 兜底。
+- **已知容错**：`tokenOf` 对模型丢 `t:` 前缀的 tab id 做后缀归一匹配；`sanitizeUrl` 剥离模型偶发的反引号包裹。
+
+---
+
 ## 10. 📜 决策记录（ADR 摘要）
 
 - **ADR-001**：工具暴露走 MCP，**不**走原生工具（`HarnessTool.BROWSER`）。理由：与 harness 既有 `McpManager` 流水线零冲突；未来工具集可平滑扩到 200+。
 - **ADR-002**：MCP server 跑在 TaiXu 自己的 Android 进程内（loopback），使用 Ktor 起服。理由：无需 fork WebReverse-MCP；与现有 `McpHttpTransport` 同协议同形态；外接零开发。
 - **ADR-003**：内建 server 默认 `isBuiltin=true` 且 `isEnabled=true`，但配置写入 `McpServerRepository`。理由：与用户对 MCP server 的"启用/禁用"心智模型一致；用户关闭时不影响其它 MCP server。
 - **ADR-004**：ref 不暴露真实 selector；用户和 AI 操作共用一张 `refMap`，ref 在 tab 重建时归零。理由：防止 prompt 里出现内部 path / 减少幻觉、同时支持 co-browsing。
-- **ADR-005**：第一版 MVP **不**实现 CDP hub、断点、hook、JSVMP/WASM、Evidence Graph。理由：TaiXu 主要用例是"AI 打开网页、读 DOM、读 API、点击登录"，不必要求 web 逆向工程能力。
+- **ADR-005**：第一版 MVP **不**实现 CDP hub、断点、hook、JSVMP/WASM、Evidence Graph。理由：TaiXu 主要用例是"AI 打开网页、读 DOM、读 API、点击登录"，不必要求 web 逆向工程能力。**（2026-09 演进：阶段 1 注入式 Hook 引擎与阶段 2 CDP 断点/Worker 级拦截已落地，见 §9.5；JSVMP/WASM 与 Evidence Graph 仍未实现）**
 
 ---
 
