@@ -15,8 +15,15 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import top.wkbin.taixu.core.model.ToolImageRef
+import androidx.core.graphics.createBitmap
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * 把当前 WebView 内容截图落盘到 `cacheDir/taixu-browser/screenshots/<tabId>/<ts>.png`。
@@ -32,6 +39,9 @@ class ScreenshotRecorder(private val context: Context) {
     private val ioHandler by lazy { Handler(ioThread.looper) }
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    /** 超时后迟到的 Bitmap 回收兜底：独立于调用方协程，不随其取消。 */
+    private val lateRecycleScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
     suspend fun capture(
         view: WebView,
         tabId: String,
@@ -41,27 +51,37 @@ class ScreenshotRecorder(private val context: Context) {
     ): ToolImageRef? {
         val deferred = CompletableDeferred<Bitmap?>()
         mainHandler.post {
-            val w = preferredWidth ?: view.width.takeIf { it > 0 } ?: 1080
-            val h = preferredHeight ?: view.height.takeIf { it > 0 } ?: 1920
-            // 离屏 / 从未 layout 的 WebView 先强制 measure+layout，避免软渲空白
-            if (view.width <= 0 || view.height <= 0) {
-                view.measure(
-                    View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
-                    View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY),
-                )
-                view.layout(0, 0, w, h)
-            }
-            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            try {
-                val canvas = Canvas(bmp)
-                view.draw(canvas)
-                deferred.complete(bmp)
+            // WebView 无 isDestroyed API：视图已销毁时 measure/layout/draw 可能抛异常，整体兜底为 null
+            val bmp: Bitmap? = try {
+                val w = preferredWidth ?: view.width.takeIf { it > 0 } ?: 1080
+                val h = preferredHeight ?: view.height.takeIf { it > 0 } ?: 1920
+                // 离屏 / 从未 layout 的 WebView 先强制 measure+layout，避免软渲空白
+                if (view.width <= 0 || view.height <= 0) {
+                    view.measure(
+                        View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY),
+                    )
+                    view.layout(0, 0, w, h)
+                }
+                val b = createBitmap(w, h)
+                try {
+                    view.draw(Canvas(b))
+                    b
+                } catch (t: Throwable) {
+                    b.recycle()
+                    null
+                }
             } catch (t: Throwable) {
-                bmp.recycle()
-                deferred.complete(null)
+                null
             }
+            deferred.complete(bmp)
         }
-        val bmp = withTimeoutOrNull(timeoutMs) { deferred.await() } ?: return null
+        val bmp = withTimeoutOrNull(timeoutMs.milliseconds) { deferred.await() }
+        if (bmp == null) {
+            // 超时放弃等待，但主线程 block 稍后仍可能完成回调并产生 Bitmap：到达即回收，避免泄漏
+            lateRecycleScope.launch { deferred.await()?.recycle() }
+            return null
+        }
         val file = writePngAsync(tabId, bmp)
         return ToolImageRef(
             id = UUID.randomUUID().toString(),
@@ -73,7 +93,7 @@ class ScreenshotRecorder(private val context: Context) {
         )
     }
 
-    private fun writePngAsync(tabId: String, bmp: Bitmap): String {
+    private suspend fun writePngAsync(tabId: String, bmp: Bitmap): String {
         val dir = File(context.cacheDir, "taixu-browser/screenshots/$tabId").apply { mkdirs() }
         val filename = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date()) + ".png"
         val file = File(dir, filename)
@@ -87,6 +107,15 @@ class ScreenshotRecorder(private val context: Context) {
             bmp.recycle()
             done.complete(file.absolutePath)
         }
-        return runCatching { kotlinx.coroutines.runBlocking { done.await() } }.getOrDefault(file.absolutePath)
+        // 挂起等待压缩完成：不再 runBlocking 阻塞 MCP 工作线程，也保留取消传播
+        return done.await()
+    }
+
+    /** closeTab / shutdown 时删除该 tab 的截图目录，防止 cacheDir 无限增长。 */
+    suspend fun cleanup(tabId: String) {
+        withContext(Dispatchers.IO) {
+            val dir = File(context.cacheDir, "taixu-browser/screenshots/$tabId")
+            if (dir.exists()) dir.deleteRecursively()
+        }
     }
 }

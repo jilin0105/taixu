@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.zIndex
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.navigation3.runtime.NavBackStack
 import androidx.navigation3.runtime.NavEntry
@@ -101,6 +102,10 @@ fun TaiXuNavHost() {
     // conversation owner at the Activity scope so switching back to 智枢 does not rebuild Hilt's
     // graph, restore the latest session, and restart its initialization skeleton on every visit.
     val chatViewModel: ChatViewModel = hiltViewModel()
+    // 浏览器引擎是全局单例：BrowserViewModel 同样挂到 Activity 作用域，
+    // 使智枢内嵌浏览器面板与独立浏览器页共享同一份 tab/URL/共浏览状态。
+    val browserViewModel: top.wkbin.taixu.ui.browser.BrowserViewModel = hiltViewModel()
+    val browserUiState by browserViewModel.uiState.collectAsStateWithLifecycle()
     // SettingsViewModel owns dozens of eagerly shared DataStore/database streams and performs
     // repository initialization. Let the settings navigation graph share the Activity-scoped
     // instance instead of constructing that whole graph once for every Navigation3 entry.
@@ -137,7 +142,6 @@ fun TaiXuNavHost() {
                     onNavigate = ::navigateMain,
                     onOpenTerminal = { homeStack.push(TerminalDestination()) },
                     onOpenToolCenter = { homeStack.push(ToolCenterDestination) },
-                    onOpenBrowser = { homeStack.push(BrowserDestination) },
                 )
             }
             entry<AgentDestination> {
@@ -152,6 +156,16 @@ fun TaiXuNavHost() {
                     onNavigate = ::navigateMain,
                     // 内嵌终端面板非独立导航节点，无返回目标：隐藏顶栏返回箭头，避免点击无反馈
                     terminalPane = { project -> TerminalScreen(onBack = {}, project = project, showBackButton = false) },
+                    // 内嵌浏览器面板：与独立浏览器页共享 Activity 级 BrowserViewModel，
+                    // 手机端左右滑动切换对话/浏览器，宽屏双栏可切"终端/浏览器"
+                    browserPane = { onExit ->
+                        top.wkbin.taixu.ui.browser.BrowserPane(
+                            viewModel = browserViewModel,
+                            onExit = onExit,
+                        )
+                    },
+                    browserActivityTick = browserUiState.activityTick,
+                    browserBackPressed = { browserViewModel.handleBackImmediate() },
                     onOpenFile = { projectName, relativePath ->
                         agentStack.push(CodeEditorDestination(projectName, relativePath))
                     },
@@ -390,7 +404,7 @@ fun TaiXuNavHost() {
             entry<TerminalDestination> { destination ->
                 TerminalScreen(onBack = ::popBack, project = destination.project)
             }
-            entry<BrowserDestination> { BrowserScreen(onBack = ::popBack) }
+            entry<BrowserDestination> { BrowserScreen(onBack = ::popBack, viewModel = browserViewModel) }
     }
 
     val density = LocalDensity.current

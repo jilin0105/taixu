@@ -8,7 +8,11 @@ import kotlinx.serialization.Serializable
 @Serializable
 enum class McpTransportType {
     STDIO,  // 在 Linux 沙箱内通过标准输入输出与进程交互
-    SSE,    // 远程 HTTP 服务：连接时自动协商 Streamable HTTP 与 legacy HTTP+SSE 两种协议
+    /**
+     * 远程 HTTP 服务。客户端按 URL 自动协商：URL 不以 /sse 结尾时先 Streamable HTTP
+     * （POST /mcp 请求-响应），失败再回落 legacy HTTP+SSE；服务端只需实现其一。
+     */
+    SSE,
 }
 /**
  * MCP 服务配置
@@ -27,6 +31,13 @@ data class McpServerConfig(
     val env: Map<String, String> = emptyMap(),
     /** 远程 MCP 服务的 HTTP 端点 URL（例如 http://127.0.0.1:8000/mcp 或 .../sse） */
     val serverUrl: String = "",
+    /**
+     * 远程 HTTP MCP 服务的 Bearer token（发送 `Authorization: Bearer <token>`）。
+     * 运行时注入用（例如内置 browser server 的自环凭据）：@Transient 保证不参与序列化，
+     * 既不落 Room 也不随 [toExportJsonConfig] 导出。
+     */
+    @kotlinx.serialization.Transient
+    val authToken: String = "",
     /** 是否启用 */
     val isEnabled: Boolean = true,
     /** 是否为内置预设服务 */
@@ -105,6 +116,9 @@ data class SubagentTaskSpec(
  * 内置 MCP 预设服务
  */
 object BuiltinMcpPresets {
+    /** 内置 in-app browser MCP server 的 id：自环 Bearer 认证与浏览器工具审批白名单都以它为准。 */
+    const val BROWSER_BUILTIN_ID = "taixu-browser-builtin"
+
     val presets: List<McpServerConfig> = listOf(
         McpServerConfig(
             id = "mcp_sqlite",
@@ -160,9 +174,9 @@ object BuiltinMcpPresets {
             isBuiltin = true,
         ),
         McpServerConfig(
-            id = "taixu-browser-builtin",
+            id = BROWSER_BUILTIN_ID,
             name = "TaiXu Browser (Built-in)",
-            description = "TaiXu 内置 in-app WebView 的 MCP server（in-process loopback 127.0.0.1:8787）；由 harness 层 BrowserMcpBootstrap 启动，暴露 mcp__browser__* 工具给 Agent 与外接 IDE。",
+            description = "TaiXu 内置 in-app WebView 的 MCP server（in-process loopback 127.0.0.1:8787，Streamable HTTP POST /mcp 请求-响应，Bearer 认证）；由 harness 层 BrowserMcpBootstrap 启动，暴露 mcp__browser__* 工具给 Agent 与外接 IDE。",
             transportType = McpTransportType.SSE,
             serverUrl = "http://127.0.0.1:8787/mcp",
             isEnabled = true,

@@ -3,10 +3,12 @@ package top.wkbin.taixu.harness.browser
 import android.content.Context
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.Lazy
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import top.wkbin.taixu.harness.mcp.server.BuiltinBrowserMcpAccess
 import top.wkbin.taixu.harness.mcp.server.McpServerRuntime
 import top.wkbin.taixu.runtime.browser.BrowserRegistry
 import top.wkbin.taixu.runtime.browser.BrowserRegistryImpl
@@ -18,20 +20,24 @@ import top.wkbin.taixu.core.browser.BrowserFamily
  * 把 in-process 浏览器 MCP server 注入到 harness 流水线，并负责：
  *  - 在 ApplicationContext 上拉起 [AndroidInAppBrowserEngine] 注册到 [BrowserRegistry];
  *  - 按用户偏好（allowRemoteConnect / desktopUserAgent）在 loopback 或 0.0.0.0 端口上启动 [McpServerRuntime];
- *  - 桌面外接开启时生成 Bearer Token（McpAuthFilter 强制校验）。
+ *  - 无论 loopback 还是外接都生成 Bearer Token（[top.wkbin.taixu.harness.mcp.server.McpAuthFilter] 恒强制校验），
+ *    并写入 [BuiltinBrowserMcpAccess]（token + 实际端口）供自环客户端使用。
  *
  * 调用时机：Application.onCreate 后由 AppScope 协程调用一次 [bootstrap]。
+ * [McpServerRuntime] 经 [Lazy] 注入：其构造图（含 BrowserMcpTools 的 DataStore 快照读取）
+ * 推迟到 bootstrap() 的 IO 协程内才展开，不阻塞主线程。
  */
 @Singleton
 class BrowserMcpBootstrap @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val runtime: McpServerRuntime,
+    private val runtime: Lazy<McpServerRuntime>,
     private val registry: BrowserRegistry,
     private val browserPrefs: top.wkbin.taixu.core.datastore.BrowserPreferences,
 ) {
-    /** 注册引擎并启动 HTTP server；幂等。按用户偏好（#4）决定桌面外接：allowRemote 时绑定 0.0.0.0 并生成 Bearer Token。 */
+    /** 注册引擎并启动 HTTP server；幂等。按用户偏好（#4）决定绑定面：allowRemote 时绑定 0.0.0.0。 */
     fun bootstrap(): Boolean {
-        if (runtime.isRunning) return true
+        val server = runtime.get()
+        if (server.isRunning) return true
         val regImpl = registry as? BrowserRegistryImpl ?: return false
         val prefs = readPrefs()
         if (registry.get(BrowserFamily.IN_APP) == null) {
@@ -40,13 +46,16 @@ class BrowserMcpBootstrap @Inject constructor(
             regImpl.registerEngine(engine)
         }
         val allowRemote = prefs.allowRemoteConnect
-        val token = if (allowRemote) generateToken() else null
-        val ok = runtime.start(loopbackOnly = !allowRemote, token = token, port = McpServerRuntime.defaultPort)
+        // loopback 也必须带 token：Android 回环地址不按 UID 隔离，认证恒开启
+        val token = generateToken()
+        BuiltinBrowserMcpAccess.token = token
+        // 首选端口被占用时 start 内部会自动顺延尝试相邻端口，自环客户端经 BuiltinBrowserMcpAccess 感知实际端口
+        val ok = server.start(loopbackOnly = !allowRemote, token = token, port = McpServerRuntime.defaultPort)
         if (ok) {
             val host = if (allowRemote) "0.0.0.0" else McpServerRuntime.loopbackHost
-            Log.i(TAG, "BrowserMcpServer 已启动 http://$host:${runtime.port}/mcp" + (token?.let { " (Bearer token=$it)" } ?: ""))
+            Log.i(TAG, "BrowserMcpServer 已启动 http://$host:${server.port}/mcp（Bearer 认证已启用）")
         } else {
-            Log.w(TAG, "BrowserMcpServer 启动失败（端口被占用）")
+            Log.w(TAG, "BrowserMcpServer 启动失败：候选端口 ${McpServerRuntime.defaultPort}..${McpServerRuntime.defaultPort + 9} 均不可用")
         }
         return ok
     }
@@ -69,7 +78,10 @@ class BrowserMcpBootstrap @Inject constructor(
     private fun generateToken(): String = java.util.UUID.randomUUID().toString().replace("-", "")
 
     fun stop() {
-        try { runtime.stop() } catch (t: Throwable) { Log.w(TAG, "stop: ${t.message}") }
+        try {
+            runtime.get().stop()
+            BuiltinBrowserMcpAccess.token = null
+        } catch (t: Throwable) { Log.w(TAG, "stop: ${t.message}") }
     }
 
     companion object {

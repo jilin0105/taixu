@@ -2,6 +2,9 @@ package top.wkbin.taixu.harness
 
 import top.wkbin.taixu.core.database.AgentApprovalRequestEntity
 import top.wkbin.taixu.core.model.ApprovalMode
+import top.wkbin.taixu.core.model.BuiltinMcpPresets
+import top.wkbin.taixu.core.model.McpToolInfo
+import top.wkbin.taixu.harness.mcp.McpToolApiName
 import java.util.UUID
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -21,6 +24,23 @@ data class ApprovalDecision(
 class ApprovalPolicyEngine @Inject constructor(
     private val pathResolver: HarnessPathResolver,
 ) {
+    /**
+     * 内置 browser server 在工具 API 名里可能出现的 server 段集合：
+     * 编码名 `mcp__<server 前 16 字符>__<tool>__<hash>` 与 legacy 名 `mcp__<完整 server id>__<tool>`。
+     * 借 [McpToolApiName] 生成，保证与 harness 实际编码规则一致。
+     */
+    private val builtinBrowserServerSegments: Set<String> by lazy {
+        val probe = McpToolInfo(
+            serverId = BuiltinMcpPresets.BROWSER_BUILTIN_ID,
+            serverName = BuiltinMcpPresets.BROWSER_BUILTIN_ID,
+            name = "browser_snapshot",
+            description = "",
+        )
+        setOf(McpToolApiName.encode(probe), McpToolApiName.legacy(probe))
+            .map { it.substringAfter("__").substringBefore("__") }
+            .toSet()
+    }
+
     fun decide(
         mode: ApprovalMode,
         tool: HarnessTool,
@@ -165,9 +185,15 @@ class ApprovalPolicyEngine @Inject constructor(
         else -> tool.name.lowercase()
     }
 
-    /** 解析 MCP 工具名（mcp__<server>__<tool>__<hash>）并映射内置浏览器工具风险档位；非浏览器工具返回 null。 */
+    /**
+     * 解析 MCP 工具名（mcp__<server>__<tool>__<hash>）并映射内置浏览器工具风险档位。
+     * 仅当 server 段确认为内置 browser server（编码截断段或 legacy 完整 id）时才套用浏览器风险矩阵，
+     * 防止外部 MCP server 用同名工具冒充内置白名单；非内置浏览器工具返回 null。
+     */
     private fun mcpBrowserRisk(rawToolName: String?): String? {
         if (rawToolName == null) return null
+        val server = rawToolName.substringAfter("__").substringBefore("__")
+        if (server !in builtinBrowserServerSegments) return null
         val tool = rawToolName.substringAfter("__").substringAfter("__").substringBefore("__")
         return when (tool) {
             "browser_back", "browser_forward", "browser_refresh", "browser_list_tabs", "browser_close_tab",

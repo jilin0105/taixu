@@ -3,6 +3,7 @@ package top.wkbin.taixu.runtime.browser.engine
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.webkit.CookieManager
 import android.webkit.WebView
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
@@ -16,13 +17,15 @@ import top.wkbin.taixu.runtime.browser.BrowserSessionToken
 import top.wkbin.taixu.runtime.browser.InAppBrowserViewProvider
 import top.wkbin.taixu.runtime.browser.js.JsEvaluator
 import top.wkbin.taixu.runtime.browser.screenshot.ScreenshotRecorder
-import top.wkbin.taixu.runtime.browser.snapshot.SnapshotBuilder
 import top.wkbin.taixu.runtime.browser.capabilities.EngineCapabilities
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 
 /**
  * in-app WebView 引擎实现。所有 WebView 操作走主线程 [Handler]，协程侧用 [CompletableDeferred] 等待结果。
+ *
+ * SnapshotBuilder 与 per-tab scope 由 [WebViewTabPool] 统一持有（每 tab 唯一实例），
+ * onPageFinished 自动刷新与 [snapshot] 共用同一 builder，避免并发双扫描重写 ref。
  */
 class AndroidInAppBrowserEngine(
     private val context: Context,
@@ -42,27 +45,19 @@ class AndroidInAppBrowserEngine(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val screenshotRecorder = ScreenshotRecorder(context)
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
-    private val snapshotBuilders = HashMap<String, SnapshotBuilder>()
 
-    private fun builderOf(token: BrowserSessionToken): SnapshotBuilder =
-        snapshotBuilders.getOrPut(token.tabId) {
-            SnapshotBuilder(token, eventBus, CoroutineScopeHolder.scope())
-        }
-
-    override suspend fun openTab(url: String?, activate: Boolean): BrowserSessionToken {
-        val token = pool.create(url)
-        snapshotBuilders[token.tabId] = SnapshotBuilder(token, eventBus, CoroutineScopeHolder.scope())
-        if (activate) pool.attach(token)
-        return token
-    }
+    override suspend fun openTab(url: String?, activate: Boolean): BrowserSessionToken =
+        pool.create(url, activate)
 
     override suspend fun navigate(tab: BrowserSessionToken, url: String) {
-        postMain { pool.viewOf(tab)?.loadUrl(url) }
+        val view = pool.viewOf(tab) ?: error("tab ${tab.tabId} not found")
+        // posted 执行时 tab 可能已被关闭 / 崩溃销毁：用池内成员关系守卫（WebView 无 isDestroyed API）
+        postMain { if (pool.viewOf(tab) === view) view.loadUrl(url) }
     }
 
     override suspend fun snapshot(tab: BrowserSessionToken, maxElements: Int): PageSnapshot {
         val view = pool.viewOf(tab) ?: error("tab ${tab.tabId} not found")
-        val builder = builderOf(tab)
+        val builder = pool.builderOf(tab) ?: error("tab ${tab.tabId} not found")
         // refresh 同步返回本次扫描结果，避免依赖全局 eventBus 的异步发布造成竞态
         return builder.refresh(view, maxElements)
             ?: PageSnapshot(tab.tabId, tab.url, "", emptyMap(), "empty", 0L)
@@ -119,43 +114,48 @@ class AndroidInAppBrowserEngine(
 
     override suspend fun evaluate(tab: BrowserSessionToken, script: String): String? {
         val view = pool.viewOf(tab) ?: return null
-        return JsEvaluator.evaluate(view, script)
+        val raw = JsEvaluator.evaluate(view, script) ?: return null
+        // evaluateJavascript 回调是 JSON 字面量：解码后再返回给模型
+        return JsEvaluator.unwrap(raw)
     }
 
     override suspend fun pageSource(tab: BrowserSessionToken, maxBytes: Int): String {
         val view = pool.viewOf(tab) ?: return ""
-        val html = JsEvaluator.evaluate(view, "document.documentElement.outerHTML") ?: return ""
+        val raw = JsEvaluator.evaluate(view, "document.documentElement.outerHTML") ?: return ""
+        val html = JsEvaluator.unwrap(raw)
         return if (html.length > maxBytes) html.substring(0, maxBytes) + "\n[TRUNCATED]" else html
     }
 
     override suspend fun back(tab: BrowserSessionToken): Boolean {
-        val deferred = CompletableDeferred<Boolean>()
-        postMain {
-            val v = pool.viewOf(tab)
-            val result = if (v != null && v.canGoBack()) { v.goBack(); true } else false
-            deferred.complete(result)
-        }
-        return withTimeoutOrNull(2_000L) { deferred.await() } ?: false
+        val view = pool.viewOf(tab) ?: error("tab ${tab.tabId} not found")
+        return postMainValue {
+            if (pool.viewOf(tab) !== view) false
+            else view.canGoBack().also { if (it) view.goBack() }
+        } ?: false
     }
 
     override suspend fun forward(tab: BrowserSessionToken): Boolean {
-        val deferred = CompletableDeferred<Boolean>()
-        postMain {
-            val v = pool.viewOf(tab)
-            val result = if (v != null && v.canGoForward()) { v.goForward(); true } else false
-            deferred.complete(result)
-        }
-        return withTimeoutOrNull(2_000L) { deferred.await() } ?: false
+        val view = pool.viewOf(tab) ?: error("tab ${tab.tabId} not found")
+        return postMainValue {
+            if (pool.viewOf(tab) !== view) false
+            else view.canGoForward().also { if (it) view.goForward() }
+        } ?: false
     }
 
     override suspend fun refresh(tab: BrowserSessionToken) {
-        postMain { pool.viewOf(tab)?.reload() }
+        val view = pool.viewOf(tab) ?: error("tab ${tab.tabId} not found")
+        postMain { if (pool.viewOf(tab) === view) view.reload() }
     }
 
     override suspend fun closeTab(tab: BrowserSessionToken) {
-        postMain { pool.viewOf(tab)?.destroy() }
-        pool.onClosed(tab)
-        snapshotBuilders.remove(tab.tabId)
+        // 先捕获 WebView 引用再从池中移除：postMain 超时后主线程 block 仍会执行，
+        // 若 block 内依赖 viewOf(tab) 查池则拿到 null，destroy 永远不会执行（WebView 泄漏）。
+        val view = pool.viewOf(tab)
+        pool.onClosed(tab) // 移除 slot / 取消 per-tab scope / 清 ref 映射 / 回退 activeTab / 重置事件
+        screenshotRecorder.cleanup(tab.tabId)
+        if (view != null) {
+            postMain { AndroidWebViewFactory.destroy(view) }
+        }
     }
 
     override suspend fun listTabs(): List<BrowserSessionToken> = pool.list()
@@ -168,29 +168,48 @@ class AndroidInAppBrowserEngine(
         pool.attach(tab)
     }
 
+    // ===== Cookies：走 CookieManager（document.cookie 拿不到 HttpOnly、且无视 url 参数）=====
+    // CookieManager 需在有 Looper 的线程调用，与其它 WebView 操作一致经主线程派发。
+
     override suspend fun cookiesGet(tab: BrowserSessionToken, url: String?): String {
-        val view = pool.viewOf(tab) ?: return ""
-        return JsEvaluator.evaluate(view, "document.cookie").orEmpty().trim('"')
+        val explicitUrl = url?.takeIf { it.isNotBlank() }
+        val target: String = if (explicitUrl != null) {
+            explicitUrl
+        } else {
+            val view = pool.viewOf(tab) ?: error("tab ${tab.tabId} not found")
+            val current = postMainValue { if (pool.viewOf(tab) !== view) "" else view.url.orEmpty() } ?: ""
+            if (current.isBlank()) return ""
+            current
+        }
+        return postMainValue {
+            runCatching { CookieManager.getInstance().getCookie(target) }.getOrNull() ?: ""
+        } ?: ""
     }
 
     override suspend fun cookiesSet(tab: BrowserSessionToken, url: String, headerLine: String) {
-        val view = pool.viewOf(tab) ?: return
-        val piece = headerLine.substringBefore(';')
-        val name = piece.substringBefore('=').trim()
-        val value = piece.substringAfter('=', missingDelimiterValue = "").trim()
-        val js = "document.cookie = " + JS.q("$name=$value; path=/")
-        JsEvaluator.evaluate(view, js)
+        if (url.isBlank() || headerLine.isBlank()) return
+        postMain {
+            val cm = CookieManager.getInstance()
+            cm.setCookie(url, headerLine)
+            cm.flush()
+        }
     }
 
     override suspend fun cookiesDelete(tab: BrowserSessionToken, url: String, name: String) {
-        val view = pool.viewOf(tab) ?: return
-        val js = "document.cookie = " + JS.q("$name=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/")
-        JsEvaluator.evaluate(view, js)
+        if (url.isBlank() || name.isBlank()) return
+        postMain {
+            val cm = CookieManager.getInstance()
+            // 用立即过期的同名 cookie 覆盖（针对该 url），domain/path 由 CookieManager 自行推导
+            cm.setCookie(url, "$name=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT")
+            cm.flush()
+        }
     }
 
     override suspend fun localGet(tab: BrowserSessionToken, key: String): String? {
         val view = pool.viewOf(tab) ?: return null
-        return JsEvaluator.evaluate(view, "localStorage.getItem(" + JS.q(key) + ")")?.trim('"')?.takeIf { it.isNotEmpty() }
+        val raw = JsEvaluator.evaluate(view, "localStorage.getItem(" + JS.q(key) + ")") ?: return null
+        if (raw.trim() == "null") return null
+        return JsEvaluator.unwrap(raw).takeIf { it.isNotEmpty() }
     }
 
     override suspend fun localSet(tab: BrowserSessionToken, key: String, value: String) {
@@ -206,13 +225,17 @@ class AndroidInAppBrowserEngine(
     override suspend fun localKeys(tab: BrowserSessionToken): List<String> {
         val view = pool.viewOf(tab) ?: return emptyList()
         val raw = JsEvaluator.evaluate(view, "JSON.stringify(Object.keys(localStorage))") ?: return emptyList()
-        val arr = runCatching { json.parseToJsonElement(raw.trim('"')).jsonArray }.getOrNull() ?: return emptyList()
+        // 回调是 JSON 字面量，先解码再 parse；直接 trim('"') 遇转义必失败 → 恒为空列表
+        val arr = runCatching { json.parseToJsonElement(JsEvaluator.unwrap(raw)).jsonArray }.getOrNull()
+            ?: return emptyList()
         return arr.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
     }
 
     override suspend fun sessionGet(tab: BrowserSessionToken, key: String): String? {
         val view = pool.viewOf(tab) ?: return null
-        return JsEvaluator.evaluate(view, "sessionStorage.getItem(" + JS.q(key) + ")")?.trim('"')?.takeIf { it.isNotEmpty() }
+        val raw = JsEvaluator.evaluate(view, "sessionStorage.getItem(" + JS.q(key) + ")") ?: return null
+        if (raw.trim() == "null") return null
+        return JsEvaluator.unwrap(raw).takeIf { it.isNotEmpty() }
     }
 
     override suspend fun sessionSet(tab: BrowserSessionToken, key: String, value: String) {
@@ -228,26 +251,40 @@ class AndroidInAppBrowserEngine(
     override suspend fun sessionKeys(tab: BrowserSessionToken): List<String> {
         val view = pool.viewOf(tab) ?: return emptyList()
         val raw = JsEvaluator.evaluate(view, "JSON.stringify(Object.keys(sessionStorage))") ?: return emptyList()
-        val arr = runCatching { json.parseToJsonElement(raw.trim('"')).jsonArray }.getOrNull() ?: return emptyList()
+        val arr = runCatching { json.parseToJsonElement(JsEvaluator.unwrap(raw)).jsonArray }.getOrNull()
+            ?: return emptyList()
         return arr.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
     }
 
     override suspend fun shutdown() {
+        val tabIds = pool.list().map { it.tabId }
         pool.shutdown()
-        snapshotBuilders.clear()
+        tabIds.forEach { screenshotRecorder.cleanup(it) }
     }
 
-    private suspend inline fun postMain(crossinline block: () -> Unit) {
-        val deferred = CompletableDeferred<Unit>()
+    /**
+     * 主线程执行并取回结果（带回值版 postMain）。超时后主线程 block 仍会照常执行
+     * （WebView/主线程无法撤销已派发的操作），调用方超时返回后不应重试同副作用操作。
+     * 所有 block 内对 WebView 的调用都带 isDestroyed / 捕获引用守卫。
+     */
+    private suspend fun <T : Any> postMainValue(timeoutMs: Long = 2_000L, block: () -> T): T? {
+        val deferred = CompletableDeferred<T>()
         mainHandler.post {
-            block(); deferred.complete(Unit)
+            try {
+                deferred.complete(block())
+            } catch (t: Throwable) {
+                deferred.completeExceptionally(t)
+            }
         }
-        // #12：超时后主线程 block 仍会照常执行（WebView/主线程无法撤销已派发的操作），
-        // 调用方超时返回后不应重试同副作用操作，避免重复执行。
-        val done = withTimeoutOrNull(2_000L) { deferred.await() } != null
-        if (!done) {
-            android.util.Log.w("TaiXuBrowserEngine", "postMain 超时（2s）：操作可能已在页面执行，请勿重试同参数操作")
+        val result = withTimeoutOrNull(timeoutMs) { deferred.await() }
+        if (result == null) {
+            android.util.Log.w("TaiXuBrowserEngine", "postMain 超时（${timeoutMs}ms）：操作可能已在页面执行，请勿重试同参数操作")
         }
+        return result
+    }
+
+    private suspend fun postMain(block: () -> Unit) {
+        postMainValue { block() }
     }
 }
 
@@ -270,23 +307,52 @@ private object JS {
     fun wrapSelectorClick(selector: String): String =
         "(function(){var n=document.querySelector(${q(selector)});if(!n)return false;n.click();return true;})()"
 
+    /** input + change 两个事件都派发：React 受控组件依赖 change 提交，只派 input 会被状态回滚。 */
     fun wrapSelectorType(selector: String, text: String): String =
-        "(function(){var n=document.querySelector(${q(selector)});if(!n)return false;n.focus();n.value=${q(text)};n.dispatchEvent(new Event('input',{bubbles:true}));return true;})()"
+        "(function(){var n=document.querySelector(${q(selector)});if(!n)return false;n.focus();n.value=${q(text)};n.dispatchEvent(new Event('input',{bubbles:true}));n.dispatchEvent(new Event('change',{bubbles:true}));return true;})()"
 
+    /** keydown（可打印键加 keypress）+ keyup，带 key/code/keyCode/which（legacy 监听只认 keyCode）。 */
     fun wrapActiveElementPress(key: String): String =
-        "(function(){var k=${q(key)};var ev=new KeyboardEvent('keydown',{key:k,bubbles:true});document.activeElement.dispatchEvent(ev);return true;})()"
+        "(function(){var el=document.activeElement;if(!el)return false;var opt={key:${q(key)},code:${q(codeOf(key))},keyCode:${keyCodeOf(key)},which:${keyCodeOf(key)},bubbles:true,cancelable:true};el.dispatchEvent(new KeyboardEvent('keydown',opt));${keypressOf(key, "el")}el.dispatchEvent(new KeyboardEvent('keyup',opt));return true;})()"
 
     fun wrapSelectorPress(selector: String, key: String): String =
-        "(function(){var n=document.querySelector(${q(selector)});if(!n)return false;var k=${q(key)};var ev=new KeyboardEvent('keydown',{key:k,bubbles:true});n.dispatchEvent(ev);return true;})()"
+        "(function(){var n=document.querySelector(${q(selector)});if(!n)return false;var opt={key:${q(key)},code:${q(codeOf(key))},keyCode:${keyCodeOf(key)},which:${keyCodeOf(key)},bubbles:true,cancelable:true};n.dispatchEvent(new KeyboardEvent('keydown',opt));${keypressOf(key, "n")}n.dispatchEvent(new KeyboardEvent('keyup',opt));return true;})()"
 
     fun wrapScroll(deltaY: Int): String =
         "(function(){window.scrollBy(0,${deltaY});return true;})()"
-}
 
-/** 全局 main scope（用于 [BrowserEngine] 内嵌的 WebView 回调 publish 事件）。 */
-private object CoroutineScopeHolder {
-    private val scope = kotlinx.coroutines.CoroutineScope(
-        kotlinx.coroutines.Dispatchers.Main.immediate + kotlinx.coroutines.SupervisorJob()
-    )
-    fun scope() = scope
+    /** 可打印字符额外派 keypress（legacy 输入监听依赖）。 */
+    private fun keypressOf(key: String, targetVar: String): String =
+        if (key.length == 1) "$targetVar.dispatchEvent(new KeyboardEvent('keypress',opt));" else ""
+
+    /** 常见键的 legacy keyCode 映射；可打印字符取大写字符码。 */
+    private fun keyCodeOf(key: String): Int = when (key) {
+        "Enter" -> 13
+        "Escape" -> 27
+        "Tab" -> 9
+        "Backspace" -> 8
+        "Delete" -> 46
+        "ArrowUp" -> 38
+        "ArrowDown" -> 40
+        "ArrowLeft" -> 37
+        "ArrowRight" -> 39
+        "Home" -> 36
+        "End" -> 35
+        "PageUp" -> 33
+        "PageDown" -> 34
+        "Shift" -> 16
+        "Control" -> 17
+        "Alt" -> 18
+        "Meta" -> 91
+        " " -> 32
+        else -> if (key.length == 1) key[0].uppercaseChar().code else 0
+    }
+
+    /** KeyboardEvent.code：命名键与 key 同名，字母 KeyX、数字 DigitN、空格 Space。 */
+    private fun codeOf(key: String): String = when {
+        key == " " -> "Space"
+        key.length == 1 && key[0].isLetter() -> "Key" + key.uppercase()
+        key.length == 1 && key[0].isDigit() -> "Digit" + key
+        else -> key
+    }
 }

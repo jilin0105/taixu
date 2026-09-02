@@ -1,26 +1,39 @@
 package top.wkbin.taixu.harness.mcp.server
 
+import java.security.MessageDigest
+
 /**
  * MCP server 侧 Token 校验。
  *
  * 原则：
- * - 内置 server 在 loopback 上空 token 不拒（仅进程内自用）；
- * - 一旦开启 `browser.allowRemoteConnect=true`，则无论 loopback 还是远程都必须带 Bearer Token。
+ * - Token 恒为必填：Android 上 127.0.0.1 并不按 UID 隔离，任意应用都能直接 POST /mcp 驱动浏览器，
+ *   loopback 模式同样必须携带 Bearer Token，不存在"仅进程内自用"的豁免；
+ * - 比较使用常量时间算法（[MessageDigest.isEqual]），避免时序侧信道逐字节泄露；
  * - Token 不在响应日志/异常中露出。
  */
 object McpAuthFilter {
 
-    const val LOOPBACK_TOKEN = "loopback"
-
     fun isAcceptable(
         authHeader: String?,
-        loopback: Boolean,
         configuredToken: String?,
     ): Boolean {
-        if (loopback && configuredToken.isNullOrEmpty()) {
-            return authHeader.isNullOrBlank() || authHeader == "Bearer $LOOPBACK_TOKEN"
-        }
         if (configuredToken.isNullOrEmpty()) return false
-        return authHeader == "Bearer $configuredToken"
+        if (authHeader == null) return false
+        return MessageDigest.isEqual(
+            "Bearer $configuredToken".toByteArray(Charsets.UTF_8),
+            authHeader.toByteArray(Charsets.UTF_8),
+        )
     }
+}
+
+/**
+ * 内置浏览器 MCP server 的运行时访问参数供给点（进程内单例）：
+ *  - [token]：[top.wkbin.taixu.harness.browser.BrowserMcpBootstrap] 启动时生成并写入，
+ *    [top.wkbin.taixu.harness.mcp.McpHttpTransport] 自环访问内置 server 时携带，通过 [McpAuthFilter] 校验；
+ *  - [port]：实际绑定端口。首选端口（8787）被占用时 server 会顺延使用相邻端口，
+ *    自环客户端须以本值为准替换静态预设 URL 中的端口。
+ */
+object BuiltinBrowserMcpAccess {
+    @Volatile var token: String? = null
+    @Volatile var port: Int? = null
 }

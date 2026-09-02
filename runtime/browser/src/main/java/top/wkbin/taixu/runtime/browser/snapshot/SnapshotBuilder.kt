@@ -32,12 +32,17 @@ class SnapshotBuilder(
     private val token: BrowserSessionToken,
     private val eventBus: BrowserEventBus,
     private val scope: CoroutineScope,
+    /** 视图是否仍在池中存活（closeTab / 崩溃 / shutdown 后为 false；WebView 无 isDestroyed API）。 */
+    private val isAlive: () -> Boolean = { true },
 ) {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     suspend fun refresh(view: WebView, maxElements: Int = 200): PageSnapshot? {
-        val rawJs = JsEvaluator.evaluate(view, JS_EXTRACT) ?: return null
-        val raw = unwrap(rawJs)
+        // 已销毁 / 已移出池的 WebView 不再扫描（closeTab 与回调刷新之间存在竞态窗口）
+        if (!isAlive()) return null
+        val cap = maxElements.coerceAtLeast(1)
+        val rawJs = JsEvaluator.evaluate(view, jsExtract(cap)) ?: return null
+        val raw = JsEvaluator.unwrap(rawJs)
         val arr = runCatching { json.parseToJsonElement(raw).jsonArray }.getOrNull() ?: return null
         val refs = HashMap<String, SnapshotRef>()
         arr.forEachIndexed { idx, el ->
@@ -72,21 +77,6 @@ class SnapshotBuilder(
         return snap
     }
 
-    private fun unwrap(raw: String): String {
-        val s = raw.trim()
-        if (s.length >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
-            // evaluateJavascript 返回 JSON 字符串字面量：用 JSON 解码以正确处理 \uXXXX / \t 等转义
-            return runCatching { json.parseToJsonElement(raw).jsonPrimitive.content }
-                .getOrElse {
-                    s.substring(1, s.length - 1)
-                        .replace("\\\"", "\"")
-                        .replace("\\n", "\n")
-                        .replace("\\\\", "\\")
-                }
-        }
-        return s
-    }
-
     /** 基于 refs 内容生成稳定的 DOM 指纹，用于模型端判断页面是否变化。 */
     private fun fingerprintOf(refs: Map<String, SnapshotRef>): String {
         val canonical = refs.entries.sortedBy { it.key }
@@ -102,15 +92,16 @@ class SnapshotBuilder(
         val name = obj["name"]?.jsonPrimitive?.textOrNull()?.takeIf { it.isNotBlank() }
         val placeholder = obj["placeholder"]?.jsonPrimitive?.textOrNull()?.takeIf { it.isNotBlank() }
         val ariaLabel = obj["aria"]?.jsonPrimitive?.textOrNull()?.takeIf { it.isNotBlank() }
-        val text = obj["text"]?.jsonPrimitive?.textOrNull()?.takeIf { it.isNotBlank() }
+        // 仅生成 querySelector 合法选择器：id 用属性选择器（原 `#id` 在 id 含 . : [ ] / 数字开头时
+        // 是非法 CSS）；`:contains()` 是 jQuery 专有语法，querySelector 会抛 SyntaxError，已移除。
+        // 点击路径实际依赖 [data-taixu-ref='eN']（扫描时已写入 DOM），其余仅为可读性。
         val parts = buildList {
             add(tag)
-            id?.let { add("#$it") }
+            id?.let { add("[id='${escapeAttr(it)}']") }
             ariaLabel?.let { add("[aria-label='${escapeAttr(it)}']") }
             name?.let { add("[name='${escapeAttr(it)}']") }
             placeholder?.let { add("[placeholder='${escapeAttr(it)}']") }
             add("[data-taixu-ref='$ref']")
-            if (text != null && tag == "a") add(":contains('${escapeAttr(text.take(40))}')")
         }
         return parts.joinToString("")
     }
@@ -123,7 +114,8 @@ class SnapshotBuilder(
         private val map =
             java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentHashMap<String, String>>()
         fun put(tabId: String, ref: String, selector: String) {
-            map.getOrPut(tabId) { java.util.concurrent.ConcurrentHashMap() }[ref] = selector
+            // ConcurrentHashMap 的 getOrPut 并非原子：并发扫描会互相覆盖，必须用 computeIfAbsent
+            map.computeIfAbsent(tabId) { java.util.concurrent.ConcurrentHashMap() }[ref] = selector
         }
         fun selector(tabId: String, ref: String): String? = map[tabId]?.get(ref)
         fun clear(tabId: String) { map.remove(tabId) }
@@ -133,8 +125,11 @@ class SnapshotBuilder(
     fun clear(tabId: String) = ResolverRegistry.clear(tabId)
 
     companion object {
-        /** DOM scan: returns JSON array of visible interactive elements. */
-        const val JS_EXTRACT = """
+        /**
+         * DOM scan: returns JSON array of visible interactive elements.
+         * 元素上限由 Kotlin 侧的 maxElements 参数传入（此前 JS 内硬编码 200，与参数不一致）。
+         */
+        fun jsExtract(maxElements: Int): String = """
         (function(){
           try {
             var NODES='a,button,input,select,textarea,[role=button],[role=link],[role=textbox],[role=checkbox],[role=radio],[tabindex],[onclick]';
@@ -157,7 +152,7 @@ class SnapshotBuilder(
                 placeholder: el.getAttribute('placeholder'),
                 aria: el.getAttribute('aria-label')
               });
-              if (out.length>=200) break;
+              if (out.length>=$maxElements) break;
             }
             return JSON.stringify(out);
           } catch(e){ return '[]'; }

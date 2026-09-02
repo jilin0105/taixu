@@ -94,6 +94,8 @@ internal fun CollapsibleChatWorkbenchStrip(
     onOpenBranches: () -> Unit,
     onOpenRuntime: () -> Unit,
     modifier: Modifier = Modifier,
+    onOpenBrowser: (() -> Unit)? = null,
+    browserHighlight: Boolean = false,
 ) {
     val roundCount = runtimeEvents.count { it is HarnessEvent.ProviderRoundStarted }
     val activeModelName = activeModel?.let { entity ->
@@ -161,6 +163,18 @@ internal fun CollapsibleChatWorkbenchStrip(
                 highlight = running,
                 onClick = onOpenRuntime,
             )
+
+            // 5. 浏览器入口（轮次之后）：agent 在浏览器产生新动态时高亮提示
+            if (onOpenBrowser != null) {
+                StatusDivider()
+                WorkbenchStatusItem(
+                    icon = RuntimeIconName.Globe,
+                    label = if (browserHighlight) "浏览器 •" else "浏览器",
+                    tint = if (browserHighlight) Color(0xFF3F8FFF) else MaterialTheme.colorScheme.onSurfaceVariant,
+                    highlight = browserHighlight,
+                    onClick = onOpenBrowser,
+                )
+            }
         }
     }
 }

@@ -60,6 +60,14 @@ sealed interface BrowserEvent {
         val imageRef: ToolImageRef,
         override val at: Long = System.currentTimeMillis()
     ) : BrowserEvent
+
+    /** WebView 渲染进程崩溃 / 被系统回收；对应 tab 已被销毁，需要重新 openTab。 */
+    @Serializable
+    data class RenderProcessGone(
+        override val tabId: String,
+        val didCrash: Boolean,
+        override val at: Long = System.currentTimeMillis()
+    ) : BrowserEvent
 }
 
 /** 单条捕获的网络请求（限制字段避免过度暴露）。 */

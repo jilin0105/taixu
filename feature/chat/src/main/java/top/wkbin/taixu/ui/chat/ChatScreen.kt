@@ -12,6 +12,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -27,7 +28,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.activity.compose.BackHandler
 import top.wkbin.taixu.ui.components.RuntimeButton as Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -83,8 +87,11 @@ import top.wkbin.taixu.runtime.ProjectType
 import top.wkbin.taixu.ui.chat.ChatRenderItem
 import top.wkbin.taixu.ui.chat.projectChatMessages
 
-// 悬浮玻璃底栏实际占高 = 上下 8dp padding + 64dp 条体 = 80dp，额外留 ~10dp 呼吸空间
-private val AgentBottomBarHeight = 90.dp
+// 悬浮玻璃底栏实际占高 = 上下 8dp padding + 64dp 条体 = 80dp，留 2dp 微缝防贴死
+private val AgentBottomBarHeight = 82.dp
+
+// 浏览器 URL 栏贴合版：与底栏总占位一致（8 + 64 + 8 = 80dp），零缝隙直接贴在底栏上方
+private val BrowserBottomBarHeight = 80.dp
 
 @Composable
 private fun chatBottomInsets(bottomBarHeight: Dp): WindowInsets {
@@ -105,6 +112,9 @@ fun ChatScreen(
     onNavigate: (MainDestination) -> Unit,
     onOpenFile: ((projectName: String, relativePath: String) -> Unit)? = null,
     terminalPane: (@Composable (project: String) -> Unit)? = null,
+    browserPane: (@Composable (onExit: (() -> Unit)?) -> Unit)? = null,
+    browserActivityTick: Long = 0L,
+    browserBackPressed: (() -> Boolean)? = null,
     viewModel: ChatViewModel = hiltViewModel(),
 ) {
     val messages by viewModel.messages.collectAsStateWithLifecycle()
@@ -309,10 +319,11 @@ fun ChatScreen(
         if (opened != null && opened.sessionId != currentSessionId) viewModel.closeSubagentResult()
     }
 
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        topBar = {
+    // 模型·权限·主线·轮次 工具条：单栏浏览器分页模式下随对话页一起滑走（浏览器页全屏），
+    // 双栏/纯对话模式固定在顶部。提出为局部 lambda 避免三处重复传参。
+    // onOpenBrowser 非空时工具条末尾追加"浏览器"入口（agent 有新动态时高亮）。
+    val chatTopBar: @Composable (onOpenBrowser: (() -> Unit)?, browserHighlight: Boolean) -> Unit =
+        { onOpenBrowser, browserHighlight ->
             ChatTopBar(
                 workspace = workspace,
                 distroDisplayName = distroDisplayName,
@@ -327,8 +338,14 @@ fun ChatScreen(
                 onOpenApprovalModes = { showApprovalModes = true },
                 onOpenBranches = { showBranches = true },
                 onOpenRuntime = { showRuntimeTimeline = true },
+                onOpenBrowser = onOpenBrowser,
+                browserHighlight = browserHighlight,
             )
-        },
+        }
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { padding ->
         BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
@@ -343,110 +360,11 @@ fun ChatScreen(
 
             val bottomInsets = chatBottomInsets(AgentBottomBarHeight)
 
-            if (isDualPane && terminalPane != null) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .liquidGlassContent()
-                        .padding(horizontal = 12.dp)
-                        .windowInsetsPadding(bottomInsets),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    // 左栏：Agent 对话与指令区
-                    ChatPaneContent(
-                        onboardingPrivilege = onboardingPrivilege,
-                        modifier = Modifier
-                            .weight(0.48f)
-                            .fillMaxHeight(),
-                        messages = messages,
-                        listState = listState,
-                        running = running,
-                        status = status,
-                        thinkingExpanded = thinkingExpanded,
-                        thinkingLive = thinkingLive,
-                        liveThinkingMessageId = liveThinkingMessageId,
-                        toolResults = toolResults,
-                        workspace = workspace,
-                        workspaceProject = effectiveWorkspaceProject,
-                        onOpenFile = onOpenFile,
-                        onEditMessage = { editTargetMessageId = it.id },
-                        onDeleteMessage = viewModel::deleteMessage,
-                        error = error,
-                        onClearError = viewModel::clearError,
-                        matchingCommands = matchingCommands,
-                        matchingMentions = matchingMentions,
-                        attachedMentions = attachedMentions,
-                        knownMentionNames = knownMentionNames,
-                        queuedPrompts = queuedPrompts,
-                        onEditQueuedPrompt = viewModel::editQueuedPrompt,
-                        onRemoveQueuedPrompt = viewModel::removeQueuedPrompt,
-                        onConvertToSteer = viewModel::convertQueuedPromptToSteer,
-                        sendMode = sendMode,
-                        input = input,
-                        onInputChanged = viewModel::onInputChanged,
-                        onApplyCommand = viewModel::applySlashCommand,
-                        onApplyMention = viewModel::applyMention,
-                        onRemoveMention = viewModel::removeMention,
-                        attachments = pendingAttachments,
-                        attachmentsProcessing = attachmentsProcessing,
-                        onAttachmentsPicked = viewModel::onAttachmentsPicked,
-                        onRemoveAttachment = viewModel::removeAttachment,
-                        onSend = viewModel::sendFromComposer,
-                        onStop = viewModel::stop,
-                        lastAssistantMessageId = lastAssistantMessageId,
-                        onRegenerate = viewModel::regenerateLast,
-                        onCreateBranch = { branchFromMessageId = it },
-                        onRetryTool = viewModel::retryToolCall,
-                        initializing = initializing,
-                        pinnedCapabilities = pinnedCapabilities,
-                        onOpenSkillsMcp = { showSkillsMcpSheet = true },
-                        onUnpinMention = viewModel::unpinMention,
-                        activePlan = activePlan,
-                        pendingApprovals = pendingApprovals,
-                        onResolveApproval = viewModel::resolveApproval,
-                        contextUsage = contextUsage,
-                        activeModel = activeModel,
-                        onUpdateReasoning = viewModel::updateActiveModelReasoning,
-                        quickPhrases = quickPhrases,
-                        onSelectPhrase = viewModel::applyQuickPhrase,
-                        activeCompaction = activeCompaction,
-                        mcpRecommendations = mcpRecommendations,
-                        onEnableMcpRecommendation = viewModel::enableMcpRecommendation,
-                        onDismissMcpRecommendation = viewModel::dismissMcpRecommendation,
-                        onViewSubagentLanes = { showBranches = true },
-                        subagentBranches = branches,
-                        onOpenSubagentBranch = viewModel::openSubagentResult,
-                    )
-
-                    VerticalDivider(
-                        modifier = Modifier.fillMaxHeight().padding(vertical = 8.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                    )
-
-                    // 右栏：实时演武终端 (Terminal) 联动视窗
-                    Box(
-                        modifier = Modifier
-                            .weight(0.52f)
-                            .fillMaxHeight()
-                            .padding(top = 4.dp, bottom = 4.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .border(
-                                1.dp,
-                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
-                                RoundedCornerShape(14.dp),
-                            ),
-                    ) {
-                        terminalPane(workspace)
-                    }
-                }
-            } else {
+            // 对话主内容：双栏左栏与单栏整页共用（仅 modifier 不同）
+            val chatContent: @Composable (Modifier) -> Unit = { paneModifier ->
                 ChatPaneContent(
                     onboardingPrivilege = onboardingPrivilege,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .liquidGlassContent()
-                        .padding(horizontal = 12.dp)
-                        .windowInsetsPadding(bottomInsets),
+                    modifier = paneModifier,
                     messages = messages,
                     listState = listState,
                     running = running,
@@ -506,6 +424,152 @@ fun ChatScreen(
                     subagentBranches = branches,
                     onOpenSubagentBranch = viewModel::openSubagentResult,
                 )
+            }
+
+            if (isDualPane && terminalPane != null) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    chatTopBar(null, false)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .liquidGlassContent()
+                            .padding(horizontal = 12.dp)
+                            .windowInsetsPadding(bottomInsets),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                    // 左栏：Agent 对话与指令区
+                    chatContent(
+                        Modifier
+                            .weight(0.48f)
+                            .fillMaxHeight()
+                    )
+
+                    VerticalDivider(
+                        modifier = Modifier.fillMaxHeight().padding(vertical = 8.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                    )
+
+                    // 右栏：实时演武终端 (Terminal) / 浏览器联动视窗（可切换）
+                    var rightPaneBrowser by rememberSaveable { mutableStateOf(false) }
+                    Box(
+                        modifier = Modifier
+                            .weight(0.52f)
+                            .fillMaxHeight()
+                            .padding(top = 4.dp, bottom = 4.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .border(
+                                1.dp,
+                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                                RoundedCornerShape(14.dp),
+                            ),
+                    ) {
+                        if (browserPane != null) {
+                            Column(modifier = Modifier.fillMaxSize()) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    TextButton(onClick = { rightPaneBrowser = false }) {
+                                        Text(
+                                            "终端",
+                                            fontWeight = if (rightPaneBrowser) FontWeight.Normal else FontWeight.Bold,
+                                            color = if (rightPaneBrowser) {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            } else {
+                                                MaterialTheme.colorScheme.primary
+                                            },
+                                        )
+                                    }
+                                    TextButton(onClick = { rightPaneBrowser = true }) {
+                                        Text(
+                                            "浏览器",
+                                            fontWeight = if (rightPaneBrowser) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (rightPaneBrowser) {
+                                                MaterialTheme.colorScheme.primary
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
+                                        )
+                                    }
+                                }
+                                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                                    if (rightPaneBrowser) {
+                                        browserPane(null)
+                                    } else {
+                                        terminalPane(workspace)
+                                    }
+                                }
+                            }
+                        } else {
+                            terminalPane(workspace)
+                        }
+                    }
+                    }
+                }
+            } else if (browserPane != null) {
+                // 单栏：智枢对话 ↔ 浏览器 左右滑动切换，一边看 harness 操作一边看浏览器变化
+                val pagerState = rememberPagerState(initialPage = 0) { 2 }
+                var lastSeenBrowserTick by remember { mutableStateOf(0L) }
+                LaunchedEffect(pagerState.currentPage, browserActivityTick) {
+                    if (pagerState.currentPage == 1) lastSeenBrowserTick = browserActivityTick
+                }
+                // 浏览器页系统返回：优先回退 WebView 历史，耗尽后切回对话页
+                BackHandler(enabled = pagerState.currentPage == 1) {
+                    if (browserBackPressed?.invoke() != true) {
+                        coroutineScope.launch { pagerState.animateScrollToPage(0) }
+                    }
+                }
+                Box(modifier = Modifier.fillMaxSize()) {
+                    HorizontalPager(state = pagerState) { page ->
+                        if (page == 0) {
+                            // 对话页：顶部工具条（模型·权限·主线·轮次·浏览器）属于对话的一部分，随页滑走
+                            Column(modifier = Modifier.fillMaxSize()) {
+                                chatTopBar(
+                                    {
+                                        coroutineScope.launch { pagerState.animateScrollToPage(1) }
+                                    },
+                                    browserActivityTick > lastSeenBrowserTick,
+                                )
+                                chatContent(
+                                    Modifier
+                                        .fillMaxSize()
+                                        .liquidGlassContent()
+                                        .padding(horizontal = 12.dp)
+                                        .windowInsetsPadding(bottomInsets)
+                                )
+                            }
+                        } else {
+                            // 浏览器页：全屏，仅保留自己的极薄状态栏（末尾带"返回对话"）+ URL 栏；
+                            // 底部用贴合版 insets（无呼吸空间），URL 栏直接贴在底部导航栏上方
+                            Box(
+                                Modifier
+                                    .fillMaxSize()
+                                    .statusBarsPadding()
+                                    .windowInsetsPadding(chatBottomInsets(BrowserBottomBarHeight))
+                            ) {
+                                browserPane(
+                                    {
+                                        coroutineScope.launch { pagerState.animateScrollToPage(0) }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    chatTopBar(null, false)
+                    chatContent(
+                        Modifier
+                            .fillMaxSize()
+                            .liquidGlassContent()
+                            .padding(horizontal = 12.dp)
+                            .windowInsetsPadding(bottomInsets)
+                    )
+                }
             }
 
             if (LocalLiquidGlassBackdrop.current == null) {

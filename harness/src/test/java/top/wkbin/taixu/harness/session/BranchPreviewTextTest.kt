@@ -21,6 +21,8 @@ class BranchPreviewTextTest {
         val preview = branchPreviewText("  第一行\n\n第二行  " + "x".repeat(500))
 
         assertTrue(preview.startsWith("第一行 第二行"))
-        assertEquals(240, preview.length)
+        // 实现契约：先截断到 240 再做空白归一化/trim，因此结果 <= 240 而非精确等于
+        assertTrue(preview.length <= 240)
+        assertFalse(preview.contains("  "))
     }
 }

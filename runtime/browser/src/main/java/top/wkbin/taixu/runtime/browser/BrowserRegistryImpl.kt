@@ -1,5 +1,6 @@
 package top.wkbin.taixu.runtime.browser
 
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,7 +18,8 @@ import top.wkbin.taixu.core.browser.BrowserSelectionPolicy
  * 多引擎：v1 不实现多实例；保留接口 [BrowserEngine] 与 [list] 多条目的扩展空间。
  */
 class BrowserRegistryImpl(override val eventBus: BrowserEventBus) : BrowserRegistry {
-    private val inAppEngine = mutableListOf<BrowserEngine>()
+    // CopyOnWriteArrayList：registerEngine 写在 @Synchronized 内，get/verify/start 等无锁读安全
+    private val inAppEngine = CopyOnWriteArrayList<BrowserEngine>()
     private val _descriptors = MutableStateFlow<List<BrowserDescriptor>>(emptyList())
     override val descriptors: StateFlow<List<BrowserDescriptor>> = _descriptors.asStateFlow()
 

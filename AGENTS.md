@@ -8,16 +8,16 @@ Android 无 Root 下用 PRoot 跑 Linux 多发行版沙箱 + AI Agent Harness + 
 
 ## 模块
 
-`app`(壳/装配/JNI) · `core`(model·common·database·datastore·network·security) · `runtime`(PRoot/RootFS/PTY/工作区) · `tools`(Registry/安装事务/Provider安全) · `harness`(Agent循环/MCP/子智能体) · `feature`(components·theme·home·chat·terminal·workspace·settings·developer·onboarding·custom_iteration·navigation)
+`app`(壳/装配/JNI) · `core`(model·common·database·datastore·network·security) · `runtime`(PRoot/RootFS/PTY/工作区) · `tools`(Registry/安装事务/Provider安全) · `harness`(Agent循环/MCP/子智能体) · `feature`(components·theme·home·chat·terminal·workspace·settings·developer·onboarding·custom\_iteration·navigation)
 
 ## 动手前先读
 
-| 要做什么 | 推荐阅读文档 |
-| :--- | :--- |
-| **快速把握全局** | [`docs/AI_NAVIGATION.md`](docs/AI_NAVIGATION.md)（语义导航总览） |
-| **写代码 / 改模块 / 理拓扑** | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)（架构与模块拓扑） |
-| **追踪数据流 / 调用链路** | [`docs/EXECUTION_TRACES.md`](docs/EXECUTION_TRACES.md)（核心执行时序） |
-| **定位某个类 / 寻找文件** | [`docs/FILE_INDEX.md`](docs/FILE_INDEX.md)（关键文件索引速查） |
-| **UI/UX 设计系统与架构铁律** | [`docs/ARCHITECTURE_RULES.md`](docs/ARCHITECTURE_RULES.md)（设计规范与避坑指南） |
-| **构建 / 测试 / 打包 / 调试** | [`docs/COMMANDS.md`](docs/COMMANDS.md)（常用命令速查） |
+| 要做什么                  | 推荐阅读文档                                                                |
+| :-------------------- | :-------------------------------------------------------------------- |
+| **快速把握全局**            | [`docs/AI_NAVIGATION.md`](docs/AI_NAVIGATION.md)（语义导航总览）              |
+| **写代码 / 改模块 / 理拓扑**   | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)（架构与模块拓扑）               |
+| **追踪数据流 / 调用链路**      | [`docs/EXECUTION_TRACES.md`](docs/EXECUTION_TRACES.md)（核心执行时序）        |
+| **定位某个类 / 寻找文件**      | [`docs/FILE_INDEX.md`](docs/FILE_INDEX.md)（关键文件索引速查）                  |
+| **UI/UX 设计系统与架构铁律**   | [`docs/ARCHITECTURE_RULES.md`](docs/ARCHITECTURE_RULES.md)（设计规范与避坑指南） |
+| **构建 / 测试 / 打包 / 调试** | [`docs/COMMANDS.md`](docs/COMMANDS.md)（常用命令速查）                        |
 

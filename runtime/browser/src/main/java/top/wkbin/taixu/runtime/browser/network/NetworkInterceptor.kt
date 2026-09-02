@@ -27,6 +27,8 @@ class NetworkInterceptor(
             tabId = token.tabId,
             url = request.url.toString(),
             method = request.method,
+            // shouldInterceptRequest 只见请求、无响应回调可挂：此处恒为 0，
+            // 展示侧（browser.network_list）不应把它当作 HTTP 状态码呈现
             statusCode = 0,
             requestHeaders = request.requestHeaders.orEmpty().toMap(),
             startedAt = startedAt,

@@ -73,8 +73,14 @@ class BrowserMcpTools(
             }
             "browser.evaluate" -> {
                 val exp = args["expression"]?.asString().orEmpty()
-                if (exp.isEmpty()) InvokeResult.error("缺少 expression")
-                else InvokeResult.okMessage(engine.evaluate(tokenOf(args, engine), exp) ?: "")
+                when {
+                    // 安全门禁：allowEvalJs 默认 false，未显式开启时不执行任何脚本
+                    !prefs.allowEvalJs -> InvokeResult.error("evaluate 被禁用（allowEvalJs=false），请在浏览器设置中开启")
+                    exp.isEmpty() -> InvokeResult.error("缺少 expression")
+                    else -> engine.evaluate(tokenOf(args, engine), exp)?.let { InvokeResult.okMessage(it) }
+                        // 引擎侧 evaluate 超时/失败返回 null：不能再伪装成成功（空串）
+                        ?: InvokeResult.error("evaluation failed or timed out")
+                }
             }
             "browser.console_list" -> InvokeResult.okMessage(
                 engine.eventBus.console.value.joinToString("\n") { "[${it.level}] ${it.message}" }

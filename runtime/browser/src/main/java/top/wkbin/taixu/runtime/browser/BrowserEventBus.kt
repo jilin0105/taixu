@@ -1,5 +1,6 @@
 package top.wkbin.taixu.runtime.browser
 
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -13,9 +14,11 @@ import kotlinx.coroutines.sync.withLock
  *
  * 说明：
  * - 保持最近 N 条 console / network（默认 200 / 200）；
- * - url / title / snapshot 按 tabId 分片保存，全局 StateFlow 始终反映当前活跃 tab 的视图，
- *   避免多 tab 导航互相覆盖；工具侧请用 [urlOf] / [titleOf] / [snapshotOf] 按 tab 精确取值；
- * - 因为引擎可能在主线程派发事件，所以 publish 用 suspend + Mutex 保证线程安全。
+ * - url / title / snapshot 按 tabId 分片保存（ConcurrentHashMap：写侧经 Mutex 串行，
+ *   读侧 urlOf / titleOf / snapshotOf 被 MCP 工作线程无锁调用也安全）；
+ * - 全局 StateFlow 始终反映当前活跃 tab 的视图，避免多 tab 导航互相覆盖；
+ *   工具侧请用 [urlOf] / [titleOf] / [snapshotOf] 按 tab 精确取值；
+ * - 因为引擎可能在主线程派发事件，所以 publish 用 suspend + Mutex 保证复合更新串行。
  */
 class BrowserEventBus(
     private val consoleCapacity: Int = 200,
@@ -23,10 +26,10 @@ class BrowserEventBus(
 ) {
     private val mutex = Mutex()
 
-    // —— 按 tab 分片状态 ——
-    private val tabUrls = HashMap<String, String>()
-    private val tabTitles = HashMap<String, String>()
-    private val tabSnapshots = HashMap<String, BrowserEvent.SnapshotUpdated>()
+    // —— 按 tab 分片状态（无锁读线程安全）——
+    private val tabUrls = ConcurrentHashMap<String, String>()
+    private val tabTitles = ConcurrentHashMap<String, String>()
+    private val tabSnapshots = ConcurrentHashMap<String, BrowserEvent.SnapshotUpdated>()
 
     // —— 全局视图（始终等于当前活跃 tab 的状态）——
     private val _snapshot = MutableStateFlow<BrowserEvent.SnapshotUpdated?>(null)
@@ -83,6 +86,19 @@ class BrowserEventBus(
                 _network.update { prev ->
                     val next = (prev + event.request)
                     if (next.size > networkCapacity) next.takeLast(networkCapacity) else next
+                }
+            }
+            is BrowserEvent.RenderProcessGone -> {
+                // 渲染进程崩溃：转成 console ERROR 行，agent 经 browser.console_list 可见
+                val line = ConsoleLine(
+                    event.tabId,
+                    "ERROR",
+                    "WebView render process gone (crash=${event.didCrash}); tab ${event.tabId} closed, reopen with browser.open",
+                    event.at,
+                )
+                _console.update { prev ->
+                    val next = (prev + line)
+                    if (next.size > consoleCapacity) next.takeLast(consoleCapacity) else next
                 }
             }
             is BrowserEvent.ScreenshotSaved, is BrowserEvent.UserInteractionHappened -> {

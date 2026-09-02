@@ -31,8 +31,10 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
 import top.wkbin.taixu.core.common.logging.AppLogger
+import top.wkbin.taixu.core.model.BuiltinMcpPresets
 import top.wkbin.taixu.core.model.McpServerConfig
 import top.wkbin.taixu.core.model.McpToolInfo
+import top.wkbin.taixu.harness.mcp.server.BuiltinBrowserMcpAccess
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -148,7 +150,7 @@ class McpHttpTransport @Inject constructor(
         }
 
     private suspend fun ensureSessionLocked(server: McpServerConfig, bypassCooldown: Boolean): HttpSession {
-        val url = server.serverUrl.trim()
+        val url = effectiveUrlOf(server)
         sessions[server.id]?.let { existing ->
             if (existing.serverUrl == url && existing.isOpen) return existing
             dropSession(server.id, existing)
@@ -202,10 +204,35 @@ class McpHttpTransport @Inject constructor(
         session.legacy?.close()
     }
 
+    /**
+     * 解析目标 server 的 Bearer token：config 显式携带优先；
+     * 内置 browser server（自环）回退到 bootstrap 生成的运行时 token，
+     * 否则认证恒开启的进程内 server 会拒绝自环请求。
+     */
+    private fun bearerOf(server: McpServerConfig): String? {
+        server.authToken.takeIf { it.isNotBlank() }?.let { return it }
+        if (server.id == BuiltinMcpPresets.BROWSER_BUILTIN_ID) return BuiltinBrowserMcpAccess.token
+        return null
+    }
+
+    /**
+     * 解析目标 server 的实际 URL。内置 browser server 的首选端口被占用时，
+     * server 会顺延绑定到相邻端口（见 [McpServerRuntime]），此时静态预设 URL 已过期，
+     * 以 [BuiltinBrowserMcpAccess.port] 为准替换 URL 中的端口。
+     */
+    private fun effectiveUrlOf(server: McpServerConfig): String {
+        val url = server.serverUrl.trim()
+        val runtimePort = BuiltinBrowserMcpAccess.port ?: return url
+        if (server.id != BuiltinMcpPresets.BROWSER_BUILTIN_ID) return url
+        return url.replace(Regex("^(https?://[^/:]+):\\d+"), "$1:$runtimePort")
+    }
+
     private suspend fun createStreamableSession(server: McpServerConfig): HttpSession {
-        val endpoint = validatedMcpHttpEndpoint(server.serverUrl)
+        val url = effectiveUrlOf(server)
+        val endpoint = validatedMcpHttpEndpoint(url)
+        val bearer = bearerOf(server)
         val params = json.encodeToJsonElement(McpInitializeParams.serializer(), McpInitializeParams())
-        val init = postStreamable(endpoint, sessionId = null, method = "initialize", params = params)
+        val init = postStreamable(endpoint, sessionId = null, method = "initialize", params = params, bearer = bearer)
         val result = init.response.result?.let { json.decodeFromJsonElement(McpInitializeResult.serializer(), it) }
             ?: error("MCP initialize did not return a result")
         val session = HttpSession(
@@ -213,30 +240,34 @@ class McpHttpTransport @Inject constructor(
             endpoint = endpoint,
             sessionId = init.sessionId,
             protocolVersion = result.protocolVersion,
-            serverUrl = server.serverUrl.trim(),
+            serverUrl = url,
+            bearer = bearer,
         )
         postNotification(session, "notifications/initialized")
         return session
     }
 
     private suspend fun createLegacySession(server: McpServerConfig): HttpSession {
-        val sseUrl = validatedMcpHttpEndpoint(server.serverUrl)
+        val url = effectiveUrlOf(server)
+        val sseUrl = validatedMcpHttpEndpoint(url)
+        val bearer = bearerOf(server)
         val channel = LegacySseChannel(sseUrl, sseClient, json, scope)
         try {
             val messageEndpoint = withTimeoutOrNull(HANDSHAKE_TIMEOUT_MS) { channel.awaitEndpoint() }
                 ?: error("Legacy SSE 握手超时：${HANDSHAKE_TIMEOUT_MS / 1000}s 内未收到 endpoint 事件")
             val params = json.encodeToJsonElement(McpInitializeParams.serializer(), McpInitializeParams())
-            val init = postViaLegacy(channel, "initialize", params)
+            val init = postViaLegacy(channel, "initialize", params, bearer)
             val result = init.result?.let { json.decodeFromJsonElement(McpInitializeResult.serializer(), it) }
                 ?: error("MCP initialize did not return a result")
-            postViaLegacyNotification(channel, "notifications/initialized")
+            postViaLegacyNotification(channel, "notifications/initialized", bearer)
             return HttpSession(
                 mode = TransportMode.LEGACY_SSE,
                 endpoint = messageEndpoint,
                 sessionId = null,
                 protocolVersion = result.protocolVersion,
-                serverUrl = server.serverUrl.trim(),
+                serverUrl = url,
                 legacy = channel,
+                bearer = bearer,
             )
         } catch (t: Throwable) {
             channel.close()
@@ -254,11 +285,13 @@ class McpHttpTransport @Inject constructor(
                 method = method,
                 params = params,
                 longRunning = method == "tools/call",
+                bearer = session.bearer,
             ).response
             TransportMode.LEGACY_SSE -> postViaLegacy(
                 channel = session.legacy ?: error("Legacy SSE 会话已关闭"),
                 method = method,
                 params = params,
+                bearer = session.bearer,
             )
         }
 
@@ -268,10 +301,11 @@ class McpHttpTransport @Inject constructor(
         method: String,
         params: JsonElement,
         longRunning: Boolean = false,
+        bearer: String? = null,
     ): StreamableExchange {
         val id = UUID.randomUUID().toString()
         val payload = json.encodeToString(JsonRpcRequest.serializer(), JsonRpcRequest(id = id, method = method, params = params))
-        val request = requestBuilder(endpoint, sessionId)
+        val request = requestBuilder(endpoint, sessionId, bearer)
             .header("MCP-Protocol-Version", MCP_PROTOCOL_VERSION)
             .post(payload.toRequestBody(JSON))
             .build()
@@ -286,19 +320,24 @@ class McpHttpTransport @Inject constructor(
 
     private suspend fun postNotification(session: HttpSession, method: String) {
         val payload = json.encodeToString(JsonRpcNotification.serializer(), JsonRpcNotification(method = method))
-        val request = requestBuilder(session.endpoint, session.sessionId)
+        val request = requestBuilder(session.endpoint, session.sessionId, session.bearer)
             .header("MCP-Protocol-Version", session.protocolVersion)
             .post(payload.toRequestBody(JSON))
             .build()
         fastClient.newCall(request).executeCancellable().use { check(it.isSuccessful) { "MCP HTTP ${it.code}" } }
     }
 
-    private suspend fun postViaLegacy(channel: LegacySseChannel, method: String, params: JsonElement): JsonRpcResponse {
+    private suspend fun postViaLegacy(
+        channel: LegacySseChannel,
+        method: String,
+        params: JsonElement,
+        bearer: String? = null,
+    ): JsonRpcResponse {
         val id = UUID.randomUUID().toString()
         val payload = json.encodeToString(JsonRpcRequest.serializer(), JsonRpcRequest(id = id, method = method, params = params))
         val deferred = channel.register(id)
         return try {
-            postLegacyPayload(channel, payload, retryable = method != "tools/call")
+            postLegacyPayload(channel, payload, retryable = method != "tools/call", bearer = bearer)
             withTimeoutOrNull(CALL_TIMEOUT_MS.milliseconds) { channel.await(id, deferred) }
                 ?: error("MCP 响应超时（${CALL_TIMEOUT_MS / 1000}s）")
         } catch (t: Throwable) {
@@ -307,14 +346,15 @@ class McpHttpTransport @Inject constructor(
         }
     }
 
-    private suspend fun postViaLegacyNotification(channel: LegacySseChannel, method: String) {
+    private suspend fun postViaLegacyNotification(channel: LegacySseChannel, method: String, bearer: String? = null) {
         val payload = json.encodeToString(JsonRpcNotification.serializer(), JsonRpcNotification(method = method))
-        postLegacyPayload(channel, payload, retryable = true)
+        postLegacyPayload(channel, payload, retryable = true, bearer = bearer)
     }
 
-    private suspend fun postLegacyPayload(channel: LegacySseChannel, payload: String, retryable: Boolean) {
+    private suspend fun postLegacyPayload(channel: LegacySseChannel, payload: String, retryable: Boolean, bearer: String? = null) {
         val endpoint = channel.messageEndpoint ?: error("Legacy SSE 消息端点未就绪")
         val request = Request.Builder().url(endpoint).header("Accept", ACCEPT)
+            .apply { bearer?.let { header("Authorization", "Bearer $it") } }
             .post(payload.toRequestBody(JSON)).build()
         val client = if (retryable) fastClient else nonRetryingFastClient
         client.newCall(request).executeCancellable().use { check(it.isSuccessful) { "MCP HTTP ${it.code}" } }
@@ -333,9 +373,12 @@ class McpHttpTransport @Inject constructor(
         })
     }
 
-    private fun requestBuilder(endpoint: HttpUrl, sessionId: String?) = Request.Builder()
+    private fun requestBuilder(endpoint: HttpUrl, sessionId: String?, bearer: String? = null) = Request.Builder()
         .url(endpoint).header("Accept", ACCEPT)
-        .apply { sessionId?.let { header("Mcp-Session-Id", it) } }
+        .apply {
+            sessionId?.let { header("Mcp-Session-Id", it) }
+            bearer?.let { header("Authorization", "Bearer $it") }
+        }
 
     // ---------- 响应解析 ----------
 
@@ -398,6 +441,7 @@ class McpHttpTransport @Inject constructor(
         val protocolVersion: String,
         val serverUrl: String,
         val legacy: LegacySseChannel? = null,
+        val bearer: String? = null,
     ) {
         /** Streamable 会话视为一直可用（失效由传输层错误触发重建）；Legacy 会话看读流是否存活 */
         val isOpen: Boolean get() = legacy == null || legacy.isAlive

@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import top.wkbin.taixu.runtime.browser.secret.SecretRedactingInterceptor
 import top.wkbin.taixu.runtime.browser.tools.BrowserMcpResources
 
 @Singleton
@@ -17,9 +18,11 @@ class McpResourceDispatcher @Inject constructor(private val browserResources: Br
 
     suspend fun readResource(uri: String): JsonObject? {
         val content = browserResources.read(uri) ?: return null
+        // 与 McpToolDispatcher 同一脱敏出口：browser://storage 等资源内容可能夹带 cookie/token，
+        // 不允许 resources/read 绕过脱敏直接回灌 LLM
         return buildJsonObject {
             put("uri", JsonPrimitive(uri))
-            put("text", JsonPrimitive(content))
+            put("text", JsonPrimitive(SecretRedactingInterceptor.apply(content)))
         }
     }
 }

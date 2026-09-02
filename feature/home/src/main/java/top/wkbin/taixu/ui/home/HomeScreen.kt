@@ -121,7 +121,6 @@ fun HomeScreen(
     onNavigate: (MainDestination) -> Unit,
     onOpenTerminal: () -> Unit,
     onOpenToolCenter: () -> Unit = {},
-    onOpenBrowser: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -269,12 +268,6 @@ fun HomeScreen(
             WebChatDashboardCard(
                 status = webChatStatus,
                 onToggle = viewModel::toggleWebChat,
-            )
-
-            // 2.5 内置浏览器入口（用户主动打开 in-app WebView）
-            BrowserEntryCardSection(
-                onClick = onOpenBrowser,
-                modifier = Modifier.fillMaxWidth(),
             )
 
             // 3. 运行与开发环境体检自愈中心 (TaiXu Doctor & Auto-Fix)
@@ -1542,41 +1535,6 @@ private fun WebChatDashboardCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        }
-    }
-}
-
-
-/**
- * 首页"打开内置浏览器"入口卡片。
- *
- * 复用 [top.wkbin.taixu.ui.components.RuntimeCard]，点击后由 NavHost 跳到 BrowserDestination，
- * 与 harness 的 mcp__browser__* 工具背后是同一 [top.wkbin.taixu.runtime.browser.BrowserRegistry] 实例。
- *
- * 与 [RuntimeEngineStatusCard] 等大卡片解耦，避免修改 StatusCard 字段约定。
- */
-@Composable
-private fun BrowserEntryCardSection(
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    RuntimeCard(
-        modifier = modifier,
-        onClick = onClick,
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(
-                text = "🌐  内置浏览器",
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-            )
-            Text(
-                text = "由 harness 注入 mcp__browser__* 工具；在此处打开同一 WebView 与 Agent 协同浏览、登录、抓取 API。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }

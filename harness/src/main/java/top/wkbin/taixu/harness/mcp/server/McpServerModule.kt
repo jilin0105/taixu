@@ -8,7 +8,6 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import top.wkbin.taixu.core.browser.BrowserPreferences
-import top.wkbin.taixu.runtime.browser.BrowserEngine
 import top.wkbin.taixu.runtime.browser.BrowserRegistry
 import top.wkbin.taixu.runtime.browser.tools.BrowserMcpResources
 import top.wkbin.taixu.runtime.browser.tools.BrowserMcpTools
@@ -34,8 +33,10 @@ object McpServerModule {
         registry: BrowserRegistry,
         browserPrefs: top.wkbin.taixu.core.datastore.BrowserPreferences,
     ): BrowserMcpTools {
-        // #14：启动时把 datastore 里的真实用户偏好映射为工具层快照（AppScope 首次注入、IO 协程内构造，
-        // 单次 DataStore first() 毫秒级；读取失败兜底 DEFAULT，不阻塞启动）。
+        // #14：启动时把 datastore 里的真实用户偏好映射为工具层快照。
+        // 本 Provider 经 BrowserMcpBootstrap 的 dagger.Lazy 延迟到首个 IO 协程内才构造，
+        // 此处 runBlocking 只阻塞该协程（单次 DataStore first() 毫秒级），不再卡主线程；
+        // 读取失败兜底 DEFAULT，不阻塞启动。
         val prefs = runCatching {
             runBlocking {
                 BrowserPreferences(
@@ -50,16 +51,15 @@ object McpServerModule {
             }
         }.getOrDefault(BrowserPreferences.DEFAULT)
         return BrowserMcpTools(
-            engines = registry.collectEngines(),
-            engineSelector = { token -> registry.get(token.family) },
+            // 引擎不在构造期快照（本构造可能早于 BrowserMcpBootstrap 注册引擎）：
+            // engineSelector 在每次工具调用时实时查 registry，先按 family 精确匹配，
+            // 再退回任一健康引擎，注册时序不再影响可用性。
+            engines = emptyList(),
+            engineSelector = { token ->
+                registry.get(token.family)
+                    ?: registry.list().firstNotNullOfOrNull { registry.get(it.family) }
+            },
             prefs = prefs,
         )
     }
 }
-
-/**
- * 返回 [BrowserRegistry] 当前注册的所有 [BrowserEngine]。`BrowserRegistry` 没有暴露 engines 列表，
- * 这里通过 `descriptors` + `get(family)` 推断健康状态后返回。
- */
-private fun BrowserRegistry.collectEngines(): List<BrowserEngine> =
-    descriptors.value.mapNotNull { get(it.family) }
