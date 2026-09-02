@@ -236,8 +236,9 @@ fun TerminalScreen(
     }
 
     LaunchedEffect(screen.size, cursor.row, cursor.column, followOutput, activeId) {
-        if (followOutput && screen.isNotEmpty()) {
-            listState.scrollToItem(screen.size - 1)
+        val lastIndex = screen.lastIndex
+        if (followOutput && lastIndex >= 0) {
+            listState.scrollToItem(lastIndex)
         }
     }
 
@@ -245,7 +246,12 @@ fun TerminalScreen(
         if (inputFocused && screen.isNotEmpty()) {
             followOutput = true
             withFrameNanos { }
-            listState.scrollToItem(screen.size - 1)
+            // 等帧期间会话可能重建（如 root 环境初始化）导致 screen 清空，
+            // 此时 scrollToItem(-1) 会抛 Index should be non-negative，需重新校验。
+            val lastIndex = screen.lastIndex
+            if (lastIndex >= 0) {
+                listState.scrollToItem(lastIndex)
+            }
         }
     }
 
