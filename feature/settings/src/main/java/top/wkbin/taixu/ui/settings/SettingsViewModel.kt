@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import top.wkbin.taixu.core.datastore.SettingsDataStore
+import top.wkbin.taixu.core.datastore.BrowserPreferences
 import top.wkbin.taixu.core.database.AiModelRepository
 import top.wkbin.taixu.core.database.AiModelEntity
 import top.wkbin.taixu.core.database.AgentSkillRepository
@@ -73,6 +74,7 @@ class SettingsViewModel @Inject constructor(
     private val profileWriter: AiProfileWriter,
     private val profileBackupCodec: AiProfileBackupCodec,
     private val webChatBridgeServer: top.wkbin.taixu.runtime.webchat.WebChatBridgeServer? = null,
+    private val browserPrefs: BrowserPreferences,
 ) : ViewModel() {
     val installedDistros = linuxRuntime.installedDistros
     val activeDistroId = linuxRuntime.activeDistroId
@@ -386,6 +388,32 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /** 浏览器 MCP 安全门禁快照（allowRemoteConnect / allowEvalJs / allowHooks / allowCdp）。 */
+    val browserGates: StateFlow<BrowserGateState> = combine(
+        browserPrefs.allowRemoteConnect(),
+        browserPrefs.allowEvalJs(),
+        browserPrefs.allowHooks(),
+        browserPrefs.allowCdp(),
+    ) { remote, evalJs, hooks, cdp ->
+        BrowserGateState(remote, evalJs, hooks, cdp)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, BrowserGateState())
+
+    fun setBrowserAllowRemoteConnect(enabled: Boolean) {
+        viewModelScope.launch { browserPrefs.setAllowRemoteConnect(enabled) }
+    }
+
+    fun setBrowserAllowEvalJs(enabled: Boolean) {
+        viewModelScope.launch { browserPrefs.setAllowEvalJs(enabled) }
+    }
+
+    fun setBrowserAllowHooks(enabled: Boolean) {
+        viewModelScope.launch { browserPrefs.setAllowHooks(enabled) }
+    }
+
+    fun setBrowserAllowCdp(enabled: Boolean) {
+        viewModelScope.launch { browserPrefs.setAllowCdp(enabled) }
+    }
+
     fun saveMcpServer(server: top.wkbin.taixu.core.model.McpServerConfig) {
         viewModelScope.launch {
             mcpServerRepository.save(server)
@@ -666,70 +694,89 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun importSkillArchive(uri: Uri) {
+    fun importSkillArchives(uris: List<Uri>) {
+        if (uris.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
-            var target: File? = null
-            runCatching {
-                val id = "custom_" + UUID.randomUUID().toString().take(8)
-                target = File(pathManager.attachmentsDir, "skills/$id").apply { mkdirs() }
-                var entryCount = 0
-                var totalBytes = 0L
-                application.contentResolver.openInputStream(uri)?.use { source ->
-                    ZipInputStream(source).use { zip ->
-                        var entry = zip.nextEntry
-                        while (entry != null) {
-                            check(++entryCount <= MAX_SKILL_ARCHIVE_ENTRIES) { "Skill 压缩包文件数量超过 $MAX_SKILL_ARCHIVE_ENTRIES 个" }
-                            val relative = entry.name.replace('\\', '/')
-                            check(relative.isNotBlank() && !relative.startsWith('/')) { "Skill 压缩包包含非法路径" }
-                            val out = File(target, relative)
-                            require(out.canonicalPath.startsWith(target.canonicalPath + File.separator)) { "Skill 压缩包包含非法路径" }
-                            if (entry.isDirectory) {
-                                out.mkdirs()
-                            } else {
-                                out.parentFile?.mkdirs()
-                                var entryBytes = 0L
-                                BufferedOutputStream(out.outputStream()).use { output ->
-                                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                                    while (true) {
-                                        val read = zip.read(buffer)
-                                        if (read < 0) break
-                                        entryBytes += read
-                                        totalBytes += read
-                                        check(entryBytes <= MAX_SKILL_ENTRY_BYTES) { "Skill 单个文件不能超过 8 MB" }
-                                        check(totalBytes <= MAX_SKILL_ARCHIVE_BYTES) { "Skill 解压后总大小不能超过 32 MB" }
-                                        output.write(buffer, 0, read)
-                                    }
-                                }
-                                if (relative.startsWith("scripts/") || relative.contains("/scripts/") || out.extension.lowercase() in setOf("sh", "py", "js")) {
-                                    out.setExecutable(true, false)
+            val successes = mutableListOf<String>()
+            val failures = mutableListOf<String>()
+            uris.forEach { uri ->
+                runCatching { importSingleSkillArchive(uri) }
+                    .onSuccess { successes += it }
+                    .onFailure { failures += it.message ?: "Skill 压缩包导入失败" }
+            }
+            if (failures.isEmpty()) {
+                _skillArchiveMessageIsError.value = false
+                _skillArchiveMessage.value = if (successes.size == 1) successes.first() else "批量导入完成，共 ${successes.size} 个：\n${successes.joinToString("\n")}"
+            } else if (successes.isEmpty()) {
+                _skillArchiveMessageIsError.value = true
+                _skillArchiveMessage.value = if (failures.size == 1) failures.first() else "批量导入失败，共 ${failures.size} 个：\n${failures.joinToString("\n")}"
+            } else {
+                _skillArchiveMessageIsError.value = true
+                _skillArchiveMessage.value = "批量导入完成：成功 ${successes.size} 个，失败 ${failures.size} 个\n\n成功：\n${successes.joinToString("\n")}\n\n失败：\n${failures.joinToString("\n")}"
+            }
+        }
+    }
+
+    private suspend fun importSingleSkillArchive(uri: Uri): String {
+        var target: File? = null
+        try {
+            val id = "custom_" + UUID.randomUUID().toString().take(8)
+            target = File(pathManager.attachmentsDir, "skills/$id").apply { mkdirs() }
+            var entryCount = 0
+            var totalBytes = 0L
+            application.contentResolver.openInputStream(uri)?.use { source ->
+                ZipInputStream(source).use { zip ->
+                    var entry = zip.nextEntry
+                    while (entry != null) {
+                        check(++entryCount <= MAX_SKILL_ARCHIVE_ENTRIES) { "Skill 压缩包文件数量超过 $MAX_SKILL_ARCHIVE_ENTRIES 个" }
+                        val relative = entry.name.replace('\\', '/')
+                        check(relative.isNotBlank() && !relative.startsWith('/')) { "Skill 压缩包包含非法路径" }
+                        val out = File(target, relative)
+                        require(out.canonicalPath.startsWith(target.canonicalPath + File.separator)) { "Skill 压缩包包含非法路径" }
+                        if (entry.isDirectory) {
+                            out.mkdirs()
+                        } else {
+                            out.parentFile?.mkdirs()
+                            var entryBytes = 0L
+                            BufferedOutputStream(out.outputStream()).use { output ->
+                                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                                while (true) {
+                                    val read = zip.read(buffer)
+                                    if (read < 0) break
+                                    entryBytes += read
+                                    totalBytes += read
+                                    check(entryBytes <= MAX_SKILL_ENTRY_BYTES) { "Skill 单个文件不能超过 8 MB" }
+                                    check(totalBytes <= MAX_SKILL_ARCHIVE_BYTES) { "Skill 解压后总大小不能超过 32 MB" }
+                                    output.write(buffer, 0, read)
                                 }
                             }
-                            entry = zip.nextEntry
+                            if (relative.startsWith("scripts/") || relative.contains("/scripts/") || out.extension.lowercase() in setOf("sh", "py", "js")) {
+                                out.setExecutable(true, false)
+                            }
                         }
+                        entry = zip.nextEntry
                     }
-                } ?: error("无法读取 Skill 压缩包")
-                val promptFile = target.walkTopDown()
-                    .maxDepth(3)
-                    .filter { it.isFile && it.name.lowercase() in setOf("skill.md", "prompt.md") }
-                    .singleOrNull()
-                    ?: error("压缩包内未找到 SKILL.md")
-                val markdown = promptFile.readText().trim()
-                require(markdown.isNotBlank()) { "SKILL.md 为空" }
-                val skillName = extractSkillMetadata(markdown, "name")
-                    ?: markdown.lineSequence().firstOrNull { it.startsWith("# ") }?.removePrefix("# ")?.trim()
-                    ?: promptFile.parentFile?.name
-                    ?: id
-                val description = extractSkillMetadata(markdown, "description") ?: "从压缩包导入的 Skill"
-                val guestPath = "/attachments/skills/$id"
-                val prompt = markdown + "\n\n【Skill 资源目录】$guestPath\n如需执行该 Skill 附带的脚本，请先检查脚本内容与参数，再从此目录调用。"
-                agentSkillRepository.addCustom(top.wkbin.taixu.core.model.AgentSkill(id, skillName, description, prompt, isBuiltin = false, category = "自定义", resourcePath = target.absolutePath))
-                _skillArchiveMessageIsError.value = false
-                _skillArchiveMessage.value = "Skill“$skillName”导入成功，脚本资源位于 $guestPath"
-            }.onFailure { error ->
-                target?.let(::deleteOwnedSkillDirectory)
-                _skillArchiveMessageIsError.value = true
-                _skillArchiveMessage.value = error.message ?: "Skill 压缩包导入失败"
-            }
+                }
+            } ?: error("无法读取 Skill 压缩包")
+            val promptFile = target.walkTopDown()
+                .maxDepth(3)
+                .filter { it.isFile && it.name.lowercase() in setOf("skill.md", "prompt.md") }
+                .singleOrNull()
+                ?: error("压缩包内未找到 SKILL.md")
+            val markdown = promptFile.readText().trim()
+            require(markdown.isNotBlank()) { "SKILL.md 为空" }
+            val skillName = extractSkillMetadata(markdown, "name")
+                ?: markdown.lineSequence().firstOrNull { it.startsWith("# ") }?.removePrefix("# ")?.trim()
+                ?: promptFile.parentFile?.name
+                ?: id
+            val description = extractSkillMetadata(markdown, "description") ?: "从压缩包导入的 Skill"
+            val guestPath = "/attachments/skills/$id"
+            val prompt = markdown + "\n\n【Skill 资源目录】$guestPath\n如需执行该 Skill 附带的脚本，请先检查脚本内容与参数，再从此目录调用。"
+            agentSkillRepository.addCustom(top.wkbin.taixu.core.model.AgentSkill(id, skillName, description, prompt, isBuiltin = false, category = "自定义", resourcePath = target.absolutePath))
+            return "Skill“$skillName”导入成功，脚本资源位于 $guestPath"
+        } catch (error: Throwable) {
+            target?.let(::deleteOwnedSkillDirectory)
+            throw error
         }
     }
 
@@ -1150,3 +1197,11 @@ class SettingsViewModel @Inject constructor(
         }
     }
 }
+
+/** 浏览器 MCP 安全门禁状态（默认全部关闭，最小权限）。 */
+data class BrowserGateState(
+    val allowRemoteConnect: Boolean = false,
+    val allowEvalJs: Boolean = false,
+    val allowHooks: Boolean = false,
+    val allowCdp: Boolean = false,
+)

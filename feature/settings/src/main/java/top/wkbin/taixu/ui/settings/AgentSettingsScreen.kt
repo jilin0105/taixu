@@ -119,7 +119,7 @@ fun AgentSettingsScreen(
             .entries
             .sortedBy { AgentDepartments.find(it.key).sortOrder }
     }
-    val skillArchivePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(viewModel::importSkillArchive) }
+    val skillArchivePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) viewModel.importSkillArchives(uris) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -383,7 +383,7 @@ fun AgentSettingsScreen(
                 OutlinedButton(onClick = { skillArchivePicker.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")) }, modifier = Modifier.fillMaxWidth().height(44.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         RuntimeIcon(RuntimeIconName.FolderDownload, Modifier.size(16.dp))
-                        Text("从 ZIP 导入 Skill（支持 scripts/ 执行脚本）")
+                        Text("从 ZIP 导入 Skill（支持批量多选）")
                     }
                 }
             }

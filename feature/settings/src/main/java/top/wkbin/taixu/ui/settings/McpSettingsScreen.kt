@@ -89,6 +89,7 @@ fun McpSettingsScreen(
 ) {
     val servers by viewModel.mcpServers.collectAsStateWithLifecycle()
     val connectionStates by viewModel.mcpConnectionStates.collectAsStateWithLifecycle()
+    val browserGates by viewModel.browserGates.collectAsStateWithLifecycle()
     var showAddDialog by remember { mutableStateOf(false) }
     var viewingDetailServer by remember { mutableStateOf<McpServerConfig?>(null) }
     // 待确认删除的服务 id（破坏性操作二次确认）；McpServerConfig 非 Parcelable，仅保存 id
@@ -216,6 +217,10 @@ fun McpSettingsScreen(
                 }
             }
 
+            item(key = "mcp_section_browser_gates") {
+                BrowserGatesCard(gates = browserGates, viewModel = viewModel)
+            }
+
             item {
                 Spacer(Modifier.height(24.dp))
             }
@@ -276,6 +281,94 @@ fun McpSettingsScreen(
                 res
             },
         )
+    }
+}
+
+/**
+ * 浏览器 MCP 安全门禁卡片：内置浏览器服务的危险能力开关（最小权限，默认全关）。
+ * 门禁为引擎池级/工具快照级配置，修改后需重启应用生效。
+ */
+@Composable
+private fun BrowserGatesCard(gates: BrowserGateState, viewModel: SettingsViewModel) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp, bottom = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            "浏览器 MCP 安全门禁",
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            "内置浏览器服务的危险能力开关，默认全部关闭；修改后需重启应用生效",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    RuntimeCard(
+        modifier = Modifier.fillMaxWidth(),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            BrowserGateRow(
+                title = "远程连接",
+                description = "允许局域网设备连接浏览器 MCP 服务（绑定 0.0.0.0）；关闭时仅限本机回环，仍强制 Bearer 认证",
+                checked = gates.allowRemoteConnect,
+                onCheckedChange = viewModel::setBrowserAllowRemoteConnect,
+            )
+            BrowserGateRow(
+                title = "页面 JS 执行",
+                description = "允许 Agent 在页面上下文执行任意 JavaScript（browser.evaluate）",
+                checked = gates.allowEvalJs,
+                onCheckedChange = viewModel::setBrowserAllowEvalJs,
+            )
+            BrowserGateRow(
+                title = "注入式 Hook",
+                description = "允许注入脚本拦截/改写页面网络请求与 JS 函数（log/block/redirect/mock）",
+                checked = gates.allowHooks,
+                onCheckedChange = viewModel::setBrowserAllowHooks,
+            )
+            BrowserGateRow(
+                title = "CDP 调试（断点）",
+                description = "允许通过 DevTools 协议 attach 页面：真断点、暂停时读写变量、Worker 级请求拦截；开启会暴露本进程 DevTools socket（同设备其他应用理论上可连），仅在受控环境使用",
+                checked = gates.allowCdp,
+                onCheckedChange = viewModel::setBrowserAllowCdp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun BrowserGateRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
