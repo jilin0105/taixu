@@ -46,6 +46,8 @@ class SettingsDataStore @Inject constructor(
     private val browserCoBrowsingEnabledKey = BrowserPreferencesKeys.CoBrowsingEnabled
     private val browserAllowRemoteConnectKey = BrowserPreferencesKeys.AllowRemoteConnect
     private val browserAllowEvalJsKey = BrowserPreferencesKeys.AllowEvalJs
+    private val browserAllowHooksKey = BrowserPreferencesKeys.AllowHooks
+    private val browserAllowCdpKey = BrowserPreferencesKeys.AllowCdp
     private val browserDesktopUserAgentKey = BrowserPreferencesKeys.DesktopUserAgent
     private val browserMaxCaptureBytesKey = BrowserPreferencesKeys.MaxCaptureBytes
 
@@ -59,6 +61,10 @@ class SettingsDataStore @Inject constructor(
     suspend fun setBrowserAllowRemoteConnect(value: Boolean) { context.settingsDataStore.edit { it[browserAllowRemoteConnectKey] = value } }
     val browserAllowEvalJs: Flow<Boolean> = context.settingsDataStore.data.map { it[browserAllowEvalJsKey] ?: false }
     suspend fun setBrowserAllowEvalJs(value: Boolean) { context.settingsDataStore.edit { it[browserAllowEvalJsKey] = value } }
+    val browserAllowHooks: Flow<Boolean> = context.settingsDataStore.data.map { it[browserAllowHooksKey] ?: false }
+    suspend fun setBrowserAllowHooks(value: Boolean) { context.settingsDataStore.edit { it[browserAllowHooksKey] = value } }
+    val browserAllowCdp: Flow<Boolean> = context.settingsDataStore.data.map { it[browserAllowCdpKey] ?: false }
+    suspend fun setBrowserAllowCdp(value: Boolean) { context.settingsDataStore.edit { it[browserAllowCdpKey] = value } }
     val browserDesktopUserAgent: Flow<Boolean> = context.settingsDataStore.data.map { it[browserDesktopUserAgentKey] ?: false }
     suspend fun setBrowserDesktopUserAgent(value: Boolean) { context.settingsDataStore.edit { it[browserDesktopUserAgentKey] = value } }
     val browserMaxCaptureBytes: Flow<Int> = context.settingsDataStore.data.map { it[browserMaxCaptureBytesKey] ?: (6 * 1024 * 1024) }

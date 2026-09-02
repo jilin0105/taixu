@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import top.wkbin.taixu.runtime.browser.cdp.DebugPausedState
+import top.wkbin.taixu.runtime.browser.hook.HookHitRecord
 
 /**
  * 浏览器事件总线（StateFlow-backed）。任意 [BrowserEngine] 实例向其 publish 事件，
@@ -23,6 +25,8 @@ import kotlinx.coroutines.sync.withLock
 class BrowserEventBus(
     private val consoleCapacity: Int = 200,
     private val networkCapacity: Int = 200,
+    private val hookHitCapacity: Int = 200,
+    private val debugEventCapacity: Int = 200,
 ) {
     private val mutex = Mutex()
 
@@ -50,6 +54,26 @@ class BrowserEventBus(
     private val _network = MutableStateFlow<List<CapturedRequest>>(emptyList())
     val network: StateFlow<List<CapturedRequest>> = _network.asStateFlow()
 
+    private val _hookHits = MutableStateFlow<List<HookHitRecord>>(emptyList())
+    val hookHits: StateFlow<List<HookHitRecord>> = _hookHits.asStateFlow()
+
+    // —— CDP 调试事件（debug_events 工具读）——
+    /** 调试事件环内单条记录（paused/resumed 摘要）。 */
+    @kotlinx.serialization.Serializable
+    data class DebugEventRecord(
+        val tabId: String,
+        val kind: String,           // "paused" / "resumed"
+        val reason: String = "",
+        val summary: String = "",
+        val at: Long = System.currentTimeMillis(),
+    )
+
+    private val _debugEvents = MutableStateFlow<List<DebugEventRecord>>(emptyList())
+    val debugEvents: StateFlow<List<DebugEventRecord>> = _debugEvents.asStateFlow()
+
+    // —— CDP 暂停态分片（debug_state 工具读；debugPausedOf 无锁）——
+    private val tabDebugPaused = ConcurrentHashMap<String, DebugPausedState>()
+
     /** 按 tab 读取 URL（不含 fallback）。 */
     fun urlOf(tabId: String): String? = tabUrls[tabId]
 
@@ -58,6 +82,9 @@ class BrowserEventBus(
 
     /** 按 tab 读取最近一次快照。 */
     fun snapshotOf(tabId: String): BrowserEvent.SnapshotUpdated? = tabSnapshots[tabId]
+
+    /** 按 tab 读取 CDP 暂停态（null = running / 未 attach）。 */
+    fun debugPausedOf(tabId: String): DebugPausedState? = tabDebugPaused[tabId]
 
     private fun isActiveTab(tabId: String): Boolean = _activeTab.value?.tabId == tabId
 
@@ -88,6 +115,36 @@ class BrowserEventBus(
                     if (next.size > networkCapacity) next.takeLast(networkCapacity) else next
                 }
             }
+            is BrowserEvent.HookHit -> {
+                _hookHits.update { prev ->
+                    val next = (prev + event.hit)
+                    if (next.size > hookHitCapacity) next.takeLast(hookHitCapacity) else next
+                }
+            }
+            is BrowserEvent.DebugPaused -> {
+                tabDebugPaused[event.tabId] = event.state
+                val record = DebugEventRecord(
+                    tabId = event.tabId,
+                    kind = "paused",
+                    reason = event.state.reason,
+                    summary = event.state.callFrames.firstOrNull()
+                        ?.let { "${it.functionName.ifEmpty { "<anonymous>" }} @ ${it.url}:${it.lineNumber + 1}" }
+                        ?: "no frames",
+                    at = event.at,
+                )
+                _debugEvents.update { prev ->
+                    val next = (prev + record)
+                    if (next.size > debugEventCapacity) next.takeLast(debugEventCapacity) else next
+                }
+            }
+            is BrowserEvent.DebugResumed -> {
+                tabDebugPaused.remove(event.tabId)
+                val record = DebugEventRecord(tabId = event.tabId, kind = "resumed", at = event.at)
+                _debugEvents.update { prev ->
+                    val next = (prev + record)
+                    if (next.size > debugEventCapacity) next.takeLast(debugEventCapacity) else next
+                }
+            }
             is BrowserEvent.RenderProcessGone -> {
                 // 渲染进程崩溃：转成 console ERROR 行，agent 经 browser.console_list 可见
                 val line = ConsoleLine(
@@ -112,6 +169,14 @@ class BrowserEventBus(
         _console.value = emptyList()
     }
 
+    suspend fun clearHookHits() = mutex.withLock {
+        _hookHits.value = emptyList()
+    }
+
+    suspend fun clearDebugEvents() = mutex.withLock {
+        _debugEvents.value = emptyList()
+    }
+
     suspend fun resetForTab(tabId: String) = mutex.withLock {
         tabUrls.remove(tabId)
         tabTitles.remove(tabId)
@@ -123,6 +188,9 @@ class BrowserEventBus(
         }
         _console.value = _console.value.filter { it.tabId != tabId }
         _network.value = _network.value.filter { it.tabId != tabId }
+        _hookHits.value = _hookHits.value.filter { it.tabId != tabId }
+        _debugEvents.value = _debugEvents.value.filter { it.tabId != tabId }
+        tabDebugPaused.remove(tabId)
     }
 
     suspend fun setActiveTab(tab: BrowserSessionToken?) = mutex.withLock {

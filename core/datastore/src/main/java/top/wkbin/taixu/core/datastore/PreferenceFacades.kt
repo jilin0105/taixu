@@ -154,6 +154,8 @@ class BrowserPreferences @Inject constructor(private val store: SettingsDataStor
     fun coBrowsingEnabled() = store.browserCoBrowsingEnabled
     fun allowRemoteConnect() = store.browserAllowRemoteConnect
     fun allowEvalJs() = store.browserAllowEvalJs
+    fun allowHooks() = store.browserAllowHooks
+    fun allowCdp() = store.browserAllowCdp
     fun desktopUserAgent() = store.browserDesktopUserAgent
     fun maxCaptureBytes() = store.browserMaxCaptureBytes
     suspend fun setDefaultFamily(value: String) = store.setBrowserDefaultFamily(value)
@@ -161,6 +163,8 @@ class BrowserPreferences @Inject constructor(private val store: SettingsDataStor
     suspend fun setCoBrowsingEnabled(value: Boolean) = store.setBrowserCoBrowsingEnabled(value)
     suspend fun setAllowRemoteConnect(value: Boolean) = store.setBrowserAllowRemoteConnect(value)
     suspend fun setAllowEvalJs(value: Boolean) = store.setBrowserAllowEvalJs(value)
+    suspend fun setAllowHooks(value: Boolean) = store.setBrowserAllowHooks(value)
+    suspend fun setAllowCdp(value: Boolean) = store.setBrowserAllowCdp(value)
     suspend fun setDesktopUserAgent(value: Boolean) = store.setBrowserDesktopUserAgent(value)
     suspend fun setMaxCaptureBytes(value: Int) = store.setBrowserMaxCaptureBytes(value)
 }

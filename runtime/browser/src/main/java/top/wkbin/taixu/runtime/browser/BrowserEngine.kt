@@ -4,6 +4,11 @@ import top.wkbin.taixu.core.browser.BrowserFamily
 import top.wkbin.taixu.core.browser.BrowserPreferences
 import top.wkbin.taixu.core.browser.PageSnapshot
 import top.wkbin.taixu.core.model.ToolImageRef
+import top.wkbin.taixu.runtime.browser.cdp.DebugBreakpoint
+import top.wkbin.taixu.runtime.browser.cdp.DebugStep
+import top.wkbin.taixu.runtime.browser.hook.HookRule
+import top.wkbin.taixu.runtime.browser.hook.HookRuleInfo
+import top.wkbin.taixu.runtime.browser.hook.InjectedScript
 import android.webkit.WebView
 
 /**
@@ -67,6 +72,73 @@ interface BrowserEngine {
     suspend fun sessionSet(tab: BrowserSessionToken, key: String, value: String)
     suspend fun sessionDelete(tab: BrowserSessionToken, key: String)
     suspend fun sessionKeys(tab: BrowserSessionToken): List<String>
+
+    // ===== 注入式 Hook 引擎（阶段 1；默认不支持，仅 in-app 引擎实现） =====
+
+    /** 安装 hook 规则并推送到受影响的活跃 tab。 */
+    suspend fun hookInstall(rule: HookRule): HookRule =
+        throw UnsupportedOperationException("hooks not supported by ${family.name}")
+
+    suspend fun hookRemove(id: String): Boolean =
+        throw UnsupportedOperationException("hooks not supported by ${family.name}")
+
+    suspend fun hookList(tabId: String?): List<HookRuleInfo> =
+        throw UnsupportedOperationException("hooks not supported by ${family.name}")
+
+    /** 清空规则 + 持久脚本 + 命中 + body（tabId=null 时全局）。 */
+    suspend fun hookReset(tabId: String?): Boolean =
+        throw UnsupportedOperationException("hooks not supported by ${family.name}")
+
+    /** 注入 JS：persistent=true 注册为持久脚本（每次导航自动重放），否则立即执行一次。 */
+    suspend fun injectScript(tab: BrowserSessionToken, code: String, persistent: Boolean, name: String): String =
+        throw UnsupportedOperationException("hooks not supported by ${family.name}")
+
+    /** 查询单条已捕获网络请求的元数据与请求/响应 body。 */
+    suspend fun networkDetail(id: String): String? =
+        throw UnsupportedOperationException("hooks not supported by ${family.name}")
+
+    // ===== CDP 调试引擎（阶段 2：真断点 + Worker 级 Fetch 拦截；默认不支持，仅 in-app 引擎实现） =====
+
+    /** CDP attach 会话 / 断点数 / paused 状态总览。 */
+    suspend fun debugStatus(): String =
+        throw UnsupportedOperationException("cdp debug not supported by ${family.name}")
+
+    /** attach tab（devtools socket 发现 + target 匹配 + 断点重放 + Fetch 拦截）。 */
+    suspend fun debugAttach(tab: BrowserSessionToken): String =
+        throw UnsupportedOperationException("cdp debug not supported by ${family.name}")
+
+    /** detach；tab 省略 = 全部。返回 detach 数量。 */
+    suspend fun debugDetach(tab: BrowserSessionToken?): Int =
+        throw UnsupportedOperationException("cdp debug not supported by ${family.name}")
+
+    /** 设置断点（line/column 0-based，与 CDP 原生一致）。 */
+    suspend fun debugSetBreakpoint(tab: BrowserSessionToken, url: String, line: Int, column: Int, condition: String?): DebugBreakpoint =
+        throw UnsupportedOperationException("cdp debug not supported by ${family.name}")
+
+    suspend fun debugRemoveBreakpoint(tab: BrowserSessionToken, id: String): Boolean =
+        throw UnsupportedOperationException("cdp debug not supported by ${family.name}")
+
+    suspend fun debugListBreakpoints(tab: BrowserSessionToken): List<DebugBreakpoint> =
+        throw UnsupportedOperationException("cdp debug not supported by ${family.name}")
+
+    /** 恢复执行；tab 省略 = 恢复全部 paused 的 tab。返回恢复数。 */
+    suspend fun debugResume(tab: BrowserSessionToken?): Int =
+        throw UnsupportedOperationException("cdp debug not supported by ${family.name}")
+
+    suspend fun debugStep(tab: BrowserSessionToken, step: DebugStep): Boolean =
+        throw UnsupportedOperationException("cdp debug not supported by ${family.name}")
+
+    /** paused 调用栈（帧/行号/作用域类型）或 "running"。 */
+    suspend fun debugState(tab: BrowserSessionToken): String =
+        throw UnsupportedOperationException("cdp debug not supported by ${family.name}")
+
+    /** 在暂停帧上求值（returnByValue；超长截断）。 */
+    suspend fun debugEval(tab: BrowserSessionToken, frame: Int, expression: String): String =
+        throw UnsupportedOperationException("cdp debug not supported by ${family.name}")
+
+    /** 读作用域变量；scope=null 时输出全部作用域摘要。 */
+    suspend fun debugScope(tab: BrowserSessionToken, frame: Int, scope: Int?): String =
+        throw UnsupportedOperationException("cdp debug not supported by ${family.name}")
 
     suspend fun shutdown()
 }

@@ -13,6 +13,8 @@ object BrowserPreferencesKeys {
     val CoBrowsingEnabled = booleanPreferencesKey("browser_co_browsing_enabled")
     val AllowRemoteConnect = booleanPreferencesKey("browser_allow_remote_connect")
     val AllowEvalJs = booleanPreferencesKey("browser_allow_eval_js")
+    val AllowHooks = booleanPreferencesKey("browser_allow_hooks")
+    val AllowCdp = booleanPreferencesKey("browser_allow_cdp")
     val DesktopUserAgent = booleanPreferencesKey("browser_desktop_user_agent")
     val MaxCaptureBytes = intPreferencesKey("browser_max_capture_bytes")
 }

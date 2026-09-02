@@ -45,6 +45,8 @@ object McpServerModule {
                     coBrowsingEnabled = browserPrefs.coBrowsingEnabled().first(),
                     allowRemoteConnect = browserPrefs.allowRemoteConnect().first(),
                     allowEvalJs = browserPrefs.allowEvalJs().first(),
+                    allowHooks = browserPrefs.allowHooks().first(),
+                    allowCdp = browserPrefs.allowCdp().first(),
                     desktopUserAgent = browserPrefs.desktopUserAgent().first(),
                     maxCaptureBytes = browserPrefs.maxCaptureBytes().first(),
                 )

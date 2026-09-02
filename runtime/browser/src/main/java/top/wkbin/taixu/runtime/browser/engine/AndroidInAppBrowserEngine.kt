@@ -18,6 +18,12 @@ import top.wkbin.taixu.runtime.browser.InAppBrowserViewProvider
 import top.wkbin.taixu.runtime.browser.js.JsEvaluator
 import top.wkbin.taixu.runtime.browser.screenshot.ScreenshotRecorder
 import top.wkbin.taixu.runtime.browser.capabilities.EngineCapabilities
+import top.wkbin.taixu.runtime.browser.cdp.CdpManager
+import top.wkbin.taixu.runtime.browser.cdp.DebugBreakpoint
+import top.wkbin.taixu.runtime.browser.cdp.DebugStep
+import top.wkbin.taixu.runtime.browser.hook.HookRule
+import top.wkbin.taixu.runtime.browser.hook.HookRuleInfo
+import top.wkbin.taixu.runtime.browser.hook.InjectedScript
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 
@@ -56,6 +62,7 @@ class AndroidInAppBrowserEngine(
     }
 
     override suspend fun snapshot(tab: BrowserSessionToken, maxElements: Int): PageSnapshot {
+        checkNotPaused(tab)
         val view = pool.viewOf(tab) ?: error("tab ${tab.tabId} not found")
         val builder = pool.builderOf(tab) ?: error("tab ${tab.tabId} not found")
         // refresh 同步返回本次扫描结果，避免依赖全局 eventBus 的异步发布造成竞态
@@ -68,6 +75,7 @@ class AndroidInAppBrowserEngine(
         ref: String,
         refSelectorLookup: suspend (BrowserSessionToken, String) -> String?,
     ): Boolean {
+        checkNotPaused(tab)
         val selector = refSelectorLookup(tab, ref) ?: return false
         val js = JS.wrapSelectorClick(selector)
         val view = pool.viewOf(tab) ?: return false
@@ -80,6 +88,7 @@ class AndroidInAppBrowserEngine(
         text: String,
         refSelectorLookup: suspend (BrowserSessionToken, String) -> String?,
     ): Boolean {
+        checkNotPaused(tab)
         val selector = refSelectorLookup(tab, ref) ?: return false
         val js = JS.wrapSelectorType(selector, text)
         val view = pool.viewOf(tab) ?: return false
@@ -92,6 +101,7 @@ class AndroidInAppBrowserEngine(
         key: String,
         refSelectorLookup: suspend (BrowserSessionToken, String) -> String?,
     ): Boolean {
+        checkNotPaused(tab)
         val view = pool.viewOf(tab) ?: return false
         val js = if (ref == null) {
             JS.wrapActiveElementPress(key)
@@ -103,6 +113,7 @@ class AndroidInAppBrowserEngine(
     }
 
     override suspend fun scroll(tab: BrowserSessionToken, deltaY: Int): Boolean {
+        checkNotPaused(tab)
         val view = pool.viewOf(tab) ?: return false
         return JsEvaluator.evaluate(view, JS.wrapScroll(deltaY))?.let { it == "true" } ?: false
     }
@@ -113,6 +124,7 @@ class AndroidInAppBrowserEngine(
     }
 
     override suspend fun evaluate(tab: BrowserSessionToken, script: String): String? {
+        checkNotPaused(tab)
         val view = pool.viewOf(tab) ?: return null
         val raw = JsEvaluator.evaluate(view, script) ?: return null
         // evaluateJavascript 回调是 JSON 字面量：解码后再返回给模型
@@ -120,6 +132,7 @@ class AndroidInAppBrowserEngine(
     }
 
     override suspend fun pageSource(tab: BrowserSessionToken, maxBytes: Int): String {
+        checkNotPaused(tab)
         val view = pool.viewOf(tab) ?: return ""
         val raw = JsEvaluator.evaluate(view, "document.documentElement.outerHTML") ?: return ""
         val html = JsEvaluator.unwrap(raw)
@@ -260,6 +273,243 @@ class AndroidInAppBrowserEngine(
         val tabIds = pool.list().map { it.tabId }
         pool.shutdown()
         tabIds.forEach { screenshotRecorder.cleanup(it) }
+    }
+
+    // ===== 注入式 Hook 引擎（阶段 1）=====
+
+    private fun requireHookStore() =
+        pool.hookStore ?: throw UnsupportedOperationException(
+            "hooks disabled (allowHooks=false)，请在浏览器设置中开启后重启"
+        )
+
+    private fun requireHookInstaller() =
+        pool.hookInstaller ?: throw UnsupportedOperationException(
+            "hooks disabled (allowHooks=false)，请在浏览器设置中开启后重启"
+        )
+
+    /** 规则变更后推送到受影响的活跃 tab（主线程 evaluate）。 */
+    private suspend fun pushRulesToTabs(scopeTabId: String?) {
+        val installer = requireHookInstaller()
+        pool.list()
+            .filter { scopeTabId == null || it.tabId == scopeTabId }
+            .forEach { token ->
+                pool.viewOf(token)?.let { view ->
+                    postMain { installer.pushRules(token.tabId, view) }
+                }
+            }
+    }
+
+    override suspend fun hookInstall(rule: HookRule): HookRule {
+        requireHookStore().install(rule)
+        pushRulesToTabs(rule.scopeTabId)
+        pool.cdpManager?.onRulesChanged()
+        return rule
+    }
+
+    override suspend fun hookRemove(id: String): Boolean {
+        val removed = requireHookStore().remove(id)
+        if (removed) {
+            pushRulesToTabs(null)
+            pool.cdpManager?.onRulesChanged()
+        }
+        return removed
+    }
+
+    override suspend fun hookList(tabId: String?): List<HookRuleInfo> {
+        val store = requireHookStore()
+        return store.list(tabId).map { HookRuleInfo(it, store.hitCount(it.id)) }
+    }
+
+    override suspend fun hookReset(tabId: String?): Boolean {
+        val store = requireHookStore()
+        store.reset(tabId)
+        when (tabId) {
+            null -> {
+                pool.hookPipeline?.let { p ->
+                    pool.list().forEach { p.clearForTab(it.tabId) }
+                }
+                pool.hookBodies?.clear()
+                eventBus.clearHookHits()
+            }
+            else -> {
+                pool.hookPipeline?.clearForTab(tabId)
+                pool.hookBodies?.clearForTab(tabId)
+            }
+        }
+        pushRulesToTabs(tabId)
+        pool.cdpManager?.onRulesChanged()
+        return true
+    }
+
+    override suspend fun injectScript(tab: BrowserSessionToken, code: String, persistent: Boolean, name: String): String {
+        if (persistent) {
+            val store = requireHookStore()
+            val script = InjectedScript(
+                id = "sc_" + java.util.UUID.randomUUID().toString().substring(0, 8),
+                name = name.ifBlank { "script" },
+                code = code,
+                scopeTabId = tab.tabId,
+            )
+            store.addScript(script)
+            pushRulesToTabs(tab.tabId)
+            return "persistent script registered: ${script.id}（后续导航自动重放）"
+        }
+        val view = pool.viewOf(tab) ?: error("tab ${tab.tabId} not found")
+        val raw = JsEvaluator.evaluate(view, code) ?: return "no result"
+        return JsEvaluator.unwrap(raw).ifBlank { "ok" }
+    }
+
+    override suspend fun networkDetail(id: String): String? {
+        val captured = eventBus.network.value.lastOrNull { it.id == id }
+            ?: return null
+        val bodies = pool.hookBodies?.get(id)
+        return buildString {
+            appendLine("[${captured.source}] ${captured.method} ${captured.url}")
+            appendLine("status=${captured.statusCode} duration=${captured.durationMs}ms rule=${captured.ruleId.ifBlank { "-" }} action=${captured.actionTaken.ifBlank { "-" }}")
+            if (captured.requestHeaders.isNotEmpty()) {
+                appendLine("-- request headers --")
+                captured.requestHeaders.forEach { (k, v) -> appendLine("$k: $v") }
+            }
+            if (captured.responseHeaders.isNotEmpty()) {
+                appendLine("-- response headers --")
+                captured.responseHeaders.forEach { (k, v) -> appendLine("$k: $v") }
+            }
+            if (bodies != null && bodies.requestBody.isNotEmpty()) {
+                appendLine("-- request body --")
+                appendLine(bodies.requestBody)
+            }
+            if (bodies != null && bodies.responseBody.isNotEmpty()) {
+                appendLine("-- response body --")
+                appendLine(bodies.responseBody)
+            }
+            if (bodies == null && captured.source == "js") {
+                appendLine("(body 未捕获：规则需 captureBody=true 或已被 LRU 逐出)")
+            }
+        }
+    }
+
+    // ===== CDP 调试引擎（阶段 2：真断点 + Worker 级 Fetch 拦截）=====
+
+    private fun requireCdp(): CdpManager =
+        pool.cdpManager ?: throw UnsupportedOperationException(
+            "cdp disabled (allowCdp=false)，请在浏览器设置中开启后重启"
+        )
+
+    private fun requireDebugConnection(tab: BrowserSessionToken) =
+        requireCdp().connectionOf(tab.tabId)
+            ?: throw IllegalStateException("tab ${tab.tabId} 未 attach CDP（先 browser.debug_attach）")
+
+    /**
+     * 页内工具前置守卫：paused 时 JS 执行被冻结，evaluateJavascript 回调永不到达（工具挂起）。
+     * 改为立即报错引导 agent 先 resume。
+     */
+    private fun checkNotPaused(tab: BrowserSessionToken) {
+        val state = eventBus.debugPausedOf(tab.tabId) ?: return
+        val at = state.callFrames.firstOrNull()
+            ?.let { " ${it.functionName.ifEmpty { "<anonymous>" }} @ ${it.url}:${it.lineNumber + 1}" }
+            .orEmpty()
+        throw IllegalStateException(
+            "tab ${tab.tabId} 正在断点处暂停（$at）：页内工具被冻结，请先 browser.debug_resume"
+        )
+    }
+
+    override suspend fun debugStatus(): String {
+        val status = requireCdp().status()
+        return buildString {
+            appendLine("devtools socket: ${if (status.devToolsSocketActive) "active" else "inactive"}")
+            if (status.attachedTabs.isEmpty()) {
+                appendLine("attached: none（用 browser.debug_attach 附加当前 tab）")
+            } else {
+                appendLine("attached: ${status.attachedTabs.size} tab(s)")
+                status.attachedTabs.forEach {
+                    appendLine(
+                        "- ${it.tabId}: ${it.targetUrl} paused=${it.paused} " +
+                            "breakpoints=${it.breakpoints} workers=${it.workers}"
+                    )
+                }
+            }
+        }.trimEnd()
+    }
+
+    override suspend fun debugAttach(tab: BrowserSessionToken): String =
+        when (val result = requireCdp().attach(tab.tabId)) {
+            is CdpManager.AttachResult.Attached ->
+                "attached ${tab.tabId} -> ${result.targetUrl}（断点已重放，Fetch 拦截已启用）"
+            is CdpManager.AttachResult.AlreadyAttached ->
+                "already attached: ${tab.tabId} -> ${result.targetUrl}"
+        }
+
+    override suspend fun debugDetach(tab: BrowserSessionToken?): Int = requireCdp().detach(tab?.tabId)
+
+    override suspend fun debugSetBreakpoint(
+        tab: BrowserSessionToken,
+        url: String,
+        line: Int,
+        column: Int,
+        condition: String?,
+    ): DebugBreakpoint = requireDebugConnection(tab).debug.setBreakpoint(url, line, column, condition)
+
+    override suspend fun debugRemoveBreakpoint(tab: BrowserSessionToken, id: String): Boolean =
+        requireDebugConnection(tab).debug.removeBreakpoint(id)
+
+    override suspend fun debugListBreakpoints(tab: BrowserSessionToken): List<DebugBreakpoint> =
+        requireDebugConnection(tab).debug.breakpoints()
+
+    override suspend fun debugResume(tab: BrowserSessionToken?): Int {
+        val manager = requireCdp()
+        if (tab != null) {
+            requireDebugConnection(tab).debug.resume()
+            return 1
+        }
+        var resumed = 0
+        manager.attachedTabIds().forEach { id ->
+            manager.connectionOf(id)?.let { conn ->
+                if (conn.debug.paused.value != null) {
+                    conn.debug.resume()
+                    resumed++
+                }
+            }
+        }
+        return resumed
+    }
+
+    override suspend fun debugStep(tab: BrowserSessionToken, step: DebugStep): Boolean =
+        requireDebugConnection(tab).debug.step(step)
+
+    override suspend fun debugState(tab: BrowserSessionToken): String {
+        requireDebugConnection(tab)
+        val state = eventBus.debugPausedOf(tab.tabId) ?: return "running"
+        return buildString {
+            appendLine("paused (${state.reason}) at:")
+            state.callFrames.forEachIndexed { i, f ->
+                appendLine(
+                    "[$i] ${f.functionName.ifEmpty { "<anonymous>" }} ${f.url}:" +
+                        "${f.lineNumber + 1}:${f.columnNumber + 1}"
+                )
+                f.scopes.forEachIndexed { j, s ->
+                    appendLine("    scope[$j] ${s.type}${if (s.name.isNotEmpty()) " (${s.name})" else ""}")
+                }
+            }
+            if (state.hitBreakpoints.isNotEmpty()) {
+                appendLine("hit breakpoints: ${state.hitBreakpoints.joinToString()}")
+            }
+        }.trimEnd()
+    }
+
+    override suspend fun debugEval(tab: BrowserSessionToken, frame: Int, expression: String): String {
+        val state = eventBus.debugPausedOf(tab.tabId)
+            ?: throw IllegalStateException("tab ${tab.tabId} not paused（断点触发后再求值）")
+        val callFrame = state.callFrames.getOrNull(frame)
+            ?: throw IllegalArgumentException("frame index out of range: $frame (0..${state.callFrames.size - 1})")
+        return requireDebugConnection(tab).debug.evaluateOnCallFrame(callFrame.callFrameId, expression)
+    }
+
+    override suspend fun debugScope(tab: BrowserSessionToken, frame: Int, scope: Int?): String {
+        val state = eventBus.debugPausedOf(tab.tabId)
+            ?: throw IllegalStateException("tab ${tab.tabId} not paused（断点触发后再读作用域）")
+        val callFrame = state.callFrames.getOrNull(frame)
+            ?: throw IllegalArgumentException("frame index out of range: $frame (0..${state.callFrames.size - 1})")
+        return requireDebugConnection(tab).debug.scopeProperties(callFrame.callFrameId, scope)
     }
 
     /**

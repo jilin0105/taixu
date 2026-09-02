@@ -1,10 +1,13 @@
-package top.wkbin.taixu.runtime.browser.tools
+﻿package top.wkbin.taixu.runtime.browser.tools
 
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.put
 import top.wkbin.taixu.core.browser.BrowserCapability
 import top.wkbin.taixu.core.browser.BrowserPreferences
@@ -12,6 +15,11 @@ import top.wkbin.taixu.core.browser.BrowserRisk
 import top.wkbin.taixu.core.model.ToolImageRef
 import top.wkbin.taixu.runtime.browser.BrowserEngine
 import top.wkbin.taixu.runtime.browser.BrowserSessionToken
+import top.wkbin.taixu.runtime.browser.cdp.DebugStep
+import top.wkbin.taixu.runtime.browser.hook.HookAction
+import top.wkbin.taixu.runtime.browser.hook.HookRule
+import top.wkbin.taixu.runtime.browser.hook.HookType
+import top.wkbin.taixu.runtime.browser.hook.validate
 
 /**
  * mcp__browser__* 工具调度器。
@@ -25,6 +33,9 @@ class BrowserMcpTools(
     private val engineSelector: (BrowserSessionToken) -> BrowserEngine?,
     private val prefs: BrowserPreferences,
 ) {
+    /** hook 动作数组的解码器：sealed 多态，判别字段 "type"（与 HookRuleStore 的 Json 配置一致）。 */
+    private val hookJson = Json { ignoreUnknownKeys = true; classDiscriminator = "type" }
+
     fun list(): List<ToolSpec> = TOOLS
 
     suspend fun invoke(toolName: String, args: JsonObject): InvokeResult {
@@ -87,7 +98,16 @@ class BrowserMcpTools(
             )
             "browser.console_clear" -> { engine.eventBus.clearConsole(); InvokeResult.okMessage("ok") }
             "browser.network_list" -> InvokeResult.okMessage(
-                engine.eventBus.network.value.joinToString("\n") { "[${it.method}] ${it.url} (${it.statusCode})" }
+                engine.eventBus.network.value.joinToString("\n") { r ->
+                    buildString {
+                        append("[${r.source}] [${r.method}] ${r.url} (${r.statusCode}, ${r.durationMs}ms")
+                        if (r.requestSize > 0 || r.responseSize > 0) {
+                            append(", req ${fmtBytes(r.requestSize)} res ${fmtBytes(r.responseSize)}")
+                        }
+                        if (r.ruleId.isNotBlank()) append(", rule=${r.ruleId}, action=${r.actionTaken}")
+                        append(") id=${r.id}")
+                    }
+                }.ifEmpty { "no captured requests" }
             )
             "browser.cookies_get" -> {
             val t = tokenOf(args, engine)
@@ -107,6 +127,26 @@ class BrowserMcpTools(
             "browser.local_set", "browser.session_set" -> handleKvSet(engine, args, toolName.startsWith("browser.session"))
             "browser.local_delete", "browser.session_delete" -> handleKvDelete(engine, args, toolName.startsWith("browser.session"))
             "browser.local_keys", "browser.session_keys" -> handleKvKeys(engine, args, toolName.startsWith("browser.session"))
+            // ===== 注入式 Hook 引擎（阶段 1；allowHooks||allowCdp 门禁，network_detail 除外） =====
+            "browser.hook_create" -> handleHookCreate(engine, args)
+            "browser.hook_list" -> handleHookList(engine, args)
+            "browser.hook_remove" -> handleHookRemove(engine, args)
+            "browser.hook_reset" -> handleHookReset(engine, args)
+            "browser.hook_hits" -> handleHookHits(engine, args)
+            "browser.inject_script" -> handleInjectScript(engine, args)
+            "browser.network_detail" -> handleNetworkDetail(engine, args)
+            // ===== CDP 调试引擎（阶段 2；allowCdp 门禁） =====
+            "browser.debug_status" -> handleDebugStatus(engine)
+            "browser.debug_attach" -> handleDebugAttach(engine, args)
+            "browser.debug_detach" -> handleDebugDetach(engine, args)
+            "browser.debug_set_breakpoint" -> handleDebugSetBreakpoint(engine, args)
+            "browser.debug_remove_breakpoint" -> handleDebugRemoveBreakpoint(engine, args)
+            "browser.debug_list_breakpoints" -> handleDebugListBreakpoints(engine, args)
+            "browser.debug_resume" -> handleDebugResume(engine, args)
+            "browser.debug_step" -> handleDebugStep(engine, args)
+            "browser.debug_state" -> handleDebugState(engine, args)
+            "browser.debug_eval" -> handleDebugEval(engine, args)
+            "browser.debug_scope" -> handleDebugScope(engine, args)
             else -> InvokeResult.error("工具未实现：$toolName")
         }
     }
@@ -211,11 +251,258 @@ class BrowserMcpTools(
             (if (session) engine.sessionKeys(tokenOf(args, engine)) else engine.localKeys(tokenOf(args, engine))).joinToString("\n")
         )
 
-    private fun JsonElement?.asString(): String? = 
+    // ===== hook 引擎工具实现 =====
+
+    /**
+     * 安全门禁：hook 规则工具在 allowHooks 或 allowCdp 任一开启时可用
+     * （只开 allowCdp 时 CDP Fetch 拦截同样需要建规则）；默认均 false 时拒绝。
+     */
+    private fun hookGate(): InvokeResult? =
+        if (!prefs.allowHooks && !prefs.allowCdp) {
+            InvokeResult.error("hook 规则工具被禁用（allowHooks 与 allowCdp 均为 false），请在浏览器设置中开启后重启")
+        } else null
+
+    /** CDP debug 工具门禁：独立 allowCdp 开关（与 allowHooks 解耦）。 */
+    private fun debugGate(): InvokeResult? =
+        if (!prefs.allowCdp) {
+            InvokeResult.error("debug 工具被禁用（allowCdp=false），请在浏览器设置中开启后重启")
+        } else null
+
+    /** 引擎侧 hooks/cdp 未启用（如 in-app 池开关为 false）时抛 UnsupportedOperationException → 转友好错误。 */
+    private suspend fun runGatedTool(block: suspend () -> InvokeResult): InvokeResult =
+        runCatching { block() }.getOrElse { e ->
+            InvokeResult.error(e.message ?: "操作失败")
+        }
+
+    private suspend fun handleHookCreate(engine: BrowserEngine, args: JsonObject): InvokeResult {
+        hookGate()?.let { return it }
+        val typeRaw = args["type"]?.asString()
+            ?: return InvokeResult.error("缺少 type（fetch/xhr/websocket/function/method/property/storage/cookie/console/timer/crypto）")
+        val type = HookType.entries.firstOrNull { it.name.equals(typeRaw, ignoreCase = true) }
+            ?: return InvokeResult.error("未知 hook type：$typeRaw")
+        val target = args["target"]?.asString() ?: return InvokeResult.error("缺少 target")
+        val actions: List<HookAction> = when (val actionsEl = args["actions"]) {
+            null -> listOf(HookAction.Log())
+            is JsonArray -> runCatching {
+                hookJson.decodeFromJsonElement(ListSerializer(HookAction.serializer()), actionsEl)
+            }.getOrElse { return InvokeResult.error("actions 解析失败：${it.message}") }
+            else -> return InvokeResult.error("actions 必须是数组，如 [{\"type\":\"log\"}]")
+        }
+        if (actions.isEmpty()) return InvokeResult.error("actions 不能为空")
+        val rule = HookRule(
+            id = "hr_" + java.util.UUID.randomUUID().toString().substring(0, 8),
+            type = type,
+            target = target,
+            name = args["name"]?.asString() ?: "",
+            scopeTabId = args["tab"]?.asString(),
+            method = args["method"]?.asString() ?: "*",
+            actions = actions,
+            enabled = args["enabled"]?.asBool() ?: true,
+            captureStack = args["captureStack"]?.asBool() ?: false,
+            captureBody = args["captureBody"]?.asBool() ?: false,
+        )
+        rule.validate()?.let { return InvokeResult.error(it) }
+        return runGatedTool {
+            engine.hookInstall(rule)
+            InvokeResult.okMessage(
+                "hook installed: ${rule.id} type=${rule.type} target=${rule.target} actions=${actions.joinToString(",") { it::class.simpleName ?: "?" }}"
+            )
+        }
+    }
+
+    private suspend fun handleHookList(engine: BrowserEngine, args: JsonObject): InvokeResult {
+        hookGate()?.let { return it }
+        return runGatedTool {
+            val rules = engine.hookList(args["tab"]?.asString())
+            InvokeResult.okMessage(
+                if (rules.isEmpty()) "no hooks"
+                else rules.joinToString("\n") {
+                    "${it.rule.id}\t${it.rule.type}\t${it.rule.target}\tenabled=${it.rule.enabled}\thits=${it.hitCount}"
+                }
+            )
+        }
+    }
+
+    private suspend fun handleHookRemove(engine: BrowserEngine, args: JsonObject): InvokeResult {
+        hookGate()?.let { return it }
+        val id = args["id"]?.asString() ?: return InvokeResult.error("缺少 id")
+        return runGatedTool {
+            if (engine.hookRemove(id)) InvokeResult.okMessage("hook removed: $id")
+            else InvokeResult.error("hook not found: $id")
+        }
+    }
+
+    private suspend fun handleHookReset(engine: BrowserEngine, args: JsonObject): InvokeResult {
+        hookGate()?.let { return it }
+        val tabId = args["tab"]?.asString()
+        return runGatedTool {
+            engine.hookReset(tabId)
+            InvokeResult.okMessage("hooks reset" + (tabId?.let { " (tab=$it)" } ?: " (all)"))
+        }
+    }
+
+    private suspend fun handleHookHits(engine: BrowserEngine, args: JsonObject): InvokeResult {
+        hookGate()?.let { return it }
+        val tabId = args["tab"]?.asString()
+        val limit = (args["limit"]?.asInt() ?: 50).coerceIn(1, 200)
+        val hits = engine.eventBus.hookHits.value
+            .filter { tabId == null || it.tabId == tabId }
+            .takeLast(limit)
+        return InvokeResult.okMessage(
+            if (hits.isEmpty()) "no hook hits"
+            else hits.joinToString("\n") {
+                "[${it.at}] ${it.tabId} ${it.hookId} ${it.type} ${it.target} ${it.phase} — ${it.summary}"
+            }
+        )
+    }
+
+    private suspend fun handleInjectScript(engine: BrowserEngine, args: JsonObject): InvokeResult {
+        // inject_script 是页内注入，维持 allowHooks-only（CDP 开关不包含注入能力）
+        if (!prefs.allowHooks) {
+            return InvokeResult.error("inject_script 被禁用（allowHooks=false），请在浏览器设置中开启后重启")
+        }
+        val code = args["code"]?.asString() ?: return InvokeResult.error("缺少 code")
+        if (code.isBlank()) return InvokeResult.error("code 不能为空")
+        val persistent = args["persistent"]?.asBool() ?: false
+        val name = args["name"]?.asString() ?: ""
+        return runGatedTool {
+            InvokeResult.okMessage(engine.injectScript(tokenOf(args, engine), code, persistent, name))
+        }
+    }
+
+    /** 不受 allowHooks 门禁：hooks 关闭时 body 天然不存在，仅元数据可见。 */
+    private suspend fun handleNetworkDetail(engine: BrowserEngine, args: JsonObject): InvokeResult {
+        val id = args["id"]?.asString() ?: return InvokeResult.error("缺少 id")
+        return runGatedTool {
+            engine.networkDetail(id)?.let { InvokeResult.okMessage(it) }
+                ?: InvokeResult.error("network request not found: $id（id 来自 browser.network_list 输出末尾）")
+        }
+    }
+
+    // ===== CDP debug 工具实现 =====
+
+    private suspend fun handleDebugStatus(engine: BrowserEngine): InvokeResult {
+        debugGate()?.let { return it }
+        return runGatedTool { InvokeResult.okMessage(engine.debugStatus()) }
+    }
+
+    private suspend fun handleDebugAttach(engine: BrowserEngine, args: JsonObject): InvokeResult {
+        debugGate()?.let { return it }
+        return runGatedTool { InvokeResult.okMessage(engine.debugAttach(tokenOf(args, engine))) }
+    }
+
+    private suspend fun handleDebugDetach(engine: BrowserEngine, args: JsonObject): InvokeResult {
+        debugGate()?.let { return it }
+        val tab = args["tab"]?.asString()?.let { BrowserSessionToken(tabId = it, family = engine.family) }
+        return runGatedTool {
+            val n = engine.debugDetach(tab)
+            InvokeResult.okMessage("detached $n tab(s)" + (tab?.let { " (tab=${it.tabId})" } ?: " (all)"))
+        }
+    }
+
+    private suspend fun handleDebugSetBreakpoint(engine: BrowserEngine, args: JsonObject): InvokeResult {
+        debugGate()?.let { return it }
+        val url = args["url"]?.asString() ?: return InvokeResult.error("缺少 url（脚本 URL，如 https://x.test/app.js）")
+        val line = args["line"]?.asInt() ?: return InvokeResult.error("缺少 line（0-based 行号）")
+        val column = args["column"]?.asInt() ?: 0
+        val condition = args["condition"]?.asString()
+        return runGatedTool {
+            val bp = engine.debugSetBreakpoint(tokenOf(args, engine), url, line, column, condition)
+            InvokeResult.okMessage(
+                "breakpoint ${bp.id}: ${bp.url}:${bp.lineNumber}:${bp.columnNumber}" +
+                    (if (bp.condition.isNotEmpty()) " if (${bp.condition})" else "")
+            )
+        }
+    }
+
+    private suspend fun handleDebugRemoveBreakpoint(engine: BrowserEngine, args: JsonObject): InvokeResult {
+        debugGate()?.let { return it }
+        val id = args["id"]?.asString() ?: return InvokeResult.error("缺少 id（来自 debug_list_breakpoints）")
+        return runGatedTool {
+            if (engine.debugRemoveBreakpoint(tokenOf(args, engine), id)) InvokeResult.okMessage("breakpoint removed: $id")
+            else InvokeResult.error("breakpoint not found: $id")
+        }
+    }
+
+    private suspend fun handleDebugListBreakpoints(engine: BrowserEngine, args: JsonObject): InvokeResult {
+        debugGate()?.let { return it }
+        return runGatedTool {
+            val bps = engine.debugListBreakpoints(tokenOf(args, engine))
+            InvokeResult.okMessage(
+                if (bps.isEmpty()) "no breakpoints"
+                else bps.joinToString("\n") {
+                    "${it.id}\t${it.url}:${it.lineNumber}:${it.columnNumber}" +
+                        (if (it.condition.isNotEmpty()) "\tif(${it.condition})" else "")
+                }
+            )
+        }
+    }
+
+    private suspend fun handleDebugResume(engine: BrowserEngine, args: JsonObject): InvokeResult {
+        debugGate()?.let { return it }
+        val tab = args["tab"]?.asString()?.let { BrowserSessionToken(tabId = it, family = engine.family) }
+        return runGatedTool {
+            val n = engine.debugResume(tab)
+            InvokeResult.okMessage(
+                if (n > 0) "resumed $n tab(s)"
+                else "no paused tabs（省略 tab 参数时恢复全部 paused 的 tab）"
+            )
+        }
+    }
+
+    private suspend fun handleDebugStep(engine: BrowserEngine, args: JsonObject): InvokeResult {
+        debugGate()?.let { return it }
+        val stepRaw = args["step"]?.asString() ?: return InvokeResult.error("缺少 step（over/into/out）")
+        val step = when (stepRaw.lowercase()) {
+            "over" -> DebugStep.OVER
+            "into" -> DebugStep.INTO
+            "out" -> DebugStep.OUT
+            else -> return InvokeResult.error("未知 step：$stepRaw（可选 over/into/out）")
+        }
+        return runGatedTool {
+            engine.debugStep(tokenOf(args, engine), step)
+            InvokeResult.okMessage("stepped $stepRaw（下一暂停点见 browser.debug_state）")
+        }
+    }
+
+    private suspend fun handleDebugState(engine: BrowserEngine, args: JsonObject): InvokeResult {
+        debugGate()?.let { return it }
+        return runGatedTool { InvokeResult.okMessage(engine.debugState(tokenOf(args, engine))) }
+    }
+
+    private suspend fun handleDebugEval(engine: BrowserEngine, args: JsonObject): InvokeResult {
+        debugGate()?.let { return it }
+        val expression = args["expression"]?.asString() ?: return InvokeResult.error("缺少 expression")
+        if (expression.isBlank()) return InvokeResult.error("expression 不能为空")
+        val frame = args["frame"]?.asInt() ?: 0
+        return runGatedTool {
+            InvokeResult.okMessage(engine.debugEval(tokenOf(args, engine), frame, expression))
+        }
+    }
+
+    private suspend fun handleDebugScope(engine: BrowserEngine, args: JsonObject): InvokeResult {
+        debugGate()?.let { return it }
+        val frame = args["frame"]?.asInt() ?: 0
+        val scope = args["scope"]?.asInt()
+        return runGatedTool {
+            InvokeResult.okMessage(engine.debugScope(tokenOf(args, engine), frame, scope))
+        }
+    }
+
+    private fun fmtBytes(n: Long): String = when {
+        n >= 1024 * 1024 -> "${n / (1024 * 1024)}MB"
+        n >= 1024 -> "${n / 1024}KB"
+        else -> "${n}B"
+    }
+
+    private fun JsonElement?.asString(): String? =
         (this as? JsonPrimitive)?.content?.takeIf { it.isNotEmpty() }
 
-    private fun JsonElement?.asInt(): Int? = 
+    private fun JsonElement?.asInt(): Int? =
         (this as? JsonPrimitive)?.content?.toIntOrNull()
+
+    private fun JsonElement?.asBool(): Boolean? =
+        (this as? JsonPrimitive)?.content?.toBooleanStrictOrNull()
 
 
     data class ToolSpec(
@@ -246,12 +533,18 @@ class BrowserMcpTools(
         private fun schema(
             properties: Map<String, String> = emptyMap(),
             required: List<String> = emptyList(),
+        ): JsonObject = schemaEl(properties.entries.associate { (name, type) ->
+            name to buildJsonObject { put("type", JsonPrimitive(type)) }
+        }, required)
+
+        /** 嵌套结构版 schema：属性值直接给 JsonElement（数组/对象等）。 */
+        private fun schemaEl(
+            properties: Map<String, JsonElement> = emptyMap(),
+            required: List<String> = emptyList(),
         ): JsonObject = buildJsonObject {
             put("type", JsonPrimitive("object"))
             put("properties", buildJsonObject {
-                properties.forEach { (name, type) ->
-                    put(name, buildJsonObject { put("type", JsonPrimitive(type)) })
-                }
+                properties.forEach { (name, el) -> put(name, el) }
             })
             if (required.isNotEmpty()) {
                 put("required", JsonArray(required.map(::JsonPrimitive)))
@@ -262,6 +555,80 @@ class BrowserMcpTools(
         private val NO_ARGS = schema(mapOf("tab" to "string"))
         private val URL = schema(mapOf("url" to "string", "tab" to "string"), listOf("url"))
         private val REF = schema(mapOf("ref" to "string", "tab" to "string"), listOf("ref"))
+
+        // ---- hook 工具的嵌套 schema 片段 ----
+        private val strT = buildJsonObject { put("type", JsonPrimitive("string")) }
+        private val intT = buildJsonObject { put("type", JsonPrimitive("integer")) }
+        private val boolT = buildJsonObject { put("type", JsonPrimitive("boolean")) }
+        private val objT = buildJsonObject { put("type", JsonPrimitive("object")) }
+
+        /** actions 数组：item 的 type 取值 log/block/redirect/mock/modify_headers/replace/fake_value。 */
+        private val ACTIONS_SCHEMA: JsonElement = buildJsonObject {
+            put("type", JsonPrimitive("array"))
+            put("items", buildJsonObject {
+                put("type", JsonPrimitive("object"))
+                put("properties", buildJsonObject {
+                    put("type", strT)
+                    put("captureBody", boolT)
+                    put("url", strT)
+                    put("status", intT)
+                    put("headers", objT)
+                    put("body", strT)
+                    put("request", objT)
+                    put("response", objT)
+                    put("code", strT)
+                    put("value", strT)
+                })
+                put("required", JsonArray(listOf(JsonPrimitive("type"))))
+            })
+        }
+
+        private val HOOK_CREATE_SCHEMA: JsonObject = schemaEl(
+            mapOf(
+                "type" to strT,
+                "target" to strT,
+                "name" to strT,
+                "method" to strT,
+                "tab" to strT,
+                "actions" to ACTIONS_SCHEMA,
+                "captureStack" to boolT,
+                "captureBody" to boolT,
+                "enabled" to boolT,
+            ),
+            listOf("type", "target"),
+        )
+        private val INJECT_SCHEMA: JsonObject = schemaEl(
+            mapOf(
+                "code" to strT,
+                "tab" to strT,
+                "persistent" to boolT,
+                "name" to strT,
+            ),
+            listOf("code"),
+        )
+
+        // ---- debug 工具 schema ----
+        private val DEBUG_SET_BP_SCHEMA: JsonObject = schemaEl(
+            mapOf(
+                "url" to strT,
+                "line" to intT,
+                "column" to intT,
+                "condition" to strT,
+                "tab" to strT,
+            ),
+            listOf("url", "line"),
+        )
+        private val DEBUG_STEP_SCHEMA: JsonObject = schemaEl(
+            mapOf("step" to strT, "tab" to strT),
+            listOf("step"),
+        )
+        private val DEBUG_EVAL_SCHEMA: JsonObject = schemaEl(
+            mapOf("expression" to strT, "frame" to intT, "tab" to strT),
+            listOf("expression"),
+        )
+        private val DEBUG_SCOPE_SCHEMA: JsonObject = schemaEl(
+            mapOf("frame" to intT, "scope" to intT, "tab" to strT),
+        )
         private val TOOLS: List<ToolSpec> = listOf(
             ToolSpec("browser.open", BrowserRisk.MEDIUM, BrowserCapability.OPEN, "打开新 tab；返回 tab ID", URL),
             ToolSpec("browser.navigate", BrowserRisk.MEDIUM, BrowserCapability.NAVIGATE, "当前或指定 tab 跳转到 URL", URL),
@@ -294,6 +661,30 @@ class BrowserMcpTools(
             ToolSpec("browser.session_set", BrowserRisk.HIGH, BrowserCapability.SESSION_RW, "写 sessionStorage", schema(mapOf("key" to "string", "value" to "string", "tab" to "string"), listOf("key", "value"))),
             ToolSpec("browser.session_delete", BrowserRisk.HIGH, BrowserCapability.SESSION_RW, "删 sessionStorage", schema(mapOf("key" to "string", "tab" to "string"), listOf("key"))),
             ToolSpec("browser.session_keys", BrowserRisk.MEDIUM, BrowserCapability.SESSION_RW, "列 sessionStorage keys", NO_ARGS),
+            // ===== 注入式 Hook 引擎（阶段 1）=====
+            ToolSpec(
+                "browser.hook_create", BrowserRisk.CRITICAL, BrowserCapability.INSTALL_HOOK,
+                "安装 hook 规则（网页逆向核心工具）。type+target 语义：fetch/xhr/websocket→target 为 URL glob（* ? 通配，如 https://api.example.com/v1/*）；function/method→对象路径（如 JSON.parse）；property→属性路径（如 document.cookie）；storage→local/session；cookie→* 或 cookie 名；console→* 或逗号分隔 level；timer→*/setInterval/setTimeout；crypto→*/random/uuid。actions 动作（按优先级 block>mock>redirect>modify_headers>log）：log（记录，可设 captureBody）、block（阻断）、redirect（换 URL，仅 fetch/xhr）、mock（伪造响应 status/headers/body，仅 fetch/xhr）、modify_headers（改写请求/响应头，值 \"!\" 删除该头，仅 fetch/xhr）、replace（替换函数实现，仅 function/method）、fake_value（伪造 getter 返回值，仅 property）。示例：1) 记录某 API 请求响应体 {type:\"fetch\", target:\"https://api.example.com/v1/*\", actions:[{type:\"log\", captureBody:true}]}；2) mock 接口 {type:\"fetch\", target:\"*/api/user\", actions:[{type:\"mock\", status:200, body:\"{\\\"ok\\\":1}\"}]}；3) hook 函数 {type:\"function\", target:\"JSON.parse\", actions:[{type:\"log\"}]}。建议先用 log 观察再改写",
+                HOOK_CREATE_SCHEMA,
+            ),
+            ToolSpec("browser.hook_list", BrowserRisk.LOW, BrowserCapability.INSTALL_HOOK, "列出已安装 hook 规则与命中计数", schema(mapOf("tab" to "string"))),
+            ToolSpec("browser.hook_remove", BrowserRisk.MEDIUM, BrowserCapability.INSTALL_HOOK, "按 id 移除 hook 规则", schema(mapOf("id" to "string"), listOf("id"))),
+            ToolSpec("browser.hook_reset", BrowserRisk.HIGH, BrowserCapability.INSTALL_HOOK, "清空 hook 规则/持久脚本/命中记录/body（tab 省略时全局）", schema(mapOf("tab" to "string"))),
+            ToolSpec("browser.hook_hits", BrowserRisk.MEDIUM, BrowserCapability.INSTALL_HOOK, "最近 hook 命中记录（函数参数摘要/属性读值等）", schema(mapOf("tab" to "string", "limit" to "integer"))),
+            ToolSpec("browser.inject_script", BrowserRisk.CRITICAL, BrowserCapability.INSTALL_HOOK, "注入 JS 到页面。persistent=false 立即执行一次；persistent=true 注册为持久脚本，每次导航自动重放（适合重定义函数/改原型）。需 allowEvalJs 思路同 evaluate：代码直接作用于真实页面，请谨慎", INJECT_SCHEMA),
+            ToolSpec("browser.network_detail", BrowserRisk.MEDIUM, BrowserCapability.NETWORK_INTERCEPT, "查询单条网络请求的元数据与请求/响应 body（id 来自 network_list；body 需规则 captureBody=true 捕获）", schema(mapOf("id" to "string"), listOf("id"))),
+            // ===== CDP 调试引擎（阶段 2）=====
+            ToolSpec("browser.debug_status", BrowserRisk.LOW, BrowserCapability.CDP_DEBUG, "CDP attach 会话总览：各 tab 的 target/paused/断点数/worker 数", schema()),
+            ToolSpec("browser.debug_attach", BrowserRisk.MEDIUM, BrowserCapability.CDP_DEBUG, "attach tab 开启 CDP 调试（真断点 + Worker 级 Fetch 拦截）。重复 attach 幂等；断点在 detach 后重 attach 自动重放", NO_ARGS),
+            ToolSpec("browser.debug_detach", BrowserRisk.LOW, BrowserCapability.CDP_DEBUG, "分离 CDP 连接（tab 省略=全部）。detach 前自动 resume 防页面冻结", NO_ARGS),
+            ToolSpec("browser.debug_set_breakpoint", BrowserRisk.MEDIUM, BrowserCapability.CDP_DEBUG, "在脚本 URL 的指定行设断点（line/column 均 0-based）。触发后页面暂停，用 debug_state 看调用栈、debug_eval 看变量；**调试完必须 debug_resume**。condition 为可选条件表达式", DEBUG_SET_BP_SCHEMA),
+            ToolSpec("browser.debug_remove_breakpoint", BrowserRisk.LOW, BrowserCapability.CDP_DEBUG, "按 id 移除断点（id 来自 debug_list_breakpoints）", schema(mapOf("id" to "string", "tab" to "string"), listOf("id"))),
+            ToolSpec("browser.debug_list_breakpoints", BrowserRisk.LOW, BrowserCapability.CDP_DEBUG, "列出当前 tab 的断点", schema(mapOf("tab" to "string"))),
+            ToolSpec("browser.debug_resume", BrowserRisk.MEDIUM, BrowserCapability.CDP_DEBUG, "恢复执行（tab 省略=恢复全部 paused 的 tab）。暂停期间页内工具（evaluate/snapshot/click 等）会被冻结拒绝", NO_ARGS),
+            ToolSpec("browser.debug_step", BrowserRisk.MEDIUM, BrowserCapability.CDP_DEBUG, "单步执行：over（跳过函数）/into（进入函数）/out（跳出函数）；多 tab 同时 paused 时必须指定 tab", DEBUG_STEP_SCHEMA),
+            ToolSpec("browser.debug_state", BrowserRisk.LOW, BrowserCapability.CDP_DEBUG, "查看暂停状态：调用栈（帧/函数名/位置/作用域类型）或 running", schema(mapOf("tab" to "string"))),
+            ToolSpec("browser.debug_eval", BrowserRisk.HIGH, BrowserCapability.CDP_DEBUG, "在暂停帧上求值表达式（可读写局部变量；returnByValue）。frame 默认 0（栈顶）；结果超长截断 64KB", DEBUG_EVAL_SCHEMA),
+            ToolSpec("browser.debug_scope", BrowserRisk.MEDIUM, BrowserCapability.CDP_DEBUG, "读取暂停帧的作用域变量：scope 省略时输出全部作用域摘要（类型+变量名列表），指定时输出该作用域的变量名=值明细", DEBUG_SCOPE_SCHEMA),
         )
     }
 }

@@ -4,6 +4,9 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.webkit.WebView
+import androidx.webkit.ScriptHandler
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -16,10 +19,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonPrimitive
 import top.wkbin.taixu.core.browser.BrowserFamily
 import top.wkbin.taixu.runtime.browser.BrowserEvent
 import top.wkbin.taixu.runtime.browser.BrowserEventBus
 import top.wkbin.taixu.runtime.browser.BrowserSessionToken
+import top.wkbin.taixu.runtime.browser.cdp.CdpManager
+import top.wkbin.taixu.runtime.browser.hook.HookEventPipeline
+import top.wkbin.taixu.runtime.browser.hook.HookInstaller
+import top.wkbin.taixu.runtime.browser.hook.HookRuleStore
+import top.wkbin.taixu.runtime.browser.hook.NetworkBodyStore
 import top.wkbin.taixu.runtime.browser.snapshot.SnapshotBuilder
 
 /**
@@ -32,17 +41,51 @@ import top.wkbin.taixu.runtime.browser.snapshot.SnapshotBuilder
  *   防止 WebView 回调协程在视图销毁后继续触发；
  * - 唯一的 [SnapshotBuilder]：engine.snapshot 与 onPageFinished 自动刷新共用同一实例，
  *   避免两套扫描并发重写 data-taixu-ref 属性导致模型侧 ref 与实际元素错位。
+ *
+ * Hook 引擎栈（[hooksEnabled]=true 时创建，否则全部为 null 零开销）：
+ * [hookStore]（规则）+ [hookPipeline]（页内事件管道）+ [hookBodies]（网络 body）+ [hookInstaller]（注入器）。
+ * 与 desktopUserAgent 一样，切换开关需新 tab 或重启生效。
+ *
+ * CDP 栈（[cdpEnabled]=true 时创建）：[cdpManager]（断点 + Worker 级 Fetch 拦截）。
+ * 规则存储与 body 存储在 hooksEnabled||cdpEnabled 任一开启时创建（同一规则双层生效）；
+ * hookPipeline / hookInstaller 仍仅 hooksEnabled 创建。
+ * 每个 tab 注入 `window.__taixuTabId` marker（document-start + 即时求值），
+ * 供 CdpTargetMatcher 在同 URL 多 tab 时精确定位。
  */
 class WebViewTabPool(
     private val context: Context,
     private val eventBus: BrowserEventBus,
     private val desktopUserAgent: Boolean = false,
+    hooksEnabled: Boolean = false,
+    cdpEnabled: Boolean = false,
+    maxCaptureBytes: Long = 6L * 1024 * 1024,
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val mutex = Mutex()
 
     /** tab 数上限：防止 agent 无限开 tab 打爆内存。 */
     private val maxTabs = 8
+
+    // ===== hook / CDP 共享存储（hooksEnabled||cdpEnabled 任一开启即创建） =====
+    val hookStore: HookRuleStore? =
+        if (hooksEnabled || cdpEnabled) HookRuleStore(maxBodyBytes = minOf(maxCaptureBytes, 256L * 1024).toInt()) else null
+    val hookBodies: NetworkBodyStore? =
+        if (hooksEnabled || cdpEnabled) NetworkBodyStore(totalBudgetBytes = maxCaptureBytes) else null
+
+    // ===== hook 引擎栈（仅 hooksEnabled；注入式页内拦截） =====
+    val hookPipeline: HookEventPipeline? =
+        if (hooksEnabled && hookStore != null && hookBodies != null) HookEventPipeline(hookStore, hookBodies, eventBus) else null
+    val hookInstaller: HookInstaller? =
+        if (hookPipeline != null && hookStore != null) {
+            HookInstaller(context, hookPipeline, hookStore).also { hookPipeline.start() }
+        } else null
+
+    // ===== CDP 引擎栈（仅 cdpEnabled；真断点 + Worker 级 Fetch 拦截） =====
+    val cdpManager: CdpManager? =
+        if (cdpEnabled && hookStore != null && hookBodies != null) CdpManager(hookStore, hookBodies, eventBus) else null
+
+    /** __taixuTabId marker 的 document-start 句柄（仅 cdpEnabled 时注册）。 */
+    private val markerHandles = ConcurrentHashMap<String, ScriptHandler>()
 
     private data class Slot(
         val token: BrowserSessionToken,
@@ -80,7 +123,10 @@ class WebViewTabPool(
         val builder = SnapshotBuilder(token, eventBus, scope) { byToken[token.tabId] != null }
         withContext(Dispatchers.Main.immediate) {
             val view = AndroidWebViewFactory.create(context, desktopUserAgent)
-            WebViewClients.attach(view, eventBus, token, this@WebViewTabPool, builder, scope)
+            WebViewClients.attach(view, eventBus, token, this@WebViewTabPool, builder, scope, hookInstaller)
+            // 桥与 document-start 脚本必须在首个 loadUrl 之前装好，最早的请求才不会漏
+            hookInstaller?.onWebViewCreated(token.tabId, view)
+            if (cdpManager != null) installTabMarker(token.tabId, view)
             byToken[token.tabId] = Slot(token, view, scope, builder)
             initialUrl?.let {
                 view.loadUrl(it)
@@ -116,6 +162,12 @@ class WebViewTabPool(
         val slot = byToken.remove(token.tabId)
         slot?.scope?.cancel()
         slot?.builder?.clear(token.tabId)
+        slot?.let { s ->
+            hookInstaller?.onWebViewDestroyed(token.tabId, s.view)
+            hookPipeline?.clearForTab(token.tabId)
+            removeTabMarker(token.tabId)
+        }
+        cdpManager?.onTabClosed(token.tabId)
         if (_activeTab.value?.tabId == token.tabId) {
             _activeTab.value = byToken.values.firstOrNull()?.token
         }
@@ -131,6 +183,12 @@ class WebViewTabPool(
         val slot = byToken.remove(token.tabId)
         slot?.scope?.cancel()
         slot?.builder?.clear(token.tabId)
+        slot?.let { s ->
+            hookInstaller?.onWebViewDestroyed(token.tabId, s.view)
+            hookPipeline?.clearForTab(token.tabId)
+            removeTabMarker(token.tabId)
+        }
+        cdpManager?.onTabClosed(token.tabId)
         if (_activeTab.value?.tabId == token.tabId) {
             _activeTab.value = byToken.values.firstOrNull()?.token
         }
@@ -147,8 +205,14 @@ class WebViewTabPool(
         all.forEach { slot ->
             slot.scope.cancel()
             slot.builder.clear(slot.token.tabId)
-            mainHandler.post { AndroidWebViewFactory.destroy(slot.view) }
+            mainHandler.post {
+                hookInstaller?.onWebViewDestroyed(slot.token.tabId, slot.view)
+                removeTabMarker(slot.token.tabId)
+                AndroidWebViewFactory.destroy(slot.view)
+            }
         }
+        hookPipeline?.shutdown()
+        cdpManager?.shutdown()
         lifecycleScope.cancel()
     }
 
@@ -157,5 +221,32 @@ class WebViewTabPool(
     /** 主线程回调发布事件（经 lifecycleScope 派发，不随 per-tab scope 取消而丢失）。 */
     fun publishFromMain(event: BrowserEvent) {
         lifecycleScope.launch { eventBus.publish(event) }
+    }
+
+    /**
+     * 注入 `window.__taixuTabId` marker（仅 cdpEnabled）：document-start 覆盖后续导航，
+     * 即时求值覆盖当前文档（about:blank 初始页不走 document-start）。
+     * 必须主线程调用。
+     */
+    private fun installTabMarker(tabId: String, view: WebView) {
+        val script = "window.__taixuTabId=${JsonPrimitive(tabId)};"
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            runCatching {
+                markerHandles[tabId] =
+                    WebViewCompat.addDocumentStartJavaScript(view, script, setOf("*"))
+            }
+        }
+        runCatching { view.evaluateJavascript(script, null) }
+    }
+
+    /** 移除 marker 句柄；任意线程可调（内部保证主线程执行）。 */
+    private fun removeTabMarker(tabId: String) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            markerHandles.remove(tabId)?.let { runCatching { it.remove() } }
+        } else {
+            mainHandler.post {
+                markerHandles.remove(tabId)?.let { runCatching { it.remove() } }
+            }
+        }
     }
 }

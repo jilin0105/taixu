@@ -12,5 +12,7 @@ enum class BrowserCapability {
     CONSOLE_READ,
     NETWORK_INTERCEPT,
     COOKIES_RW, LOCAL_RW, SESSION_RW,
-    FILE_FS
+    FILE_FS,
+    INSTALL_HOOK,
+    CDP_DEBUG
 }

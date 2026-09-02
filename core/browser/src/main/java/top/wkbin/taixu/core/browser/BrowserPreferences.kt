@@ -9,6 +9,8 @@ data class BrowserPreferences(
     val coBrowsingEnabled: Boolean = true,
     val allowRemoteConnect: Boolean = false,
     val allowEvalJs: Boolean = false,
+    val allowHooks: Boolean = false,
+    val allowCdp: Boolean = false,
     val desktopUserAgent: Boolean = false,
     val maxCaptureBytes: Int = 6 * 1024 * 1024
 ) {

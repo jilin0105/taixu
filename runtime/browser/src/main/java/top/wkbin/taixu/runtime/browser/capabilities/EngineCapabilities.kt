@@ -25,5 +25,7 @@ object EngineCapabilities {
         BrowserCapability.LOCAL_RW,
         BrowserCapability.SESSION_RW,
         BrowserCapability.FILE_FS,
+        BrowserCapability.INSTALL_HOOK,
+        BrowserCapability.CDP_DEBUG,
     )
 }

@@ -3,6 +3,8 @@ package top.wkbin.taixu.runtime.browser
 import kotlinx.serialization.Serializable
 import top.wkbin.taixu.core.browser.PageSnapshot
 import top.wkbin.taixu.core.model.ToolImageRef
+import top.wkbin.taixu.runtime.browser.cdp.DebugPausedState
+import top.wkbin.taixu.runtime.browser.hook.HookHitRecord
 
 /**
  * 浏览器侧事件总线传输的事件（密封接口）。
@@ -46,6 +48,29 @@ sealed interface BrowserEvent {
         override val at: Long = System.currentTimeMillis()
     ) : BrowserEvent
 
+    /** 注入式 hook 命中（fetch/XHR/函数/属性/WebSocket 等）。 */
+    @Serializable
+    data class HookHit(
+        override val tabId: String,
+        val hit: HookHitRecord,
+        override val at: Long = System.currentTimeMillis()
+    ) : BrowserEvent
+
+    /** CDP Debugger 暂停：断点命中 / 异常等；调用栈见 [state]。 */
+    @Serializable
+    data class DebugPaused(
+        override val tabId: String,
+        val state: DebugPausedState,
+        override val at: Long = System.currentTimeMillis()
+    ) : BrowserEvent
+
+    /** CDP Debugger 恢复执行（resume/step 之后）。 */
+    @Serializable
+    data class DebugResumed(
+        override val tabId: String,
+        override val at: Long = System.currentTimeMillis()
+    ) : BrowserEvent
+
     @Serializable
     data class UserInteractionHappened(
         override val tabId: String,
@@ -82,7 +107,17 @@ data class CapturedRequest(
     val responseHeaders: Map<String, String> = emptyMap(),
     val startedAt: Long,
     val finishedAt: Long = 0L,
-    val errorMessage: String = ""
+    val errorMessage: String = "",
+    /** "native"（shouldInterceptRequest）/"js"（hook 引擎）/"cdp"（CDP Fetch 域，覆盖 Worker 与子资源）。 */
+    val source: String = "native",
+    val initiator: String = "",
+    val durationMs: Long = 0L,
+    val requestSize: Long = 0L,
+    val responseSize: Long = 0L,
+    val hasRequestBody: Boolean = false,
+    val hasResponseBody: Boolean = false,
+    val ruleId: String = "",
+    val actionTaken: String = "",
 )
 
 @Serializable

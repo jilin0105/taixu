@@ -41,7 +41,14 @@ class BrowserMcpBootstrap @Inject constructor(
         val regImpl = registry as? BrowserRegistryImpl ?: return false
         val prefs = readPrefs()
         if (registry.get(BrowserFamily.IN_APP) == null) {
-            val pool = WebViewTabPool(context, registry.eventBus, desktopUserAgent = prefs.desktopUserAgent)
+            // hooksEnabled/cdpEnabled 与 desktopUserAgent 一样：池级开关，切换需重启（或新引擎注册）才生效
+            val pool = WebViewTabPool(
+                context, registry.eventBus,
+                desktopUserAgent = prefs.desktopUserAgent,
+                hooksEnabled = prefs.allowHooks,
+                cdpEnabled = prefs.allowCdp,
+                maxCaptureBytes = prefs.maxCaptureBytes.toLong(),
+            )
             val engine = AndroidInAppBrowserEngine(context, registry.eventBus, pool)
             regImpl.registerEngine(engine)
         }
@@ -69,6 +76,8 @@ class BrowserMcpBootstrap @Inject constructor(
                 coBrowsingEnabled = browserPrefs.coBrowsingEnabled().first(),
                 allowRemoteConnect = browserPrefs.allowRemoteConnect().first(),
                 allowEvalJs = browserPrefs.allowEvalJs().first(),
+                allowHooks = browserPrefs.allowHooks().first(),
+                allowCdp = browserPrefs.allowCdp().first(),
                 desktopUserAgent = browserPrefs.desktopUserAgent().first(),
                 maxCaptureBytes = browserPrefs.maxCaptureBytes().first(),
             )
