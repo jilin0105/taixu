@@ -44,12 +44,12 @@ class BrowserMcpTools(
         val engine = pickEngine(explicitTokenOf(args)) ?: return InvokeResult.error("无浏览器引擎")
         return when (toolName) {
             "browser.open" -> {
-                val url = args["url"]?.asString() ?: prefs.homeUrl
+                val url = sanitizeUrl(args["url"]?.asString()).ifEmpty { prefs.homeUrl }
                 val token = engine.openTab(url)
                 InvokeResult.okMessage("opened tab=${token.tabId} url=${url}")
             }
             "browser.navigate" -> {
-                val url = args["url"]?.asString().orEmpty()
+                val url = sanitizeUrl(args["url"]?.asString())
                 if (url.isBlank()) InvokeResult.error("缺少 url 参数") else {
                 engine.navigate(tokenOf(args, engine), url); InvokeResult.okMessage("navigated=$url")
                 }
@@ -156,10 +156,29 @@ class BrowserMcpTools(
         return BrowserSessionToken(tabId = tabId, family = prefs.resolvedFamily)
     }
 
-    private fun tokenOf(args: JsonObject, engine: BrowserEngine): BrowserSessionToken =
-        args["tab"]?.asString()?.let { BrowserSessionToken(tabId = it, family = engine.family) }
-            ?: engine.activeTab()
-            ?: BrowserSessionToken.defaultTab(engine.family)
+    /**
+     * 解析工具调用的目标 tab token。
+     * 归一化容错：模型常把 list_tabs 输出的 `t:xxx` 传成 `xxx`（丢前缀），
+     * 先精确匹配再后缀匹配已存在的 tab，均未命中时保留原值让引擎报 not found。
+     */
+    private suspend fun tokenOf(args: JsonObject, engine: BrowserEngine): BrowserSessionToken {
+        val raw = args["tab"]?.asString()
+        if (raw.isNullOrBlank()) {
+            return engine.activeTab() ?: BrowserSessionToken.defaultTab(engine.family)
+        }
+        if (raw == BrowserSessionToken.DEFAULT_TAB_ID) {
+            return BrowserSessionToken(raw, engine.family)
+        }
+        val tabs = engine.listTabs()
+        val normalized = tabs.firstOrNull { it.tabId == raw }?.tabId
+            ?: tabs.firstOrNull { it.tabId.endsWith(raw) }?.tabId
+            ?: raw
+        return BrowserSessionToken(tabId = normalized, family = engine.family)
+    }
+
+    /** URL 清洗：模型偶发把 URL 包在反引号或首尾空白里（`https://x.test`），剥离后再交给引擎。 */
+    private fun sanitizeUrl(raw: String?): String =
+        raw?.trim()?.trim('`')?.trim().orEmpty()
 
     private fun pickEngine(token: BrowserSessionToken): BrowserEngine? {
         return engineSelector(token) ?: engines.firstOrNull()
@@ -402,7 +421,8 @@ class BrowserMcpTools(
 
     private suspend fun handleDebugSetBreakpoint(engine: BrowserEngine, args: JsonObject): InvokeResult {
         debugGate()?.let { return it }
-        val url = args["url"]?.asString() ?: return InvokeResult.error("缺少 url（脚本 URL，如 https://x.test/app.js）")
+        val url = sanitizeUrl(args["url"]?.asString())
+        if (url.isEmpty()) return InvokeResult.error("缺少 url（脚本 URL，如 https://x.test/app.js）")
         val line = args["line"]?.asInt() ?: return InvokeResult.error("缺少 line（0-based 行号）")
         val column = args["column"]?.asInt() ?: 0
         val condition = args["condition"]?.asString()
