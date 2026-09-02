@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.core.database
+package top.wkbin.taixu.core.database
 
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
@@ -141,5 +141,12 @@ val MIGRATION_40_41 = object : Migration(40, 41) {
 val MIGRATION_41_42 = object : Migration(41, 42) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE harness_models ADD COLUMN imageGenerationEnabled INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
+/** 跟踪内置 MCP 是否被用户手动切换过启停：0 = 跟随预设默认值，1 = 尊重用户选择。 */
+val MIGRATION_42_43 = object : Migration(42, 43) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE mcp_servers ADD COLUMN userToggled INTEGER NOT NULL DEFAULT 0")
     }
 }

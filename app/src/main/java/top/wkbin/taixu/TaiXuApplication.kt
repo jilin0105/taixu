@@ -16,6 +16,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -39,19 +40,39 @@ class TaiXuApplication : Application() {
         configureCursorWindowSize()
         crashReporter.install()
         appScope.launch(Dispatchers.IO) {
-            // 上一次未捕获崩溃会先落在应用私有目录；下次启动后复制到公共下载目录，
-            // 方便测试用户直接从 Download/TaiXu/crash-reports 取出并反馈。
-            runCatching { crashReporter.exportPendingReports() }
-            runCatching { privilegeManager.reconcilePersistedMode() }
-            // 启动进程内 MCP HTTP server（loopback 127.0.0.1:8787）供 harness / 外部 IDE 接入浏览器工具
-            runCatching { browserMcpBootstrap.bootstrap() }
-            agentSkillRepositoryLazy.get().ensureInitialized()
-            mcpServerRepositoryLazy.get().ensureInitialized()
+            // 并发执行互不依赖的启动任务（crash 导出 / 特权恢复 / 浏览器 MCP bootstrap /
+            // 技能入库 / MCP 预设入库），单任务失败不拖垮其他任务。
+            coroutineScope {
+                // 上一次未捕获崩溃会先落在应用私有目录；下次启动后复制到公共下载目录，
+                // 方便测试用户直接从 Download/TaiXu/crash-reports 取出并反馈。
+                launch { runCatching { crashReporter.exportPendingReports() } }
+                launch { runCatching { privilegeManager.reconcilePersistedMode() } }
+                // 启动进程内 MCP HTTP server（loopback 127.0.0.1:8787）供 harness / 外部 IDE 接入浏览器工具
+                launch { runCatching { browserMcpBootstrap.bootstrap() } }
+                launch { runCatching { agentSkillRepositoryLazy.get().ensureInitialized() } }
+                launch { runCatching { mcpServerRepositoryLazy.get().ensureInitialized() } }
+            }
             settingsDataStore.incrementLaunchCount()
+            // 时序门：上面的任务全部就绪后才构造 HarnessLoop——
+            //  1) MCP 预设已入库：McpManager 预热（构造时触发）能读到完整 server 列表，
+            //     否则首启预热读到空表，第一轮对话缺工具；
+            //  2) 浏览器 HTTP server 已监听 + 引擎已注册：内置 browser server 的自环发现
+            //     不会撞"连接拒绝 → 5 分钟冷却"；
+            //  3) 构造不再由前台服务监听协程在主线程提前触发（重 Hilt 图主线程构造即启动 jank，
+            //     且预热时机不受控）。即使页面抢先注入触发构造，预热失败也按轮自愈，此处只是尽量保证顺序。
+            val harnessLoop = harnessLoopLazy.get()
+            // Agent 开始执行时拉起前台服务，保证后台存活 + 通知进度；结束后由服务发带回复框的通知。
+            // 并入本协程：构造完成后才开始监听，不再单独开协程抢构造。
+            launch {
+                harnessLoop.running.collectLatest { running ->
+                    if (running) {
+                        runCatching { AgentForegroundService.start(this@TaiXuApplication) }
+                    }
+                }
+            }
             // 进程被杀后重启时，先按 operation replay policy 修复中断检查点，再续跑已
             // 获得 autoResume 授权且仍有尝试预算的 durable task。等待审批的任务保持冻结，
             // 不可重放工具只写中断结果，绝不自动再次产生副作用。
-            val harnessLoop = harnessLoopLazy.get()
             runCatching {
                 val recovered = harnessLoop.recoverAllInterruptedSessions()
                 if (recovered > 0) {
@@ -59,14 +80,6 @@ class TaiXuApplication : Application() {
                 }
             }.onFailure {
                 android.util.Log.w("TaiXuApp", "恢复中断会话失败", it)
-            }
-        }
-        // Agent 开始执行时拉起前台服务，保证后台存活 + 通知进度；结束后由服务发带回复框的通知。
-        appScope.launch {
-            harnessLoopLazy.get().running.collectLatest { running ->
-                if (running) {
-                    runCatching { AgentForegroundService.start(this@TaiXuApplication) }
-                }
             }
         }
     }

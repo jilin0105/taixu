@@ -405,9 +405,10 @@ class SystemPromptBuilder @Inject constructor(
          */
         internal val mcpUsageGuidance: Map<String, String> = mapOf(
             "mcp_codegraph" to "代码检索、项目重构、架构分析、符号定位、调用链与影响面分析（具体检索策略见 code-navigation 规则块）",
-            "mcp_websearch" to "需要联网搜索、获取最新信息、查找外部资料，或搜索到结果后抓取对应网页正文时使用",
-            "mcp_git" to "分析 Git 历史提交、分支拓扑、Diff 差异与仓库状态时使用",
-            "mcp_sqlite" to "查询、分析沙箱或工作区内的 SQLite 数据库时使用",
+            BuiltinMcpPresets.BROWSER_BUILTIN_ID to "用户要求打开/浏览具体网站（如\"打开百度\"\"去 GitHub 看看某仓库\"）、在真实浏览器里可视化操作页面（导航、点击、输入、截图、读 console）、从网页 API 拉取数据、做浏览器脚本测试时使用。与 websearch 的边界：用户点名网站或要看\"浏览器里发生了什么\"→ 用浏览器工具真实导航操作；只要纯文本检索结果不要可视化 → 用 websearch。用户说\"打开 XX 搜索 YY\"属于前者，应打开该网站并在页面内完成搜索",
+            "mcp_websearch" to "仅需联网获取文本资料（最新资讯、文档、外部信息）时使用；用户明确要求打开某个网站、或在浏览器里可视化操作/抓取页面时改用内置浏览器工具",
+            "mcp_git" to "只读分析 Git 历史提交、分支拓扑、Diff 差异与仓库状态时使用；实际变更仓库（add/commit/push/checkout 等）改用 base 执行 git 命令",
+            "mcp_sqlite" to "交互式查询与表结构分析 SQLite 数据库时使用；批量导入/dump/迁移等脚本化操作改用 base",
             "mcp_apktool" to "APK 逆向、清单权限解析、硬编码凭据提取、Smali 敏感代码检索时使用",
         )
 

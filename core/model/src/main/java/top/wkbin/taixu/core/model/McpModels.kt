@@ -127,7 +127,7 @@ object BuiltinMcpPresets {
             transportType = McpTransportType.STDIO,
             command = "python3",
             args = listOf("-u", "/opt/taixu/scripts/sqlite_mcp_server.py", "--db-path", "/root/taixu.db"),
-            isEnabled = false,
+            isEnabled = true,
             isBuiltin = true,
         ),
         McpServerConfig(
@@ -137,7 +137,7 @@ object BuiltinMcpPresets {
             transportType = McpTransportType.STDIO,
             command = "python3",
             args = listOf("-u", "/opt/taixu/scripts/git_mcp_server.py", "--repository", "/workspace"),
-            isEnabled = false,
+            isEnabled = true,
             isBuiltin = true,
         ),
         McpServerConfig(
@@ -147,7 +147,7 @@ object BuiltinMcpPresets {
             transportType = McpTransportType.STDIO,
             command = "python3",
             args = listOf("-u", "/opt/taixu/scripts/apktool_mcp_server.py"),
-            isEnabled = false,
+            isEnabled = true,
             isBuiltin = true,
         ),
         McpServerConfig(
@@ -157,7 +157,7 @@ object BuiltinMcpPresets {
             transportType = McpTransportType.STDIO,
             command = "python3",
             args = listOf("-u", "/opt/taixu/scripts/codegraph_mcp_server.py", "--repository", "/workspace"),
-            isEnabled = false,
+            isEnabled = true,
             isBuiltin = true,
         ),
         McpServerConfig(
@@ -170,7 +170,7 @@ object BuiltinMcpPresets {
             env = mapOf(
                 "DEFAULT_SEARCH_ENGINE" to "baidu",
             ),
-            isEnabled = false,
+            isEnabled = true,
             isBuiltin = true,
         ),
         McpServerConfig(

@@ -29,6 +29,8 @@ data class McpServerEntity(
     val serverUrl: String,
     val isEnabled: Boolean,
     val isBuiltin: Boolean,
+    /** 用户是否手动切换过启停：false = 跟随内置预设默认值，true = 尊重用户当前选择。 */
+    val userToggled: Boolean = false,
 )
 
 @Dao
@@ -57,8 +59,12 @@ interface McpServerDao {
         serverUrl: String,
     )
 
-    @Query("UPDATE mcp_servers SET isEnabled = :enabled WHERE id = :id")
+    @Query("UPDATE mcp_servers SET isEnabled = :enabled, userToggled = 1 WHERE id = :id")
     suspend fun setEnabled(id: String, enabled: Boolean)
+
+    /** 同步内置服务的默认启停：仅作用于用户从未手动切换过的行，尊重用户显式选择。 */
+    @Query("UPDATE mcp_servers SET isEnabled = :enabled WHERE id = :id AND isBuiltin = 1 AND userToggled = 0")
+    suspend fun syncBuiltinDefault(id: String, enabled: Boolean)
 
     @Query("SELECT id FROM mcp_servers WHERE isBuiltin = 1")
     suspend fun findAllBuiltinIds(): List<String>
@@ -85,8 +91,7 @@ class McpServerRepository @Inject constructor(
             if (dao.findById(preset.id) == null) {
                 dao.upsert(entity)
             } else {
-                // 更新内置服务的启动定义（例如从失效 npx 包迁移到 APK 自带脚本），
-                // 但保留用户当前的启用/停用状态。
+                // 更新内置服务的启动定义（例如从失效 npx 包迁移到 APK 自带脚本）。
                 dao.updateBuiltinDefinition(
                     id = entity.id,
                     name = entity.name,
@@ -97,6 +102,9 @@ class McpServerRepository @Inject constructor(
                     envCiphertext = entity.envCiphertext,
                     serverUrl = entity.serverUrl,
                 )
+                // 用户从未手动切换过启停的行跟随当前预设默认值
+                // （默认值从关闭改为开启后，存量安装也能自动启用，无需手动开启）。
+                dao.syncBuiltinDefault(entity.id, entity.isEnabled)
             }
         }
         // 清理已被移除的内置预设：代码不再提供的系统核心 MCP 从库中移除，
