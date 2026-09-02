@@ -107,7 +107,17 @@ class ChatViewModel @Inject constructor(
     private val providerRepository: ProviderRepository,
     private val profileWriter: top.wkbin.taixu.core.tools.AiProfileWriter,
     private val privilegeManager: top.wkbin.taixu.runtime.privilege.PrivilegeManager,
+    private val pathManager: top.wkbin.taixu.runtime.RuntimePathManager,
 ) : ViewModel() {
+
+    /**
+     * 模型回复里引用的沙箱绝对路径（如 /workspace/xxx.jpg）到宿主真实目录的映射，
+     * 供聊天媒体渲染把 PRoot 内路径翻译成 Android 可读文件。
+     */
+    val sandboxHostRoots: Map<String, java.io.File> = mapOf(
+        "workspace" to pathManager.workspaceDir,
+        "attachments" to pathManager.attachmentsDir,
+    )
 
     /** 空会话首屏权限感知引导：按实际特权状态给出不同玩法提示。 */
     val privilegeOnboarding: StateFlow<OnboardingPrivilege?> =

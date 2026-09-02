@@ -701,6 +701,16 @@ class ToolExecutor @Inject constructor(
         }
         val file = completedFile ?: destination
         val size = file.length()
+        if (hasImageExtension(destination) && !isImageMagic(destination)) {
+            return false to buildString {
+                append("下载失败：目标应为图片，但内容不是有效的图片格式（JPEG/PNG/GIF/WebP/BMP）。")
+                append("\n来源：").append(url)
+                append("\n大小：").append(size).append(" bytes")
+                append("\n常见原因：图床反爬/防盗链返回了占位图或错误页，或链接已过期。")
+                append("\n建议：更换图源（换站点/换域名）或稍后重试，不要用相同 URL 原样重试。")
+            }
+        }
+        val duplicateOf = findDuplicateDownload(destination)
         val body = buildString {
             append("下载完成：").append(destinationPath)
             append("\n大小：").append(size).append(" bytes")
@@ -708,8 +718,65 @@ class ToolExecutor @Inject constructor(
             append("\n特性：HTTPS、HTTP Range 断点续传、自动重试（最多 ").append(maxAttempts).append(" 次）")
             if (verified) append("\nSHA-256：已校验")
             append("\n说明：当前下载器是单连接续传，不是多线程分片下载。")
+            if (duplicateOf != null) {
+                append("\n\n警告：本次下载内容与工作区已有文件 ").append(duplicateOf)
+                append(" 完全相同（SHA-256 一致），疑似图床反爬占位图。请立即更换图源（换站点/换域名），")
+                append("不要继续从同一图床高频下载，也不要重复下载相同的 URL。")
+            }
         }
         return true to body
+    }
+
+    private fun hasImageExtension(file: java.io.File): Boolean =
+        file.extension.lowercase() in IMAGE_DOWNLOAD_EXTENSIONS
+
+    private fun isImageMagic(file: java.io.File): Boolean {
+        val head = ByteArray(16)
+        val read = try {
+            java.io.FileInputStream(file).use { it.read(head) }
+        } catch (_: java.io.IOException) {
+            return true
+        }
+        if (read < 3) return false
+        val jpeg = head[0] == 0xFF.toByte() && head[1] == 0xD8.toByte() && head[2] == 0xFF.toByte()
+        val png = read >= 8 && head[0] == 0x89.toByte() && head[1] == 0x50.toByte() && head[2] == 0x4E.toByte() && head[3] == 0x47.toByte()
+        val gif = head[0] == 0x47.toByte() && head[1] == 0x49.toByte() && head[2] == 0x46.toByte()
+        val bmp = head[0] == 0x42.toByte() && head[1] == 0x4D.toByte()
+        val webp = read >= 12 && head[0] == 0x52.toByte() && head[1] == 0x49.toByte() && head[2] == 0x46.toByte() && head[3] == 0x46.toByte() &&
+            head[8] == 0x57.toByte() && head[9] == 0x45.toByte() && head[10] == 0x42.toByte() && head[11] == 0x50.toByte()
+        return jpeg || png || gif || bmp || webp
+    }
+
+    /** 检测同目录下是否已有字节完全相同的文件（反爬占位图的典型特征：不同 URL 下载结果一模一样）。 */
+    private fun findDuplicateDownload(file: java.io.File): String? {
+        if (file.length() <= 0L || file.length() > 32L * 1024 * 1024) return null
+        val parent = file.parentFile ?: return null
+        val candidates = parent.listFiles { f -> f.isFile && f.name != file.name && f.length() == file.length() }
+            ?: return null
+        val digest = try {
+            sha256Of(file)
+        } catch (_: Exception) {
+            return null
+        } ?: return null
+        for (candidate in candidates) {
+            if (sha256Of(candidate) == digest) return candidate.name
+        }
+        return null
+    }
+
+    private fun sha256Of(file: java.io.File): String? = try {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        java.io.FileInputStream(file).use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        digest.digest().joinToString("") { "%02x".format(it) }
+    } catch (_: Exception) {
+        null
     }
 
     private fun formatDownloadProgress(event: DownloadEvent.Progress, startedAt: Long): String {
@@ -794,6 +861,7 @@ class ToolExecutor @Inject constructor(
         private val LOGCAT_TAG = Regex("^[A-Za-z0-9_.-]{1,80}$")
         const val DEFAULT_DOWNLOAD_MAX_BYTES = 1024L * 1024L * 1024L
         const val MAX_DOWNLOAD_MAX_BYTES = 4L * 1024L * 1024L * 1024L
+        private val IMAGE_DOWNLOAD_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
         const val PROGRESS_REPORT_INTERVAL_MS = 250L
         const val DEFAULT_PROCESS_LOG_LINES = 120L
         const val MAX_PROCESS_LOG_LINES = 500L

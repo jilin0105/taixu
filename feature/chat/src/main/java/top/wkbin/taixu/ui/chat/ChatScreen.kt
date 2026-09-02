@@ -45,6 +45,7 @@ import androidx.compose.material3.Text
 import top.wkbin.taixu.ui.components.RuntimeTextButton as TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -343,6 +344,9 @@ fun ChatScreen(
             )
         }
 
+    // 模型回复里的 /workspace、/attachments 等沙箱路径在此翻译为宿主真实文件，
+    // 否则 Coil 会按 Android 根文件系统路径加载而必然失败。
+    CompositionLocalProvider(LocalSandboxHostRoots provides viewModel.sandboxHostRoots) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -798,6 +802,7 @@ fun ChatScreen(
             },
         )
     }
+    } // CompositionLocalProvider(LocalSandboxHostRoots)
 }
 
 @Composable

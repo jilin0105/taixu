@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.core.network
+package top.wkbin.taixu.core.network
 
 import java.io.File
 import java.io.FileOutputStream
@@ -128,6 +128,9 @@ class ResumableFileDownloader @Inject constructor(
             throw DownloadError.Storage("临时下载文件超过大小限制：${request.maxBytes} bytes")
         }
         httpClient.prepareGet(request.url) {
+            // 图床/CDN 普遍对无 UA 的裸请求做反爬（返回统一占位图），模拟浏览器并带上站点根 Referer。
+            header(HttpHeaders.UserAgent, BROWSER_USER_AGENT)
+            header("Referer", refererRootOf(request.url))
             if (existingBytes > 0L) {
                 header(HttpHeaders.Range, "bytes=$existingBytes-")
             }
@@ -203,10 +206,22 @@ class ResumableFileDownloader @Inject constructor(
         }
     }
 
+    private fun refererRootOf(url: String): String {
+        val schemeEnd = url.indexOf("://")
+        if (schemeEnd <= 0) return url
+        val hostStart = schemeEnd + 3
+        if (hostStart >= url.length) return url
+        val host = url.substring(hostStart).substringBefore('/').substringBefore('?').substringBefore('#')
+        if (host.isEmpty()) return url
+        return url.substring(0, hostStart) + host + "/"
+    }
+
     private class RestartFromZeroException : IOException()
 
     private companion object {
         const val BUFFER_SIZE = 64 * 1024
         const val RETRY_DELAY_MS = 500L
+        const val BROWSER_USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) 122.0.0.0 Mobile Safari/537.36"
     }
 }
