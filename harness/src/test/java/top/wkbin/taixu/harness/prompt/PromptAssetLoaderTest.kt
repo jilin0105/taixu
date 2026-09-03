@@ -76,6 +76,8 @@ class PromptAssetLoaderTest {
             "WORKSPACE_LINE" to "工作区：/workspace/demo",
             "ROLE_PROMPT" to "be precise",
             "TASK_PROMPT" to "run tests",
+            "WRITE_LINE" to "限定写入范围：app/src/ui",
+            "FACTS_PACK" to "## 父级上下文事实包\n- 测试事实",
         )
         listMarkdowns("prompts").forEach { path ->
             val rendered = loader.render(path, variables)

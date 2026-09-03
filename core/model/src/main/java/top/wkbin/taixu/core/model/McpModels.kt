@@ -110,6 +110,8 @@ data class SubagentTaskSpec(
     val department: String = "",
     /** Short English professional keywords matched against id/name/description locally. */
     val agentQuery: String = "",
+    /** 子任务声明的写目标文件/目录（相对或绝对路径）。空列表 = 整工作区租约（串行启动）。 */
+    val writePaths: List<String> = emptyList(),
 )
 
 /**

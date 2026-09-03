@@ -1,5 +1,6 @@
 package top.wkbin.taixu.harness
 
+import top.wkbin.taixu.core.database.AgentContextRepository
 import top.wkbin.taixu.core.database.HarnessSessionRepository
 import top.wkbin.taixu.core.model.AgentSubagent
 import top.wkbin.taixu.core.model.AgentSubagentIndexEntry
@@ -41,6 +42,7 @@ class SubagentOrchestrator @Inject constructor(
     private val laneRunner: SubagentLaneRunner,
     private val subagentRepository: top.wkbin.taixu.core.database.AgentSubagentRepository,
     private val promptAssets: PromptAssetLoader,
+    private val agentContextRepo: AgentContextRepository,
 ) {
     /**
      * Application-wide budget: a three-agent fan-out should actually run three lanes at once,
@@ -69,42 +71,60 @@ class SubagentOrchestrator @Inject constructor(
         }
         val parentLeaf = laneManager.get(parentSessionId, "main")?.leafId
 
-        val results = specs.map { spec ->
-            async {
-                globalParallelism.withPermit {
-                    val profile = resolveProfile(spec, profileIndex)
-                    if (profile == null) {
-                        return@withPermit SubagentExecutionOutcome(
-                            spec = spec,
-                            subSessionId = "",
-                            isSuccess = false,
-                            summary = routingFailure(spec),
-                            toolCallCount = 0,
-                        )
+        // 写租约协调：把任务按 write_paths 冲突切成若干"写不冲突"的波。
+        // 同一波内的写路径互不相交 → 可并行（受 globalParallelism 约束）；跨波顺序执行。
+        // 未声明 write_paths 的任务按"整工作区租约"处理 → 自身独占一波 → 串行。
+        val results = mutableListOf<SubagentExecutionOutcome>()
+        for (wave in buildWriteCleanWaves(specs)) {
+            results += wave.map { spec ->
+                async {
+                    globalParallelism.withPermit {
+                        runSubagent(spec, parentSessionId, parentLeaf, workspace, modelId, modelVariant, profileIndex)
                     }
-                    val laneName = "subagent:${profile.id}:${java.util.UUID.randomUUID()}"
-                    laneManager.create(parentSessionId, laneName, parentLeaf)
-                    val prompt = buildSubagentPrompt(spec, profile, workspace)
-                    val laneResult = withTimeoutOrNull(SUBAGENT_TIMEOUT_MS) {
-                        laneRunner.run(parentSessionId, laneName, prompt, workspace, modelId, modelVariant)
-                    }
-
-                    SubagentExecutionOutcome(
-                        spec = spec,
-                        subSessionId = laneName,
-                        isSuccess = laneResult?.success == true,
-                        summary = laneResult?.summary ?: "执行超时 (${SUBAGENT_TIMEOUT_MS / 60_000} 分钟)",
-                        toolCallCount = laneResult?.toolCallCount ?: 0,
-                        resolvedProfileId = profile.id,
-                        resolvedProfileName = profile.name,
-                    )
                 }
-            }
-        }.awaitAll()
+            }.awaitAll()
+        }
 
         val summaryMarkdown = buildSummaryMarkdown(results)
         val anySuccess = results.any { it.isSuccess }
         anySuccess to summaryMarkdown
+    }
+
+    private suspend fun runSubagent(
+        spec: SubagentTaskSpec,
+        parentSessionId: String,
+        parentLeaf: String?,
+        workspace: String,
+        modelId: String?,
+        modelVariant: String?,
+        profileIndex: List<AgentSubagentIndexEntry>,
+    ): SubagentExecutionOutcome {
+        val profile = resolveProfile(spec, profileIndex)
+        if (profile == null) {
+            return SubagentExecutionOutcome(
+                spec = spec,
+                subSessionId = "",
+                isSuccess = false,
+                summary = routingFailure(spec),
+                toolCallCount = 0,
+            )
+        }
+        val laneName = "subagent:${profile.id}:${java.util.UUID.randomUUID()}"
+        laneManager.create(parentSessionId, laneName, parentLeaf)
+        val prompt = buildSubagentPrompt(spec, profile, workspace, parentSessionId)
+        val laneResult = withTimeoutOrNull(SUBAGENT_TIMEOUT_MS) {
+            laneRunner.run(parentSessionId, laneName, prompt, workspace, modelId, modelVariant)
+        }
+
+        return SubagentExecutionOutcome(
+            spec = spec,
+            subSessionId = laneName,
+            isSuccess = laneResult?.success == true,
+            summary = laneResult?.summary ?: "执行超时 (${SUBAGENT_TIMEOUT_MS / 60_000} 分钟)",
+            toolCallCount = laneResult?.toolCallCount ?: 0,
+            resolvedProfileId = profile.id,
+            resolvedProfileName = profile.name,
+        )
     }
 
     private suspend fun resolveProfile(
@@ -129,7 +149,18 @@ class SubagentOrchestrator @Inject constructor(
             "请保留部门并改用 2–5 个更具体的英文专业关键词。"
     }
 
-    private fun buildSubagentPrompt(spec: SubagentTaskSpec, profile: AgentSubagent, workspace: String): String {
+    private suspend fun buildSubagentPrompt(
+        spec: SubagentTaskSpec,
+        profile: AgentSubagent,
+        workspace: String,
+        parentSessionId: String,
+    ): String {
+        val factsPack = buildParentFactsPack(parentSessionId, workspace)
+        val writeLine = if (spec.writePaths.isNotEmpty()) {
+            "限定写入范围（请只在这些文件/目录下写，勿越界）：${spec.writePaths.joinToString("、")}"
+        } else {
+            "未限定写入范围：请仅在你的任务所需范围内修改文件，避免覆盖其他并行子任务的工作成果。"
+        }
         return promptAssets.render(
             "prompts/subagent_task.md",
             mapOf(
@@ -139,8 +170,23 @@ class SubagentOrchestrator @Inject constructor(
                 "WORKSPACE_LINE" to workspace.takeIf { it.isNotBlank() }?.let { "工作区：$it" }.orEmpty(),
                 "ROLE_PROMPT" to profile.systemPrompt.trim(),
                 "TASK_PROMPT" to spec.prompt,
+                "WRITE_LINE" to writeLine,
+                "FACTS_PACK" to factsPack,
             ),
         )
+    }
+
+    /** 父级 facts pack：把父会话已 pin 的长期指令/事实浓缩为一段低体积背景，而非整段父 transcript。 */
+    private suspend fun buildParentFactsPack(parentSessionId: String, workspace: String): String {
+        val pinned = runCatching {
+            agentContextRepo.getPinnedMemories(
+                projectOwnerId = workspace.trim().trimEnd('/'),
+                sessionId = parentSessionId,
+            )
+        }.getOrDefault(emptyList())
+        if (pinned.isEmpty()) return ""
+        return "## 父级上下文事实包（父会话已 pin 的指令/事实，作为本子任务的背景参考）\n" +
+            pinned.joinToString("\n") { "- [${it.scope}/${it.kind}] ${it.key}: ${it.value}" }
     }
 
     private companion object {
@@ -181,5 +227,36 @@ class SubagentOrchestrator @Inject constructor(
         val resolvedProfileId: String? = null,
         val resolvedProfileName: String? = null,
     )
-
 }
+
+/**
+ * 将任务按 write_paths 冲突切成若干互不相交的"波"。
+ * 同一波内所有任务的写路径集合互不重叠 → 可安全并行执行。
+ * 空 writePaths 的任务视为"整工作区租约" → 与一切任务冲突 → 独占一波（串行）。
+ */
+internal fun buildWriteCleanWaves(specs: List<SubagentTaskSpec>): List<List<SubagentTaskSpec>> {
+    val waves = mutableListOf<MutableList<SubagentTaskSpec>>()
+    val waveIsWhole = mutableListOf<Boolean>()       // 该波是否持整工作区租约
+    val wavePaths = mutableListOf<MutableSet<String>>() // 该波已占用的写路径
+    for (spec in specs) {
+        val paths = spec.writePaths.mapTo(hashSetOf()) { normalizeWritePath(it) }
+        val specIsWhole = paths.isEmpty()
+        val joinIndex = if (specIsWhole) {
+            null
+        } else {
+            waves.indices.firstOrNull { i -> !waveIsWhole[i] && wavePaths[i].intersect(paths).isEmpty() }
+        }
+        if (joinIndex != null && joinIndex >= 0) {
+            waves[joinIndex].add(spec)
+            wavePaths[joinIndex].addAll(paths)
+        } else {
+            waves.add(mutableListOf(spec))
+            waveIsWhole.add(specIsWhole)
+            wavePaths.add(paths)
+        }
+    }
+    return waves
+}
+
+/** 规范化写路径，统一去掉首尾斜杠，保证跨子任务的路径比较稳定。 */
+internal fun normalizeWritePath(path: String): String = path.trim().trim('/')

@@ -96,5 +96,32 @@ class SubagentArgsParserTest {
         assertTrue(SubagentArgsParser.parse(args).isEmpty())
     }
 
+    @Test
+    fun `parses writePaths as an array or a single string`() {
+        val args = jsonObject(
+            """{"subagents":
+                [
+                    {"taskName":"前端","role":"coder","prompt":"写前端","writePaths":["app/src/ui/","/app/src/model/core.kt"]},
+                    {"taskName":"后端","role":"coder","prompt":"写后端","writePaths":"server/src"}
+                ]}""",
+        )
+
+        val result = SubagentArgsParser.parse(args)
+
+        assertEquals(listOf("app/src/ui/", "/app/src/model/core.kt"), result[0].writePaths)
+        assertEquals(listOf("server/src"), result[1].writePaths)
+    }
+
+    @Test
+    fun `tasks without writePaths default to whole workspace lease`() {
+        val args = jsonObject(
+            """{"subagents":{"taskName":"审查","role":"reviewer","prompt":"审查"}}""",
+        )
+
+        val result = SubagentArgsParser.parse(args)
+
+        assertTrue(result.single().writePaths.isEmpty())
+    }
+
     private fun jsonObject(raw: String) = Json.parseToJsonElement(raw).jsonObject
 }

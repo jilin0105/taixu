@@ -34,10 +34,17 @@ object SubagentArgsParser {
                 prompt = prompt,
                 department = department,
                 agentQuery = agentQuery,
+                writePaths = candidate.strings("writePaths").map { it.trim() },
             )
         }.take(maxTasks.coerceAtLeast(0))
     }
 
     private fun JsonObject.string(key: String): String? =
         (this[key] as? JsonPrimitive)?.contentOrNull
+
+    private fun JsonObject.strings(key: String): List<String> = when (val value = this[key]) {
+        is JsonPrimitive -> listOfNotNull(value.contentOrNull?.takeIf { it.isNotBlank() })
+        is JsonArray -> value.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf { s -> s.isNotBlank() } }
+        else -> emptyList()
+    }
 }
