@@ -289,6 +289,20 @@
     <string name="chat_retry_from_tool">从此工具重试</string>
     <string name="chat_regenerate">重新生成</string>
     <string name="chat_branch_from_here">从这条消息创建分支</string>
+    <!-- 撤回到此轮（Checkpoint Rewind） -->
+    <string name="chat_rewind">撤回到此轮</string>
+    <string name="chat_rewind_title">撤回到此轮</string>
+    <string name="chat_rewind_subtitle">该轮及之后的改动将被撤销</string>
+    <string name="chat_rewind_code">仅代码</string>
+    <string name="chat_rewind_code_desc">恢复该轮起被写工具改动的文件（创建于该轮的文件会被删除）</string>
+    <string name="chat_rewind_conversation">仅对话</string>
+    <string name="chat_rewind_conversation_desc">复制该轮之前的对话为新的回退分支，当前会话保留不动</string>
+    <string name="chat_rewind_both">代码 + 对话</string>
+    <string name="chat_rewind_both_desc">恢复文件改动并派生对话回退分支</string>
+    <string name="chat_rewind_done">已恢复 %1$d 个文件、删除 %2$d 个文件</string>
+    <string name="chat_rewind_switched">已切换到回退分支</string>
+    <string name="chat_rewind_no_checkpoint">该轮没有可撤销的改动记录（仅记录有文件写入的轮次）</string>
+    <string name="chat_rewind_failed">撤回失败：%1$s</string>
     <!-- 会话级结构化任务规划看板（plan 工具数据源） -->
     <string name="chat_plan_board_header">任务执行规划</string>
     <string name="chat_plan_board_progress">%1$d / %2$d</string>

@@ -52,6 +52,7 @@ import top.wkbin.taixu.harness.HarnessMessage
 import top.wkbin.taixu.harness.HarnessTool
 import top.wkbin.taixu.harness.CapabilityEvent
 import top.wkbin.taixu.harness.ToolCall
+import top.wkbin.taixu.harness.checkpoint.RewindScope
 import top.wkbin.taixu.harness.ToolResult
 import top.wkbin.taixu.harness.UserMessage
 import top.wkbin.taixu.runtime.WorkspaceProject
@@ -103,6 +104,7 @@ internal fun ChatMessageList(
     onEditMessage: (UserMessage) -> Unit,
     onDeleteMessage: (String) -> Unit,
     onCreateBranch: (String) -> Unit,
+    onRewindMessage: (String, RewindScope) -> Unit = { _, _ -> },
     onRegenerate: () -> Unit,
     onRetryTool: (String) -> Unit,
     onOpenFile: ((String, String) -> Unit)?,
@@ -197,6 +199,7 @@ internal fun ChatMessageList(
                                 onEdit = { onEditMessage(message) },
                                 onDelete = { onDeleteMessage(message.id) },
                                 onCreateBranch = { onCreateBranch(message.id) },
+                                onRewind = { scope -> onRewindMessage(message.id, scope) },
                             )
                             is AssistantText -> AssistantBubble(
                                 message = message,

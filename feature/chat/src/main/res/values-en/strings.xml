@@ -275,6 +275,20 @@
     <string name="chat_retry_from_tool">Retry from this tool</string>
     <string name="chat_regenerate">Regenerate</string>
     <string name="chat_branch_from_here">Branch from this message</string>
+    <!-- Rewind to this turn (Checkpoint Rewind) -->
+    <string name="chat_rewind">Rewind to this turn</string>
+    <string name="chat_rewind_title">Rewind to this turn</string>
+    <string name="chat_rewind_subtitle">Changes from this turn onward will be undone</string>
+    <string name="chat_rewind_code">Code only</string>
+    <string name="chat_rewind_code_desc">Restore files touched by write tools since this turn (files created in it are deleted)</string>
+    <string name="chat_rewind_conversation">Conversation only</string>
+    <string name="chat_rewind_conversation_desc">Copy the conversation before this turn into a new rewind branch; the current session stays untouched</string>
+    <string name="chat_rewind_both">Code + conversation</string>
+    <string name="chat_rewind_both_desc">Restore files and fork a conversation rewind branch</string>
+    <string name="chat_rewind_done">Restored %1$d files, deleted %2$d files</string>
+    <string name="chat_rewind_switched">Switched to the rewind branch</string>
+    <string name="chat_rewind_no_checkpoint">No undoable changes recorded for this turn (only turns with file writes are recorded)</string>
+    <string name="chat_rewind_failed">Rewind failed: %1$s</string>
     <!-- Top bar menu & permission snackbar -->
     <string name="chat_snackbar_grant">Grant</string>
     <string name="chat_snackbar_got_it">Got it</string>

@@ -73,6 +73,7 @@ import coil3.request.ImageRequest
 import top.wkbin.taixu.harness.AssistantText
 import top.wkbin.taixu.harness.CapabilityEvent
 import top.wkbin.taixu.harness.UserMessage
+import top.wkbin.taixu.harness.checkpoint.RewindScope
 import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -87,11 +88,14 @@ internal fun UserBubble(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onCreateBranch: () -> Unit,
+    onRewind: (RewindScope) -> Unit = {},
 ) {
     val context = LocalContext.current
     var showMenu by remember { mutableStateOf(false) }
     // 删除消息为破坏性操作，先经确认对话框
     var showDeleteConfirm by rememberSaveable { mutableStateOf(false) }
+    // 撤回到此轮：先选择撤回范围（代码/对话/两者）
+    var showRewindScopeDialog by rememberSaveable { mutableStateOf(false) }
 
     val copyText = {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -192,6 +196,14 @@ internal fun UserBubble(
                 },
             )
             DropdownMenuItem(
+                text = { Text(stringResource(R.string.chat_rewind)) },
+                leadingIcon = { RuntimeIcon(RuntimeIconName.Reverse, Modifier.size(16.dp)) },
+                onClick = {
+                    showMenu = false
+                    showRewindScopeDialog = true
+                },
+            )
+            DropdownMenuItem(
                 text = { Text(stringResource(R.string.chat_delete), color = MaterialTheme.colorScheme.error) },
                 leadingIcon = {
                     RuntimeIcon(
@@ -235,6 +247,77 @@ internal fun UserBubble(
                 TextButton(onClick = { showDeleteConfirm = false }) { Text(stringResource(R.string.chat_cancel)) }
             },
         )
+    }
+
+    // 撤回范围选择：仅代码 / 仅对话 / 两者
+    if (showRewindScopeDialog) {
+        RuntimeAlertDialog(
+            onDismissRequest = { showRewindScopeDialog = false },
+            title = { Text(stringResource(R.string.chat_rewind_title), fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        stringResource(R.string.chat_rewind_subtitle),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    RewindScopeOption(
+                        label = stringResource(R.string.chat_rewind_code),
+                        description = stringResource(R.string.chat_rewind_code_desc),
+                        icon = RuntimeIconName.Code,
+                        onClick = { showRewindScopeDialog = false; onRewind(RewindScope.CODE) },
+                    )
+                    RewindScopeOption(
+                        label = stringResource(R.string.chat_rewind_conversation),
+                        description = stringResource(R.string.chat_rewind_conversation_desc),
+                        icon = RuntimeIconName.Chat,
+                        onClick = { showRewindScopeDialog = false; onRewind(RewindScope.CONVERSATION) },
+                    )
+                    RewindScopeOption(
+                        label = stringResource(R.string.chat_rewind_both),
+                        description = stringResource(R.string.chat_rewind_both_desc),
+                        icon = RuntimeIconName.Reverse,
+                        onClick = { showRewindScopeDialog = false; onRewind(RewindScope.BOTH) },
+                    )
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showRewindScopeDialog = false }) { Text(stringResource(R.string.chat_cancel)) }
+            },
+        )
+    }
+}
+
+/** 撤回范围选择行：图标 + 标题 + 说明，整行可点。 */
+@Composable
+private fun RewindScopeOption(
+    label: String,
+    description: String,
+    icon: RuntimeIconName,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RuntimeIcon(icon, Modifier.size(20.dp), MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                Text(
+                    description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 

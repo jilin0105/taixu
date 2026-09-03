@@ -802,6 +802,39 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch { harnessLoop.renameSession(id, title) }
     }
 
+    // ---- 撤回到此轮（Checkpoint Rewind） ----
+
+    /**
+     * 撤回到 [messageId] 所在用户轮：按 checkpoint 锚点定位轮次，
+     * prepare/commit 两段式执行；CONVERSATION/BOTH 会派生回退分支并切换过去。
+     */
+    fun rewindToMessage(messageId: String, scope: top.wkbin.taixu.harness.checkpoint.RewindScope) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val sessionId = harnessLoop.currentSessionId.value
+            val target = harnessLoop.sessionCheckpoints(sessionId)
+                .firstOrNull { it.anchorMessageId == messageId }
+            if (target == null) {
+                _notice.value = context.getString(R.string.chat_rewind_no_checkpoint)
+                return@launch
+            }
+            runCatching {
+                val plan = harnessLoop.prepareRewind(sessionId, target.turn, scope)
+                val result = harnessLoop.commitRewind(plan, workspace.value)
+                val forkedSessionId = result.forkedSessionId
+                if (forkedSessionId != null) {
+                    harnessLoop.loadSession(forkedSessionId)
+                }
+                _notice.value = buildString {
+                    append(context.getString(R.string.chat_rewind_done, result.filesRestored, result.filesDeleted))
+                    if (forkedSessionId != null) append(" · ").append(context.getString(R.string.chat_rewind_switched))
+                    result.note?.let { append("\n").append(it) }
+                }
+            }.onFailure { throwable ->
+                _notice.value = context.getString(R.string.chat_rewind_failed, throwable.message ?: "unknown")
+            }
+        }
+    }
+
     // ---- 模型管理 ----
 
     private val _providerModelIds = MutableStateFlow<List<String>>(emptyList())
