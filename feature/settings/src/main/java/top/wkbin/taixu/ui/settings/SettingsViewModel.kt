@@ -717,6 +717,25 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /** 手动批量导入：扫描 attachments/skills 与工作区 skills 目录，把未入库的 Skill 文件夹一次性注册。 */
+    fun scanSkillDirectories() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { agentSkillRepository.syncFromDirectories(skillScanRoots()) }
+                .onSuccess { imported ->
+                    _skillArchiveMessageIsError.value = false
+                    _skillArchiveMessage.value = when (imported.size) {
+                        0 -> "目录扫描完成，未发现新的 Skill（已导入的不会重复注册）"
+                        1 -> "目录扫描完成，导入 1 个：“${imported.first().name}”"
+                        else -> "目录扫描完成，共导入 ${imported.size} 个：\n${imported.joinToString("\n") { "· ${it.name}" }}"
+                    }
+                }
+                .onFailure {
+                    _skillArchiveMessageIsError.value = true
+                    _skillArchiveMessage.value = it.message ?: "Skill 目录扫描失败"
+                }
+        }
+    }
+
     private suspend fun importSingleSkillArchive(uri: Uri): String {
         var target: File? = null
         try {
@@ -765,11 +784,11 @@ class SettingsViewModel @Inject constructor(
                 ?: error("压缩包内未找到 SKILL.md")
             val markdown = promptFile.readText().trim()
             require(markdown.isNotBlank()) { "SKILL.md 为空" }
-            val skillName = extractSkillMetadata(markdown, "name")
+            val skillName = AgentSkillRepository.extractSkillMetadata(markdown, "name")
                 ?: markdown.lineSequence().firstOrNull { it.startsWith("# ") }?.removePrefix("# ")?.trim()
                 ?: promptFile.parentFile?.name
                 ?: id
-            val description = extractSkillMetadata(markdown, "description") ?: "从压缩包导入的 Skill"
+            val description = AgentSkillRepository.extractSkillMetadata(markdown, "description") ?: "从压缩包导入的 Skill"
             val guestPath = "/attachments/skills/$id"
             val prompt = markdown + "\n\n【Skill 资源目录】$guestPath\n如需执行该 Skill 附带的脚本，请先检查脚本内容与参数，再从此目录调用。"
             agentSkillRepository.addCustom(top.wkbin.taixu.core.model.AgentSkill(id, skillName, description, prompt, isBuiltin = false, category = "自定义", resourcePath = target.absolutePath))
@@ -787,19 +806,18 @@ class SettingsViewModel @Inject constructor(
 
     private fun deleteOwnedSkillDirectory(directory: File) {
         val candidate = runCatching { directory.canonicalFile }.getOrNull() ?: return
-        val roots = listOf(File(pathManager.attachmentsDir, "skills"), File(application.filesDir, "skills"))
+        val roots = listOf(File(pathManager.attachmentsDir, "skills"), File(application.filesDir, "skills"), File(pathManager.workspaceDir, "skills"))
             .mapNotNull { runCatching { it.canonicalFile }.getOrNull() }
         if (roots.any { candidate.path.startsWith(it.path + File.separator) }) candidate.deleteRecursively()
     }
 
     private fun deleteOwnedSkillDirectory(path: String) = deleteOwnedSkillDirectory(File(path))
 
-    private fun extractSkillMetadata(markdown: String, key: String): String? {
-        if (!markdown.startsWith("---")) return null
-        return markdown.lineSequence().drop(1).takeWhile { it.trim() != "---" }
-            .firstOrNull { it.substringBefore(':').trim().equals(key, ignoreCase = true) }
-            ?.substringAfter(':')?.trim()?.trim('"', '\'')?.takeIf { it.isNotBlank() }
-    }
+    /** Skill 自动发现目录：共享附件区与工作区，guestPrefix 对应 PRoot 沙箱内挂载路径。 */
+    private fun skillScanRoots() = listOf(
+        top.wkbin.taixu.core.database.SkillScanRoot(File(pathManager.attachmentsDir, "skills"), "/attachments/skills"),
+        top.wkbin.taixu.core.database.SkillScanRoot(File(pathManager.workspaceDir, "skills"), "/workspace/skills"),
+    )
 
     private companion object {
         const val MAX_SKILL_ARCHIVE_ENTRIES = 256

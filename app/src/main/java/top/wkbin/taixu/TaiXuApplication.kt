@@ -6,6 +6,7 @@ import top.wkbin.taixu.harness.HarnessLoop
 import top.wkbin.taixu.core.datastore.SettingsDataStore
 import top.wkbin.taixu.core.database.AgentSkillRepository
 import top.wkbin.taixu.core.database.McpServerRepository
+import top.wkbin.taixu.core.database.SkillScanRoot
 import top.wkbin.taixu.service.AgentForegroundService
 import top.wkbin.taixu.runtime.privilege.PrivilegeManager
 import top.wkbin.taixu.harness.browser.BrowserMcpBootstrap
@@ -30,6 +31,7 @@ class TaiXuApplication : Application() {
     @Inject lateinit var settingsDataStore: SettingsDataStore
     @Inject lateinit var agentSkillRepositoryLazy: Lazy<AgentSkillRepository>
     @Inject lateinit var mcpServerRepositoryLazy: Lazy<McpServerRepository>
+    @Inject lateinit var pathManagerLazy: Lazy<top.wkbin.taixu.runtime.RuntimePathManager>
     @Inject lateinit var privilegeManager: PrivilegeManager
     @Inject lateinit var browserMcpBootstrap: BrowserMcpBootstrap
 
@@ -49,7 +51,25 @@ class TaiXuApplication : Application() {
                 launch { runCatching { privilegeManager.reconcilePersistedMode() } }
                 // 启动进程内 MCP HTTP server（loopback 127.0.0.1:8787）供 harness / 外部 IDE 接入浏览器工具
                 launch { runCatching { browserMcpBootstrap.bootstrap() } }
-                launch { runCatching { agentSkillRepositoryLazy.get().ensureInitialized() } }
+                launch {
+                    runCatching {
+                        val skillRepository = agentSkillRepositoryLazy.get()
+                        skillRepository.ensureInitialized()
+                        // 批量自动发现：把 rikkahub / aicode 等工具的 skills 目录整体复制到
+                        // attachments/skills 或工作区 skills 目录后，重启即可全部导入；
+                        // 按 resourcePath 去重，重复扫描安全。
+                        val pathManager = pathManagerLazy.get()
+                        val imported = skillRepository.syncFromDirectories(
+                            listOf(
+                                SkillScanRoot(java.io.File(pathManager.attachmentsDir, "skills"), "/attachments/skills"),
+                                SkillScanRoot(java.io.File(pathManager.workspaceDir, "skills"), "/workspace/skills"),
+                            )
+                        )
+                        if (imported.isNotEmpty()) {
+                            android.util.Log.i("TaiXuApp", "Skill 目录自动发现并导入 ${imported.size} 个：${imported.joinToString { it.name }}")
+                        }
+                    }
+                }
                 launch { runCatching { mcpServerRepositoryLazy.get().ensureInitialized() } }
             }
             settingsDataStore.incrementLaunchCount()
