@@ -160,7 +160,9 @@ val MIGRATION_43_44 = object : Migration(43, 44) {
         db.execSQL("ALTER TABLE agent_memories ADD COLUMN subjectKey TEXT NOT NULL DEFAULT ''")
         db.execSQL("ALTER TABLE agent_memories ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
         db.execSQL("ALTER TABLE agent_memories ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
-        db.execSQL("ALTER TABLE agent_memories ADD COLUMN expiresAt INTEGER DEFAULT NULL")
+        // 注意：DEFAULT null 必须小写——Room 校验 default 值时按 PRAGMA 返回的 DDL 字面量逐字比较（大小写敏感），
+        // 须与 44.json createSql（由实体 @ColumnInfo(defaultValue = "null") 生成）完全一致。
+        db.execSQL("ALTER TABLE agent_memories ADD COLUMN expiresAt INTEGER DEFAULT null")
         db.execSQL("ALTER TABLE agent_memories ADD COLUMN lastVerifiedAt INTEGER NOT NULL DEFAULT 0")
         db.execSQL("ALTER TABLE agent_memories ADD COLUMN volatility TEXT NOT NULL DEFAULT 'reference'")
         // 存量记忆以 key 作为主题键（幂等：重复执行时新库已是空表或已回填）。
