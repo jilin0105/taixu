@@ -2,6 +2,7 @@ package top.wkbin.taixu.ui.settings
 
 import android.app.Application
 import android.net.Uri
+import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import top.wkbin.taixu.core.datastore.SettingsDataStore
@@ -734,6 +735,87 @@ class SettingsViewModel @Inject constructor(
                     _skillArchiveMessage.value = it.message ?: "Skill 目录扫描失败"
                 }
         }
+    }
+
+    /**
+     * 从用户自选的任意目录（SAF 目录选择器）导入 Skill：递归查找直属含 SKILL.md
+     * 的目录，把最顶层的 Skill 目录整体复制到 attachments/skills 下再由扫描入库，
+     * 保证资源落在 PRoot 可访问的挂载路径内。嵌套的 Skill 子目录随父目录一并复制，
+     * 之后由递归扫描逐个注册。
+     */
+    fun importSkillsFromTree(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val treeRoot = DocumentFile.fromTreeUri(application, uri) ?: error("无法访问所选目录")
+                val targetRoot = File(pathManager.attachmentsDir, "skills").apply { mkdirs() }
+                val copied = importDocumentTree(treeRoot, targetRoot)
+                check(copied > 0) { "所选目录及子目录中未发现包含 SKILL.md 的 Skill 文件夹" }
+                val imported = agentSkillRepository.syncFromDirectories(skillScanRoots())
+                "自选目录导入完成，发现并注册 ${imported.size} 个 Skill"
+            }.onSuccess {
+                _skillArchiveMessageIsError.value = false
+                _skillArchiveMessage.value = it
+            }.onFailure {
+                _skillArchiveMessageIsError.value = true
+                _skillArchiveMessage.value = it.message ?: "自选目录导入失败"
+            }
+        }
+    }
+
+    /** 递归遍历 SAF 目录，把顶层 Skill 目录复制到 [targetRoot]；返回复制的目录数。 */
+    private fun importDocumentTree(dir: DocumentFile, targetRoot: File): Int {
+        var count = 0
+        dir.listFiles().filter { it.isDirectory }.forEach { child ->
+            if (isDocumentSkillDir(child)) {
+                val name = uniqueDirName(targetRoot, child.name ?: "skill")
+                copyDocumentTree(child, File(targetRoot, name))
+                count++
+            } else {
+                count += importDocumentTree(child, targetRoot)
+            }
+        }
+        return count
+    }
+
+    private fun isDocumentSkillDir(dir: DocumentFile): Boolean =
+        dir.listFiles().any { it.isFile && it.name?.lowercase() in AgentSkillRepository.SKILL_PROMPT_FILE_NAMES }
+
+    /** 递归复制 SAF 目录到宿主文件系统；脚本文件标记为可执行。 */
+    private fun copyDocumentTree(src: DocumentFile, dest: File) {
+        dest.mkdirs()
+        src.listFiles().forEach { entry ->
+            val name = entry.name ?: return@forEach
+            if (entry.isDirectory) {
+                copyDocumentTree(entry, File(dest, name))
+            } else {
+                val out = File(dest, name)
+                application.contentResolver.openInputStream(entry.uri)?.use { input ->
+                    BufferedOutputStream(out.outputStream()).use { output ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                        }
+                    }
+                }
+                if (name.substringAfterLast('.', "").lowercase() in setOf("sh", "py", "js")) {
+                    out.setExecutable(true, false)
+                }
+            }
+        }
+    }
+
+    /** 生成不冲突的目标目录名：已存在则追加序号。 */
+    private fun uniqueDirName(targetRoot: File, base: String): String {
+        val safe = base.replace(Regex("[\\\\/:*?\"<>|]"), "_").ifBlank { "skill" }
+        var candidate = safe
+        var index = 2
+        while (File(targetRoot, candidate).exists()) {
+            candidate = "${safe}_$index"
+            index++
+        }
+        return candidate
     }
 
     private suspend fun importSingleSkillArchive(uri: Uri): String {

@@ -120,6 +120,7 @@ fun AgentSettingsScreen(
             .sortedBy { AgentDepartments.find(it.key).sortOrder }
     }
     val skillArchivePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) viewModel.importSkillArchives(uris) }
+    val skillDirPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) viewModel.importSkillsFromTree(uri) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -396,6 +397,20 @@ fun AgentSettingsScreen(
                 }
                 Text(
                     text = "可将 rikkahub、aicode 等工具的 skills 目录整体复制到 attachments/skills 或工作区 skills 目录，重启应用即自动批量导入；运行中复制可点击上方按钮立即扫描，已导入的不会重复注册",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp, start = 4.dp),
+                )
+            }
+            item {
+                OutlinedButton(onClick = { skillDirPicker.launch(null) }, modifier = Modifier.fillMaxWidth().height(44.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        RuntimeIcon(RuntimeIconName.Search, Modifier.size(16.dp))
+                        Text("从自选目录导入（任意位置）")
+                    }
+                }
+                Text(
+                    text = "在文件管理器中任选一个目录（支持任意深度嵌套，含 Skill 目录内再嵌套 Skill 子目录的情况），自动查找其中所有包含 SKILL.md 的技能文件夹并导入",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp, start = 4.dp),

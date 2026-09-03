@@ -85,14 +85,14 @@ class AgentSkillRepository @Inject constructor(
     }
 
     /**
-     * 扫描各根目录下的一级子目录，把包含 SKILL.md / prompt.md 且尚未入库的目录
-     * 自动注册为自定义 Skill。用户手动复制 Skill 文件夹（或把其他工具的整个
+     * 递归扫描各根目录（含任意深度嵌套），把直属包含 SKILL.md / prompt.md 且尚未入库的
+     * 目录自动注册为自定义 Skill。用户手动复制 Skill 文件夹（或把其他工具的整个
      * skills 目录整体复制）到 attachments/skills 或工作区 skills 目录即可被发现，
      * 无需通过 ZIP 逐个导入。按 resourcePath 去重，重复调用安全。
      *
-     * 兼容两种目录形态：
-     * - 单个 Skill 目录：目录直属 SKILL.md；
-     * - 集合目录：本身不含 SKILL.md，但一级子目录各自是一个 Skill（整包复制场景）。
+     * 嵌套语义：目录树中任何直属含 SKILL.md 的目录都是一个 Skill——既支持
+     * “单个 Skill 目录”，也支持“集合目录（如 rikkahub / aicode 的整个 skills 目录）”，
+     * 以及 Skill 目录内再嵌套 Skill 子目录的多级结构。
      *
      * @return 本次新注册的 Skill 列表
      */
@@ -104,49 +104,38 @@ class AgentSkillRepository @Inject constructor(
                 runCatching { File(stored).canonicalPath }.getOrDefault(stored)
             }
         val imported = mutableListOf<AgentSkill>()
-
-        suspend fun register(dir: File, promptFile: File, guestPath: String) {
-            val markdown = runCatching { promptFile.readText().trim() }.getOrNull()
-            if (markdown.isNullOrBlank()) return
-            val skill = AgentSkill(
-                id = "custom_" + UUID.randomUUID().toString().take(8),
-                name = extractSkillMetadata(markdown, "name")
-                    ?: markdown.lineSequence().firstOrNull { it.startsWith("# ") }?.removePrefix("# ")?.trim()
-                    ?: dir.name,
-                description = extractSkillMetadata(markdown, "description") ?: "从目录自动发现的 Skill",
-                systemPrompt = markdown + "\n\n【Skill 资源目录】$guestPath\n如需执行该 Skill 附带的脚本，请先检查脚本内容与参数，再从此目录调用。",
-                isBuiltin = false,
-                category = "自定义",
-                resourcePath = dir.absolutePath,
-            )
-            dao.upsert(skill.toEntity())
-            knownPaths += runCatching { dir.canonicalPath }.getOrDefault(dir.absolutePath)
-            imported += skill
-        }
-
         roots.forEach { root ->
-            root.hostDir.listFiles().orEmpty()
-                .filter { it.isDirectory }
+            root.hostDir.walkTopDown()
+                .maxDepth(MAX_SCAN_DEPTH)
+                .filter { it.isDirectory && it != root.hostDir }
                 .forEach { dir ->
                     val canonical = runCatching { dir.canonicalPath }.getOrNull() ?: return@forEach
                     if (canonical in knownPaths) return@forEach
-                    val directPrompt = directPromptFile(dir)
-                    if (directPrompt != null) {
-                        register(dir, directPrompt, root.guestPrefix.trimEnd('/') + "/" + dir.name)
-                    } else {
-                        // 集合目录：一级子目录各自是一个 Skill（如 rikkahub / aicode 等工具的整个 skills 目录整体复制）
-                        dir.listFiles().orEmpty()
-                            .filter { it.isDirectory }
-                            .forEach { child ->
-                                val childCanonical = runCatching { child.canonicalPath }.getOrNull() ?: return@forEach
-                                if (childCanonical in knownPaths) return@forEach
-                                val childPrompt = directPromptFile(child) ?: return@forEach
-                                register(child, childPrompt, root.guestPrefix.trimEnd('/') + "/" + dir.name + "/" + child.name)
-                            }
-                    }
+                    val promptFile = directPromptFile(dir) ?: return@forEach
+                    val relative = dir.relativeTo(root.hostDir).invariantSeparatorsPath
+                    registerDir(dir, promptFile, root.guestPrefix.trimEnd('/') + "/" + relative, knownPaths, imported)
                 }
         }
         imported
+    }
+
+    private suspend fun registerDir(dir: File, promptFile: File, guestPath: String, knownPaths: MutableSet<String>, imported: MutableList<AgentSkill>) {
+        val markdown = runCatching { promptFile.readText().trim() }.getOrNull()
+        if (markdown.isNullOrBlank()) return
+        val skill = AgentSkill(
+            id = "custom_" + UUID.randomUUID().toString().take(8),
+            name = extractSkillMetadata(markdown, "name")
+                ?: markdown.lineSequence().firstOrNull { it.startsWith("# ") }?.removePrefix("# ")?.trim()
+                ?: dir.name,
+            description = extractSkillMetadata(markdown, "description") ?: "从目录自动发现的 Skill",
+            systemPrompt = markdown + "\n\n【Skill 资源目录】$guestPath\n如需执行该 Skill 附带的脚本，请先检查脚本内容与参数，再从此目录调用。",
+            isBuiltin = false,
+            category = "自定义",
+            resourcePath = dir.absolutePath,
+        )
+        dao.upsert(skill.toEntity())
+        knownPaths += runCatching { dir.canonicalPath }.getOrDefault(dir.absolutePath)
+        imported += skill
     }
 
     /** 目录直属的提示词文件（不含嵌套子目录），优先 SKILL.md。 */
@@ -156,7 +145,9 @@ class AgentSkillRepository @Inject constructor(
             .let { files -> files.firstOrNull { it.name.lowercase() == "skill.md" } ?: files.firstOrNull() }
 
     companion object {
-        private val SKILL_PROMPT_FILE_NAMES = setOf("skill.md", "prompt.md")
+        /** Skill 目录的提示词文件名（小写），供导入与扫描逻辑统一判定。 */
+        val SKILL_PROMPT_FILE_NAMES = setOf("skill.md", "prompt.md")
+        private const val MAX_SCAN_DEPTH = 6
 
         /** 从 SKILL.md 的 YAML frontmatter 中提取 name / description 等元数据。 */
         fun extractSkillMetadata(markdown: String, key: String): String? {
