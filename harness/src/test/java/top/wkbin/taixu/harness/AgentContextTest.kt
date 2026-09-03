@@ -129,6 +129,142 @@ class AgentContextTest {
     }
 
     @Test
+    fun `same subjectKey deduplicates into a single revision instead of two conflicting memories`() = runBlocking {
+        val save: suspend (String, String) -> Pair<Boolean, String> = { action, value ->
+            executor.executeMemory(
+                buildJsonObject {
+                    put("action", action)
+                    put("key", "pkg")
+                    put("subjectKey", "project.package_manager")
+                    put("value", value)
+                    put("scope", "global")
+                },
+                "session-1",
+                "",
+            )
+        }
+        val (firstOk, _) = save("save", "npm")
+        assertTrue(firstOk)
+
+        val (secondOk, secondMsg) = save("save", "pnpm")
+        assertTrue(secondOk)
+        assertTrue(secondMsg.contains("升级为 revision=2"))
+
+        val holder = fakeDao.getMemoryBySubjectKey("project.package_manager", "global", "")
+        assertNotNull(holder)
+        assertEquals("pnpm", holder!!.value)
+        assertEquals(2, holder.revision)
+        // 同主题只保留一条活动修订
+        assertEquals(1, fakeDao.countMemories("global", ""))
+    }
+
+    @Test
+    fun `pinned memories are limited by a total character budget`() = runBlocking {
+        val big = "x".repeat(2000)
+        val (rejectedOk, rejectedMsg) = executor.executeMemory(
+            buildJsonObject {
+                put("action", "save")
+                put("key", "too_big")
+                put("value", big)
+                put("pinned", "true")
+                put("scope", "global")
+            },
+            "session-1",
+            "",
+        )
+        assertFalse(rejectedOk)
+        assertTrue(rejectedMsg.contains("pinned"))
+
+        // 两条短 pinned 记忆在预算内应放行并进入 pinned 检索。
+        suspend fun pin(key: String, value: String) {
+            val (ok, _) = executor.executeMemory(
+                buildJsonObject {
+                    put("action", "save")
+                    put("key", key)
+                    put("value", value)
+                    put("pinned", "true")
+                    put("scope", "global")
+                },
+                "session-1",
+                "",
+            )
+            assertTrue(ok)
+        }
+        pin("pin_a", "必须使用 Kotlin")
+        pin("pin_b", "遵循 Material 规范")
+        val pinned = fakeDao.getPinnedMemories("", "session-1")
+        assertEquals(2, pinned.size)
+    }
+
+    @Test
+    fun `expired memories are excluded from recall unless explicitly included`() = runBlocking {
+        val past = System.currentTimeMillis() - 1
+        val (ok, _) = executor.executeMemory(
+            buildJsonObject {
+                put("action", "save")
+                put("key", "stale")
+                put("value", "过期事实")
+                put("scope", "global")
+                put("expiresAt", past.toString())
+            },
+            "session-1",
+            "",
+        )
+        assertTrue(ok)
+
+        // 默认 list 不召回过期记忆
+        val (_, defaultList) = executor.executeMemory(
+            buildJsonObject { put("action", "list") },
+            "session-1",
+            "",
+        )
+        assertFalse(defaultList.contains("过期事实"))
+
+        // include_expired 可显式看到过期记忆（只降权不删除）
+        val (_, withExpired) = executor.executeMemory(
+            buildJsonObject {
+                put("action", "list")
+                put("include_expired", "true")
+            },
+            "session-1",
+            "",
+        )
+        assertTrue(withExpired.contains("过期事实"))
+        assertTrue(withExpired.contains("已过期"))
+    }
+
+    @Test
+    fun `verify refreshes lastVerifiedAt freshness signal`() = runBlocking {
+        val (ok, _) = executor.executeMemory(
+            buildJsonObject {
+                put("action", "save")
+                put("key", "checkpoint")
+                put("value", "稳定配置")
+                put("scope", "global")
+            },
+            "session-1",
+            "",
+        )
+        assertTrue(ok)
+        val before = fakeDao.getMemoryByKey("checkpoint", "global", "")
+
+        val (verifyOk, verifyMsg) = executor.executeMemory(
+            buildJsonObject {
+                put("action", "verify")
+                put("key", "checkpoint")
+                put("scope", "global")
+            },
+            "session-1",
+            "",
+        )
+        assertTrue(verifyOk)
+        assertTrue(verifyMsg.contains("续期"))
+        val after = fakeDao.getMemoryByKey("checkpoint", "global", "")
+        assertTrue(after?.lastVerifiedAt != null)
+        assertTrue((after?.lastVerifiedAt ?: 0) >= (before?.lastVerifiedAt ?: 0))
+    }
+
+    @Test
     fun testScratchpadLifecycle() = runBlocking {
         val saveArgs = buildJsonObject {
             put("action", "save")
@@ -173,6 +309,22 @@ private class FakeAgentContextDao : AgentContextRepository {
 
     override suspend fun getMemoryByKey(key: String, scope: String, ownerId: String): AgentMemoryEntity? =
         memories.values.find { it.key == key && it.scope == scope && it.ownerId == ownerId }
+
+    override suspend fun getMemoryBySubjectKey(subjectKey: String, scope: String, ownerId: String): AgentMemoryEntity? =
+        memories.values.find { it.subjectKey == subjectKey && it.scope == scope && it.ownerId == ownerId }
+
+    override suspend fun getPinnedMemories(projectOwnerId: String, sessionId: String): List<AgentMemoryEntity> =
+        getMemoriesForContext(projectOwnerId, sessionId, 100).filter { it.pinned }
+
+    override suspend fun getFreshMemories(projectOwnerId: String, sessionId: String, pinned: Boolean, now: Long, limit: Int): List<AgentMemoryEntity> =
+        getMemoriesForContext(projectOwnerId, sessionId, limit).filter {
+            val expires = it.expiresAt
+            it.pinned == pinned && (expires == null || expires > now)
+        }
+
+    override suspend fun touchMemory(id: String, now: Long) {
+        memories[id]?.let { memories[id] = it.copy(lastVerifiedAt = now) }
+    }
 
     override suspend fun getMemoriesForContext(projectOwnerId: String, sessionId: String, limit: Int): List<AgentMemoryEntity> =
         memories.values.filter {

@@ -150,3 +150,24 @@ val MIGRATION_42_43 = object : Migration(42, 43) {
         db.execSQL("ALTER TABLE mcp_servers ADD COLUMN userToggled INTEGER NOT NULL DEFAULT 0")
     }
 }
+
+/**
+ * 记忆语义扩展（Reasonix Context Engine v2）：主题冲突去重 / revision / pinned / 新鲜度。
+ * 存量记忆打 subjectKey=原 key、revision=1、fresh，保证无损升级且幂等。
+ */
+val MIGRATION_43_44 = object : Migration(43, 44) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE agent_memories ADD COLUMN subjectKey TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE agent_memories ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("ALTER TABLE agent_memories ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE agent_memories ADD COLUMN expiresAt INTEGER")
+        db.execSQL("ALTER TABLE agent_memories ADD COLUMN lastVerifiedAt INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE agent_memories ADD COLUMN volatility TEXT NOT NULL DEFAULT 'reference'")
+        // 存量记忆以 key 作为主题键（幂等：重复执行时新库已是空表或已回填）。
+        db.execSQL("UPDATE agent_memories SET subjectKey = `key` WHERE subjectKey = ''")
+        // 索引名必须与 Room 生成的 schema（44.json）完全一致，否则迁移后校验失败触发破坏性回退
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_agent_memories_scope_ownerId_subjectKey ON agent_memories(scope, ownerId, subjectKey)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_agent_memories_pinned ON agent_memories(pinned)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_agent_memories_expiresAt ON agent_memories(expiresAt)")
+    }
+}

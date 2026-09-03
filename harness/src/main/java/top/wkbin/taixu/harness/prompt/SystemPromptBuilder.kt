@@ -7,6 +7,7 @@ import javax.inject.Singleton
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.flow.first
 import top.wkbin.taixu.core.database.AgentContextRepository
+import top.wkbin.taixu.core.database.AgentMemoryEntity
 import top.wkbin.taixu.core.database.AgentSkillRepository
 import top.wkbin.taixu.core.database.AgentSubagentRepository
 import top.wkbin.taixu.core.database.McpServerRepository
@@ -100,9 +101,45 @@ class SystemPromptBuilder @Inject constructor(
             )
         }
             .getOrDefault(emptyList())
-        val memorySection = if (memories.isNotEmpty()) {
-            "\n\n## 长期事实与偏好记忆 (Long-Term Memory)\n" +
-                memories.joinToString("\n") {
+        // pinned 与 relevant 正交分层：
+        // - pinned 常驻稳定前缀（最高权威，注入格式与官方长期指令记忆一致）
+        // - relevant 仅在用户轮发生过时按当前消息检索，注入为用户轮次低权威摘要，且排除 pinned 避免重复
+        val now = System.currentTimeMillis()
+        val projectOwner = workspacePath.trim().trimEnd('/')
+        val pinnedMemories = runCatching { agentContextDao.getPinnedMemories(projectOwner, sessionId) }
+            .getOrDefault(emptyList())
+        val pinnedSection = if (pinnedMemories.isNotEmpty()) {
+            "\n\n## 长期指令记忆（pinned，始终遵循）\n" +
+                pinnedMemories.joinToString("\n") {
+                    "- [${it.scope}/${it.kind}] ${it.key.take(MAX_PROMPT_MEMORY_KEY_CHARS)}: " +
+                        it.value.take(MAX_PROMPT_MEMORY_VALUE_CHARS)
+                }
+        } else ""
+
+        fun isFreshOrUndated(expiresAt: Long?, now: Long): Boolean {
+            val expires = expiresAt
+            return expires == null || expires > now
+        }
+
+        val pinnedIds = pinnedMemories.mapTo(mutableSetOf()) { it.id }
+        val recallMemories = runCatching {
+            fun fresh(x: AgentMemoryEntity) = x.id !in pinnedIds && isFreshOrUndated(x.expiresAt, now)
+            val freshCache = memories.filter(::fresh)
+            if (latestUserMessage.isNotBlank()) {
+                val hits = agentContextDao.searchMemories(
+                    query = latestUserMessage.take(MAX_PROMPT_RECALL_QUERY_CHARS),
+                    projectOwnerId = projectOwner,
+                    sessionId = sessionId,
+                    limit = MAX_PROMPT_MEMORIES,
+                ).filter(::fresh)
+                if (hits.isNotEmpty()) hits else freshCache.take(MAX_PROMPT_MEMORIES)
+            } else {
+                freshCache.take(MAX_PROMPT_MEMORIES)
+            }
+        }.getOrDefault(emptyList())
+        val recallSection = if (recallMemories.isNotEmpty()) {
+            "\n\n## 长期事实与偏好记忆（relevant recall，低权威：仅在与当前请求相关时参考，可被当前对话覆盖）\n" +
+                recallMemories.joinToString("\n") {
                     "- [${it.scope}/${it.kind}] ${it.key.take(MAX_PROMPT_MEMORY_KEY_CHARS)}: " +
                         it.value.take(MAX_PROMPT_MEMORY_VALUE_CHARS)
                 }
@@ -197,7 +234,8 @@ class SystemPromptBuilder @Inject constructor(
             routedBlocks,
             installedToolsSection,
             mcpCapabilitySection,
-            memorySection,
+            pinnedSection,
+            recallSection,
             planSection,
             subagentSection,
             toolCallSection,
@@ -396,6 +434,7 @@ class SystemPromptBuilder @Inject constructor(
         private const val MAX_PROMPT_MEMORIES = 32
         private const val MAX_PROMPT_MEMORY_KEY_CHARS = 128
         private const val MAX_PROMPT_MEMORY_VALUE_CHARS = 512
+        private const val MAX_PROMPT_RECALL_QUERY_CHARS = 256
         private const val MAX_WORKSPACE_CACHE_ENTRIES = 16
         const val PROJECT_CONTEXT_MAX_BYTES = 16 * 1024
 

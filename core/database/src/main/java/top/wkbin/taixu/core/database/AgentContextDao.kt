@@ -20,6 +20,38 @@ interface AgentContextDao {
     @Query("SELECT * FROM agent_memories WHERE `key` = :key AND scope = :scope AND ownerId = :ownerId LIMIT 1")
     suspend fun getMemoryByKey(key: String, scope: String, ownerId: String): AgentMemoryEntity?
 
+    /** 按主题键（subjectKey）定位同主题记忆，用于冲突去重与 revision 判定。 */
+    @Query("SELECT * FROM agent_memories WHERE subjectKey = :subjectKey AND scope = :scope AND ownerId = :ownerId LIMIT 1")
+    suspend fun getMemoryBySubjectKey(subjectKey: String, scope: String, ownerId: String): AgentMemoryEntity?
+
+    /** 钉选记忆：总是注入 system prompt 稳定前缀，绕过检索与新鲜度过滤。 */
+    @Query("""
+        SELECT * FROM agent_memories
+        WHERE pinned = 1
+          AND ((scope = 'global' AND ownerId = '')
+            OR (:projectOwnerId != '' AND scope = 'project' AND ownerId = :projectOwnerId)
+            OR (:sessionId != '' AND scope = 'session' AND ownerId = :sessionId))
+        ORDER BY updatedAt DESC
+    """)
+    suspend fun getPinnedMemories(projectOwnerId: String, sessionId: String): List<AgentMemoryEntity>
+
+    /** 未过期记忆（新鲜度查询基础）：expiresAt 为 null 或晚于 now 视为新鲜。 */
+    @Query("""
+        SELECT * FROM agent_memories
+        WHERE ((scope = 'global' AND ownerId = '')
+            OR (:projectOwnerId != '' AND scope = 'project' AND ownerId = :projectOwnerId)
+            OR (:sessionId != '' AND scope = 'session' AND ownerId = :sessionId))
+          AND pinned = :pinned
+          AND (expiresAt IS NULL OR expiresAt > :now)
+        ORDER BY updatedAt DESC
+        LIMIT :limit
+    """)
+    suspend fun getFreshMemories(projectOwnerId: String, sessionId: String, pinned: Boolean, now: Long, limit: Int): List<AgentMemoryEntity>
+
+    /** 续期：确认记忆仍然有效，刷新 lastVerifiedAt（新鲜度信号，不删除）。 */
+    @Query("UPDATE agent_memories SET lastVerifiedAt = :now WHERE id = :id AND (expiresAt IS NULL OR expiresAt > :now)")
+    suspend fun touchMemory(id: String, now: Long)
+
     @Query("""
         SELECT * FROM agent_memories
         WHERE (scope = 'global' AND ownerId = '')
