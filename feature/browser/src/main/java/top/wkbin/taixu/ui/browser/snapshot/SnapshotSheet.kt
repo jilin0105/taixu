@@ -21,7 +21,7 @@ fun SnapshotSheet(state: SnapshotSheetState, onDismiss: () -> Unit) {
         title = { Text("Snapshot · ${state.title.ifBlank { state.url }}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
         text = {
             Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                Text("${state.url}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(state.url, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 LazyColumn {
                     items(state.snapshot.interactiveRefs) { ref ->
                         RuntimeCard(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
