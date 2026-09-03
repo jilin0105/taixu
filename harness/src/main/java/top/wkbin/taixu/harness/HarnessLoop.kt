@@ -474,6 +474,7 @@ class HarnessLoop @Inject constructor(
         approvalRepository.deleteForSession(id)
         agentTaskStateMachine.deleteForSession(id)
         sessionDao.deleteSession(id)
+        rewindController.dropSession(id)
         sessionLoopDetectors.remove(id)
         sessionCancelEpochs.remove(id)
         cancellingSessions.remove(id)

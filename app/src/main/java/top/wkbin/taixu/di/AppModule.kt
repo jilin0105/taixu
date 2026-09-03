@@ -175,6 +175,18 @@ object AppModule {
     fun provideWorkspaceFileAccess(pathManager: top.wkbin.taixu.runtime.RuntimePathManager): WorkspaceFileAccess =
         WorkspaceFileAccess(pathManager.workspaceDir)
 
+    /** checkpoint 快照落盘到应用私有目录（linux-runtime/checkpoints/<sessionId>/），模型不可见。 */
+    @Provides
+    @Singleton
+    fun provideCheckpointStore(
+        pathManager: top.wkbin.taixu.runtime.RuntimePathManager,
+    ): top.wkbin.taixu.harness.checkpoint.CheckpointStore =
+        top.wkbin.taixu.harness.checkpoint.CheckpointStore().apply {
+            persistence = top.wkbin.taixu.harness.checkpoint.FileCheckpointPersistence(
+                java.io.File(pathManager.baseDir, "checkpoints"),
+            )
+        }
+
     @Provides
     @Singleton
     fun provideRuntimeManager(impl: RuntimeManagerImpl): RuntimeManager = impl
