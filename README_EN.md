@@ -10,6 +10,10 @@
   Android No-Root Linux Runtime · Native Agent Harness · PTY Terminal · Workspace & Tool Ecosystem
 </p>
 
+<p align="center">
+  <a href="README.md">简体中文</a> · <strong>English</strong>
+</p>
+
 ---
 
 ## Prologue: What is TaiXu

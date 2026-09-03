@@ -14,6 +14,10 @@
   <code>v0.8.1</code> · <code>Android 10+</code> · <code>arm64-v8a</code>
 </p>
 
+<p align="center">
+  <strong>简体中文</strong> · <a href="README_EN.md">English</a>
+</p>
+
 ---
 
 ## 何为太墟
