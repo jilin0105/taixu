@@ -33,14 +33,6 @@ import top.wkbin.taixu.core.tools.ProviderEndpointPolicy
 
 data class OnboardingStatus(val loaded: Boolean = false, val completed: Boolean = false)
 
-data class StarterPlugin(
-    val id: String,
-    val name: String,
-    val description: String,
-    val category: String,
-    val isRecommended: Boolean = false,
-)
-
 @HiltViewModel
 class OnboardingViewModel @Inject constructor(
     @ApplicationContext private val context: Context,

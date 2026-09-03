@@ -167,13 +167,3 @@ fun distroIconFor(distroId: String): RuntimeIconName = when (distroId.lowercase(
     "void" -> RuntimeIconName.Void
     else -> RuntimeIconName.Linux
 }
-
-/**
- * 根据工程类型或模板返回专有官方框架/语言 Logo
- */
-fun projectTypeIconFor(type: String): RuntimeIconName = when (type.uppercase()) {
-    "ANDROID" -> RuntimeIconName.Android
-    "FLUTTER" -> RuntimeIconName.Flutter
-    "REVERSE" -> RuntimeIconName.Reverse
-    else -> RuntimeIconName.Code
-}

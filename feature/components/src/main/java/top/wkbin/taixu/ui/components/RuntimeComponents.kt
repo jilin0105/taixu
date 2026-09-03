@@ -684,9 +684,6 @@ fun TaiXuBrandBadge(size: Dp = 38.dp) {
 }
 
 @Composable
-fun AppMark(size: Dp = 38.dp) = TaiXuBrandBadge(size)
-
-@Composable
 fun SectionHeader(
     title: String,
     subtitle: String? = null,

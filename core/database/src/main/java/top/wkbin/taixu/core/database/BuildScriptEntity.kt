@@ -34,13 +34,6 @@ data class ProjectBuildScriptBindingEntity(
     val updatedAt: Long,
 )
 
-data class ProjectBuildScriptBinding(
-    val projectName: String,
-    val scriptId: String,
-    val scriptName: String,
-    val projectType: String,
-)
-
 @Dao
 interface BuildScriptDao {
     @Query("SELECT * FROM build_scripts ORDER BY isBuiltin DESC, updatedAt DESC, name COLLATE NOCASE ASC")

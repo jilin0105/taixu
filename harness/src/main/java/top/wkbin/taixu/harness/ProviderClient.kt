@@ -576,18 +576,6 @@ data class ApiFunctionCall(
 )
 
 @Serializable
-data class ChatCompletionRequest(
-    val model: String,
-    val messages: List<ApiMessage>,
-    val tools: List<ApiToolDefinition>? = null,
-    val tool_choice: String = "auto",
-    val stream: Boolean = false,
-    val temperature: Float? = null,
-    val max_tokens: Int? = null,
-    val top_p: Float? = null,
-)
-
-@Serializable
 data class ApiToolDefinition(
     val type: String = "function",
     val function: ApiFunctionDefinition,

@@ -42,7 +42,6 @@ dependencies {
     implementation(project(":core:network"))
     implementation(project(":runtime"))
     implementation(project(":tools"))
-    implementation(libs.androidx.core.ktx)
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.okhttp)

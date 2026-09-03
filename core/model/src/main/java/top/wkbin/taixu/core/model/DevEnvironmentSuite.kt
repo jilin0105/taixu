@@ -228,7 +228,3 @@ object BuiltinPluginBundles {
         return steps
     }
 }
-
-// 保持兼容别名
-typealias DevEnvironmentSuite = PluginBundle
-typealias BuiltinDevSuites = BuiltinPluginBundles

@@ -118,12 +118,20 @@ class SubagentOrchestrator @Inject constructor(
             laneRunner.run(parentSessionId, laneName, prompt, workspace, modelId, modelVariant)
         }
 
+        // 超时取消时 withTimeoutOrNull 返回 null，若直接 ?: 0 会把子智能体在超时窗口内
+        // 真实执行的工具调用全部归零，汇总里出现"明明在跑却显示 0 次工具调用"。
+        // lane 的 tool_call entry 在执行期已逐条落库，从 transcript 恢复真实计数。
+        val toolCallCount = resolveSubagentToolCallCount(
+            laneResult?.toolCallCount,
+            runCatching { laneManager.transcript(parentSessionId, laneName) }.getOrDefault(emptyList()),
+        )
+
         return SubagentExecutionOutcome(
             spec = spec,
             subSessionId = laneName,
             isSuccess = laneResult?.success == true,
-            summary = laneResult?.summary ?: "执行超时 (${SUBAGENT_TIMEOUT_MS / 60_000} 分钟)",
-            toolCallCount = laneResult?.toolCallCount ?: 0,
+            summary = laneResult?.summary ?: "执行超时 (${SUBAGENT_TIMEOUT_MS / 60_000} 分钟，已执行 $toolCallCount 次工具调用)",
+            toolCallCount = toolCallCount,
             resolvedProfileId = profile.id,
             resolvedProfileName = profile.name,
         )
@@ -192,7 +200,9 @@ class SubagentOrchestrator @Inject constructor(
     }
 
     private companion object {
-        const val SUBAGENT_TIMEOUT_MS = 6 * 60 * 1000L
+        // 15 分钟：移动端复杂分析任务（大文件读取 + 多轮工具调用 + 长文本产出）
+        // 实测 6 分钟不够用，超时前往往仍在正常执行中途。
+        const val SUBAGENT_TIMEOUT_MS = 15 * 60 * 1000L
     }
 
     private fun buildSummaryMarkdown(outcomes: List<SubagentExecutionOutcome>): String =
@@ -250,6 +260,16 @@ internal fun buildWriteCleanWaves(specs: List<SubagentTaskSpec>): List<List<Suba
 
 /** 规范化写路径，统一去掉首尾斜杠，保证跨子任务的路径比较稳定。 */
 internal fun normalizeWritePath(path: String): String = path.trim().trim('/')
+
+/**
+ * 超时取消时 laneRunner 协程被中止，其内存中的工具调用统计随返回值一起丢失；
+ * 此时从 lane 已落库的 transcript（tool_call entry）恢复真实计数，
+ * 避免汇总里出现"子智能体明明在干活却显示 0 次工具调用"。
+ */
+internal fun resolveSubagentToolCallCount(
+    laneResultToolCalls: Int?,
+    persistedTranscript: List<HarnessMessage>,
+): Int = laneResultToolCalls ?: persistedTranscript.count { it is ToolCall }
 
 /** 汇总注入父上下文的字符预算；超出即走截断+落盘分页。 */
 internal const val SUMMARY_INLINE_BUDGET = 12_000

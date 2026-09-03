@@ -845,19 +845,6 @@ private fun copyImageSource(context: Context, source: Any, target: Uri) {
     } ?: error("Cannot open destination")
 }
 
-/** 媒体加载中/失败态的占位块（圆角与成图一致，避免前后跳变）。 */
-@Composable
-private fun MediaStateBox(shape: RoundedCornerShape, content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit) {
-    Box(
-        modifier = Modifier
-            .width(MEDIA_MAX_WIDTH)
-            .height(MEDIA_PLACEHOLDER_HEIGHT)
-            .background(MaterialTheme.colorScheme.surfaceContainerLowest, shape),
-        contentAlignment = Alignment.Center,
-        content = content,
-    )
-}
-
 private val MEDIA_MAX_WIDTH = 260.dp
 private val MEDIA_MAX_HEIGHT = 340.dp
 private val MEDIA_PLACEHOLDER_HEIGHT = 180.dp

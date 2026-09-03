@@ -42,16 +42,6 @@ val M3ExpDarkTertiaryContainer = Color(0xFF77321D)
 val M3ExpDarkOnTertiaryContainer = Color(0xFFFFDBD1)
 
 // M3 Expressive 状态色 (Semantic Feedback)
-val M3ExpLightSuccess = Color(0xFF2E7D32)
-val M3ExpLightSuccessContainer = Color(0xFFD7F5D9)
-val M3ExpDarkSuccess = Color(0xFF81C784)
-val M3ExpDarkSuccessContainer = Color(0xFF1B4D20)
-
-val M3ExpLightWarning = Color(0xFFB25E00)
-val M3ExpLightWarningContainer = Color(0xFFFFDCBE)
-val M3ExpDarkWarning = Color(0xFFFFB77C)
-val M3ExpDarkWarningContainer = Color(0xFF6B3600)
-
 val M3ExpLightError = Color(0xFFBA1A1A)
 val M3ExpLightErrorContainer = Color(0xFFFFDAD6)
 val M3ExpDarkError = Color(0xFFFFB4AB)
@@ -86,56 +76,6 @@ val M3ExpDarkSurfaceContainerHigh = Color(0xFF282A30)
 val M3ExpDarkSurfaceContainerHighest = Color(0xFF33343B)
 val M3ExpDarkOutline = Color(0xFF90909A)
 val M3ExpDarkOutlineVariant = Color(0xFF45464F)
-
-// 兼容旧语义常量别名（自动桥接至 M3 Expressive）
-val CyberCyan = M3ExpDarkPrimary
-val CyberCyanMuted = M3ExpDarkSecondary
-val CyberCyanContainer = M3ExpDarkPrimaryContainer
-val AuroraViolet = M3ExpLightSecondary
-val AuroraVioletLight = M3ExpDarkSecondary
-val AuroraVioletContainer = M3ExpDarkSecondaryContainer
-val PulseEmerald = M3ExpDarkSuccess
-val PulseEmeraldContainer = M3ExpDarkSuccessContainer
-val SolarAmber = M3ExpDarkWarning
-val SolarAmberContainer = M3ExpDarkWarningContainer
-val LaserCrimson = M3ExpDarkError
-val LaserCrimsonContainer = M3ExpDarkErrorContainer
-
-val TaiXuVoid = M3ExpDarkSurfaceContainerLowest
-val TaiXuBackground = M3ExpDarkBackground
-val TaiXuSurface = M3ExpDarkSurface
-val TaiXuSurfaceLow = M3ExpDarkSurfaceContainerLow
-val TaiXuSurfaceContainerLow = M3ExpDarkSurfaceContainer
-val TaiXuSurfaceHigh = M3ExpDarkSurfaceContainerHigh
-val TaiXuSurfaceHighest = M3ExpDarkSurfaceContainerHighest
-val TaiXuOnPrimary = M3ExpDarkOnPrimary
-val TaiXuOnSurface = M3ExpDarkOnSurface
-val TaiXuOnSurfaceMuted = M3ExpDarkOnSurfaceVariant
-val TaiXuOnSurfaceDim = M3ExpDarkOutline
-val TaiXuOutline = M3ExpDarkOutline
-val TaiXuOutlineVariant = M3ExpDarkOutlineVariant
-val TaiXuGlassBg = Color(0xF21E1F25)
-
-val LightBg = M3ExpLightBackground
-val LightSurface = M3ExpLightSurface
-val LightSurfaceLow = M3ExpLightSurfaceContainerLow
-val LightSurfaceHigh = M3ExpLightSurfaceContainerHigh
-val LightSurfaceHighest = M3ExpLightSurfaceContainerHighest
-val LightPrimary = M3ExpLightPrimary
-val LightPrimaryContainer = M3ExpLightPrimaryContainer
-val LightOnPrimary = M3ExpLightOnPrimary
-val LightOnPrimaryContainer = M3ExpLightOnPrimaryContainer
-val LightSecondary = M3ExpLightSecondary
-val LightSecondaryContainer = M3ExpLightSecondaryContainer
-val LightOnSecondaryContainer = M3ExpLightOnSecondaryContainer
-val LightOnSurface = M3ExpLightOnSurface
-val LightOnSurfaceMuted = M3ExpLightOnSurfaceVariant
-val LightOnSurfaceDim = M3ExpLightOutline
-val LightOutline = M3ExpLightOutline
-val LightOutlineVariant = M3ExpLightOutlineVariant
-val LightGlassBg = Color(0xF2FFFFFF)
-val LightGlowBorder = Color(0x1F4259C3)
-val TaiXuGlowBorder = Color(0x2FBAC3FF)
 
 // ======================= 「澄明 · Chengming」液态玻璃主题色板 =======================
 // 半透明冰霜质地，让根层流光（Aurora）透出并经由 backdrop 折射，呈现液态玻璃质感。
@@ -204,10 +144,4 @@ val ChengmingDarkSurfaceContainerHigh = Color(0xCC222F43)
 val ChengmingDarkSurfaceContainerHighest = Color(0xCC2A3850)
 val ChengmingDarkOutline = Color(0xFF8A97A8)
 val ChengmingDarkOutlineVariant = Color(0x5546535F)
-
-// 澄明 · 流光底色（Aurora）——液态玻璃折射的"源"
-val ChengmingAuroraTop = Color(0xFF3E63DD)
-val ChengmingAuroraMid = Color(0xFF6E7CE0)
-val ChengmingAuroraBottom = Color(0xFFB47AE8)
-val ChengmingAuroraGlow = Color(0x6629B6F6)
 

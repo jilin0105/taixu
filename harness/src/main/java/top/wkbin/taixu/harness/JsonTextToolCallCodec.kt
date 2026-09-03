@@ -202,9 +202,3 @@ object TextToolCallCodec {
 
     private val JSON_NUMBER = Regex("""-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?""")
 }
-
-/** 兼容旧调用点；新代码统一使用 [TextToolCallCodec]。 */
-object JsonTextToolCallCodec {
-    fun extract(json: Json, text: String): List<ApiToolCallSpec> = TextToolCallCodec.extract(json, text)
-    fun stripMarkers(text: String): String = TextToolCallCodec.stripMarkers(text)
-}

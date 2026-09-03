@@ -472,14 +472,6 @@ fun WorkshopScriptEditorScreen(type: WorkshopScriptType, onBack: () -> Unit, vie
     } }
 }
 
-@Composable private fun ScriptRow(type: WorkshopScriptType, isCustom: Boolean, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        RuntimeIcon(if (type == WorkshopScriptType.ANDROID) RuntimeIconName.Android else RuntimeIconName.Flutter, Modifier.size(28.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) { Text(type.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold); Text(if (isCustom) type.customPath else type.defaultPath, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = 11.sp), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis); Text(if (isCustom) "已使用自定义脚本" else "使用系统默认脚本", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
-        RuntimeIcon(RuntimeIconName.ChevronRight, Modifier.size(20.dp), MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
 @Composable private fun ScriptPathPanel(path: String) { RuntimeCard(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) { Column(verticalArrangement = Arrangement.spacedBy(4.dp)) { Text(stringResource(R.string.workshop_script_path_title), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(path, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = 11.sp)) } } }
 
 @Composable

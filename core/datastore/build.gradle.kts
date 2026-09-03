@@ -24,7 +24,6 @@ dependencies {
     implementation(project(":core:security"))
     implementation(project(":core:model"))
     implementation(libs.androidx.datastore.preferences)
-    implementation(libs.androidx.core.ktx)
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.kotlinx.coroutines.core)
