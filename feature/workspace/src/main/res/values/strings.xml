@@ -106,6 +106,8 @@
     <string name="workspace_export_apk_description">便于用宿主侧工具（MT 管理器等）直接打开；需已授予全部文件访问权限</string>
     <string name="workspace_git_url">Git 仓库地址</string>
     <string name="workspace_git_import_description">导入到目标目录后以仓库内容为准，不会生成模板文件</string>
+    <string name="workspace_git_clone_in_progress">正在从 GitHub 拉取项目</string>
+    <string name="workspace_git_clone_connecting">正在连接仓库…</string>
     <string name="workspace_internal_storage">内部空间</string>
     <string name="workspace_shared_space">共享空间</string>
     <string name="workspace_location_project">工程专属目录  /workspace/%1$s</string>

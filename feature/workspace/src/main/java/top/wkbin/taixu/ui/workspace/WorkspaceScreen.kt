@@ -254,6 +254,7 @@ fun WorkspaceScreen(
     val installedComponentIds by viewModel.installedComponentIds.collectAsStateWithLifecycle()
     val keystores by viewModel.keystores.collectAsStateWithLifecycle()
     val loadingProjects by viewModel.loadingProjects.collectAsStateWithLifecycle()
+    val githubImportProgress by viewModel.githubImportProgress.collectAsStateWithLifecycle()
     val projectTemplates by viewModel.projectTemplates.collectAsStateWithLifecycle()
     val templateScriptPreview by viewModel.templateScriptPreview.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -298,6 +299,7 @@ fun WorkspaceScreen(
     var archiveSource by remember { mutableStateOf<ProjectArchiveSource?>(null) }
     var importGitUrl by rememberSaveable { mutableStateOf("") }
     var gitTransport by rememberSaveable { mutableStateOf(GitTransport.HTTP) }
+    var importInProgress by rememberSaveable { mutableStateOf(false) }
     var pendingExportProject by remember { mutableStateOf<WorkspaceProject?>(null) }
     var buildConfigTarget by remember { mutableStateOf<WorkspaceProject?>(null) }
     var pendingExportTemplateId by remember { mutableStateOf<String?>(null) }
@@ -1619,6 +1621,11 @@ fun WorkspaceScreen(
             archiveSource = null
             importGitUrl = ""
             gitTransport = GitTransport.HTTP
+            importInProgress = false
+        }
+        // GitHub 拉取进行中：保持弹窗展示克隆进度，完成后统一关闭并复位（克隆可能耗时数分钟）
+        LaunchedEffect(importInProgress, busy) {
+            if (importInProgress && !busy) resetImportDialog()
         }
         // GitHub HTTP(S) 导入地址前置校验：必须是 http:// 或 https:// 开头
         val gitUrlError = if (
@@ -1629,13 +1636,61 @@ fun WorkspaceScreen(
             !importGitUrl.trim().startsWith("https://")
         ) stringResource(R.string.workspace_git_url_invalid) else null
         RuntimeAlertDialog(
-            onDismissRequest = { resetImportDialog() },
+            onDismissRequest = { if (!importInProgress) resetImportDialog() },
             title = { Text(stringResource(R.string.workspace_import_project), fontWeight = FontWeight.Bold) },
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    // GitHub 拉取进度：git 克隆可能耗时数分钟，实时展示最新进度与百分比
+                    if (importInProgress) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    RuntimeCircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                    Text(
+                                        stringResource(R.string.workspace_git_clone_in_progress),
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    githubImportProgress?.percent?.let { percent ->
+                                        Text(
+                                            "$percent%",
+                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                }
+                                val clonePercent = githubImportProgress?.percent
+                                LinearProgressIndicator(
+                                    progress = clonePercent?.let { percent -> { percent / 100f } },
+                                    modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)),
+                                )
+                                githubImportProgress?.let { progress ->
+                                    Text(
+                                        progress.text,
+                                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                    }
                     Text(
                         stringResource(R.string.workspace_import_source),
                         style = MaterialTheme.typography.labelMedium,
@@ -1834,7 +1889,10 @@ fun WorkspaceScreen(
                             archiveSource?.let {
                                 viewModel.importLocalProject(importProjectName, importDirectoryPath, importProjectType, it)
                             }
+                            resetImportDialog()
                         } else {
+                            // 拉取期间保持弹窗打开展示 git 克隆进度，完成后由 LaunchedEffect 统一关闭
+                            importInProgress = true
                             viewModel.importGithubProject(
                                 importProjectName,
                                 importDirectoryPath,
@@ -1843,7 +1901,6 @@ fun WorkspaceScreen(
                                 gitTransport,
                             )
                         }
-                        resetImportDialog()
                     },
                     enabled = importProjectName.isNotBlank() && !busy && gitUrlError == null &&
                         ((importMode == ProjectImportMode.LOCAL && archiveSource != null) ||
@@ -1851,7 +1908,7 @@ fun WorkspaceScreen(
                 ) { Text(stringResource(R.string.workspace_import), color = MaterialTheme.colorScheme.primary) }
             },
             dismissButton = {
-                TextButton(onClick = { resetImportDialog() }) { Text(stringResource(R.string.workspace_cancel)) }
+                TextButton(onClick = { resetImportDialog() }, enabled = !importInProgress) { Text(stringResource(R.string.workspace_cancel)) }
             },
         )
     }

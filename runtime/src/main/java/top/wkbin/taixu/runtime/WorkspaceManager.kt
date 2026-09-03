@@ -365,6 +365,7 @@ class WorkspaceManager @Inject constructor(
         projectType: ProjectType,
         gitUrl: String,
         transport: GitTransport,
+        onProgress: ((String) -> Unit)? = null,
     ): AppResult<WorkspaceProject> = withContext(Dispatchers.IO) {
         importProject(name, directoryPath, projectType, ProjectImportSource.GITHUB) { directory, cleanupOnFailure ->
             require(isValidGitUrlForTransport(gitUrl, transport)) {
@@ -373,7 +374,7 @@ class WorkspaceManager @Inject constructor(
                     GitTransport.SSH -> "SSH 地址必须使用 ssh:// 或 git@host:path 格式"
                 }
             }
-            cloneGitRepository(directory, gitUrl, cleanupOnFailure)
+            cloneGitRepository(directory, gitUrl, cleanupOnFailure, onProgress)
         }
     }
 
@@ -574,11 +575,18 @@ class WorkspaceManager @Inject constructor(
             }
         }
 
-    private suspend fun cloneGitRepository(directory: File, url: String, cleanupOnFailure: Boolean) {
+    private suspend fun cloneGitRepository(
+        directory: File,
+        url: String,
+        cleanupOnFailure: Boolean,
+        onProgress: ((String) -> Unit)? = null,
+    ) {
         val result = linuxRuntime.get().execute(
             ShellCommand(
-                commandLine = "git clone --depth 1 -- ${shellQuote(url.trim())} ${shellQuote(linuxPathFor(directory))}",
+                // --progress 让 git 在非 TTY 管道下也输出克隆进度（remote:/Receiving objects: 等）
+                commandLine = "git clone --depth 1 --progress -- ${shellQuote(url.trim())} ${shellQuote(linuxPathFor(directory))}",
                 timeoutMs = GIT_CLONE_TIMEOUT_SECONDS * 1_000L,
+                onOutput = onProgress,
             ),
         )
         check(result.isSuccess) {

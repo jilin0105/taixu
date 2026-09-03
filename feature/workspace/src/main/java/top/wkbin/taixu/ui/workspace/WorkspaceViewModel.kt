@@ -243,6 +243,16 @@ class WorkspaceViewModel @Inject constructor(
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
 
+    /**
+     * GitHub 拉取进度：仅在进行中的 git clone 期间非空。
+     * [text] 为 git 输出的最新一行（remote:/Receiving objects: 等，\r 分隔的进度更新取末段），
+     * [percent] 从输出中解析的百分比（0-100），无法解析时为 null（UI 显示不确定进度条）。
+     */
+    data class GithubImportProgress(val text: String, val percent: Int?)
+
+    private val _githubImportProgress = MutableStateFlow<GithubImportProgress?>(null)
+    val githubImportProgress: StateFlow<GithubImportProgress?> = _githubImportProgress.asStateFlow()
+
     // 运行/构建状态
     val buildProgress: StateFlow<top.wkbin.taixu.runtime.build.BuildRunProgress?> = buildCoordinator.state
         .map { it?.progress }
@@ -392,10 +402,25 @@ class WorkspaceViewModel @Inject constructor(
         if (_busy.value) return
         viewModelScope.launch {
             _busy.value = true
-            val result = workspaceManager.importGithubProject(name, directoryPath, projectType, gitUrl, transport)
+            _githubImportProgress.value = GithubImportProgress(
+                text = context.getString(R.string.workspace_git_clone_connecting),
+                percent = null,
+            )
+            val result = workspaceManager.importGithubProject(name, directoryPath, projectType, gitUrl, transport) { chunk ->
+                // git 进度用 \r 原地刷新，取 chunk 内最后一个非空片段作为最新状态
+                val latest = chunk.split('\r', '\n').lastOrNull { it.isNotBlank() }?.trim()
+                if (latest != null) {
+                    _githubImportProgress.value = GithubImportProgress(
+                        text = latest,
+                        percent = GIT_PERCENT_REGEX.findAll(latest).lastOrNull()
+                            ?.groupValues?.get(1)?.toIntOrNull()?.coerceIn(0, 100),
+                    )
+                }
+            }
             _message.value = result.errorOrNull()?.message ?: context.getString(R.string.workspace_project_imported)
             _messageIsError.value = result.isFailure
             if (result.isSuccess) workspaceManager.listProjects()
+            _githubImportProgress.value = null
             _busy.value = false
         }
     }
@@ -650,3 +675,6 @@ internal fun isValidWorkspaceEntryName(name: String): Boolean {
     if (name.contains('/') || name.contains('\\')) return false
     return true
 }
+
+/** 从 git 克隆进度行提取百分比，如 "Receiving objects: 45% (50/110), 1.2 MiB"。 */
+private val GIT_PERCENT_REGEX = Regex("""(\d{1,3})%""")
