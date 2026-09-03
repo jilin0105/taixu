@@ -220,12 +220,8 @@ class McpHttpTransport @Inject constructor(
      * server 会顺延绑定到相邻端口（见 [McpServerRuntime]），此时静态预设 URL 已过期，
      * 以 [BuiltinBrowserMcpAccess.port] 为准替换 URL 中的端口。
      */
-    private fun effectiveUrlOf(server: McpServerConfig): String {
-        val url = server.serverUrl.trim()
-        val runtimePort = BuiltinBrowserMcpAccess.port ?: return url
-        if (server.id != BuiltinMcpPresets.BROWSER_BUILTIN_ID) return url
-        return url.replace(Regex("^(https?://[^/:]+):\\d+"), "$1:$runtimePort")
-    }
+    private fun effectiveUrlOf(server: McpServerConfig): String =
+        resolveBrowserEffectiveUrl(server.serverUrl.trim(), server.id, BuiltinBrowserMcpAccess.port)
 
     private suspend fun createStreamableSession(server: McpServerConfig): HttpSession {
         val url = effectiveUrlOf(server)
@@ -574,6 +570,19 @@ class McpHttpTransport @Inject constructor(
         private const val FAILURE_COOLDOWN_MS = 5 * 60_000L
         private val JSON = "application/json".toMediaType()
     }
+}
+
+/**
+ * 解析内置 browser server 的"实际"URL：仅当日标服务是内置 browser 且已绑定运行时端口时，
+ * 用运行时端口替换静态预设 URL 里的首选端口；否则原样返回。纯函数，便于对端口顺延做回归测试。
+ *
+ * 这是"发现与调用分离"的分界：provider 可见工具 schema（[top.wkbin.taixu.harness.mcp.server.McpToolDispatcher.listTools]）
+ * 不含任何端口，真实端口只在 tools/call 连接阶段经此解析注入，因此绑定端口变化不改变 provider 可见表面。
+ */
+internal fun resolveBrowserEffectiveUrl(serverUrl: String, serverId: String, runtimePort: Int?): String {
+    if (runtimePort == null) return serverUrl
+    if (serverId != BuiltinMcpPresets.BROWSER_BUILTIN_ID) return serverUrl
+    return serverUrl.replace(Regex("^(https?://[^/:]+):\\d+"), "$1:$runtimePort")
 }
 
 internal fun isAllowedCleartextMcpHost(host: String): Boolean {
