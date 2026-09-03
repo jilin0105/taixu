@@ -114,6 +114,7 @@ class HarnessLoop @Inject constructor(
     private val pathManager: top.wkbin.taixu.runtime.RuntimePathManager,
     private val agentTaskStateMachine: AgentStateMachine,
     private val turnRunner: TurnRunner,
+    private val rewindController: top.wkbin.taixu.harness.checkpoint.RewindController,
 ) {
     private val loopScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -142,6 +143,21 @@ class HarnessLoop @Inject constructor(
     /** Session-scoped message stream used by trusted secondary surfaces such as TaiXu WebChat. */
     fun messagesForSession(sessionId: String): StateFlow<List<HarnessMessage>> =
         messageProjector.messagesFlow(sessionId)
+
+    // ---- Checkpoints & Rewind（每轮文件快照安全网，供 UI / 未来 MCP 调用） ----
+    fun sessionCheckpoints(sessionId: String): List<top.wkbin.taixu.harness.checkpoint.CheckpointMeta> =
+        rewindController.checkpoints(sessionId)
+
+    fun prepareRewind(
+        sessionId: String,
+        turn: Int,
+        scope: top.wkbin.taixu.harness.checkpoint.RewindScope,
+    ): top.wkbin.taixu.harness.checkpoint.RewindPlan = rewindController.prepare(sessionId, turn, scope)
+
+    suspend fun commitRewind(
+        plan: top.wkbin.taixu.harness.checkpoint.RewindPlan,
+        workspace: String = "",
+    ): top.wkbin.taixu.harness.checkpoint.RewindResult = rewindController.commit(plan, workspace)
 
     /** Loads persisted history without changing the Android UI's foreground session. */
     suspend fun prepareRemoteSession(sessionId: String): List<HarnessMessage> {
@@ -983,6 +999,7 @@ class HarnessLoop @Inject constructor(
         sessionLoopDetectors.getOrPut(sessId) { ToolCallLoopDetector() }.reset()
         agentEventLogger.log(sessId, "UserPrompt", userText)
         val userMessage = UserMessage(id = newId(), createdAt = now(), text = userText, imageUrls = imageUrls)
+        rewindController.beginTurn(sessId, userText)
         val operationId = operationCoordinator.acceptRun(sessId, userMessage)
         taskId?.let { agentTaskStateMachine.checkpoint(it, operationId, 0, 0, "任务已受理") }
         messageProjector.publishPersisted(sessId, userMessage)

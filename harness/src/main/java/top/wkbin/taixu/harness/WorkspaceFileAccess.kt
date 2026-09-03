@@ -148,6 +148,41 @@ class WorkspaceFileAccess(
     /** Resolve a download destination while preserving the workspace boundary checks. */
     fun resolveDownloadDestination(path: String): File = resolveWritable(path)
 
+    /**
+     * 读取指定路径当前内容；文件不存在或无权限读取时返回 null（不抛异常）。
+     * 供 checkpoint 快照在写工具触碰前捕获轮初内容。
+     */
+    suspend fun previewOrNull(path: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val file = resolveRequired(path)
+            if (!file.isFile) null else file.readText(Charsets.UTF_8)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /** 文件字节数（路径越界/非文件/不存在返回 null）；供 checkpoint 预判是否跳过超大文件快照。 */
+    suspend fun fileSizeOrNull(path: String): Long? = withContext(Dispatchers.IO) {
+        try {
+            val file = resolveRequired(path)
+            if (file.isFile) file.length() else null
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /** 在工作区边界内删除文件（路径逃逸或删除失败返回 false）；文件不存在视为成功。 */
+    suspend fun delete(path: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val file = resolve(path) ?: return@withContext false
+            if (!file.exists()) return@withContext true
+            if (file.isDirectory) return@withContext false
+            file.delete()
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     /** Cheap cache stamp for prompt-relevant workspace metadata without reading file bodies. */
     suspend fun changeStamp(path: String, relativePaths: List<String>): Long = withContext(Dispatchers.IO) {
         val base = resolveRequired(path)

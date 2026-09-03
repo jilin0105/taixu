@@ -63,6 +63,7 @@ class ToolExecutor @Inject constructor(
     private val hostGuiController: top.wkbin.taixu.runtime.gui.HostGuiController? = null,
     private val buildScriptToolExecutor: BuildScriptToolExecutor? = null,
     private val promptRouter: top.wkbin.taixu.harness.prompt.PromptRouter? = null,
+    private val checkpointStore: top.wkbin.taixu.harness.checkpoint.CheckpointStore? = null,
 ) {
     @Inject
     lateinit var settingsDataStore: AgentPreferences
@@ -186,6 +187,7 @@ class ToolExecutor @Inject constructor(
             HarnessTool.WRITE -> {
                 val path = requireString(args, "path")
                 val content = requireString(args, "content")
+                captureBeforeWrite(sessionId, activeFileAccess, path)
                 val linesAdded = content.lines().size
                 activeFileAccess.write(path, content)
                     .toToolOutput("已写入 $path\nDIFF_STAT: +$linesAdded -0", actionName = "write")
@@ -194,6 +196,7 @@ class ToolExecutor @Inject constructor(
                 val path = requireString(args, "path")
                 val oldText = requireString(args, "oldText")
                 val newText = requireString(args, "newText")
+                captureBeforeWrite(sessionId, activeFileAccess, path)
                 val linesAdded = newText.lines().size
                 val linesDeleted = oldText.lines().size
                 activeFileAccess.edit(path, oldText, newText)
@@ -808,6 +811,21 @@ class ToolExecutor @Inject constructor(
     }
 
 
+    /** 写工具触碰前，捕获该路径的轮初内容进 checkpoint（同轮同路径去重）。 */
+    private suspend fun captureBeforeWrite(
+        sessionId: String,
+        activeFileAccess: WorkspaceFileAccess,
+        path: String,
+    ) {
+        val normalized = path.trim().trimStart('/')
+        // 超过快照上限的文件整体跳过：避免大文件整读入堆内存（OOM 风险），
+        // 且 commit 恢复走 write（同样受 1MiB 上限约束），快照了也恢复不回去。
+        // 注意不能返回 null 充当"文件不存在"快照——那会让 rewind 误删该文件。
+        val size = activeFileAccess.fileSizeOrNull(normalized)
+        if (size != null && size > CHECKPOINT_SNAPSHOT_MAX_BYTES) return
+        checkpointStore?.capture(sessionId, normalized, activeFileAccess.previewOrNull(normalized))
+    }
+
     private fun AppResult<Any>.toToolOutput(successMessage: String = "", actionName: String = ""): Pair<Boolean, String> = when (this) {
         is AppResult.Success -> true to successMessage.ifBlank { data.toString() }
         is AppResult.Failure -> {
@@ -861,6 +879,9 @@ class ToolExecutor @Inject constructor(
         private val LOGCAT_TAG = Regex("^[A-Za-z0-9_.-]{1,80}$")
         const val DEFAULT_DOWNLOAD_MAX_BYTES = 1024L * 1024L * 1024L
         const val MAX_DOWNLOAD_MAX_BYTES = 4L * 1024L * 1024L * 1024L
+
+        /** checkpoint 单文件快照上限：与 WorkspaceFileAccess.MAX_WRITE_BYTES 对齐（超限跳过快照，恢复本也走 write）。 */
+        const val CHECKPOINT_SNAPSHOT_MAX_BYTES = 1L * 1024L * 1024L
         private val IMAGE_DOWNLOAD_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
         const val PROGRESS_REPORT_INTERVAL_MS = 250L
         const val DEFAULT_PROCESS_LOG_LINES = 120L
