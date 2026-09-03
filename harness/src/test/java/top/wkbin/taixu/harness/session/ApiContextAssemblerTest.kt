@@ -188,6 +188,24 @@ class ApiContextAssemblerTest {
         assertEquals("hello", off.last { it.role == "assistant" }.content)
     }
 
+    @Test
+    fun `tool-calling assistant messages must round-trip reasoning content for thinking mode`() = runBlocking {
+        // DeepSeek 思考模式：两个 user 之间若有工具调用，中间 assistant 消息的
+        // reasoning_content 必须原样传回，否则 400 报错。
+        push(
+            "s-think-tool",
+            UserMessage("u1", 1L, "读文件"),
+            ToolCall("t1", 2L, HarnessTool.READ, buildJsonObject { }, reasoning = "需要先看文件", rawToolName = "read"),
+            ToolResult("r1", 3L, "t1", success = true, output = "内容"),
+            AssistantText("a1", 4L, "文件内容是……", reasoning = "已读到"),
+        )
+        val out = assembler.assemble("s-think-tool", nativeModel(), "")
+        val toolTurn = out.first { it.role == "assistant" && !it.tool_calls.isNullOrEmpty() }
+        assertEquals("需要先看文件", toolTurn.reasoning_content)
+        // 收尾纯文本 assistant 轮仍不回传
+        assertNull(out.last { it.role == "assistant" && it.tool_calls == null }.reasoning_content)
+    }
+
     // ---------- JSON_TEXT 协议 ----------
 
     @Test
