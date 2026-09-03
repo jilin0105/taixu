@@ -21,16 +21,18 @@ class CheckpointStore @Inject constructor() {
         var active: MutableMap<String, FileSnap>? = null
         var activeTurn = 0
         var activePrompt = ""
+        var activeAnchorMessageId: String? = null
         var open = false
     }
 
     /** 开启一个新的用户轮次 checkpoint，并关闭上一轮（若有）。 */
     @Synchronized
-    fun beginTurn(sessionId: String, prompt: String) {
+    fun beginTurn(sessionId: String, prompt: String, anchorMessageId: String? = null) {
         val state = sessions.getOrPut(sessionId) { SessionState() }
         closeTurn(state)
         state.activeTurn = state.checkpoints.size
         state.activePrompt = prompt.ifBlank { "（空白输入）" }
+        state.activeAnchorMessageId = anchorMessageId
         state.active = LinkedHashMap()
         state.open = true
     }
@@ -60,8 +62,13 @@ class CheckpointStore @Inject constructor() {
     @Synchronized
     fun checkpoints(sessionId: String): List<CheckpointMeta> =
         sessions[sessionId]?.checkpoints?.map {
-            CheckpointMeta(it.turn, it.time, it.prompt, it.files.map { snap -> snap.path })
+            CheckpointMeta(it.turn, it.time, it.prompt, it.files.map { snap -> snap.path }, it.anchorMessageId)
         } ?: emptyList()
+
+    /** 查询某轮 checkpoint 的用户消息锚点（供对话 fork 定位）。 */
+    @Synchronized
+    fun anchorMessageIdOf(sessionId: String, turn: Int): String? =
+        sessions[sessionId]?.checkpoints?.firstOrNull { it.turn == turn }?.anchorMessageId
 
     /**
      * 规划"代码回滚"：撤回到 [turn]，即撤销该轮及之后的所有写改动。
@@ -96,11 +103,13 @@ class CheckpointStore @Inject constructor() {
                     time = System.currentTimeMillis(),
                     prompt = state.activePrompt,
                     files = active.values.toList(),
+                    anchorMessageId = state.activeAnchorMessageId,
                 ),
             )
             while (state.checkpoints.size > MAX_KEPT) state.checkpoints.removeAt(0)
         }
         state.active = null
+        state.activeAnchorMessageId = null
         state.open = false
     }
 

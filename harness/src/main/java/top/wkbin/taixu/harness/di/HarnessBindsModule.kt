@@ -5,6 +5,8 @@ import dagger.Module
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
+import top.wkbin.taixu.harness.checkpoint.ConversationRewinder
+import top.wkbin.taixu.harness.checkpoint.SessionForkConversationRewinder
 import top.wkbin.taixu.harness.prompt.DefaultPrivilegeSectionRenderer
 import top.wkbin.taixu.harness.prompt.PrivilegeSectionRenderer
 import top.wkbin.taixu.harness.projection.LiveMessagePort
@@ -27,4 +29,11 @@ abstract class HarnessBindsModule {
     abstract fun bindLiveMessagePort(
         impl: SessionMessageProjector,
     ): LiveMessagePort
+
+    /** 对话回退 fork 处理器 → 会话树派生实现（RewindController 的可选注入点收口） */
+    @Binds
+    @Singleton
+    abstract fun bindConversationRewinder(
+        impl: SessionForkConversationRewinder,
+    ): ConversationRewinder
 }

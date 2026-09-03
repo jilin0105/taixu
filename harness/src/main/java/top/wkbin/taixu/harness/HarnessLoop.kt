@@ -999,7 +999,7 @@ class HarnessLoop @Inject constructor(
         sessionLoopDetectors.getOrPut(sessId) { ToolCallLoopDetector() }.reset()
         agentEventLogger.log(sessId, "UserPrompt", userText)
         val userMessage = UserMessage(id = newId(), createdAt = now(), text = userText, imageUrls = imageUrls)
-        rewindController.beginTurn(sessId, userText)
+        rewindController.beginTurn(sessId, userText, userMessage.id)
         val operationId = operationCoordinator.acceptRun(sessId, userMessage)
         taskId?.let { agentTaskStateMachine.checkpoint(it, operationId, 0, 0, "任务已受理") }
         messageProjector.publishPersisted(sessId, userMessage)

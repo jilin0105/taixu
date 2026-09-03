@@ -23,6 +23,8 @@ data class Checkpoint(
     val prompt: String,
     /** 该轮触碰过的文件快照（每个 path 仅保留轮初内容）。 */
     val files: List<FileSnap>,
+    /** 该轮用户消息 entry id，供对话 fork 在会话树上定位轮次边界。 */
+    val anchorMessageId: String? = null,
 )
 
 /** 提供给恢复 UI 的轻量摘要：不含文件内容。 */
@@ -31,6 +33,8 @@ data class CheckpointMeta(
     val time: Long,
     val prompt: String,
     val changedFiles: List<String>,
+    /** 该轮用户消息 entry id，供对话 fork 在会话树上定位轮次边界。 */
+    val anchorMessageId: String? = null,
 )
 
 /** 恢复范围：仅代码 / 仅对话 / 两者。 */
@@ -51,4 +55,6 @@ data class RewindResult(
     /** 存在无法满足的部分（如对话 fork 处理器未就绪）时为 true。 */
     val partial: Boolean,
     val note: String? = null,
+    /** CONVERSATION/BOTH 恢复派生出的新会话 id；UI 可跳转过去继续对话。 */
+    val forkedSessionId: String? = null,
 )

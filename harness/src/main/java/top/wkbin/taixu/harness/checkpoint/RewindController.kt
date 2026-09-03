@@ -21,7 +21,8 @@ class RewindController @Inject constructor(
     fun checkpoints(sessionId: String): List<CheckpointMeta> = store.checkpoints(sessionId)
 
     /** 用户轮次开始处调用：开启该轮 checkpoint。 */
-    fun beginTurn(sessionId: String, prompt: String) = store.beginTurn(sessionId, prompt)
+    fun beginTurn(sessionId: String, prompt: String, anchorMessageId: String? = null) =
+        store.beginTurn(sessionId, prompt, anchorMessageId)
 
     /** 会话结束/删除清理。 */
     fun dropSession(sessionId: String) = store.dropSession(sessionId)
@@ -55,11 +56,12 @@ class RewindController @Inject constructor(
 
         var partial = problems.isNotEmpty()
         var note: String? = null
+        var forkedSessionId: String? = null
         if (plan.scope != RewindScope.CODE) {
-            val forkedSessionId = conversationRewinder?.rewindConversation(plan.sessionId, plan.turn)
+            forkedSessionId = conversationRewinder?.rewindConversation(plan.sessionId, plan.turn)
             if (forkedSessionId == null) {
                 partial = true
-                note = "对话尚未在目标轮派生新会话（未配置对话 fork 处理器）；代码恢复已完成。"
+                note = "对话尚未在目标轮派生新会话（未配置对话 fork 处理器或该轮无锚点）；代码恢复已完成。"
             }
         }
         if (problems.isNotEmpty()) {
@@ -70,6 +72,7 @@ class RewindController @Inject constructor(
             filesDeleted = deleted,
             partial = partial,
             note = note,
+            forkedSessionId = forkedSessionId,
         )
     }
 }
