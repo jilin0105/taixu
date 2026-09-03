@@ -75,6 +75,26 @@ if [ -x "$JAVA_HOME_RESOLVED/bin/java" ] && [ ! -x /usr/bin/java ]; then
     ln -sf "$JAVA_HOME_RESOLVED/bin/java" /usr/bin/java 2>/dev/null || true
 fi
 
+# 工坊签名管理器（WorkshopSigningManager）与离线套件统一使用
+# /opt/taixu/toolchains/android/jdk 作为 JAVA_HOME 规范路径。在线安装的
+# apt JDK 位于 /usr/lib/jvm/*，这里补一个规范路径软链接，保证 keytool
+# 在在线/离线两条安装路径下都从默认路径可达。若离线插件已部署 JDK 真身
+# 目录（非软链接），保留不动。
+TOOLCHAIN_JDK_LINK="/opt/taixu/toolchains/android/jdk"
+if [ -d "$TOOLCHAIN_JDK_LINK" ] && [ ! -L "$TOOLCHAIN_JDK_LINK" ]; then
+    echo "==> [TaiXu] 检测到离线套件 JDK 真身，跳过规范路径链接"
+else
+    mkdir -p /opt/taixu/toolchains/android /opt/taixu/bin 2>/dev/null || true
+    ln -sfn "$JAVA_HOME_RESOLVED" "$TOOLCHAIN_JDK_LINK"
+    # keytool / jarsigner 进 /opt/taixu/bin（PATH 首位），终端可直接调用。
+    for jdk_cmd in keytool jarsigner; do
+        if [ -x "$JAVA_HOME_RESOLVED/bin/$jdk_cmd" ]; then
+            ln -sfn "$JAVA_HOME_RESOLVED/bin/$jdk_cmd" "/opt/taixu/bin/$jdk_cmd" 2>/dev/null || true
+        fi
+    done
+    echo "==> [TaiXu] JDK 规范路径已就位: $TOOLCHAIN_JDK_LINK -> $JAVA_HOME_RESOLVED"
+fi
+
 # ------------------------------------------------------------------------------
 # 步骤 2：修复 JDK 安全配置目录
 # JDK 9+ 从 $JAVA_HOME/conf/security/java.security 读取主配置；同时维护
@@ -522,6 +542,8 @@ fi
 echo "==> [TaiXu] 装配自检:"
 
 [ -x "$JAVA_HOME_RESOLVED/bin/java" ] && echo "    [OK] Java 运行时" || { echo "    [MISS] Java 运行时"; exit 1; }
+# 工坊签名（创建/导入 keystore）依赖规范路径下的 keytool，缺失时签名功能不可用。
+[ -x /opt/taixu/toolchains/android/jdk/bin/keytool ] && echo "    [OK] keytool 签名工具链 (规范路径)" || { echo "    [MISS] keytool 签名工具链"; exit 1; }
 [ -s "$SECURITY_CONF_DIR/java.security" ] && [ -f "$SECURITY_CONF_DIR/policy/unlimited/default_local.policy" ] && echo "    [OK] java.security + crypto policy" || { echo "    [MISS] java.security / crypto policy"; exit 1; }
 [ -s "$SECURITY_DIR/cacerts" ] && "$JAVA_HOME_RESOLVED/bin/keytool" -list -keystore "$SECURITY_DIR/cacerts" -storetype PKCS12 -storepass changeit >/dev/null 2>&1 && echo "    [OK] Java cacerts (PKCS12)" || { echo "    [MISS] Java cacerts"; exit 1; }
 [ -f "$SDK_HOME/platforms/android-34/android.jar" ] && echo "    [OK] Android Platform 34" || { echo "    [MISS] Android 平台包"; exit 1; }
