@@ -19,6 +19,7 @@ import kotlinx.serialization.json.JsonObject
 import top.wkbin.taixu.harness.session.LaneManager
 import top.wkbin.taixu.harness.subagent.SubagentLaneRunner
 import top.wkbin.taixu.harness.prompt.PromptAssetLoader
+import top.wkbin.taixu.harness.WorkspaceFileAccess
 
 internal class SubagentConcurrencyGate(
     maxParallelism: Int = DEFAULT_MAX_CONCURRENT_SUBAGENTS,
@@ -43,6 +44,7 @@ class SubagentOrchestrator @Inject constructor(
     private val subagentRepository: top.wkbin.taixu.core.database.AgentSubagentRepository,
     private val promptAssets: PromptAssetLoader,
     private val agentContextRepo: AgentContextRepository,
+    private val fileAccess: WorkspaceFileAccess,
 ) {
     /**
      * Application-wide budget: a three-agent fan-out should actually run three lanes at once,
@@ -85,7 +87,7 @@ class SubagentOrchestrator @Inject constructor(
             }.awaitAll()
         }
 
-        val summaryMarkdown = buildSummaryMarkdown(results)
+        val summaryMarkdown = paginateSummary(results, workspace)
         val anySuccess = results.any { it.isSuccess }
         anySuccess to summaryMarkdown
     }
@@ -193,32 +195,20 @@ class SubagentOrchestrator @Inject constructor(
         const val SUBAGENT_TIMEOUT_MS = 6 * 60 * 1000L
     }
 
-    private fun buildSummaryMarkdown(outcomes: List<SubagentExecutionOutcome>): String {
-        return buildString {
-            val succeeded = outcomes.count { it.isSuccess }
-            val batchStatus = when (succeeded) {
-                outcomes.size -> "全部成功"
-                0 -> "全部失败"
-                else -> "部分成功"
-            }
-            append("### 🤖 子智能体协同执行完成 · $batchStatus ($succeeded/${outcomes.size})\n\n")
-            outcomes.forEachIndexed { index, outcome ->
-                val statusIcon = if (outcome.isSuccess) "✅" else "⚠️"
-                val resolvedRole = if (outcome.resolvedProfileId != null) {
-                    "${outcome.resolvedProfileName} · ${outcome.resolvedProfileId}"
-                } else {
-                    outcome.spec.role.ifBlank { "${outcome.spec.department} / ${outcome.spec.agentQuery}" }
-                }
-                append("#### ${index + 1}. $statusIcon 【${outcome.spec.taskName}】(角色: $resolvedRole)\n")
-                append("- **工具调用次数**：${outcome.toolCallCount} 次\n")
-                append("- **子任务输出**：\n")
-                append(outcome.summary.trim())
-                append("\n\n")
-            }
-        }
-    }
+    private fun buildSummaryMarkdown(outcomes: List<SubagentExecutionOutcome>): String =
+        renderSummaryMarkdown(outcomes)
 
-    private data class SubagentExecutionOutcome(
+    /**
+     * 结果分页读取：汇总注入父上下文前先做预算控制。
+     * 总量 ≤ [SUMMARY_INLINE_BUDGET] 字符 → 原样注入（保持现状，不破坏小批次体验）；
+     * 超限 → 每个子任务输出截断为 [PER_TASK_INLINE_BUDGET] 字符，
+     * 完整结果落盘 `.taixu-subagent/<laneName-safe>.md`（工作区相对路径），
+     * 模型可用 read 工具按 offset/limit 分页读取。
+     */
+    private suspend fun paginateSummary(outcomes: List<SubagentExecutionOutcome>, workspace: String): String =
+        paginateSubagentSummary(outcomes, workspace, fileAccess)
+
+    internal data class SubagentExecutionOutcome(
         val spec: SubagentTaskSpec,
         val subSessionId: String,
         val isSuccess: Boolean,
@@ -260,3 +250,94 @@ internal fun buildWriteCleanWaves(specs: List<SubagentTaskSpec>): List<List<Suba
 
 /** 规范化写路径，统一去掉首尾斜杠，保证跨子任务的路径比较稳定。 */
 internal fun normalizeWritePath(path: String): String = path.trim().trim('/')
+
+/** 汇总注入父上下文的字符预算；超出即走截断+落盘分页。 */
+internal const val SUMMARY_INLINE_BUDGET = 12_000
+
+/** 超限时分任务的截断保留长度。 */
+internal const val PER_TASK_INLINE_BUDGET = 3_000
+
+/** 子智能体汇总 Markdown：状态行 + 每任务的输出。 */
+internal fun renderSummaryMarkdown(outcomes: List<SubagentOrchestrator.SubagentExecutionOutcome>): String =
+    buildString {
+        val succeeded = outcomes.count { it.isSuccess }
+        val batchStatus = when (succeeded) {
+            outcomes.size -> "全部成功"
+            0 -> "全部失败"
+            else -> "部分成功"
+        }
+        append("### 🤖 子智能体协同执行完成 · $batchStatus ($succeeded/${outcomes.size})\n\n")
+        outcomes.forEachIndexed { index, outcome ->
+            val statusIcon = if (outcome.isSuccess) "✅" else "⚠️"
+            val resolvedRole = if (outcome.resolvedProfileId != null) {
+                "${outcome.resolvedProfileName} · ${outcome.resolvedProfileId}"
+            } else {
+                outcome.spec.role.ifBlank { "${outcome.spec.department} / ${outcome.spec.agentQuery}" }
+            }
+            append("#### ${index + 1}. $statusIcon 【${outcome.spec.taskName}】(角色: $resolvedRole)\n")
+            append("- **工具调用次数**：${outcome.toolCallCount} 次\n")
+            append("- **子任务输出**：\n")
+            append(outcome.summary.trim())
+            append("\n\n")
+        }
+    }
+
+/**
+ * 结果分页读取：汇总注入父上下文前的预算控制。
+ * 总量 ≤ [SUMMARY_INLINE_BUDGET] 字符 → 原样注入（保持现状，小批次体验不变）；
+ * 超限 → 每个超长子任务输出截断为 [PER_TASK_INLINE_BUDGET] 字符，完整结果落盘
+ * `.taixu-subagent/<laneName-safe>.md`（工作区相对路径），模型可用 read 工具按 offset/limit 分页读取。
+ */
+internal suspend fun paginateSubagentSummary(
+    outcomes: List<SubagentOrchestrator.SubagentExecutionOutcome>,
+    workspace: String,
+    fileAccess: WorkspaceFileAccess,
+): String {
+    val full = renderSummaryMarkdown(outcomes)
+    if (full.length <= SUMMARY_INLINE_BUDGET || workspace.isBlank()) return full
+
+    val overflowTasks = outcomes.filter { it.summary.length > PER_TASK_INLINE_BUDGET }
+    val spillDir = ".taixu-subagent"
+    val spilled = mutableMapOf<String, String>() // laneName -> 相对路径
+    overflowTasks.forEach { outcome ->
+        val fileName = outcome.subSessionId
+            .filter { it.isLetterOrDigit() || it == '-' || it == ':' }
+            .replace(':', '-')
+            .takeLast(80) + ".md"
+        val relativePath = "$spillDir/$fileName"
+        // 落盘失败不阻塞：该任务按普通截断处理
+        if (fileAccess.write(relativePath, outcome.summary) is top.wkbin.taixu.core.common.result.AppResult.Success) {
+            spilled[outcome.subSessionId] = relativePath
+        }
+    }
+
+    return buildString {
+        val succeeded = outcomes.count { it.isSuccess }
+        val batchStatus = when (succeeded) {
+            outcomes.size -> "全部成功"
+            0 -> "全部失败"
+            else -> "部分成功"
+        }
+        append("### 🤖 子智能体协同执行完成 · $batchStatus ($succeeded/${outcomes.size})\n\n")
+        append("（本批输出总量超出注入预算，超长子任务已截断；完整结果可用 read 工具按 offset/limit 分页读取）\n\n")
+        outcomes.forEachIndexed { index, outcome ->
+            val statusIcon = if (outcome.isSuccess) "✅" else "⚠️"
+            val resolvedRole = if (outcome.resolvedProfileId != null) {
+                "${outcome.resolvedProfileName} · ${outcome.resolvedProfileId}"
+            } else {
+                outcome.spec.role.ifBlank { "${outcome.spec.department} / ${outcome.spec.agentQuery}" }
+            }
+            append("#### ${index + 1}. $statusIcon 【${outcome.spec.taskName}】(角色: $resolvedRole)\n")
+            append("- **工具调用次数**：${outcome.toolCallCount} 次\n")
+            append("- **子任务输出**：\n")
+            val spillPath = spilled[outcome.subSessionId]
+            if (spillPath != null) {
+                append(outcome.summary.take(PER_TASK_INLINE_BUDGET))
+                append("\n\n…（截断，共 ${outcome.summary.length} 字符。完整结果：read 路径 `$spillPath`）\n\n")
+            } else {
+                append(outcome.summary.trim())
+                append("\n\n")
+            }
+        }
+    }
+}
