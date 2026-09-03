@@ -160,7 +160,7 @@ val MIGRATION_43_44 = object : Migration(43, 44) {
         db.execSQL("ALTER TABLE agent_memories ADD COLUMN subjectKey TEXT NOT NULL DEFAULT ''")
         db.execSQL("ALTER TABLE agent_memories ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
         db.execSQL("ALTER TABLE agent_memories ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
-        db.execSQL("ALTER TABLE agent_memories ADD COLUMN expiresAt INTEGER")
+        db.execSQL("ALTER TABLE agent_memories ADD COLUMN expiresAt INTEGER DEFAULT NULL")
         db.execSQL("ALTER TABLE agent_memories ADD COLUMN lastVerifiedAt INTEGER NOT NULL DEFAULT 0")
         db.execSQL("ALTER TABLE agent_memories ADD COLUMN volatility TEXT NOT NULL DEFAULT 'reference'")
         // 存量记忆以 key 作为主题键（幂等：重复执行时新库已是空表或已回填）。
