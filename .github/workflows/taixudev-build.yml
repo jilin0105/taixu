@@ -12,7 +12,7 @@ jobs:
   build:
     name: Build & Package TaiXuDev
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 70
 
     permissions:
       contents: write
@@ -36,20 +36,25 @@ jobs:
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      - name: Build TaiXuDev APK
+      - name: Build TaiXuDev APK (R8 minified release)
         env:
           TAIXU_DEV_BUILD: "1"
         run: |
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          # GitHub Runner 有 16GB 内存，R8 可跑完整优化流程；
+          # gradle.properties 中的 5GB 堆是为手机沙箱设的下限，此处显式上调到 12GB。
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace \
+            -Dorg.gradle.jvmargs="-Xmx12g -XX:MaxMetaspaceSize=1g -XX:+UseParallelGC -Dfile.encoding=UTF-8"
 
       - name: Identify and Rename Output APK
         run: |
           mkdir -p output
-          APK_PATH=$(find app/build/outputs/apk -name "*.apk" | head -n 1)
+          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
           if [ -f "$APK_PATH" ]; then
-            cp "$APK_PATH" output/TaiXuDev-arm64-debug.apk
-            sha256sum output/TaiXuDev-arm64-debug.apk > output/TaiXuDev-arm64-debug.apk.sha256
-            echo "APK ready: output/TaiXuDev-arm64-debug.apk"
+            cp "$APK_PATH" output/TaiXuDev-arm64-release.apk
+            sha256sum output/TaiXuDev-arm64-release.apk > output/TaiXuDev-arm64-release.apk.sha256
+            # R8 混淆映射表是排查 release 崩溃堆栈的唯一依据，必须随包留存。
+            cp app/build/outputs/mapping/release/mapping.txt output/mapping.txt
+            echo "APK ready: output/TaiXuDev-arm64-release.apk"
           else
             echo "Error: No APK generated!" && exit 1
           fi
@@ -57,7 +62,7 @@ jobs:
       - name: Upload TaiXuDev APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: taixudev-apk
+          name: taixudev-release-apk
           path: output/*
           retention-days: 7
 

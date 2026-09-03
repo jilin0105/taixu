@@ -13,6 +13,11 @@ val appVersionCode = 15
 // 与正式版（top.wkbin.taixu）在设备上独立共存、互不覆盖。
 val taiXuDevBuild = System.getenv("TAIXU_DEV_BUILD") == "1"
 
+// 低内存降级开关：仅供手机 PRoot 沙箱等小内存环境本地构建 R8 包时启用，
+// 会关闭 R8 的 IR 优化阶段以压低内存峰值（裁剪与混淆仍然生效）。
+// GitHub Actions 云端构建不设置该变量，产出完整优化强度的 R8 包。
+val taiXuDevLowMem = System.getenv("TAIXU_DEV_LOWMEM") == "1"
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.serialization)
@@ -83,9 +88,18 @@ extensions.configure<ApplicationExtension> {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            // TaiXuDev 自测包追加低内存 R8 规则：关闭 IR 优化阶段以压低内存峰值，
+            // 仍保留代码裁剪、标识符混淆与资源压缩（详见 proguard-dev-lowmem.pro）。
+            if (taiXuDevBuild && taiXuDevLowMem) {
+                proguardFiles("proguard-dev-lowmem.pro")
+            }
             val onCi = System.getenv("CI") == "true"
             if (keystorePropertiesFile != null && !onCi) {
                 signingConfig = signingConfigs.getByName("release")
+            } else if (taiXuDevBuild) {
+                // TaiXuDev 的 R8 压缩包在缺少正式发布密钥时改用 debug 密钥签名，
+                // 保证 assembleRelease 产物可直接侧载自测（正式发布路径不受影响）。
+                signingConfig = signingConfigs.getByName("debug")
             }
         }
     }
@@ -95,16 +109,26 @@ extensions.configure<ApplicationExtension> {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // TaiXuDev 自测包在低内存环境（手机 PRoot 沙箱 / 小规格 CI Runner）构建时，
+    // lintVitalRelease 会与 minifyReleaseWithR8 抢占同一个 Gradle JVM 堆并触发 OOM。
+    // 仅对 dev 构建关闭 release lint；正式发布构建的检查强度保持不变。
+    if (taiXuDevBuild) {
+        lint {
+            checkReleaseBuilds = false
+        }
+    }
+
     buildFeatures {
         compose = true
     }
 
     // TaiXuDev 构建加载 dev 资源覆盖目录：应用名等文案切换为 TaiXuDev 品牌，
     // 与正式版资源（main）物理隔离，互不影响。
-    sourceSets.getByName("debug") {
-        if (taiXuDevBuild) {
-            res.srcDir("src/dev/res")
-        }
+    // debug 与 release 两个变体都要覆盖：R8 压缩后的 dev 包同样需要 TaiXuDev 品牌名，
+    // 否则 assembleRelease 产物会沿用 main 的“太墟”，与正式版无法从桌面图标区分。
+    if (taiXuDevBuild) {
+        sourceSets.getByName("debug") { res.srcDir("src/dev/res") }
+        sourceSets.getByName("release") { res.srcDir("src/dev/res") }
     }
 
     packaging {
