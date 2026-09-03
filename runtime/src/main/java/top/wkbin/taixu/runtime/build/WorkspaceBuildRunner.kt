@@ -379,7 +379,9 @@ class WorkspaceBuildRunner @Inject constructor(
                 }
                 if (!probe.isSuccess && !useQemuBuild) {
                     val reason = (probe.stderr + "\n" + probe.stdout).trim().takeLast(800)
-                    log("[TaiXu Build] ⚠️ 未检测到 Android 构建环境 (OpenJDK 17 / Gradle 8.14.2)")
+                    // 按实际失败项点名，避免把 cmake/ninja/java 等失败误导成"缺 Gradle"
+                    val missing = BuildEnvironmentPreflight.describeFailure(reason)
+                    log("[TaiXu Build] ⚠️ 未检测到 Android 构建环境${missing?.let { "：$it" } ?: ""}")
                     log("[TaiXu Build] 预检原因: $reason")
                     log("[TaiXu Build] 💡 提示：请先在【插件与工具中心】中装配【Android & 移动全栈开发套件】")
                     send(
@@ -387,7 +389,7 @@ class WorkspaceBuildRunner @Inject constructor(
                             step = "缺少 Android 构建环境",
                             isRunning = false,
                             isSuccess = false,
-                            message = "Android 构建前置检查失败：${reason.ifBlank { "工具链不完整" }}",
+                            message = "Android 构建前置检查失败：${missing ?: reason.ifBlank { "工具链不完整" }}",
                             logOutput = snapshotLogs(),
                             suggestedSuiteId = "android-suite",
                         )
@@ -677,7 +679,9 @@ class WorkspaceBuildRunner @Inject constructor(
                 }
                 if (!probeFlutter.isSuccess && !useQemuBuild) {
                     val reason = (probeFlutter.stderr + "\n" + probeFlutter.stdout).trim().takeLast(800)
-                    log("[TaiXu Build] ⚠️ 未检测到 Flutter SDK 环境")
+                    // 按实际失败项点名，避免把工具链单项缺失误导成整体环境缺失
+                    val missing = BuildEnvironmentPreflight.describeFailure(reason)
+                    log("[TaiXu Build] ⚠️ 未检测到 Flutter 构建环境${missing?.let { "：$it" } ?: ""}")
                     log("[TaiXu Build] 预检原因: $reason")
                     log("[TaiXu Build] 💡 提示：请先在【插件与工具中心】中装配【Android & 移动全栈开发套件 (含 Flutter)】")
                     send(
@@ -685,7 +689,7 @@ class WorkspaceBuildRunner @Inject constructor(
                             step = "缺少 Flutter 构建环境",
                             isRunning = false,
                             isSuccess = false,
-                            message = "Flutter 构建前置检查失败：${reason.ifBlank { "工具链不完整" }}",
+                            message = "Flutter 构建前置检查失败：${missing ?: reason.ifBlank { "工具链不完整" }}",
                             logOutput = snapshotLogs(),
                             suggestedSuiteId = "flutter-suite",
                         )

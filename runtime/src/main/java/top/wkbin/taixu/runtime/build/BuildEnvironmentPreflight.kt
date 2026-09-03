@@ -73,10 +73,18 @@ object BuildEnvironmentPreflight {
             lines += "NDK_STRIP=\$(find \"\$NDK_PATH/toolchains/llvm/prebuilt\" \\( -type f -o -type l \\) -name llvm-strip -print -quit 2>/dev/null)"
             lines += "test -f \"\$NDK_PATH/source.properties\" -a -x \"\$NDK_CLANG\" -a -x \"\$NDK_STRIP\" || fail ndk_missing"
             lines += "test \"\$(elf_machine \"\$NDK_CLANG\")\" = $ARM64_ELF_MACHINE -a \"\$(elf_machine \"\$NDK_STRIP\")\" = $ARM64_ELF_MACHINE || fail ndk_arch"
+            // CMake/Ninja 只对含 native 代码的工程是硬需求（与 taixu-build.sh doctor
+            // 的 has_native 口径一致）。在线装配（android-core）不安装它们到固定路径，
+            // 无条件强校验会把纯 Kotlin/Java 工程误杀成"缺少构建环境"。
+            lines += "has_native=0"
+            lines += "if test -f \"\$PROJECT_PATH/CMakeLists.txt\" -o -f \"\$PROJECT_PATH/app/CMakeLists.txt\" -o -d \"\$PROJECT_PATH/app/src/main/cpp\" -o -d \"\$PROJECT_PATH/app/src/main/jni\"; then has_native=1; fi"
+            lines += "if grep -Eq 'externalNativeBuild|ndkBuild' \"\$PROJECT_PATH/build.gradle\" \"\$PROJECT_PATH/build.gradle.kts\" \"\$PROJECT_PATH/app/build.gradle\" \"\$PROJECT_PATH/app/build.gradle.kts\" 2>/dev/null; then has_native=1; fi"
+            lines += "if [ \"\$has_native\" = 1 ]; then"
             lines += "CMAKE_HOME=\${TAIXU_CMAKE_HOME:-/opt/taixu/tools/android-suite-offline/cmake}"
             lines += "NINJA_HOME=\${TAIXU_NINJA_HOME:-/opt/taixu/tools/android-suite-offline/bin}"
-            lines += "test -x \"\$CMAKE_HOME/bin/cmake\" || fail cmake_missing"
-            lines += "test -x \"\$NINJA_HOME/ninja\" || fail ninja_missing"
+            lines += "test -x \"\$CMAKE_HOME/bin/cmake\" -o -x /usr/bin/cmake -o -x /usr/local/bin/cmake || fail cmake_missing"
+            lines += "test -x \"\$NINJA_HOME/ninja\" -o -x /usr/bin/ninja -o -x /usr/local/bin/ninja || fail ninja_missing"
+            lines += "fi"
             lines += "GRADLE_USER_HOME=\${GRADLE_USER_HOME:-/root/.gradle}"
             lines += "grep -Fqx 'android.builder.sdkDownload=false' \"\$GRADLE_USER_HOME/gradle.properties\" 2>/dev/null || fail sdk_download_enabled"
             lines += "GRADLE_HOME=\${GRADLE_HOME:-/opt/gradle-8.14.2}"
@@ -93,5 +101,43 @@ object BuildEnvironmentPreflight {
         return lines.joinToString("; ")
     }
 
+    /**
+     * 将预检失败输出（stdout/stderr）解析为用户可读的缺失项描述。
+     * 之前所有失败一律提示"未检测到构建环境 (OpenJDK 17 / Gradle)"，
+     * 用户会把 cmake/ninja/java 等失败误报成"缺 gradle"。
+     */
+    fun describeFailure(output: String): String? {
+        val token = output.lineSequence()
+            .mapNotNull { line -> PREFLIGHT_FAIL.find(line)?.groupValues?.getOrNull(1)?.trim() }
+            .lastOrNull()
+            ?: return null
+        return when (token.substringBefore(' ')) {
+            "shell" -> "沙箱缺少 /bin/sh"
+            "project_missing" -> "项目目录在沙箱内不存在"
+            "android_settings" -> "项目缺少 settings.gradle/settings.gradle.kts"
+            "android_build_file" -> "项目缺少 build.gradle/build.gradle.kts"
+            "flutter_pubspec" -> "项目缺少 pubspec.yaml"
+            "flutter_android_host" -> "Flutter 工程缺少 android 宿主目录"
+            "qemu_guest" -> "QEMU 隔离环境架构异常"
+            "java_missing" -> "缺少 JDK 17"
+            "java_arch" -> "JDK 架构不匹配（$token）"
+            "android_platform" -> "缺少 Android Platform 34"
+            "build_tools" -> "缺少 Android Build-Tools 35"
+            "aapt2_missing" -> "缺少 AAPT2"
+            "aapt2_arch" -> "AAPT2 不是 ARM64 制品"
+            "ndk_missing" -> "缺少 ARM64 NDK"
+            "ndk_arch" -> "NDK 主机工具不是 ARM64 制品"
+            "cmake_missing" -> "缺少 CMake（含 native 代码的工程需要）"
+            "ninja_missing" -> "缺少 Ninja（含 native 代码的工程需要）"
+            "gradle_missing" -> "缺少 Gradle 8.14.2"
+            "sdk_download_enabled" -> "Gradle SDK 自动下载禁用策略未配置"
+            "flutter_missing" -> "缺少 Flutter SDK"
+            "dart_arch" -> "Dart SDK 不是 ARM64 制品"
+            else -> "预检失败：$token"
+        }
+    }
+
     private fun shellQuote(value: String): String = "'${value.replace("'", "'\\\''")}'"
+
+    private val PREFLIGHT_FAIL = Regex("TAIXU_PREFLIGHT_FAIL:\\s*(\\S.*)")
 }

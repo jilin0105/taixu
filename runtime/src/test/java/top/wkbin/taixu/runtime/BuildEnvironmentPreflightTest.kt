@@ -1,6 +1,8 @@
 package top.wkbin.taixu.runtime.build
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import top.wkbin.taixu.runtime.ProjectType
@@ -55,6 +57,42 @@ class BuildEnvironmentPreflightTest {
         assertTrue(command.contains("java_arch_machine"))
         assertTrue(command.contains("libjvm.so"))
         assertTrue(command.contains("readlink -f"))
+    }
+
+    @Test
+    fun androidArmPreflightGatesCMakeNinjaBehindNativeDetection() {
+        val command = BuildEnvironmentPreflight.command("/workspace/app", ProjectType.ANDROID)
+        // CMake/Ninja 与 taixu-build.sh doctor 的 has_native 口径对齐：只有
+        // 含 native 代码的工程才强制；纯 Kotlin/Java 工程在线装配（android-core
+        // 不装 CMake/Ninja）不能再被误杀成"缺少构建环境"。
+        assertTrue(command.contains("has_native=0"))
+        assertTrue(command.contains("CMakeLists.txt"))
+        assertTrue(command.contains("app/src/main/cpp"))
+        assertTrue(command.contains("externalNativeBuild|ndkBuild"))
+        assertTrue(command.contains("fail cmake_missing"))
+        assertTrue(command.contains("fail ninja_missing"))
+        // 校验必须被 has_native 条件包裹，且接受系统路径兜底
+        val cmakeCheck = command.substringAfter("if [ \"\$has_native\" = 1 ]; then").substringBefore("fi")
+        assertTrue(cmakeCheck.contains("fail cmake_missing"))
+        assertTrue(cmakeCheck.contains("fail ninja_missing"))
+        assertTrue(cmakeCheck.contains("/usr/bin/cmake"))
+        assertTrue(cmakeCheck.contains("/usr/bin/ninja"))
+    }
+
+    @Test
+    fun describeFailureNamesTheActuallyMissingTool() {
+        // 用户反馈"缺 gradle"实际多为 cmake/ninja/java 等单项失败被统一文案掩盖
+        assertEquals("缺少 Gradle 8.14.2", BuildEnvironmentPreflight.describeFailure("TAIXU_PREFLIGHT_FAIL: gradle_missing"))
+        assertEquals("缺少 CMake（含 native 代码的工程需要）", BuildEnvironmentPreflight.describeFailure("some log\nTAIXU_PREFLIGHT_FAIL: cmake_missing"))
+        assertEquals("缺少 Ninja（含 native 代码的工程需要）", BuildEnvironmentPreflight.describeFailure("TAIXU_PREFLIGHT_FAIL: ninja_missing"))
+        assertEquals("缺少 JDK 17", BuildEnvironmentPreflight.describeFailure("TAIXU_PREFLIGHT_FAIL: java_missing"))
+        assertEquals(
+            "JDK 架构不匹配（java_arch path=/usr/bin/java machine=unreadable expected=b700）",
+            BuildEnvironmentPreflight.describeFailure("TAIXU_PREFLIGHT_FAIL: java_arch path=/usr/bin/java machine=unreadable expected=b700"),
+        )
+        assertEquals("缺少 Android Platform 34", BuildEnvironmentPreflight.describeFailure("TAIXU_PREFLIGHT_FAIL: android_platform"))
+        assertNull(BuildEnvironmentPreflight.describeFailure("TAIXU_PREFLIGHT_OK"))
+        assertNull(BuildEnvironmentPreflight.describeFailure(""))
     }
 }
 
