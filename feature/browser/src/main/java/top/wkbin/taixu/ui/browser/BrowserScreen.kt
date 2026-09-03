@@ -51,6 +51,7 @@ import top.wkbin.taixu.ui.components.RuntimeIcon
 import top.wkbin.taixu.ui.components.RuntimeIconName
 import top.wkbin.taixu.ui.components.RuntimeIconButton
 import top.wkbin.taixu.ui.components.RuntimeTopBar
+import top.wkbin.taixu.ui.browser.network.NetworkTimelineSheet
 import top.wkbin.taixu.ui.browser.snapshot.SnapshotSheet
 
 @Composable
@@ -88,6 +89,10 @@ fun BrowserPane(
     onExit: (() -> Unit)? = null,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val networkRequests by viewModel.network.collectAsStateWithLifecycle()
+    val networkSheetVisible by viewModel.networkSheetVisible.collectAsStateWithLifecycle()
+    val networkDetail by viewModel.networkDetail.collectAsStateWithLifecycle()
+    val debugPaused by viewModel.debugPaused.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     // 面板可见性上报：可见时才补建活跃 tab / 轮询状态，避免 app 启动即常驻 WebView
     DisposableEffect(Unit) {
@@ -110,6 +115,8 @@ fun BrowserPane(
             onSelect = viewModel::selectTab,
             onClose = viewModel::closeTab,
             onShowSnapshot = viewModel::onOpenSnapshot,
+            onShowNetwork = viewModel::showNetworkSheet,
+            networkCount = networkRequests.size,
             onExit = onExit,
         )
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -126,6 +133,14 @@ fun BrowserPane(
                     }
                 }
             }
+            // CDP 断点/异常暂停横幅：页面被挂起时提示原因与位置，支持手动放行
+            debugPaused?.let { paused ->
+                DebugPausedBanner(
+                    paused = paused,
+                    onResume = viewModel::resumeDebugger,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                )
+            }
             SnackbarHost(
                 hostState = snackbarHostState,
                 modifier = Modifier.align(Alignment.BottomCenter),
@@ -134,6 +149,15 @@ fun BrowserPane(
                 SnapshotSheet(
                     state = sheet,
                     onDismiss = viewModel::dismissSnapshot,
+                )
+            }
+            if (networkSheetVisible) {
+                NetworkTimelineSheet(
+                    requests = networkRequests,
+                    hookHits = viewModel.hookHits.value,
+                    detail = networkDetail,
+                    onLoadDetail = viewModel::loadNetworkDetail,
+                    onDismiss = viewModel::dismissNetworkSheet,
                 )
             }
         }
@@ -162,6 +186,8 @@ private fun BrowserStatusBar(
     onSelect: (String) -> Unit,
     onClose: (String) -> Unit,
     onShowSnapshot: () -> Unit,
+    onShowNetwork: () -> Unit,
+    networkCount: Int,
     onExit: (() -> Unit)? = null,
 ) {
     Surface(
@@ -194,7 +220,15 @@ private fun BrowserStatusBar(
                 onClick = onShowSnapshot,
             )
             StatusDivider()
-            // 3. 标签页胶囊
+            // 3. 网络时间线入口（请求流 + Hook 命中，agent 操作可视化）
+            BrowserStatusItem(
+                icon = RuntimeIconName.Network,
+                label = "网络 $networkCount",
+                tint = MaterialTheme.colorScheme.tertiary,
+                onClick = onShowNetwork,
+            )
+            StatusDivider()
+            // 4. 标签页胶囊
             if (tabs.isEmpty()) {
                 BrowserStatusItem(
                     icon = RuntimeIconName.Globe,
@@ -272,6 +306,71 @@ private fun StatusDivider() {
             .size(width = 1.dp, height = 9.dp)
             .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
     )
+}
+
+/**
+ * CDP 调试暂停横幅：断点/异常命中导致页面 JS 挂起时悬浮于浏览区顶部，
+ * 提示暂停原因与命中位置，并提供手动"继续执行"（agent 不在时避免页面无限冻结）。
+ */
+@Composable
+private fun DebugPausedBanner(
+    paused: top.wkbin.taixu.runtime.browser.cdp.DebugPausedState,
+    onResume: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val frame = paused.callFrames.firstOrNull()
+    val location = frame?.let {
+        "${it.functionName.ifEmpty { "<anonymous>" }} @ ${it.url.substringAfterLast('/')}:${it.lineNumber + 1}"
+    } ?: "无调用栈"
+    Surface(
+        color = Color(0xCCB45309),
+        shape = RoundedCornerShape(10.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            RuntimeIcon(RuntimeIconName.Alert, Modifier.size(16.dp), tint = Color.White)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "已暂停 · ${paused.reason}",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    location,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                    color = Color(0xE6FFFFFF),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Surface(
+                onClick = onResume,
+                shape = RoundedCornerShape(14.dp),
+                color = Color.White,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    RuntimeIcon(RuntimeIconName.Play, Modifier.size(12.dp), tint = Color(0xFFB45309))
+                    Text(
+                        "继续",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = Color(0xFFB45309),
+                    )
+                }
+            }
+        }
+    }
 }
 
 /** 状态栏小胶囊：icon + label，样式对齐智枢工作台的 WorkbenchStatusItem。 */

@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -20,7 +22,10 @@ import top.wkbin.taixu.core.datastore.BrowserPreferences
 import top.wkbin.taixu.runtime.browser.BrowserEventBus
 import top.wkbin.taixu.runtime.browser.BrowserRegistry
 import top.wkbin.taixu.runtime.browser.BrowserSessionToken
+import top.wkbin.taixu.runtime.browser.CapturedRequest
 import top.wkbin.taixu.runtime.browser.InAppBrowserViewProvider
+import top.wkbin.taixu.runtime.browser.cdp.DebugPausedState
+import top.wkbin.taixu.runtime.browser.hook.HookHitRecord
 import top.wkbin.taixu.ui.browser.snapshot.SnapshotSheetState
 
 @HiltViewModel
@@ -86,6 +91,64 @@ class BrowserViewModel @Inject constructor(
             activityTick = activityTick,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, BrowserUiState.Empty)
+
+    // ===== 网络时间线 / Hook 命中 / CDP 暂停（独立流，避免撑爆 uiState 的 combine 上限） =====
+
+    /** 网络时间线：native 捕获与 js hook 捕获去重合并（js 条目带状态码与 body，优先保留）。 */
+    val network: StateFlow<List<CapturedRequest>> = eventBus.network
+        .map(::dedupeNetwork)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** hook 命中记录（函数/属性/WebSocket/网络规则），直接透出 EventBus 环形缓冲。 */
+    val hookHits: StateFlow<List<HookHitRecord>> = eventBus.hookHits
+
+    /** 当前活跃 tab 的 CDP 暂停态（null = 运行中/未 attach）；debugEvents 变化时重读分片。 */
+    val debugPaused: StateFlow<DebugPausedState?> = combine(
+        eventBus.debugEvents,
+        eventBus.activeTab,
+    ) { _, tab -> tab?.let { eventBus.debugPausedOf(it.tabId) } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private val _networkSheetVisible = MutableStateFlow(false)
+    val networkSheetVisible: StateFlow<Boolean> = _networkSheetVisible.asStateFlow()
+
+    private val _networkDetail = MutableStateFlow<String?>(null)
+    val networkDetail: StateFlow<String?> = _networkDetail.asStateFlow()
+
+    fun showNetworkSheet() { _networkSheetVisible.value = true }
+
+    fun dismissNetworkSheet() {
+        _networkSheetVisible.value = false
+        _networkDetail.value = null
+    }
+
+    /** 拉取单条请求的完整详情（元数据 + 请求/响应头与 body），由引擎 networkDetail 输出。 */
+    fun loadNetworkDetail(id: String) = viewModelScope.launch {
+        _networkDetail.value = runCatching {
+            registry.getDefault().networkDetail(id)
+        }.getOrNull() ?: "（无详情：引擎未就绪，或 body 未捕获）"
+    }
+
+    /** 手动放行 CDP 暂停（断点/异常挂起）；恢复全部已暂停的 tab。 */
+    fun resumeDebugger() = viewModelScope.launch {
+        runCatching { registry.getDefault().debugResume(null) }
+            .onFailure { _toolMessage.value = "恢复失败：${it.message ?: "CDP 未启用"}" }
+    }
+
+    /**
+     * native（shouldInterceptRequest，无状态码）与 js（hook 引擎，有状态码/body）
+     * 对同一请求会各出一条：同 method+url 且 2.5s 时间窗内视为重复，隐藏 native 条目。
+     */
+    private fun dedupeNetwork(all: List<CapturedRequest>): List<CapturedRequest> {
+        val jsEntries = all.filter { it.source != "native" }
+        if (jsEntries.isEmpty()) return all
+        return all.filterNot { native ->
+            native.source == "native" && jsEntries.any {
+                it.method == native.method && it.url == native.url &&
+                    kotlin.math.abs(it.startedAt - native.startedAt) < 2_500
+            }
+        }
+    }
 
     init {
         viewModelScope.launch {
