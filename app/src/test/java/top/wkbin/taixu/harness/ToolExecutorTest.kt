@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.harness
+package top.wkbin.taixu.harness
 
 import top.wkbin.taixu.core.security.SecretRedactor
 import top.wkbin.taixu.core.network.DownloadEvent
@@ -38,7 +38,16 @@ class ToolExecutorTest {
         val root = temporaryFolder.newFolder("workspace")
         runtime = FakeLinuxRuntime()
         downloader = RecordingDownloader()
-        executor = ToolExecutor(WorkspaceFileAccess(root), runtime, SecretRedactor(), downloader)
+        val pathResolver = HarnessPathResolver()
+        val approvalPolicyEngine = ApprovalPolicyEngine(pathResolver)
+        executor = ToolExecutor(
+            fileAccess = WorkspaceFileAccess(root),
+            linuxRuntime = runtime,
+            pathResolver = pathResolver,
+            approvalPolicyEngine = approvalPolicyEngine,
+            secretRedactor = SecretRedactor(),
+            fileDownloader = downloader,
+        )
     }
 
     @Test
