@@ -2,16 +2,22 @@ package top.wkbin.taixu.ui.settings
 
 import top.wkbin.taixu.ui.components.RuntimeAlertDialog
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.PowerManager
+import android.provider.MediaStore
 import android.provider.Settings as AndroidSettings
 import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -1390,6 +1396,36 @@ fun SponsorScreen(
     }
 }
 
+/** 将打包在 mipmap 中的赞赏码二维码保存至系统相册 Pictures/TaiXu */
+private fun saveSponsorQrToGallery(context: Context, qrRes: Int, namePrefix: String): Boolean {
+    val resolver = context.contentResolver
+    val filename = "taixu-sponsor-$namePrefix-${System.currentTimeMillis()}.png"
+    val values = ContentValues().apply {
+        put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+        put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+        put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/TaiXu")
+        put(MediaStore.Images.Media.IS_PENDING, 1)
+    }
+    val target = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
+    return runCatching {
+        val bitmap = BitmapFactory.decodeResource(context.resources, qrRes)
+            ?: error("无法解码赞赏码资源")
+        resolver.openOutputStream(target)?.use { output ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+        } ?: error("无法写入目标文件")
+        resolver.update(
+            target,
+            ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) },
+            null,
+            null,
+        )
+        true
+    }.getOrElse {
+        resolver.delete(target, null, null)
+        false
+    }
+}
+
 /** 赞赏码弹窗：展示打包在 mipmap 中的二维码图片 */
 @Composable
 private fun SponsorQrDialog(
@@ -1398,6 +1434,8 @@ private fun SponsorQrDialog(
     accent: Color,
     onDismiss: () -> Unit,
 ) {
+    val context = LocalContext.current
+
     RuntimeAlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -1449,6 +1487,28 @@ private fun SponsorQrDialog(
             }
         },
         confirmButton = {
+            Button(
+                onClick = {
+                    val prefix = if (title.contains("微信")) "wechat" else "alipay"
+                    val success = saveSponsorQrToGallery(context, qrRes, prefix)
+                    if (success) {
+                        Toast.makeText(context, "二维码已保存至相册", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "保存失败，请稍后重试", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = accent),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    RuntimeIcon(RuntimeIconName.Download, Modifier.size(16.dp), tint = Color.White)
+                    Text("保存到相册", color = Color.White)
+                }
+            }
+        },
+        dismissButton = {
             TextButton(onClick = onDismiss) {
                 Text("关闭")
             }
