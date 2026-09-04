@@ -25,36 +25,129 @@ import top.wkbin.taixu.harness.mcp.McpToolApiName
 object ToolSchemaValidator {
     private val json = Json { ignoreUnknownKeys = true }
 
-    /** 智能参数解包与别名规整（自动展开单层 params/arguments，映射下划线/驼峰命名别名） */
+    /**
+     * 智能参数解包、键扁平化还原与别名规整：
+     * 1. 自动解包单层包裹参数（params/arguments/input）；
+     * 2. 自动把双下划线 `__` 或点号 `.` 分隔的扁平化键（例如 options__timeout 或 config.port）
+     *    还原为标准嵌套 JsonObject，兼容小参数量或特定模型打平输出对象的习惯（DeepSeek-Reasonix 规范）；
+     * 3. 映射常用字段别名（path/command/oldText/newText/timeout_seconds）。
+     */
     fun normalizeArgs(raw: JsonObject): JsonObject {
         val base = if (raw.size == 1 && (raw.containsKey("params") || raw.containsKey("arguments") || raw.containsKey("input"))) {
             (raw["params"] as? JsonObject) ?: (raw["arguments"] as? JsonObject) ?: (raw["input"] as? JsonObject) ?: raw
         } else raw
 
+        val unflattened = unflattenObject(base)
+
         return kotlinx.serialization.json.buildJsonObject {
-            base.forEach { (k, v) -> put(k, v) }
-            if (!base.containsKey("path")) {
-                val alias = base["file_path"] ?: base["filePath"] ?: base["file"] ?: base["target"]
+            unflattened.forEach { (k, v) -> put(k, v) }
+            if (!unflattened.containsKey("path")) {
+                val alias = unflattened["file_path"] ?: unflattened["filePath"] ?: unflattened["file"] ?: unflattened["target"]
                 alias?.let { put("path", it) }
             }
-            if (!base.containsKey("command")) {
-                val alias = base["cmd"] ?: base["script"]
+            if (!unflattened.containsKey("command")) {
+                val alias = unflattened["cmd"] ?: unflattened["script"]
                 alias?.let { put("command", it) }
             }
-            if (!base.containsKey("oldText")) {
-                val alias = base["old_text"] ?: base["original_text"]
+            if (!unflattened.containsKey("oldText")) {
+                val alias = unflattened["old_text"] ?: unflattened["original_text"]
                 alias?.let { put("oldText", it) }
             }
-            if (!base.containsKey("newText")) {
-                val alias = base["new_text"] ?: base["replacement"]
+            if (!unflattened.containsKey("newText")) {
+                val alias = unflattened["new_text"] ?: unflattened["replacement"]
                 alias?.let { put("newText", it) }
             }
-            if (!base.containsKey("timeout_seconds")) {
-                val alias = base["timeout"] ?: base["timeoutSeconds"] ?: base["timeout_sec"]
+            if (!unflattened.containsKey("timeout_seconds")) {
+                val alias = unflattened["timeout"] ?: unflattened["timeoutSeconds"] ?: unflattened["timeout_sec"]
                 alias?.let { put("timeout_seconds", it) }
             }
         }
     }
+
+    /**
+     * 将带有双下划线（options__timeout）或合规点号路径（options.timeout）的扁平键还原为深层嵌套 JsonObject。
+     * 若已存在同名嵌套对象，则自动递归深度合并。
+     */
+    fun unflattenObject(obj: JsonObject): JsonObject {
+        val root = mutableMapOf<String, Any?>()
+
+        fun insert(path: List<String>, value: JsonElement) {
+            var current = root
+            for (i in 0 until path.size - 1) {
+                val part = path[i]
+                val existing = current[part]
+                val nextMap = when (existing) {
+                    is MutableMap<*, *> -> @Suppress("UNCHECKED_CAST") (existing as MutableMap<String, Any?>)
+                    is JsonObject -> {
+                        val m = mutableMapOf<String, Any?>()
+                        existing.forEach { (k, v) -> m[k] = v }
+                        current[part] = m
+                        m
+                    }
+                    else -> {
+                        val m = mutableMapOf<String, Any?>()
+                        current[part] = m
+                        m
+                    }
+                }
+                current = nextMap
+            }
+            val leaf = path.last()
+            val finalValue = if (value is JsonObject) unflattenObject(value) else value
+            val existing = current[leaf]
+            if (existing is MutableMap<*, *> && finalValue is JsonObject) {
+                @Suppress("UNCHECKED_CAST")
+                val m = existing as MutableMap<String, Any?>
+                finalValue.forEach { (k, v) -> m[k] = v }
+            } else {
+                current[leaf] = finalValue
+            }
+        }
+
+        for ((key, value) in obj) {
+            val segments = splitFlattenedKey(key)
+            if (segments.size > 1) {
+                insert(segments, value)
+            } else {
+                val processedVal = if (value is JsonObject) unflattenObject(value) else value
+                val existing = root[key]
+                if (existing is MutableMap<*, *> && processedVal is JsonObject) {
+                    @Suppress("UNCHECKED_CAST")
+                    val m = existing as MutableMap<String, Any?>
+                    processedVal.forEach { (k, v) -> m[k] = v }
+                } else {
+                    root[key] = processedVal
+                }
+            }
+        }
+
+        return toJsonElement(root) as JsonObject
+    }
+
+    private fun splitFlattenedKey(key: String): List<String> {
+        if (key.contains("__")) {
+            val parts = key.split("__").filter { it.isNotEmpty() }
+            if (parts.size > 1) return parts
+        }
+        if (key.contains(".") && !key.startsWith(".") && !key.endsWith(".")) {
+            val parts = key.split(".")
+            val allValidIdentifiers = parts.all { it.isNotEmpty() && it.all { ch -> ch.isLetterOrDigit() || ch == '_' } }
+            if (allValidIdentifiers && parts.size > 1) return parts
+        }
+        return listOf(key)
+    }
+
+    private fun toJsonElement(value: Any?): JsonElement = when (value) {
+        null -> kotlinx.serialization.json.JsonNull
+        is JsonElement -> value
+        is Map<*, *> -> kotlinx.serialization.json.buildJsonObject {
+            value.forEach { (k, v) ->
+                put(k.toString(), toJsonElement(v))
+            }
+        }
+        else -> kotlinx.serialization.json.JsonNull
+    }
+
 
     /** 校验工具参数；空列表 = 通过。 */
     fun problemsFor(

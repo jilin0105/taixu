@@ -150,4 +150,62 @@ class ToolSchemaValidatorTest {
         }
         assertTrue(ToolSchemaValidator.validate(schema, validArgs).isEmpty())
     }
+
+    @Test
+    fun `normalizeArgs unflattens double-underscore keys into nested objects`() {
+        val raw = buildJsonObject {
+            put("database__host", "127.0.0.1")
+            put("database__port", 5432)
+            put("database__auth__user", "admin")
+            put("timeout", 10)
+        }
+        val normalized = ToolSchemaValidator.normalizeArgs(raw)
+        val db = normalized["database"] as? JsonObject
+        assertEquals("127.0.0.1", (db?.get("host") as? kotlinx.serialization.json.JsonPrimitive)?.content)
+        assertEquals("5432", (db?.get("port") as? kotlinx.serialization.json.JsonPrimitive)?.content)
+        val auth = db?.get("auth") as? JsonObject
+        assertEquals("admin", (auth?.get("user") as? kotlinx.serialization.json.JsonPrimitive)?.content)
+        assertEquals("10", (normalized["timeout_seconds"] as? kotlinx.serialization.json.JsonPrimitive)?.content)
+    }
+
+    @Test
+    fun `normalizeArgs unflattens dot-separated keys into nested objects`() {
+        val raw = buildJsonObject {
+            put("config.network.port", 8080)
+            put("config.name", "my-server")
+        }
+        val normalized = ToolSchemaValidator.normalizeArgs(raw)
+        val cfg = normalized["config"] as? JsonObject
+        assertEquals("my-server", (cfg?.get("name") as? kotlinx.serialization.json.JsonPrimitive)?.content)
+        val net = cfg?.get("network") as? JsonObject
+        assertEquals("8080", (net?.get("port") as? kotlinx.serialization.json.JsonPrimitive)?.content)
+    }
+
+    @Test
+    fun `normalizeArgs deep merges explicit object with flattened keys`() {
+        val raw = buildJsonObject {
+            put("options", buildJsonObject { put("retries", 3) })
+            put("options__timeout", 30)
+        }
+        val normalized = ToolSchemaValidator.normalizeArgs(raw)
+        val opt = normalized["options"] as? JsonObject
+        assertEquals("3", (opt?.get("retries") as? kotlinx.serialization.json.JsonPrimitive)?.content)
+        assertEquals("30", (opt?.get("timeout") as? kotlinx.serialization.json.JsonPrimitive)?.content)
+    }
+
+    @Test
+    fun `validate passes nested schema when model emits flattened keys`() {
+        val nestedSchema = schema(
+            """{"type":"object","properties":{
+                "db":{"type":"object","properties":{"host":{"type":"string"}},"required":["host"]}
+            },"required":["db"]}"""
+        )
+        // Model emits db__host instead of {"db": {"host": "..."}}
+        val flatArgs = buildJsonObject {
+            put("db__host", "localhost")
+        }
+        val problems = ToolSchemaValidator.validate(nestedSchema, flatArgs)
+        assertTrue("Flattened args should satisfy nested schema requirements: $problems", problems.isEmpty())
+    }
 }
+
