@@ -383,6 +383,12 @@ class ChatViewModel @Inject constructor(
             systemTokens = systemTokens,
             compactionEnabled = compactionEnabled,
         )
+        val totalPromptTokens = inputs.currentMessages.filterIsInstance<AssistantText>().mapNotNull { it.promptTokens?.toLong() }.sum()
+        val totalCachedTokens = inputs.currentMessages.filterIsInstance<AssistantText>().mapNotNull { it.cachedTokens?.toLong() }.sum()
+        val cacheHitPct = if (totalPromptTokens > 0L && totalCachedTokens > 0L) {
+            ((totalCachedTokens * 100L) / totalPromptTokens).toInt().coerceIn(1, 100)
+        } else null
+
         ContextUsage(
             usedTokens = effectiveUsage.totalTokens,
             limitTokens = (activeModel?.contextTokens ?: inputs.defaultBudget).coerceAtLeast(1),
@@ -390,7 +396,10 @@ class ChatViewModel @Inject constructor(
             toolTokens = effectiveUsage.toolTokens,
             conversationTokens = effectiveUsage.conversationTokens,
             compacted = effectiveUsage.keepFromIndex > 0,
+            cachedTokens = totalCachedTokens,
+            cacheHitRatePercent = cacheHitPct,
         )
+
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ContextUsage())
 
     /** 各 MCP 服务的实时连通性状态（与 McpManager 共享，聊天挂载面板 / 设置页联动）。 */
@@ -1139,7 +1148,10 @@ data class ContextUsage(
     val toolTokens: Int = 0,
     val conversationTokens: Int = 0,
     val compacted: Boolean = false,
+    val cachedTokens: Long = 0L,
+    val cacheHitRatePercent: Int? = null,
 )
+
 
 data class MentionItem(
     val id: String,

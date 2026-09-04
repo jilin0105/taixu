@@ -485,12 +485,21 @@ internal fun AssistantBubble(
                     )
                 }
 
-                // Provider 报告的本轮 token 用量明细（输入/输出/缓存命中）。
+                // Provider 报告的本轮 token 用量明细（输入/输出/缓存命中与命中率）。
                 val tokenParts = buildList {
                     message.promptTokens?.let { add("↑${formatTokenCount(it)}") }
                     message.completionTokens?.let { add("↓${formatTokenCount(it)}") }
-                    message.cachedTokens?.takeIf { cached -> cached > 0 }?.let { add("⚡${formatTokenCount(it)}") }
+                    message.cachedTokens?.takeIf { cached -> cached > 0 }?.let { cached ->
+                        val prompt = message.promptTokens ?: 0
+                        val pct = if (prompt > 0) ((cached.toLong() * 100L) / prompt.toLong()).toInt().coerceIn(1, 100) else null
+                        if (pct != null) {
+                            add("⚡${formatTokenCount(cached)} ($pct%)")
+                        } else {
+                            add("⚡${formatTokenCount(cached)}")
+                        }
+                    }
                 }
+
                 if (tokenParts.isNotEmpty()) {
                     Text(
                         tokenParts.joinToString(" "),

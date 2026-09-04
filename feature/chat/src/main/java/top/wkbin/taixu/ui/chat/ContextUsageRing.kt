@@ -159,6 +159,15 @@ fun ContextUsageRing(
                         label = stringResource(R.string.chat_context_tool_tokens),
                         tokens = usage.toolTokens,
                     )
+                    if (usage.cachedTokens > 0L) {
+                        UsageBreakdownRow(
+                            label = "KV 前缀缓存命中",
+                            tokens = usage.cachedTokens.toInt(),
+                            valueOverride = usage.cacheHitRatePercent?.let {
+                                "⚡${formatContextTokens(usage.cachedTokens.toInt())} ($it%)"
+                            },
+                        )
+                    }
                 }
 
                 if (usage.compacted) {
@@ -177,6 +186,7 @@ fun ContextUsageRing(
 private fun UsageBreakdownRow(
     label: String,
     tokens: Int,
+    valueOverride: String? = null,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -190,13 +200,14 @@ private fun UsageBreakdownRow(
             fontSize = 11.sp,
         )
         Text(
-            text = formatContextTokens(tokens),
+            text = valueOverride ?: formatContextTokens(tokens),
             style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-            color = MaterialTheme.colorScheme.onSurface,
+            color = if (valueOverride != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
             fontSize = 11.sp,
         )
     }
 }
+
 
 private fun formatContextTokens(tokens: Int): String {
     return if (tokens >= 1000) "${tokens / 1000}k" else "$tokens"
