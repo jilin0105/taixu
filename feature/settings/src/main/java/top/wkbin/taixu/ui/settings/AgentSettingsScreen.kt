@@ -88,6 +88,7 @@ fun AgentSettingsScreen(
     val compactionThreshold by viewModel.contextCompactionThreshold.collectAsStateWithLifecycle()
     val maxToolRounds by viewModel.maxToolRounds.collectAsStateWithLifecycle()
     val autoWorkspaceCwd by viewModel.autoWorkspaceCwd.collectAsStateWithLifecycle()
+    val commandOutputCompressionEnabled by viewModel.commandOutputCompressionEnabled.collectAsStateWithLifecycle()
     val baseCommandTimeoutSeconds by viewModel.baseCommandTimeoutSeconds.collectAsStateWithLifecycle()
     val approvalMode by viewModel.approvalMode.collectAsStateWithLifecycle()
     val maxToolsPerRound by viewModel.maxToolsPerRound.collectAsStateWithLifecycle()
@@ -181,6 +182,14 @@ fun AgentSettingsScreen(
                         subtitle = "当会话关联了工作区时，执行 base 命令默认以该目录为工作路径 (cwd)",
                         checked = autoWorkspaceCwd,
                         onCheckedChange = viewModel::setAutoWorkspaceCwd,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    AgentToggleRow(
+                        icon = RuntimeIconName.Compress,
+                        title = "智能压缩 Agent 命令输出",
+                        subtitle = "减少 Agent 读取 git、搜索、测试与构建日志时的上下文消耗；终端与原始文件不受影响",
+                        checked = commandOutputCompressionEnabled,
+                        onCheckedChange = viewModel::setCommandOutputCompressionEnabled,
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     ApprovalModeSelectorRow(

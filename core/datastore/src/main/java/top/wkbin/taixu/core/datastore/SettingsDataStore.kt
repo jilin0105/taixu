@@ -548,6 +548,7 @@ class SettingsDataStore @Inject constructor(
     private val contextCompactionThresholdKey = androidx.datastore.preferences.core.intPreferencesKey("agent_context_compaction_threshold")
     private val maxToolRoundsKey = androidx.datastore.preferences.core.intPreferencesKey("agent_max_tool_rounds")
     private val autoWorkspaceCwdKey = booleanPreferencesKey("agent_auto_workspace_cwd")
+    private val commandOutputCompressionEnabledKey = booleanPreferencesKey("agent_command_output_compression_enabled")
     private val baseCommandTimeoutSecondsKey = androidx.datastore.preferences.core.intPreferencesKey("agent_base_command_timeout_seconds")
 
     val contextCompactionEnabled: Flow<Boolean> = context.settingsDataStore.data.map { it[contextCompactionEnabledKey] ?: true }
@@ -564,6 +565,14 @@ class SettingsDataStore @Inject constructor(
     /** 执行命令时是否自动注入工作区路径为 cwd */
     val autoWorkspaceCwd: Flow<Boolean> = context.settingsDataStore.data.map { it[autoWorkspaceCwdKey] ?: true }
     suspend fun setAutoWorkspaceCwd(value: Boolean) { context.settingsDataStore.edit { it[autoWorkspaceCwdKey] = value } }
+
+    /** 是否使用内置 RTK 精简 Agent 的安全前台命令输出；默认开启。 */
+    val commandOutputCompressionEnabled: Flow<Boolean> = context.settingsDataStore.data.map {
+        it[commandOutputCompressionEnabledKey] ?: true
+    }
+    suspend fun setCommandOutputCompressionEnabled(value: Boolean) {
+        context.settingsDataStore.edit { it[commandOutputCompressionEnabledKey] = value }
+    }
 
     /** Agent base 命令的默认前台等待时间；单次工具调用可在安全范围内覆盖。 */
     val baseCommandTimeoutSeconds: Flow<Int> = context.settingsDataStore.data.map {

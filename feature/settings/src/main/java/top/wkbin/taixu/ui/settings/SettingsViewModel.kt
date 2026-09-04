@@ -581,6 +581,9 @@ class SettingsViewModel @Inject constructor(
     val autoWorkspaceCwd: StateFlow<Boolean> = settingsDataStore.autoWorkspaceCwd
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
+    val commandOutputCompressionEnabled: StateFlow<Boolean> = settingsDataStore.commandOutputCompressionEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
     val baseCommandTimeoutSeconds: StateFlow<Int> = settingsDataStore.baseCommandTimeoutSeconds
         .stateIn(viewModelScope, SharingStarted.Eagerly, SettingsDataStore.DEFAULT_BASE_COMMAND_TIMEOUT_SECONDS)
 
@@ -637,6 +640,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setAutoWorkspaceCwd(value: Boolean) {
         viewModelScope.launch { settingsDataStore.setAutoWorkspaceCwd(value) }
+    }
+
+    fun setCommandOutputCompressionEnabled(value: Boolean) {
+        viewModelScope.launch { settingsDataStore.setCommandOutputCompressionEnabled(value) }
     }
 
     fun setBaseCommandTimeoutSeconds(value: Int) {

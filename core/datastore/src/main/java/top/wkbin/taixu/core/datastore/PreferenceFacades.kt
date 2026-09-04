@@ -117,6 +117,7 @@ class AgentPreferences @Inject constructor(private val store: SettingsDataStore)
     val contextCompactionThreshold get() = store.contextCompactionThreshold
     val maxToolRounds get() = store.maxToolRounds
     val autoWorkspaceCwd get() = store.autoWorkspaceCwd
+    val commandOutputCompressionEnabled get() = store.commandOutputCompressionEnabled
     val baseCommandTimeoutSeconds get() = store.baseCommandTimeoutSeconds
     val contextBudgetTokens get() = store.contextBudgetTokens
     val maxToolsPerRound get() = store.maxToolsPerRound
@@ -124,6 +125,7 @@ class AgentPreferences @Inject constructor(private val store: SettingsDataStore)
     val providerModel get() = store.providerModel
     val environmentPrivacyMode get() = store.environmentPrivacyMode
     suspend fun setThinkingExpanded(value: Boolean) = store.setThinkingExpanded(value)
+    suspend fun setCommandOutputCompressionEnabled(value: Boolean) = store.setCommandOutputCompressionEnabled(value)
     suspend fun removeModelApiKey(secretRef: String) = store.removeModelApiKey(secretRef)
 }
 

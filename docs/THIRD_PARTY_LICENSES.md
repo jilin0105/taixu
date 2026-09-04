@@ -8,6 +8,7 @@
 | Termux PRoot | Android ARM64 PRoot 启动器 | Termux 主仓库二进制包，版本和 SHA-256 见 `ProotInstaller` | 必须随对应二进制包核对许可证、NOTICE 和源码获取地址；APK 仅携带当前 ARM64 构建 |
 | `libandroid-shmem.so` / `libtalloc.so` | PRoot 动态库依赖 | 与 PRoot 构建匹配的 Termux 包 | 不能只因为文件是 `.so` 就假定可自由再分发；发布前核对上游包的许可证文本 |
 | `zstd-jni` | Android ARM64 `.tar.zst` 解压 | Maven Central，`1.5.5-4` AAR | 按上游 zstd-jni 的许可证和 NOTICE 分发 |
+| RTK | Agent 安全前台命令的输出精简 | `rtk-ai/rtk` `v0.47.0`，随 APK 携带 `aarch64-unknown-linux-gnu` 可执行文件；归档 SHA-256 `960ceb5f1f5f0b0939b32b5b1d41dec6d9a7113137b0703c68dca0d169a260fc` | Apache License 2.0；完整许可证随 APK 置于 `assets/licenses/rtk-LICENSE`。仅在 Linux/glibc ARM64 沙箱中使用，无法运行或不支持的命令会回退原始命令 |
 | Node.js ARM64 Runtime | OpenClaw 需要的 Node 22 fallback | Node.js 官方 `v22.22.3` Linux ARM64 tar.xz，SHA-256 固定在 `RuntimeBinaryInstaller` | Node.js 官方许可证/NOTICE；在线下载，不内置 APK；发布前保留对应版权和源码获取信息 |
 | lzhiyong Android SDK Tools | ARM64 `aapt`、`aapt2`、`aidl`、`zipalign` | `35.0.2` 静态 AArch64 归档，URL 与 SHA-256 固定在 `setup_android_core.sh` | 在线下载、不内置 APK；发布前核对上游 Apache/AOSP LICENSE、NOTICE 与再分发要求 |
 | lzhiyong/termux-ndk | 沙箱内 Android/Flutter 项目的 Linux AArch64 NDK 主机工具链 | r29 / NDK `29.0.14206865`，`android-ndk-r29-aarch64.tar.xz`，SHA-256 固定在 `setup_termux_ndk.sh` | 在线下载、不内置 APK；上游基于 AOSP LLVM/NDK，发布前随固定版本核对 LICENSE、NOTICE、源码与修改说明 |

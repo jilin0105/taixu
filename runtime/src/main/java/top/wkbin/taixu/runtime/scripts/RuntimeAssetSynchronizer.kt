@@ -45,18 +45,21 @@ class RuntimeAssetSynchronizer @Inject constructor(
         // 2. 同步 assets/tools/ -> /opt/taixu/tools/
         syncAssetFolder("tools", toolsTargetDir)
 
-        // 3. /opt/taixu/bin 位于终端与 Agent PATH 首位，部署受管构建入口。
-        syncAssetFolder("bin", binTargetDir)
+        // 3. /opt/taixu/bin 位于终端与 Agent PATH 首位，包含脚本与 ELF 原生工具。
+        syncAssetExecutableFolder("bin", binTargetDir)
 
         // 4. 同步 assets/certs/ -> /opt/taixu/certs/ 与 /etc/ssl/certs/java/cacerts
         val certsTargetDir = File(pathManager.taixuRootDir(safeDistro), "certs")
         syncAssetBinaryFolder("certs", certsTargetDir)
 
-        // 5. Android/Flutter project templates live outside a distro so that
+        // 5. RTK 的遥测、历史与原始输出落盘默认关闭；配置只作用于 Agent 包装命令。
+        syncAssetTree("rtk", File(pathManager.taixuRootDir(safeDistro), "data/rtk/config"))
+
+        // 6. Android/Flutter project templates live outside a distro so that
         // creating a workspace does not depend on which distro is active.
         syncAssetTree("templates", File(pathManager.baseDir, "templates"))
 
-        // 6. 精准将标准 cacerts 注入沙箱 OpenJDK 与 系统证书路径
+        // 7. 精准将标准 cacerts 注入沙箱 OpenJDK 与 系统证书路径
         val builtinCacerts = File(certsTargetDir, "cacerts")
         if (builtinCacerts.exists() && builtinCacerts.length() > 0) {
             val rootfsRoot = pathManager.rootfsDir(safeDistro)
@@ -87,6 +90,23 @@ class RuntimeAssetSynchronizer @Inject constructor(
                         input.copyTo(output)
                     }
                 }
+                targetFile.setReadable(true, false)
+            }
+        }
+    }
+
+    /** 二进制安全地同步可执行 asset，不能经 UTF-8 文本路径读取。 */
+    private fun syncAssetExecutableFolder(assetSubDir: String, targetDir: File) {
+        targetDir.mkdirs()
+        val assetList = runCatching { context.assets.list(assetSubDir) }.getOrNull().orEmpty()
+        for (filename in assetList) {
+            val assetPath = "$assetSubDir/$filename"
+            val targetFile = File(targetDir, filename)
+            runCatching {
+                context.assets.open(assetPath).use { input ->
+                    targetFile.outputStream().use { output -> input.copyTo(output) }
+                }
+                targetFile.setExecutable(true, false)
                 targetFile.setReadable(true, false)
             }
         }

@@ -116,6 +116,30 @@ private const val MIN_TERMINAL_FONT_SIZE_SP = 10f
 private const val MAX_TERMINAL_FONT_SIZE_SP = 24f
 
 /**
+ * Returns the text committed by the IME since the previous editor value.
+ *
+ * The hidden editor must retain its value while the keyboard is open. Clearing it
+ * after every character makes some IMEs hide/disable the Send action. Composition
+ * text is not part of the terminal input until the IME commits it, so when a
+ * composition ends we diff from the text that existed before that composition.
+ */
+private fun terminalInputDelta(previous: TextFieldValue, current: TextFieldValue): String {
+    if (current.text.isEmpty()) return ""
+
+    val committedPrefix = previous.composition?.let { composition ->
+        previous.text.substring(0, composition.start.coerceIn(0, previous.text.length))
+    } ?: previous.text
+
+    return if (current.text.startsWith(committedPrefix)) {
+        current.text.removePrefix(committedPrefix)
+    } else {
+        // The IME may replace the whole value when committing a composition.
+        // In that case the new value is the only safe payload to forward.
+        current.text
+    }
+}
+
+/**
  * 太墟 · 矩阵控制台 (Matrix Terminal)
  * 基于原生 Linux PTY，集成开发者快捷辅助按键栏
  */
@@ -476,16 +500,18 @@ fun TerminalScreen(
                         BasicTextField(
                             value = textFieldValue,
                             onValueChange = { newValue ->
+                                val previousValue = textFieldValue
                                 if (newValue.composition != null) {
                                     // 输入法正在组合输入（例如拼音输入中），暂不提交到终端
                                     textFieldValue = newValue
                                 } else {
                                     // 输入法已确认提交或直接输入字符
-                                    val textToSend = newValue.text
+                                    val textToSend = terminalInputDelta(previousValue, newValue)
                                     if (textToSend.isNotEmpty()) {
                                         viewModel.sendText(textToSend)
                                     }
-                                    textFieldValue = TextFieldValue("")
+                                    // 保留已提交文本，避免 IME 因编辑器瞬间变空而收起发送动作。
+                                    textFieldValue = newValue
                                 }
                             },
                             modifier = Modifier
@@ -507,10 +533,11 @@ fun TerminalScreen(
                                                 }
                                             }
                                             event.key == Key.Backspace && !event.isCtrlPressed -> {
-                                                if (textFieldValue.composition == null && textFieldValue.text.isEmpty()) {
+                                                if (textFieldValue.composition == null) {
                                                     viewModel.sendText("\u007f")
                                                     true
                                                 } else {
+                                                    // Let the IME edit an active composition (for example pinyin).
                                                     false
                                                 }
                                             }

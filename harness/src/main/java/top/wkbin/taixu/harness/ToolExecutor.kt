@@ -548,6 +548,12 @@ class ToolExecutor @Inject constructor(
         val command = requireString(args, "command")
         require(command.length <= MAX_COMMAND_LENGTH) { "命令过长（${command.length} 字符，上限 $MAX_COMMAND_LENGTH）" }
         val cwd = pathResolver.resolveWorkingDirectory(args["cwd"]?.jsonPrimitive?.content, workspace)
+        val commandOutputCompressionEnabled = if (::settingsDataStore.isInitialized) {
+            runCatching { settingsDataStore.commandOutputCompressionEnabled.first() }.getOrDefault(true)
+        } else {
+            true
+        }
+        val preparedCommand = RtkCommandOptimizer.prepare(command, commandOutputCompressionEnabled)
         val configuredTimeoutSeconds = if (::settingsDataStore.isInitialized) {
             runCatching { settingsDataStore.baseCommandTimeoutSeconds.first() }
                 .getOrDefault(SettingsDataStore.DEFAULT_BASE_COMMAND_TIMEOUT_SECONDS)
@@ -563,8 +569,9 @@ class ToolExecutor @Inject constructor(
         )
         val result = linuxRuntime.execute(
             ShellCommand(
-                commandLine = command,
+                commandLine = preparedCommand.commandLine,
                 workingDirectory = cwd,
+                environment = preparedCommand.environment,
                 timeoutMs = timeoutSeconds * 1000L,
             ),
         )
