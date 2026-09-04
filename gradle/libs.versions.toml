@@ -7,6 +7,7 @@ ksp = "2.3.11"
 hilt = "2.60.1"
 composeBom = "2026.08.00"
 activityCompose = "1.13.0"
+leakcanaryAndroid = "2.14"
 lifecycle = "2.11.0"
 navigation3 = "1.1.1"
 hiltNavigationCompose = "1.4.0"
@@ -46,6 +47,7 @@ ktor-server-status-pages = { group = "io.ktor", name = "ktor-server-status-pages
 ktor-sse = { group = "io.ktor", name = "ktor-sse", version.ref = "ktorServer" }
 androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "androidxWebkit" }
 hiddenapi-bypass = { group = "org.lsposed.hiddenapibypass", name = "hiddenapibypass", version.ref = "hiddenApiBypass" }
+leakcanary-android = { module = "com.squareup.leakcanary:leakcanary-android", version.ref = "leakcanaryAndroid" }
 shizuku-api = { group = "dev.rikka.shizuku", name = "api", version.ref = "shizuku" }
 shizuku-provider = { group = "dev.rikka.shizuku", name = "provider", version.ref = "shizuku" }
 dadb = { group = "dev.mobile", name = "dadb", version.ref = "dadb" }

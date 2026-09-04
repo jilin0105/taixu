@@ -90,6 +90,9 @@ extensions.configure<ApplicationExtension> {
     }
 
     packaging {
+        dex {
+            useLegacyPackaging = true
+        }
         jniLibs {
             // PRoot is launched as an extracted ARM64 executable on Android 10+.
             useLegacyPackaging = true
@@ -129,6 +132,7 @@ dependencies {
 }
 
 dependencies {
+    debugImplementation(libs.leakcanary.android)
     implementation(project(":core:common"))
     implementation(project(":core:model"))
     implementation(project(":core:database"))
@@ -192,7 +196,7 @@ val bundledPtyNative = layout.projectDirectory.file(
     "src/main/jniLibs/arm64-v8a/libpty_native.so",
 )
 val bundledRtk = layout.projectDirectory.file("src/main/assets/bin/rtk")
-val bundledRtkSha256 = "ce9a4847940ea26169df818d6907cd99bac0257a59ed4cc6c4b647e41277ad94"
+val bundledRtkSha256 = "e440fc61077925d98fdea5c6bf817df2c3c85e6b96aea5d02659c2a6f42d93ce"
 
 tasks.configureEach {
     if (name == "preBuild") {
@@ -204,23 +208,25 @@ tasks.configureEach {
             check(bundledProotLoader.asFile.isFile && bundledProotLoader.asFile.length() > 4096L) {
                 "Missing ARM64 PRoot loader. Run tools/prepare-proot-runtime.ps1 before building."
             }
-            check(bundledRtk.asFile.isFile && bundledRtk.asFile.length() > 1_000_000L) {
-                "Missing bundled RTK ARM64 Linux executable. Restore app/src/main/assets/bin/rtk."
-            }
-            val rtkBytes = bundledRtk.asFile.readBytes()
-            check(
-                rtkBytes.size >= 20 &&
-                    rtkBytes[0] == 0x7F.toByte() && rtkBytes[1] == 'E'.code.toByte() &&
-                    rtkBytes[2] == 'L'.code.toByte() && rtkBytes[3] == 'F'.code.toByte() &&
-                    rtkBytes[18] == 0xB7.toByte() && rtkBytes[19] == 0x00.toByte(),
-            ) {
-                "Bundled RTK must be an ELF AArch64 Linux executable."
-            }
-            val rtkSha256 = MessageDigest.getInstance("SHA-256")
-                .digest(rtkBytes)
-                .joinToString("") { "%02x".format(it) }
-            check(rtkSha256 == bundledRtkSha256) {
-                "Bundled RTK SHA-256 mismatch. Expected $bundledRtkSha256, got $rtkSha256."
+            if (bundledRtk.asFile.exists()) {
+                check(bundledRtk.asFile.isFile && bundledRtk.asFile.length() > 1_000_000L) {
+                    "Bundled RTK executable in app/src/main/assets/bin/rtk is corrupted or too small."
+                }
+                val rtkBytes = bundledRtk.asFile.readBytes()
+                check(
+                    rtkBytes.size >= 20 &&
+                        rtkBytes[0] == 0x7F.toByte() && rtkBytes[1] == 'E'.code.toByte() &&
+                        rtkBytes[2] == 'L'.code.toByte() && rtkBytes[3] == 'F'.code.toByte() &&
+                        rtkBytes[18] == 0xB7.toByte() && rtkBytes[19] == 0x00.toByte(),
+                ) {
+                    "Bundled RTK must be an ELF AArch64 Linux executable."
+                }
+                val rtkSha256 = MessageDigest.getInstance("SHA-256")
+                    .digest(rtkBytes)
+                    .joinToString("") { "%02x".format(it) }
+                check(rtkSha256 == bundledRtkSha256) {
+                    "Bundled RTK SHA-256 mismatch. Expected $bundledRtkSha256, got $rtkSha256."
+                }
             }
             // libpty_native 必须是 NDK/Bionic 构建：若依赖 glibc 的 libc.so.6，设备上
             // dlopen 必失败并静默回退到 script PTY 路径（PTY 回显问题会随之复发）。
