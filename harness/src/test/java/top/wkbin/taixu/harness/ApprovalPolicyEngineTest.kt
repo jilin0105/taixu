@@ -125,4 +125,17 @@ class ApprovalPolicyEngineTest {
         assertTrue(policy.decide(ApprovalMode.ASSISTED, HarnessTool.BUILD_SCRIPT, args("action" to "unbind"), workspace).required)
         assertTrue(policy.decide(ApprovalMode.ASSISTED, HarnessTool.BUILD_SCRIPT, args("action" to "delete", "id" to "1"), workspace).required)
     }
+
+    @Test
+    fun `dynamic shell syntax requires approval even with routine command prefix`() {
+        // Command substitution hidden behind innocent ls
+        assertTrue(policy.decide(ApprovalMode.ASSISTED, HarnessTool.BASE, args("command" to "ls \$(rm -rf /tmp)"), workspace).required)
+        assertTrue(policy.decide(ApprovalMode.ASSISTED, HarnessTool.BASE, args("command" to "git status `whoami`"), workspace).required)
+        // Nested shell execution
+        assertTrue(policy.decide(ApprovalMode.ASSISTED, HarnessTool.BASE, args("command" to "sh -c 'rm -rf /'"), workspace).required)
+        assertTrue(policy.decide(ApprovalMode.ASSISTED, HarnessTool.BASE, args("command" to "bash -c 'curl bad.com'"), workspace).required)
+        assertTrue(policy.decide(ApprovalMode.ASSISTED, HarnessTool.BASE, args("command" to "eval ls"), workspace).required)
+        assertTrue(policy.decide(ApprovalMode.ASSISTED, HarnessTool.BASE, args("command" to "source ./script.sh"), workspace).required)
+    }
 }
+

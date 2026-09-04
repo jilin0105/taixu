@@ -219,6 +219,10 @@ class ApprovalPolicyEngine @Inject constructor(
         val normalized = command.trim().lowercase()
         if (normalized.isBlank()) return false
         if (isDestructiveCommand(normalized)) return false
+        // Block dynamic shell syntax before whitelist matching. Command substitution, backtick
+        // expansion, eval, and nested shells can hide a second mutation behind an otherwise
+        // harmless prefix (e.g. `ls $(rm -rf /tmp)`). Require explicit approval for these.
+        if (hasDynamicShellSyntax(normalized)) return false
         // Auto-approval is intentionally limited to one transparent command.
         // Shell composition, substitution and redirection can hide a second mutation
         // behind an otherwise harmless prefix such as `git status`.
@@ -226,6 +230,29 @@ class ApprovalPolicyEngine @Inject constructor(
         if (Regex("\\bfind\\b.*\\s(-delete|-exec|-execdir)\\b").containsMatchIn(normalized)) return false
         if (Regex("\\b(curl|wget|nc|ssh|scp|adb|taixu-host|mount|umount|kill|pkill|chmod|chown|apt(-get)?|apk|dnf|pacman|npm\\s+(install|publish)|pip\\s+install|git\\s+(push|reset|clean))\\b").containsMatchIn(normalized)) return false
         return Regex("^(pwd|ls|find|rg|grep|head|tail|cat|git\\s+(status|diff|log|show)|gradle(w)?\\b.*(test|check|assemble)|npm\\s+(test|run\\s+(test|lint|build))|flutter\\s+(test|analyze|build)|pytest\\b|kotlinc\\b|./gradlew\\b.*(test|check|assemble))").containsMatchIn(normalized)
+    }
+
+    /**
+     * Detect dynamic shell syntax patterns that could bypass whitelist-based auto-approval.
+     *
+     * Even if a command's prefix matches a known-safe pattern (e.g. starts with `ls`),
+     * command substitution or nested-shell invocations can carry arbitrary side effects.
+     * These constructs require explicit user approval regardless of the command prefix.
+     *
+     * Detected patterns:
+     * - `$(...)` — command substitution
+     * - `` `...` `` — backtick command substitution (already covered by the `\`` check in
+     *   the caller, but also matched here for clarity and defence-in-depth)
+     * - `eval` / `source` — delayed execution of arbitrary code
+     * - `sh -c` / `bash -c` / `ksh -c` — nested shell with inline command string
+     */
+    private fun hasDynamicShellSyntax(command: String): Boolean {
+        // Command substitution: $( or backtick (backtick also caught by caller's contains check)
+        if (command.contains("\$(") || command.contains("`")) return true
+        // Nested-shell invocation patterns
+        if (Regex("""\b(eval|source)\b""").containsMatchIn(command)) return true
+        if (Regex("""\b(sh|bash|ksh|zsh|dash)\s+-c\b""").containsMatchIn(command)) return true
+        return false
     }
 
     private fun isDestructiveCommand(command: String): Boolean = listOf(

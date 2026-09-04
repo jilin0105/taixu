@@ -1,6 +1,8 @@
 package top.wkbin.taixu.harness.metrics
 
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import top.wkbin.taixu.harness.ChatUsage
 
 /**
  * 单次 Agent 运行的过程指标采集（Harness 2.0 Phase 0 基线埋点）。
@@ -16,6 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * - streamRetries：限流 + 网络退避重试次数
  * - circuitBreakerTripped：是否触发连续失败熔断
  * - droppedToolCalls：超出单轮上限被丢弃的调用数
+ * - cacheHitRate：DeepSeek 等厂商 KV 前缀缓存命中率；高命中率意味着更低成本
  */
 class RunMetrics(
     private val startedAt: Long,
@@ -33,6 +36,10 @@ class RunMetrics(
     @Volatile var outcome: String = "unknown"
         private set
 
+    // Cache-hit tracking: accumulated across all rounds for the session run.
+    private val totalInputTokens = AtomicLong()
+    private val totalCacheReadTokens = AtomicLong()
+
     fun roundStarted() { rounds.incrementAndGet() }
     fun toolCallRecorded(failed: Boolean) {
         toolCalls.incrementAndGet()
@@ -49,6 +56,17 @@ class RunMetrics(
     fun circuitBreaker() { circuitBreakerTripped = true }
     fun finish(result: String) { outcome = result }
 
+    /**
+     * Record per-turn provider usage for cache-hit rate aggregation.
+     * Call this once per successful provider response (after streaming completes).
+     */
+    fun recordUsage(usage: ChatUsage) {
+        if (usage.inputTokens > 0) {
+            totalInputTokens.addAndGet(usage.inputTokens)
+            totalCacheReadTokens.addAndGet(usage.cacheReadTokens)
+        }
+    }
+
     fun summary(): String = buildString {
         append("Rounds=").append(rounds.get())
         append(", ToolCalls=").append(toolCalls.get())
@@ -60,6 +78,16 @@ class RunMetrics(
         append(", FollowUps=").append(followUpMessages.get())
         append(", MaxConsecutiveFailures=").append(maxConsecutiveFailuresSeen.get())
         append(", CircuitBreaker=").append(circuitBreakerTripped)
+        // Cache-hit rate: show percentage when we have meaningful data; "n/a" when no
+        // provider usage was reported (e.g. all turns failed before streaming started).
+        val inputToks = totalInputTokens.get()
+        val cacheHitStr = if (inputToks > 0) {
+            val hitPct = (totalCacheReadTokens.get() * 100L / inputToks).toInt()
+            "$hitPct% (${totalCacheReadTokens.get()}/${inputToks} tokens)"
+        } else {
+            "n/a"
+        }
+        append(", CacheHit=").append(cacheHitStr)
         append(", Outcome=").append(outcome)
     }
 }

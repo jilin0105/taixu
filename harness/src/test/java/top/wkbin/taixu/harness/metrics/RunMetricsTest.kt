@@ -64,4 +64,18 @@ class RunMetricsTest {
         metrics.finish("failed")
         assertEquals("failed", metrics.outcome)
     }
+
+    @Test
+    fun `cache hit rate is tracked and formatted in summary`() {
+        val metrics = RunMetrics(startedAt = 0L)
+        // Record round 1: 1000 input, 800 cache read (80% hit)
+        metrics.recordUsage(top.wkbin.taixu.harness.ChatUsage(inputTokens = 1000, cacheReadTokens = 800))
+        // Record round 2: 1000 input, 600 cache read (cumulative: 2000 input, 1400 cache read -> 70%)
+        metrics.recordUsage(top.wkbin.taixu.harness.ChatUsage(inputTokens = 1000, cacheReadTokens = 600))
+        metrics.finish("completed")
+
+        val summary = metrics.summary()
+        assertTrue(summary.contains("CacheHit=70% (1400/2000 tokens)"))
+    }
 }
+
