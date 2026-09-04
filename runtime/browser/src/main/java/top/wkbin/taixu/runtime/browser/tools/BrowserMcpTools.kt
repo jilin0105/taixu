@@ -1,4 +1,4 @@
-﻿package top.wkbin.taixu.runtime.browser.tools
+package top.wkbin.taixu.runtime.browser.tools
 
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -36,7 +36,23 @@ class BrowserMcpTools(
     /** hook 动作数组的解码器：sealed 多态，判别字段 "type"（与 HookRuleStore 的 Json 配置一致）。 */
     private val hookJson = Json { ignoreUnknownKeys = true; classDiscriminator = "type" }
 
-    fun list(): List<ToolSpec> = TOOLS
+    /**
+     * provider 可见工具清单。与 invoke 侧门禁（allowEvalJs / allowHooks / allowCdp）同源：
+     * 被关闭的能力对应工具不再注入模型——模型看不到就不会调用，省掉每轮请求重复携带的
+     * schema tokens；若模型凭历史轮次调用已隐藏工具，invoke 门禁仍会拦截并给出开启指引。
+     * 门禁组合：hook_* 需 allowHooks 或 allowCdp（CDP Fetch 拦截同样要建规则）；
+     * inject_script 仅 allowHooks；debug_* 仅 allowCdp；evaluate 仅 allowEvalJs；
+     * network_detail 无门禁（hooks 关闭时 body 天然不存在，仅元数据可见）。
+     */
+    fun list(): List<ToolSpec> = TOOLS.filter { spec ->
+        when {
+            spec.name.startsWith("browser.debug_") -> prefs.allowCdp
+            spec.name.startsWith("browser.hook_") -> prefs.allowHooks || prefs.allowCdp
+            spec.name == "browser.inject_script" -> prefs.allowHooks
+            spec.name == "browser.evaluate" -> prefs.allowEvalJs
+            else -> true
+        }
+    }
 
     suspend fun invoke(toolName: String, args: JsonObject): InvokeResult {
         val spec = TOOLS.firstOrNull { it.name == toolName }
