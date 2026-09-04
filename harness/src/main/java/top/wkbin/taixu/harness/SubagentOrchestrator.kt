@@ -114,8 +114,10 @@ class SubagentOrchestrator @Inject constructor(
         val laneName = "subagent:${profile.id}:${java.util.UUID.randomUUID()}"
         laneManager.create(parentSessionId, laneName, parentLeaf)
         val prompt = buildSubagentPrompt(spec, profile, workspace, parentSessionId)
+        val targetModelId = spec.model?.takeIf { it.isNotBlank() } ?: modelId
+        val targetModelVariant = if (spec.model.isNullOrBlank()) modelVariant else null
         val laneResult = withTimeoutOrNull(SUBAGENT_TIMEOUT_MS) {
-            laneRunner.run(parentSessionId, laneName, prompt, workspace, modelId, modelVariant)
+            laneRunner.run(parentSessionId, laneName, prompt, workspace, targetModelId, targetModelVariant)
         }
 
         // 超时取消时 withTimeoutOrNull 返回 null，若直接 ?: 0 会把子智能体在超时窗口内
@@ -134,8 +136,10 @@ class SubagentOrchestrator @Inject constructor(
             toolCallCount = toolCallCount,
             resolvedProfileId = profile.id,
             resolvedProfileName = profile.name,
+            resolvedModel = spec.model,
         )
     }
+
 
     private suspend fun resolveProfile(
         spec: SubagentTaskSpec,
@@ -226,8 +230,10 @@ class SubagentOrchestrator @Inject constructor(
         val toolCallCount: Int,
         val resolvedProfileId: String? = null,
         val resolvedProfileName: String? = null,
+        val resolvedModel: String? = null,
     )
 }
+
 
 /**
  * 将任务按 write_paths 冲突切成若干互不相交的"波"。
@@ -294,8 +300,10 @@ internal fun renderSummaryMarkdown(outcomes: List<SubagentOrchestrator.SubagentE
             } else {
                 outcome.spec.role.ifBlank { "${outcome.spec.department} / ${outcome.spec.agentQuery}" }
             }
-            append("#### ${index + 1}. $statusIcon 【${outcome.spec.taskName}】(角色: $resolvedRole)\n")
+            val modelBadge = outcome.resolvedModel?.let { " · 专用模型: $it" } ?: ""
+            append("#### ${index + 1}. $statusIcon 【${outcome.spec.taskName}】(角色: $resolvedRole$modelBadge)\n")
             append("- **工具调用次数**：${outcome.toolCallCount} 次\n")
+
             append("- **子任务输出**：\n")
             append(outcome.summary.trim())
             append("\n\n")

@@ -28,6 +28,9 @@ object SubagentArgsParser {
             val department = candidate.string("department").orEmpty().trim()
             val agentQuery = candidate.string("agentQuery").orEmpty().trim()
             if (role.isBlank() && (department.isBlank() || agentQuery.isBlank())) return@mapNotNull null
+            val rawModel = candidate.string("model") ?: candidate.string("modelId") ?: candidate.string("model_id")
+            val model = rawModel?.trim()?.takeIf { it.isNotBlank() && !it.equals("inherit", ignoreCase = true) }
+
             SubagentTaskSpec(
                 taskName = candidate.string("taskName")?.trim()?.takeIf { it.isNotBlank() } ?: defaultTaskName,
                 role = role,
@@ -35,8 +38,10 @@ object SubagentArgsParser {
                 department = department,
                 agentQuery = agentQuery,
                 writePaths = candidate.strings("writePaths").map { it.trim() },
+                model = model,
             )
         }.take(maxTasks.coerceAtLeast(0))
+
     }
 
     private fun JsonObject.string(key: String): String? =

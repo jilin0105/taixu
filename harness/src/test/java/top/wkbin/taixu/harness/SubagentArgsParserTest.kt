@@ -123,5 +123,24 @@ class SubagentArgsParserTest {
         assertTrue(result.single().writePaths.isEmpty())
     }
 
+    @Test
+    fun `parses dedicated model when specified`() {
+        val args = jsonObject(
+            """{"subagents":[
+                {"taskName":"重构","role":"coder","prompt":"重构代码","model":"qwen-2.5-coder-32b"},
+                {"taskName":"测试","role":"tester","prompt":"运行单测","modelId":"gpt-4o-mini"},
+                {"taskName":"常规","role":"reviewer","prompt":"常规审查","model":"inherit"}
+            ]}""",
+        )
+
+        val result = SubagentArgsParser.parse(args)
+
+        assertEquals(3, result.size)
+        assertEquals("qwen-2.5-coder-32b", result[0].model)
+        assertEquals("gpt-4o-mini", result[1].model)
+        assertEquals(null, result[2].model) // inherit should be normalized to null (inherit from parent)
+    }
+
     private fun jsonObject(raw: String) = Json.parseToJsonElement(raw).jsonObject
 }
+

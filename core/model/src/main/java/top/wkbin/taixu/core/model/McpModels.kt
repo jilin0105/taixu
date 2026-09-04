@@ -112,6 +112,8 @@ data class SubagentTaskSpec(
     val agentQuery: String = "",
     /** 子任务声明的写目标文件/目录（相对或绝对路径）。空列表 = 整工作区租约（串行启动）。 */
     val writePaths: List<String> = emptyList(),
+    /** 可选：指定执行该子任务的独立模型 ID、代号或简称。null 或 "inherit" 时自动继承父会话模型。 */
+    val model: String? = null,
 )
 
 /**
