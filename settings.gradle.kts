@@ -1,13 +1,16 @@
 pluginManagement {
-    // CI（GitHub Actions 自动注入 CI=true）在海外，阿里云镜像同步滞后且访问慢，
-    // 直接走官方源；本地开发保持阿里云镜像优先以加速下载。
-    val onCi = System.getenv("CI") == "true"
+    // CI（GitHub Actions 自动注入 CI=true）在海外，阿里云镜像同步滞后且访问慢；
+    // 本地开发亦可通过 -PuseOfficialRepos=true 或 USE_OFFICIAL_REPOS=true 强制走官方源。
+    val useOfficialRepos = System.getenv("CI") == "true" ||
+        providers.gradleProperty("useOfficialRepos").orNull == "true" ||
+        System.getenv("USE_OFFICIAL_REPOS") == "true"
     repositories {
-        if (onCi) {
+        if (useOfficialRepos) {
             google()
             mavenCentral()
             gradlePluginPortal()
         } else {
+            gradlePluginPortal()
             maven {
                 url = uri("https://maven.aliyun.com/repository/google")
                 isAllowInsecureProtocol = false
@@ -23,16 +26,17 @@ pluginManagement {
             }
             google()
             mavenCentral()
-            gradlePluginPortal()
         }
     }
 }
 
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    val onCi = System.getenv("CI") == "true"
+    val useOfficialRepos = System.getenv("CI") == "true" ||
+        providers.gradleProperty("useOfficialRepos").orNull == "true" ||
+        System.getenv("USE_OFFICIAL_REPOS") == "true"
     repositories {
-        if (onCi) {
+        if (useOfficialRepos) {
             google()
             mavenCentral()
         } else {

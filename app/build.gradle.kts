@@ -192,7 +192,7 @@ val bundledPtyNative = layout.projectDirectory.file(
     "src/main/jniLibs/arm64-v8a/libpty_native.so",
 )
 val bundledRtk = layout.projectDirectory.file("src/main/assets/bin/rtk")
-val bundledRtkSha256 = "e440fc61077925d98fdea5c6bf817df2c3c85e6b96aea5d02659c2a6f42d93ce"
+val bundledRtkSha256 = "ce9a4847940ea26169df818d6907cd99bac0257a59ed4cc6c4b647e41277ad94"
 
 tasks.configureEach {
     if (name == "preBuild") {
