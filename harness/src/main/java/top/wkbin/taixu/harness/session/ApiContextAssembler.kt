@@ -42,8 +42,9 @@ class ApiContextAssembler @Inject constructor(
         thinkingMode: Boolean = false,
     ): List<ApiMessage> {
         val compactionEnabled = runCatching { settingsDataStore.contextCompactionEnabled.first() }.getOrDefault(true)
-        val budgetTokens = model.contextTokens
-            ?: runCatching { settingsDataStore.contextBudgetTokens.first() }.getOrDefault(128_000)
+        val budgetTokens = (model.contextTokens
+            ?: runCatching { settingsDataStore.contextBudgetTokens.first() }.getOrDefault(128_000))
+            .coerceIn(0, ContextWindowPolicy.MAX_CONTEXT_BUDGET)
         val toolCallMode = if (model.pureChatMode) ToolCallMode.DISABLED else model.toolCallMode
 
         var compactedContext = compactionManager.project(sessId)
