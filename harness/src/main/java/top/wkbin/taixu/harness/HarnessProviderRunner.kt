@@ -192,7 +192,11 @@ class HarnessProviderRunner @Inject constructor(
                 val lowerMsg = throwable.message.orEmpty().lowercase()
                 val pendingImages = requestMessages.sumOf { it.imageUrls.size }
                 if (!imageStripped && pendingImages > 0 &&
-                    ("do not support image" in lowerMsg || "image input" in lowerMsg || "supports image" in lowerMsg)
+                    ("do not support image" in lowerMsg || "does not support image" in lowerMsg ||
+                        "image input" in lowerMsg || "supports image" in lowerMsg ||
+                        "image not supported" in lowerMsg ||
+                        "不支持图片" in lowerMsg || "不支持图像" in lowerMsg ||
+                        "图片输入" in lowerMsg || "图像输入" in lowerMsg)
                 ) {
                     imageStripped = true
                     requestMessages = requestMessages.map { it.copy(imageUrls = emptyList()) }
