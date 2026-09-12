@@ -220,7 +220,10 @@ object ContextWindowPolicy {
                 is ToolCall -> estimateTokens(message.args.toString()) + estimateTokens(message.reasoning.orEmpty())
             }
             if (used + tokens > limit) {
-                val tokenBoundary = alignKeepFromIndex(messages, (index + 1).coerceIn(0, messages.lastIndex))
+                // 强制保留最近 2 条（即使某条自身超 limit），避免全折叠导致失忆
+                val candidate = (index + 1).coerceIn(0, messages.lastIndex)
+                    .coerceAtMost((messages.size - 2).coerceAtLeast(0))
+                val tokenBoundary = alignKeepFromIndex(messages, candidate)
                 return tokenBoundary
             }
             used += tokens
